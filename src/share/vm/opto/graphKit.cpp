@@ -1486,6 +1486,7 @@ void GraphKit::pre_barrier(bool do_load,
     case BarrierSet::CardTableModRef:
     case BarrierSet::CardTableExtension:
     case BarrierSet::ModRef:
+    case BarrierSet::ShenandoahBarrierSet:
       break;
 
     case BarrierSet::Other:
@@ -1517,6 +1518,7 @@ void GraphKit::post_barrier(Node* ctl,
       break;
 
     case BarrierSet::ModRef:
+    case BarrierSet::ShenandoahBarrierSet:
       break;
 
     case BarrierSet::Other:

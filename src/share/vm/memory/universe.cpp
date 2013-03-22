@@ -76,6 +76,8 @@
 #include "gc_implementation/g1/g1CollectedHeap.inline.hpp"
 #include "gc_implementation/g1/g1CollectorPolicy.hpp"
 #include "gc_implementation/parallelScavenge/parallelScavengeHeap.hpp"
+#include "gc_implementation/shenandoah/shenandoahHeap.hpp"
+#include "gc_implementation/shenandoah/shenandoahCollectorPolicy.hpp"
 #endif
 
 // Known objects
@@ -738,8 +740,17 @@ char* Universe::preferred_heap_base(size_t heap_size, NARROW_OOP_MODE mode) {
 }
 
 jint Universe::initialize_heap() {
-
-  if (UseParallelGC) {
+  if (UseShenandoahGC) {
+#ifndef SERIALGC
+    ShenandoahCollectorPolicy* pgcPolicy =
+      new ShenandoahCollectorPolicy();
+    Universe::_collectedHeap = 
+      new ShenandoahHeap(pgcPolicy);
+#else  // SERIALGC
+    fatal("UseShenandoahGC not supported in this VM.");
+#endif // SERIALGC
+  }
+  else if (UseParallelGC) {
 #ifndef SERIALGC
     Universe::_collectedHeap = new ParallelScavengeHeap();
 #else  // SERIALGC

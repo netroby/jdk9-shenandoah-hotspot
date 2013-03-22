@@ -50,8 +50,10 @@
 #include "gc_implementation/parallelScavenge/parallelScavengeHeap.hpp"
 #include "gc_implementation/parallelScavenge/psOldGen.hpp"
 #include "gc_implementation/parallelScavenge/psYoungGen.hpp"
+#include "gc_implementation/shenandoah/shenandoahHeap.hpp"
 #include "services/g1MemoryPool.hpp"
 #include "services/psMemoryPool.hpp"
+#include "services/shenandoahMemoryPool.hpp"
 #endif
 
 GrowableArray<MemoryPool*>* MemoryService::_pools_list =
@@ -92,6 +94,10 @@ void MemoryService::set_universe_heap(CollectedHeap* heap) {
       add_g1_heap_info(G1CollectedHeap::heap());
       break;
     }
+  case CollectedHeap::ShenandoahHeap : {
+    add_shenandoah_heap_info(ShenandoahHeap::heap());
+    break;
+  }
 #endif // SERIALGC
     default: {
       guarantee(false, "Unrecognized kind of heap");
@@ -109,8 +115,12 @@ void MemoryService::set_universe_heap(CollectedHeap* heap) {
 
   // All memory pools and memory managers are initialized.
   //
+  if (UseShenandoahGC) {
+    _major_gc_manager->initialize_gc_stat_info();
+  } else {
   _minor_gc_manager->initialize_gc_stat_info();
   _major_gc_manager->initialize_gc_stat_info();
+  }
 }
 
 // Add memory pools for GenCollectedHeap
@@ -185,6 +195,14 @@ void MemoryService::add_g1_heap_info(G1CollectedHeap* g1h) {
   add_g1YoungGen_memory_pool(g1h, _major_gc_manager, _minor_gc_manager);
   add_g1OldGen_memory_pool(g1h, _major_gc_manager);
 }
+
+void MemoryService::add_shenandoah_heap_info(ShenandoahHeap* pgch) {
+  assert(UseShenandoahGC, "sanity");
+  _major_gc_manager = MemoryManager::get_shenandoah_memory_manager();
+  _managers_list->append(_major_gc_manager);
+  add_shenandoah_memory_pool(pgch, _major_gc_manager);
+}
+
 #endif // SERIALGC
 
 MemoryPool* MemoryService::add_gen(Generation* gen,
@@ -306,6 +324,8 @@ void MemoryService::add_generation_memory_pool(Generation* gen,
                                        true  /* support_usage_threshold */);
       break;
     }
+
+
 #endif // SERIALGC
 
     default:
@@ -384,6 +404,19 @@ void MemoryService::add_g1OldGen_memory_pool(G1CollectedHeap* g1h,
   mgr->add_pool(old_gen);
   _pools_list->append(old_gen);
 }
+
+void MemoryService::add_shenandoah_memory_pool(ShenandoahHeap* pgc,
+						MemoryManager* mgr) {
+  ShenandoahMemoryPool* pool = new ShenandoahMemoryPool(pgc,
+							"Shenandoah",
+							MemoryPool::Heap,
+							false /* support_usage_threshold */);
+
+  mgr->add_pool(pool);
+  _pools_list->append(pool);
+}
+   
+
 #endif // SERIALGC
 
 void MemoryService::add_code_heap_memory_pool(CodeHeap* heap) {

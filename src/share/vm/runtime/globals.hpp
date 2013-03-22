@@ -1306,6 +1306,9 @@ class CommandLineFlags {
   product(bool, UseG1GC, false,                                             \
           "Use the Garbage-First garbage collector")                        \
                                                                             \
+  product(bool, UseShenandoahGC, false,                                     \
+          "Use the Shenandoah pauseless garbage collector")                 \
+                                                                            \
   product(bool, UseParallelGC, false,                                       \
           "Use the Parallel Scavenge garbage collector")                    \
                                                                             \

@@ -73,6 +73,7 @@ class GCHeapLog : public EventLogBase<GCMessage> {
 //     GenCollectedHeap
 //     G1CollectedHeap
 //   ParallelScavengeHeap
+//   ShenandoahHeap
 //
 class CollectedHeap : public CHeapObj<mtInternal> {
   friend class VMStructs;
@@ -161,7 +162,7 @@ class CollectedHeap : public CHeapObj<mtInternal> {
 
   // Fill with a single array; caller must ensure filler_array_min_size() <=
   // words <= filler_array_max_size().
-  static inline void fill_with_array(HeapWord* start, size_t words, bool zap = true);
+  static void fill_with_array(HeapWord* start, size_t words, bool zap = true);
 
   // Fill with a single object (either an int array or a java.lang.Object).
   static inline void fill_with_object_impl(HeapWord* start, size_t words, bool zap = true);
@@ -179,7 +180,8 @@ class CollectedHeap : public CHeapObj<mtInternal> {
     SharedHeap,
     GenCollectedHeap,
     ParallelScavengeHeap,
-    G1CollectedHeap
+    G1CollectedHeap,
+    ShenandoahHeap
   };
 
   static inline size_t filler_array_max_size() {

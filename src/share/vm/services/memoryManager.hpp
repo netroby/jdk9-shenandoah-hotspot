@@ -63,7 +63,8 @@ public:
     PSScavenge,
     PSMarkSweep,
     G1YoungGen,
-    G1OldGen
+    G1OldGen,
+    Shenandoah
   };
 
   MemoryManager();
@@ -96,6 +97,7 @@ public:
   static GCMemoryManager* get_psMarkSweep_memory_manager();
   static GCMemoryManager* get_g1YoungGen_memory_manager();
   static GCMemoryManager* get_g1OldGen_memory_manager();
+  static GCMemoryManager* get_shenandoah_memory_manager();
 
 };
 
@@ -272,6 +274,16 @@ public:
 
   MemoryManager::Name kind() { return MemoryManager::G1OldGen; }
   const char* name()         { return "G1 Old Generation"; }
+};
+
+class ShenandoahMemoryManager : public GCMemoryManager {
+private:
+public:
+  ShenandoahMemoryManager() : GCMemoryManager() {}
+
+  MemoryManager::Name kind() { return MemoryManager::Shenandoah; }
+  const char* name()         { return "Shenandoah";}
+
 };
 
 #endif // SHARE_VM_SERVICES_MEMORYMANAGER_HPP

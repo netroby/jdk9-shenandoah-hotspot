@@ -167,6 +167,16 @@ static void do_oop_store(InterpreterMacroAssembler* _masm,
 
       }
       break;
+    case BarrierSet::ShenandoahBarrierSet: 
+      {
+	if (val == noreg) {
+	  __ store_heap_oop_null(obj);
+	} else {
+	  __ store_heap_oop(obj, val);
+	}
+      }
+      break;
+
 #endif // SERIALGC
     case BarrierSet::CardTableModRef:
     case BarrierSet::CardTableExtension:

@@ -51,6 +51,7 @@ class AdaptiveSizePolicy;
 #ifndef SERIALGC
 class ConcurrentMarkSweepPolicy;
 class G1CollectorPolicy;
+class ShenandoahCollectorPolicy;
 #endif // SERIALGC
 
 class GCPolicyCounters;
@@ -114,7 +115,8 @@ class CollectorPolicy : public CHeapObj<mtGC> {
     TwoGenerationCollectorPolicyKind,
     ConcurrentMarkSweepPolicyKind,
     ASConcurrentMarkSweepPolicyKind,
-    G1CollectorPolicyKind
+    G1CollectorPolicyKind,
+    ShenandoahCollectorPolicyKind
   };
 
   AdaptiveSizePolicy* size_policy() { return _size_policy; }
@@ -137,6 +139,7 @@ class CollectorPolicy : public CHeapObj<mtGC> {
 #ifndef SERIALGC
   virtual ConcurrentMarkSweepPolicy*    as_concurrent_mark_sweep_policy() { return NULL; }
   virtual G1CollectorPolicy*            as_g1_policy()                    { return NULL; }
+  virtual ShenandoahCollectorPolicy*    as_pgc_policy()                    { return NULL; }
 #endif // SERIALGC
   // Note that these are not virtual.
   bool is_generation_policy()            { return as_generation_policy() != NULL; }
@@ -145,9 +148,11 @@ class CollectorPolicy : public CHeapObj<mtGC> {
 #ifndef SERIALGC
   bool is_concurrent_mark_sweep_policy() { return as_concurrent_mark_sweep_policy() != NULL; }
   bool is_g1_policy()                    { return as_g1_policy() != NULL; }
+  bool is_pgc_policy()                   { return as_pgc_policy() != NULL; }
 #else  // SERIALGC
   bool is_concurrent_mark_sweep_policy() { return false; }
   bool is_g1_policy()                    { return false; }
+  bool is_pgc_policy()                    { return false; }
 #endif // SERIALGC
 
 

@@ -40,6 +40,7 @@ public:
     CardTableExtension,
     G1SATBCT,
     G1SATBCTLogging,
+    ShenandoahBarrierSet,
     Other,
     Uninit
   };

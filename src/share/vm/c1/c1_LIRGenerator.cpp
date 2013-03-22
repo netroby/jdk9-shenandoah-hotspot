@@ -1422,6 +1422,8 @@ void LIRGenerator::pre_barrier(LIR_Opr addr_opr, LIR_Opr pre_val,
     case BarrierSet::G1SATBCTLogging:
       G1SATBCardTableModRef_pre_barrier(addr_opr, pre_val, do_load, patch, info);
       break;
+    case BarrierSet::ShenandoahBarrierSet: break;
+
 #endif // SERIALGC
     case BarrierSet::CardTableModRef:
     case BarrierSet::CardTableExtension:
@@ -1443,6 +1445,8 @@ void LIRGenerator::post_barrier(LIR_OprDesc* addr, LIR_OprDesc* new_val) {
     case BarrierSet::G1SATBCT:
     case BarrierSet::G1SATBCTLogging:
       G1SATBCardTableModRef_post_barrier(addr,  new_val);
+      break;
+    case BarrierSet::ShenandoahBarrierSet: 
       break;
 #endif // SERIALGC
     case BarrierSet::CardTableModRef:
