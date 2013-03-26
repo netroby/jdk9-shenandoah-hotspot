@@ -41,24 +41,24 @@ jint ShenandoahHeap::initialize() {
   ReservedSpace pgc_rs = heap_rs.first_part(initialSize);
   
 
-  tty->print("Calling initialize on reserved space base = %x end = %x\n", 
+  tty->print("Calling initialize on reserved space base = %p end = %p\n", 
 	     pgc_rs.base(), pgc_rs.base() + pgc_rs.size());
   
   ShenandoahHeapRegion* current = new ShenandoahHeapRegion();
   firstRegion = current;
   currentRegion = firstRegion;
   
-  for (size_t i = 0; i < numRegions; i++) {
+  for (size_t i = 0; i < numRegions - 1; i++) {
     ShenandoahHeapRegion* next = new ShenandoahHeapRegion();
-    current->initialize((HeapWord*) pgc_rs.base() + regionSize * i, regionSize);
+    current->initialize((HeapWord*) pgc_rs.base() + regionSizeWords * i, regionSizeWords);
     current->setNext(next);
     current->regionNumber = i;
     current = next;
   }
-  current->initialize((HeapWord*) pgc_rs.base() + regionSize * numRegions, 
-		      regionSize);
+  current->initialize((HeapWord*) pgc_rs.base() + regionSizeWords * (numRegions - 1), 
+		      regionSizeWords);
   current->setNext(NULL);
-  current->regionNumber = numRegions;
+  current->regionNumber = numRegions - 1;
 
   PrintHeapRegionsClosure pc;
   heap_region_iterate(&pc);
@@ -172,7 +172,7 @@ class IsInRegionClosure : public ShenandoahHeapRegionClosure {
 public:
 
   IsInRegionClosure(const void* p) {
-    _p = _p;
+    _p = p;
     _result = false;
   }
   
@@ -239,30 +239,35 @@ ShenandoahHeap* ShenandoahHeap::heap() {
 
 HeapWord* ShenandoahHeap::mem_allocate_locked(size_t size,
 					      bool* gc_overhead_limit_was_exceeded) {
+
    HeapWord* filler = currentRegion->allocate(4);
+   HeapWord* result = NULL;
    if (filler != NULL) {
      CollectedHeap::fill_with_array(filler, 4, false);
+     result = currentRegion->allocate(size);
+     if (result != NULL) {
+       // Set the brooks pointer
+       HeapWord* first = filler+3;
+       uintptr_t first_ptr = (uintptr_t) first;
+       *(unsigned long*)(((unsigned long*)first_ptr)) = (unsigned long) result;
+       return result;
+     }
    }
+   assert (result == NULL, "expect result==NULL");
 
-  HeapWord* result = currentRegion->allocate(size);
-  if (result != NULL) {
-   // Set the brooks pointer
-        HeapWord* first = filler+3;
-        uintptr_t first_ptr = (uintptr_t) first;
-        *(unsigned long*)(((unsigned long*)first_ptr)) = (unsigned long) result;
-    return result;
-  } else {
-    tty->print("Closing region %d "PTR_FORMAT" and starting region %d "PTR_FORMAT"\n", 
-	       currentRegion->regionNumber, currentRegion, 
-	       currentRegion->next()->regionNumber, currentRegion->next());
-    printHeapObjects(currentRegion->bottom(), currentRegion->top());
-    currentRegion = currentRegion->next();
-    if (currentRegion == NULL) {
-      assert(false, "No GC implemented");
-    } else {
-      mem_allocate_locked(size, gc_overhead_limit_was_exceeded);
-    }
-  }
+   tty->print("Closing region %d "PTR_FORMAT" and starting region %d "PTR_FORMAT"\n", 
+	      currentRegion->regionNumber, currentRegion, 
+	      currentRegion->next() != NULL ? currentRegion->next()->regionNumber : -1,
+	      currentRegion->next());
+   /*
+     printHeapObjects(currentRegion->bottom(), currentRegion->top());
+   */
+   currentRegion = currentRegion->next();
+   if (currentRegion == NULL) {
+     assert(false, "No GC implemented");
+   } else {
+     return mem_allocate_locked(size, gc_overhead_limit_was_exceeded);
+   }
 }
 
 
@@ -274,7 +279,7 @@ HeapWord*  ShenandoahHeap::mem_allocate(size_t size,
 }
 
 size_t  ShenandoahHeap::unsafe_max_tlab_alloc(Thread *thread) const {
-  return regionSize;
+  return regionSizeWords;
 }
 
 bool  ShenandoahHeap::can_elide_tlab_store_barriers() const {
@@ -294,7 +299,7 @@ bool ShenandoahHeap::supports_heap_inspection() const {
 }
 
 size_t ShenandoahHeap::unsafe_max_alloc() {
-  return regionSize;
+  return regionSizeWords;
 }
 
 void ShenandoahHeap::collect(GCCause::Cause) {
@@ -368,7 +373,7 @@ void ShenandoahHeap::verify(bool silent , VerifyOption vo) {
 }
 
 size_t ShenandoahHeap::tlab_capacity(Thread *thr) const {
-  return regionSize;
+  return regionSizeWords;
 }
 
 void ShenandoahHeap::oop_iterate(MemRegion mr, 

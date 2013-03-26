@@ -51,9 +51,10 @@ private:
 
 
   static const size_t alignment = 64 * 1024;
-  static const size_t regionSize = 1024 * 1024;
+  static const size_t regionSizeBytes = 1024 * 1024;
+  static const size_t regionSizeWords = regionSizeBytes / HeapWordSize;
   static const size_t numRegions = 1000;
-  static const size_t initialSize = numRegions * regionSize;
+  static const size_t initialSize = numRegions * regionSizeBytes;
 public:
   ShenandoahHeap(ShenandoahCollectorPolicy* policy);
   HeapWord* allocate_new_tlab(size_t word_size);
@@ -117,8 +118,8 @@ public:
 
 
   // FIXME later
-  size_t used_in_bytes() { return used()/8;}
-  size_t capacity_in_bytes() { return capacity() / 8;}
+  size_t used_in_bytes() { return used() * HeapWordSize;}
+  size_t capacity_in_bytes() { return capacity() * HeapWordSize;}
 
   void heap_region_iterate(ShenandoahHeapRegionClosure* blk) const;
 
