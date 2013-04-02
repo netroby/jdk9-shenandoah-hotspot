@@ -1,27 +1,13 @@
 #ifndef SHARE_VM_GC_IMPLEMENTATION_SHENANDOAH_SHENANDOAHHEAP_HPP
 #define SHARE_VM_GC_IMPLEMENTATION_SHENANDOAH_SHENANDOAHHEAP_HPP
 
-#include "gc_implementation/shenandoah/shenandoahCollectorPolicy.hpp"
 #include "gc_implementation/shenandoah/shenandoahBarrierSet.hpp"
+#include "gc_implementation/shenandoah/shenandoahCollectorPolicy.hpp"
+#include "gc_implementation/shenandoah/shenandoahHeapRegion.hpp"
 #include "memory/barrierSet.hpp"
 #include "memory/sharedHeap.hpp"
 #include "memory/space.inline.hpp"
 #include "oops/oop.hpp"
-
-class ShenandoahHeapRegion : public ContiguousSpace {
-public:
-  ShenandoahHeapRegion* _next;
-  int regionNumber;
-
-  jint initialize(HeapWord* start, size_t regionSize);
-  void setNext(ShenandoahHeapRegion* next) {
-    _next = next;
-  }
-  ShenandoahHeapRegion* next() {
-    return _next;
-  }
-
-};
 
 class ShenandoahHeapRegionClosure : public StackObj {
   bool _complete;
@@ -49,12 +35,9 @@ private:
   ShenandoahHeapRegion* firstRegion;
   ShenandoahHeapRegion* currentRegion;
 
+  size_t numRegions;
+  size_t initialSize;
 
-  static const size_t alignment = 64 * 1024;
-  static const size_t regionSizeBytes = 1024 * 1024;
-  static const size_t regionSizeWords = regionSizeBytes / HeapWordSize;
-  static const size_t numRegions = 1000;
-  static const size_t initialSize = numRegions * regionSizeBytes;
 public:
   ShenandoahHeap(ShenandoahCollectorPolicy* policy);
   HeapWord* allocate_new_tlab(size_t word_size);
@@ -70,7 +53,8 @@ public:
   
   static ShenandoahHeap* heap();
 
-  
+ ShenandoahCollectorPolicy *shenandoahPolicy() { return _pgc_policy;}
+
   void nyi() const;
   jint initialize();
   void post_initialize();
@@ -116,8 +100,6 @@ public:
   void gc_prologue(bool b);
   void gc_epilogue(bool b);
 
-
-  // FIXME later
   size_t used_in_bytes() { return used() * HeapWordSize;}
   size_t capacity_in_bytes() { return capacity() * HeapWordSize;}
 

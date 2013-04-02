@@ -2,20 +2,17 @@
 #define SHARE_VM_GC_IMPLEMENTATION_SHENANDOAH_SHENANDOAH_COLLECTOR_POLICY_HPP
 
 #include "memory/collectorPolicy.hpp"
+#include "gc_implementation/shenandoah/shenandoahHeapRegion.hpp"
 
 class ShenandoahHeap;
 
-class ShenandoahCollectorPolicy: public CollectorPolicy {
 
+
+class ShenandoahCollectorPolicy: public CollectorPolicy {
   ShenandoahHeap* _pgc;
-  uintx min_heap_size;
-  size_t region_size;
 
 public:
   ShenandoahCollectorPolicy();
-
-  uint initial_heap_byte_size() { return min_heap_size;}
-  uint min_alignment() { return 1;}
 
   virtual ShenandoahCollectorPolicy* as_pgc_policy() {return this;}
 
@@ -41,7 +38,17 @@ public:
   HeapWord* satisfy_failed_allocation(size_t size, bool is_tlab) {
   guarantee(false, "Not using this policy feature yet.");
   return NULL;
-}
+  }
+
+  void initialize_flags() {
+    set_min_alignment(ShenandoahHeapRegion::RegionSizeBytes);
+    set_max_alignment(ShenandoahHeapRegion::RegionSizeBytes);
+  }
+
+  void initialize_all() {
+    initialize_flags();
+    initialize_size_info();
+  }
 
 };
 

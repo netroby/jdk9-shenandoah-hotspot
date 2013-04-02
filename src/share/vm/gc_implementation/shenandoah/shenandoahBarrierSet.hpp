@@ -2,6 +2,7 @@
 #define SHARE_VM_GC_IMPLEMENTATION_SHENANDOAH_SHENANDOAHBARRIERSET_HPP
 
 #include "memory/barrierSet.hpp"
+#include "memory/universe.hpp"
 
 class ShenandoahBarrierSet: public BarrierSet {
   
@@ -9,8 +10,8 @@ class ShenandoahBarrierSet: public BarrierSet {
     return bsn == BarrierSet::ShenandoahBarrierSet;
   }
 
-  void print_on(outputStream* os) const {
-    os->print("ShenandoahBarrierSet");
+  void print_on(outputStream* st) const {
+    st->print("ShenandoahBarrierSet");
   }
 
 public:
@@ -35,7 +36,12 @@ public:
   void read_prim_field(HeapWord* hw, size_t s){nyi();}
   bool read_prim_needs_barrier(HeapWord* hw, size_t s) {return false;}
   void read_ref_array(MemRegion mr) {nyi();}
-  void read_ref_field(void* v) {nyi();}
+
+  void read_ref_field(void* v) {
+    //    tty->print("read_ref_field: v = "PTR_FORMAT"\n", v);
+    // return *v;
+  }
+
   bool read_ref_needs_barrier(void* v) {nyi();}
   void read_region(MemRegion mr){nyi();}
   void resize_covered_region(MemRegion mr){nyi();}
@@ -47,9 +53,17 @@ public:
     nyi();
   }
   void write_ref_array_work(MemRegion mr){}
-  void write_ref_field_work(void* v, oop o){}
+  void write_ref_field_work(void* v, oop o){
+    //    tty->print("write_ref_field_work: v = "PTR_FORMAT" o = "PTR_FORMAT"\n",
+    //	       v, o);
+  }
   void write_ref_field_pre(void* v, oop o){}
-  void write_ref_field(void* v, oop o) {}
+
+  void write_ref_field(void* v, oop o) {
+    //    tty->print("write_ref_field: v = "PTR_FORMAT" o = "PTR_FORMAT"\n",
+    //	       v, o);
+  }
+
   void write_region_work(MemRegion mr){}
   void nyi() {
     assert(false, "not yet implemented");

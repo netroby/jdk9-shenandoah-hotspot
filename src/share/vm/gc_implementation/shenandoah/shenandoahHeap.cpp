@@ -4,17 +4,6 @@
 #include "memory/oopFactory.hpp"
 
 
-jint ShenandoahHeapRegion::initialize(HeapWord* start, 
-				      size_t regionSize) {
-  MemRegion reserved = MemRegion((HeapWord*) start,
-		       (HeapWord*) start + regionSize);
-  ContiguousSpace::initialize(reserved, true, false);
-  return JNI_OK;
-}
-
-// // Private variables
-// ShenandoahHeapRegion *ShenandoahHeap::firstRegion = NULL;
-// ShenandoahHeapRegion *ShenandoahHeap::currentRegion = NULL;
 ShenandoahHeap* ShenandoahHeap::_pgc = NULL;
 
 class PrintHeapRegionsClosure : public ShenandoahHeapRegionClosure {
@@ -31,15 +20,27 @@ public:
 jint ShenandoahHeap::initialize() {
   CollectedHeap::pre_initialize();
 
-  ReservedSpace heap_rs = Universe::reserve_heap(initialSize,
-				 ShenandoahHeap::alignment);
+  size_t init_byte_size = collector_policy()->initial_heap_byte_size();
+  size_t max_byte_size = collector_policy()->max_heap_byte_size();
+
+  tty->print("init_byte_size = %d,%x  max_byte_size = %d,%x\n", 
+	     init_byte_size, init_byte_size, max_byte_size, max_byte_size);
+
+  Universe::check_alignment(max_byte_size,  
+			    ShenandoahHeapRegion::RegionSizeBytes, 
+			    "shenandoah heap");
+  Universe::check_alignment(init_byte_size, 
+			    ShenandoahHeapRegion::RegionSizeBytes, 
+			    "shenandoah heap");
+
+  ReservedSpace heap_rs = Universe::reserve_heap(max_byte_size,
+						 ShenandoahHeapRegion::RegionSizeBytes);
   
   _reserved.set_word_size(0);
   _reserved.set_start((HeapWord*)heap_rs.base());
   _reserved.set_end((HeapWord*) (heap_rs.base() + heap_rs.size()));
 
-  ReservedSpace pgc_rs = heap_rs.first_part(initialSize);
-  
+  ReservedSpace pgc_rs = heap_rs.first_part(max_byte_size);
 
   tty->print("Calling initialize on reserved space base = %p end = %p\n", 
 	     pgc_rs.base(), pgc_rs.base() + pgc_rs.size());
@@ -47,6 +48,10 @@ jint ShenandoahHeap::initialize() {
   ShenandoahHeapRegion* current = new ShenandoahHeapRegion();
   firstRegion = current;
   currentRegion = firstRegion;
+  numRegions = init_byte_size / ShenandoahHeapRegion::RegionSizeBytes;
+  initialSize = numRegions * ShenandoahHeapRegion::RegionSizeBytes;
+  size_t regionSizeWords = ShenandoahHeapRegion::RegionSizeBytes / HeapWordSize;
+  assert(init_byte_size == initialSize, "tautology");
   
   for (size_t i = 0; i < numRegions - 1; i++) {
     ShenandoahHeapRegion* next = new ShenandoahHeapRegion();
@@ -60,23 +65,8 @@ jint ShenandoahHeap::initialize() {
   current->setNext(NULL);
   current->regionNumber = numRegions - 1;
 
-  PrintHeapRegionsClosure pc;
-  heap_region_iterate(&pc);
-
-  
-
-  // HeapWord* pointer = hr_rs.base();
-  // size_t regions = 0;
-  // ShenandoahHeapRegion* current = new ShenandoahHeapRegion();
-  // current.initialize(pointer+=region_size, region_size);
-  // firstRegion = current;
-
-  // for (regions=0; regions < numRegions; regions++) {
-  //   ShenandoahHeapRegion* next = new ShenandoahHeapRegion();
-  //   next->initialize(pointer+=region_size, region_size);
-  //   current->set_next(next);
-  //   current = next;
-  // }
+  //  PrintHeapRegionsClosure pc;
+  //  heap_region_iterate(&pc);
 
   return JNI_OK;
 }
@@ -99,31 +89,10 @@ void ShenandoahHeap::nyi() const {
 }
 
 void ShenandoahHeap::print_on(outputStream* st) const {
-  st->print("ShenandoahHeap");
+  st->print("Shenandoah Heap");
+  st->print(" total = " SIZE_FORMAT " K, used " SIZE_FORMAT " K ", capacity()/ K, used() /K);
+  st->print("Region size = " SIZE_FORMAT "K, ", ShenandoahHeapRegion::RegionSizeBytes / K);
 }
-
-// void initializeRegions(ReservedSpace heap_rs, size_t numRegions, size_t region_size, size_t alignment) {
-//   HeapWord* top = heap_rs.base();
-
-//   ShenandoahHeapRegion* current = new ShenandoahHeapRegion(heap_rs, top, region_size);
-//   top = top + region_size;
-
-//   ShenandoahHeap::firstRegion = current;
-//   size_t regions = 0;
-
-//   for (regions = 0; regions < numRegions; regions++) {
-//     ShenandoahHeapRegion* next = new ShenandoahHeapRegion(heap_rs, top, region_size);
-//     current->regionNumber = regions;
-//     current->initialize();
-//     current->setNext(next);
-//     current = next;
-//     top = top + region_size;
-//   }
-
-//   current->regionNumber = regions;
-//   current->initialize();
-//   current->setNext(NULL);
-// }
 
 void ShenandoahHeap::post_initialize() {
   // Nothing needs to go here?
@@ -240,6 +209,10 @@ ShenandoahHeap* ShenandoahHeap::heap() {
 HeapWord* ShenandoahHeap::mem_allocate_locked(size_t size,
 					      bool* gc_overhead_limit_was_exceeded) {
 
+   if (currentRegion == NULL) {
+     assert(false, "No GC implemented");
+   }
+  
    HeapWord* filler = currentRegion->allocate(4);
    HeapWord* result = NULL;
    if (filler != NULL) {
@@ -255,10 +228,13 @@ HeapWord* ShenandoahHeap::mem_allocate_locked(size_t size,
    }
    assert (result == NULL, "expect result==NULL");
 
-   tty->print("Closing region %d "PTR_FORMAT" and starting region %d "PTR_FORMAT"\n", 
+   tty->print("Closing region %d "PTR_FORMAT"["PTR_FORMAT":%d] and starting region %d "PTR_FORMAT" total used in bytes = "SIZE_FORMAT" M \n", 
 	      currentRegion->regionNumber, currentRegion, 
+	      currentRegion->top(), currentRegion->used(),
 	      currentRegion->next() != NULL ? currentRegion->next()->regionNumber : -1,
-	      currentRegion->next());
+	      currentRegion->next(),
+	      used_in_bytes()/M);
+
    /*
      printHeapObjects(currentRegion->bottom(), currentRegion->top());
    */
@@ -279,7 +255,7 @@ HeapWord*  ShenandoahHeap::mem_allocate(size_t size,
 }
 
 size_t  ShenandoahHeap::unsafe_max_tlab_alloc(Thread *thread) const {
-  return regionSizeWords;
+  return 0;
 }
 
 bool  ShenandoahHeap::can_elide_tlab_store_barriers() const {
@@ -299,7 +275,7 @@ bool ShenandoahHeap::supports_heap_inspection() const {
 }
 
 size_t ShenandoahHeap::unsafe_max_alloc() {
-  return regionSizeWords;
+  return ShenandoahHeapRegion::RegionSizeBytes / HeapWordSize;
 }
 
 void ShenandoahHeap::collect(GCCause::Cause) {
@@ -317,8 +293,7 @@ AdaptiveSizePolicy* ShenandoahHeap::size_policy() {
 }
 
 CollectorPolicy* ShenandoahHeap::collector_policy() const {
-  nyi();
-  return NULL;
+  return _pgc_policy;
 }
 
 void ShenandoahHeap::oop_iterate(ExtendedOopClosure* cl) {
@@ -373,7 +348,7 @@ void ShenandoahHeap::verify(bool silent , VerifyOption vo) {
 }
 
 size_t ShenandoahHeap::tlab_capacity(Thread *thr) const {
-  return regionSizeWords;
+  return 0;
 }
 
 void ShenandoahHeap::oop_iterate(MemRegion mr, 
@@ -410,3 +385,4 @@ void ShenandoahHeap::heap_region_iterate(ShenandoahHeapRegionClosure* blk) const
     current = current->next();
   }
 }
+
