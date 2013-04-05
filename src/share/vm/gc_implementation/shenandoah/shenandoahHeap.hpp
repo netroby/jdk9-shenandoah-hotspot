@@ -3,11 +3,15 @@
 
 #include "gc_implementation/shenandoah/shenandoahBarrierSet.hpp"
 #include "gc_implementation/shenandoah/shenandoahCollectorPolicy.hpp"
+#include "gc_implementation/shenandoah/shenandoahConcurrentThread.hpp"
 #include "gc_implementation/shenandoah/shenandoahHeapRegion.hpp"
 #include "memory/barrierSet.hpp"
 #include "memory/sharedHeap.hpp"
 #include "memory/space.inline.hpp"
 #include "oops/oop.hpp"
+#include "oops/markOop.hpp"
+
+class SpaceClosure;
 
 class ShenandoahHeapRegionClosure : public StackObj {
   bool _complete;
@@ -37,6 +41,10 @@ private:
 
   size_t numRegions;
   size_t initialSize;
+
+  ShenandoahConcurrentThread* _sct;
+  uint epoch;
+  
 
 public:
   ShenandoahHeap(ShenandoahCollectorPolicy* policy);
@@ -104,10 +112,19 @@ public:
   size_t capacity_in_bytes() { return capacity() * HeapWordSize;}
 
   void heap_region_iterate(ShenandoahHeapRegionClosure* blk) const;
+  template<class T> inline ShenandoahHeapRegion* heap_region_containing(const T addr) const;  
 
-  bool is_in_reserved(void* p) {
-    // fixme I'm a temporary stub.
-    return true;
+  bool is_in_reserved(void* p);
+
+  void mark(HeapWord* addr) {
+    markOop m = (markOop) addr;
+    m->set_age(epoch);
+  }
+
+  bool isMarked(HeapWord* addr) {
+    markOop m = (markOop) addr;
+    uint age = m->age();
+    return age >= (epoch - 1);
   }
 
 };

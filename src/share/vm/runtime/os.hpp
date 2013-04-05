@@ -374,6 +374,7 @@ class os: AllStatic {
     vm_thread,
     cgc_thread,        // Concurrent GC thread
     pgc_thread,        // Parallel GC thread
+    shenandoah_thread,
     java_thread,
     compiler_thread,
     watcher_thread,

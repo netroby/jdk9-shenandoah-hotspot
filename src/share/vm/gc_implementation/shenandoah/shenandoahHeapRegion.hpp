@@ -9,6 +9,7 @@ public:
    ShenandoahHeapRegion* _next;
    int regionNumber;
    static size_t RegionSizeBytes;
+   MemRegion reserved;
 
 
    jint initialize(HeapWord* start, size_t regionSize);

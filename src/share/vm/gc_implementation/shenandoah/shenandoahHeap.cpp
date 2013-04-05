@@ -68,15 +68,20 @@ jint ShenandoahHeap::initialize() {
   //  PrintHeapRegionsClosure pc;
   //  heap_region_iterate(&pc);
 
+  _sct = new ShenandoahConcurrentThread();
+  if (_sct == NULL)
+    return JNI_ENOMEM;
+  
   return JNI_OK;
 }
-
 
 ShenandoahHeap::ShenandoahHeap(ShenandoahCollectorPolicy* policy) : 
   SharedHeap(policy),
   _pgc_policy(policy), 
+  _sct(),
   _pgc_barrierSet(new ShenandoahBarrierSet()) {
   _pgc = this;
+  epoch = 1;
   set_barrier_set(_pgc_barrierSet);
   // Where does this really belong?
   oopDesc::set_bs(_pgc_barrierSet);
@@ -95,7 +100,7 @@ void ShenandoahHeap::print_on(outputStream* st) const {
 }
 
 void ShenandoahHeap::post_initialize() {
-  // Nothing needs to go here?
+  ShenandoahConcurrentThread* first = new ShenandoahConcurrentThread();
 }
 
 size_t ShenandoahHeap::capacity() const {
@@ -212,7 +217,7 @@ HeapWord* ShenandoahHeap::mem_allocate_locked(size_t size,
    if (currentRegion == NULL) {
      assert(false, "No GC implemented");
    }
-  
+
    HeapWord* filler = currentRegion->allocate(4);
    HeapWord* result = NULL;
    if (filler != NULL) {
@@ -283,7 +288,7 @@ void ShenandoahHeap::collect(GCCause::Cause) {
 }
 
 void ShenandoahHeap::do_full_collection(bool clear_all_soft_refs) {
-  nyi();
+  assert(false, "Shouldn't need to do full collections");
 }
 
 AdaptiveSizePolicy* ShenandoahHeap::size_policy() {
@@ -296,17 +301,6 @@ CollectorPolicy* ShenandoahHeap::collector_policy() const {
   return _pgc_policy;
 }
 
-void ShenandoahHeap::oop_iterate(ExtendedOopClosure* cl) {
-  nyi();
-}
-
-void ShenandoahHeap::object_iterate(ObjectClosure* cl) {
-  nyi();
-}
-
-void ShenandoahHeap::safe_object_iterate(ObjectClosure* cl) {
-  nyi();
-}
 
 HeapWord* ShenandoahHeap::block_start(const void* addr) const {
   nyi();
@@ -351,21 +345,98 @@ size_t ShenandoahHeap::tlab_capacity(Thread *thr) const {
   return 0;
 }
 
-void ShenandoahHeap::oop_iterate(MemRegion mr, 
-				 ExtendedOopClosure* ecl) {
+class IterateObjectClosureRegionClosure: public ShenandoahHeapRegionClosure {
+  ObjectClosure* _cl;
+public:
+  IterateObjectClosureRegionClosure(ObjectClosure* cl) : _cl(cl) {}
+  bool doHeapRegion(ShenandoahHeapRegion* r) {
+    r->object_iterate(_cl);
+    return false;
+  }
+};
+
+void ShenandoahHeap::object_iterate(ObjectClosure* cl) {
+  IterateObjectClosureRegionClosure blk(cl);
+  heap_region_iterate(&blk);
+}
+
+void ShenandoahHeap::safe_object_iterate(ObjectClosure* cl) {
   nyi();
+}
+
+class IterateOopClosureRegionClosure : public ShenandoahHeapRegionClosure {
+  MemRegion _mr;
+  ExtendedOopClosure* _cl;
+public:
+  IterateOopClosureRegionClosure(ExtendedOopClosure* cl) : _cl(cl) {}
+  IterateOopClosureRegionClosure(MemRegion mr, ExtendedOopClosure* cl) 
+    :_mr(mr), _cl(cl) {}
+  bool doHeapRegion(ShenandoahHeapRegion* r) {
+    r->oop_iterate(_cl);
+    return false;
+  }
+};
+
+void ShenandoahHeap::oop_iterate(ExtendedOopClosure* cl) {
+  IterateOopClosureRegionClosure blk(cl);
+  heap_region_iterate(&blk);
+}
+
+void ShenandoahHeap::oop_iterate(MemRegion mr, 
+				 ExtendedOopClosure* cl) {
+  IterateOopClosureRegionClosure blk(mr, cl);
+  heap_region_iterate(&blk);
 }
 
 void  ShenandoahHeap::object_iterate_since_last_GC(ObjectClosure* cl) {
   nyi();
 }
 
-void  ShenandoahHeap::space_iterate(SpaceClosure* scl) {
-  nyi();
+class SpaceClosureRegionClosure: public ShenandoahHeapRegionClosure {
+  SpaceClosure* _cl;
+public:
+  SpaceClosureRegionClosure(SpaceClosure* cl) : _cl(cl) {}
+  bool doHeapRegion(ShenandoahHeapRegion* r) {
+    _cl->do_space(r);
+    return false;
+  }
+};
+
+void  ShenandoahHeap::space_iterate(SpaceClosure* cl) {
+  SpaceClosureRegionClosure blk(cl);
+  heap_region_iterate(&blk);
 }
 
+// We need a data structure that maps addresses to heap regions.
+// This will probably be the first thing to optimize.
+
+class ContainsRegionClosure: public ShenandoahHeapRegionClosure {
+  HeapWord* addr;
+  ShenandoahHeapRegion* result;
+
+public:
+  ContainsRegionClosure(HeapWord* hw) :addr(hw) {}
+    
+  bool doHeapRegion(ShenandoahHeapRegion* r) {
+    if (r->is_in(addr)) {
+      result = r;
+      return true;
+    }
+    return false;
+  }
+};
+
+template<class T>
+inline ShenandoahHeapRegion*
+ShenandoahHeap::heap_region_containing(const T addr) const {
+  ContainsRegionClosure blk((HeapWord*) addr);
+  heap_region_iterate(&blk);
+}
+
+
 Space*  ShenandoahHeap::space_containing(const void* oop) const {
-  nyi();
+  Space* res = heap_region_containing(oop);
+  return res;
 }
 
 void  ShenandoahHeap::gc_prologue(bool b) {
@@ -386,3 +457,31 @@ void ShenandoahHeap::heap_region_iterate(ShenandoahHeapRegionClosure* blk) const
   }
 }
 
+class IsInReservedClosure : public ShenandoahHeapRegionClosure {
+  const void* _p;
+  bool _result;
+public:
+
+  IsInReservedClosure(const void* p) {
+    _p = p;
+    _result = false;
+  }
+  
+  bool doHeapRegion(ShenandoahHeapRegion* r) {
+    if (r->is_in_reserved(_p)) {
+      _result = true;
+      return true;
+    }
+    if (r->next() == NULL) 
+      return true;
+    else return false;
+  }
+
+  bool result() { return _result;}
+};
+ 
+
+ bool ShenandoahHeap::is_in_reserved(void* p) {
+   IsInReservedClosure blk(p);
+   heap_region_iterate(&blk);
+ }
