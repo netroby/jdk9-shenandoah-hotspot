@@ -93,6 +93,8 @@
   template(HeapIterateOperation)                  \
   template(ReportJavaOutOfMemory)                 \
   template(JFRCheckpoint)                         \
+  template(ShenandoahInitMark)                    \
+  template(ShenandoahFinal)                       \
   template(Exit)                                  \
 
 class VM_Operation: public CHeapObj<mtInternal> {

@@ -2,6 +2,7 @@
 #define SHARE_VM_GC_IMPLEMENTATION_SHENANDOAH_SHENANDOAHCONCURRENTTHREAD_HPP
 
 #include "gc_implementation/shared/concurrentGCThread.hpp"
+#include "memory/resourceArea.hpp"
 
 // For now we just want to have a concurrent marking thread. 
 // Once we have that working we will build a concurrent evacuation thread.
@@ -13,8 +14,9 @@ class ShenandoahConcurrentThread: public ConcurrentGCThread {
   virtual void run();
 
  private:
-  volatile bool                    _started;
-  volatile bool                    _in_progress;
+  volatile bool                    _concurrent_mark_started;
+  volatile bool                    _concurrent_mark_in_progress;
+  volatile bool                    _concurrent_mark_aborted;
 
   int _epoch;
 
@@ -28,13 +30,18 @@ class ShenandoahConcurrentThread: public ConcurrentGCThread {
   void print_on(outputStream* st) const;
   void print() const;
 
-  void set_started()       { assert(!_in_progress, "cycle in progress"); _started = true;  }
-  void clear_started()     { assert(_in_progress, "must be starting a cycle"); _started = false; }
-  bool started()           { return _started;  }
+  void set_cm_started();
+  void clear_cm_started();
+  bool cm_started();
 
-  void set_in_progress()   { assert(_started, "must be starting a cycle"); _in_progress = true;  }
-  void clear_in_progress() { assert(!_started, "must not be starting a new cycle"); _in_progress = false; }
-  bool in_progress()       { return _in_progress;  }
+  void set_cm_in_progress();
+  void clear_cm_in_progress();
+  bool cm_in_progress();
+
+  void cm_abort() { _concurrent_mark_aborted = true;}
+  bool cm_has_aborted() { return _concurrent_mark_aborted;}
+  void clear_cm_aborted() { _concurrent_mark_aborted = false;}
+
 
   // This flag returns true from the moment a marking cycle is
   // initiated (during the initial-mark pause when started() is set)
@@ -44,7 +51,7 @@ class ShenandoahConcurrentThread: public ConcurrentGCThread {
   // so that cycles do not overlap. We cannot use just in_progress()
   // as the CM thread might take some time to wake up before noticing
   // that started() is set and set in_progress().
-  bool during_cycle()      { return started() || in_progress(); }
+  bool during_cycle()      { return cm_started() || cm_in_progress(); }
 
   char* name() const { return (char*)"ShenandoahConcurrentThread";}
 
@@ -52,7 +59,7 @@ class ShenandoahConcurrentThread: public ConcurrentGCThread {
   void stop();
   void create_and_start();
   ShenandoahConcurrentThread* start();
-
+  
 };
 
 #endif // SHARE_VM_GC_IMPLEMENTATION_SHENANDOAH_SHENANDOAHCONCURRENTTHREAD_HPP

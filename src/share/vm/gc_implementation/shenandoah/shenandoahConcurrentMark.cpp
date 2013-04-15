@@ -23,35 +23,53 @@
  */
 
 #include "gc_implementation/shenandoah/shenandoahConcurrentMark.hpp"
+#include "gc_implementation/shenandoah/shenandoahHeap.hpp"
 
-CMRootRegionScanTask::CMRootRegionScanTask(ShenandoahConcurrentMark* cm) :
+
+SCMRootRegionScanTask::SCMRootRegionScanTask(ShenandoahConcurrentMark* cm) :
   AbstractGangTask("Root Region Scan"), _cm(cm) { }
 
-void CMRootRegionScanTask::work(uint worker_id) {
+void SCMRootRegionScanTask::work(uint worker_id) {
 }
 
-CMConcurrentMarkingTask::CMConcurrentMarkingTask(ShenandoahConcurrentMark* cm) :
+SCMConcurrentMarkingTask::SCMConcurrentMarkingTask(ShenandoahConcurrentMark* cm) :
   AbstractGangTask("Root Region Scan"), _cm(cm) { }
 
-void CMConcurrentMarkingTask::work(uint worker_id) {
+void SCMConcurrentMarkingTask::work(uint worker_id) {
+  tty->print("SCMConcurrentMarkingTask work worker = %d\n", worker_id);
+  Thread::current()->print_on(tty);
+  ShenandoahHeap* sh = (ShenandoahHeap *) Universe::heap();
+  //  sh->do_concurrent_marking();
 }
 
 ShenandoahConcurrentMark::ShenandoahConcurrentMark() :
 
   _max_worker_id(MAX2((uint)ParallelGCThreads, 1U)),
-  _task_queues(new CMTaskQueueSet((int) _max_worker_id)),
+  _task_queues(new SCMTaskQueueSet((int) _max_worker_id)),
   _terminator(ParallelTaskTerminator((int) _max_worker_id, _task_queues))
 
 {}
 
 void ShenandoahConcurrentMark::scanRootRegions() {
 
-  CMRootRegionScanTask task(this);
+  SCMRootRegionScanTask task(this);
   task.work(0);
 }
 
 void ShenandoahConcurrentMark::markFromRoots() {
+  tty->print("Starting markFromRoots");
+  //  SCMConcurrentMarkingTask markingTask(this);
+  //  markingTask.work(0);
+  ShenandoahHeap* sh = (ShenandoahHeap *) Universe::heap();
+  sh->do_concurrent_marking();
+}
 
-  CMConcurrentMarkingTask markingTask(this);
+void ShenandoahConcurrentMark::finishMarkFromRoots() {
+  SCMConcurrentMarkingTask markingTask(this);
+  markingTask.work(0);
+}
+
+void ShenandoahConcurrentMark::checkpointRootsFinal() {
+  SCMConcurrentMarkingTask markingTask(this);
   markingTask.work(0);
 }
