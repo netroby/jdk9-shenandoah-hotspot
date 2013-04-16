@@ -45,13 +45,9 @@ private:
   size_t numRegions;
   size_t initialSize;
 
-<<<<<<< local
   uint numAllocs;
-  ShenandoahConcurrentThread* _sct;
-=======
   //  ShenandoahConcurrentThread* _sct;
   ShenandoahConcurrentMark* _scm;
->>>>>>> other
   uint epoch;
   
 

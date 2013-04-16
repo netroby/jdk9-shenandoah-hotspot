@@ -71,16 +71,10 @@ jint ShenandoahHeap::initialize() {
   //  PrintHeapRegionsClosure pc;
   //  heap_region_iterate(&pc);
 
-<<<<<<< local
   numAllocs = 0;
-  _sct = new ShenandoahConcurrentThread();
-  if (_sct == NULL)
-    return JNI_ENOMEM;
-=======
   //  _sct = new ShenandoahConcurrentThread();
   //  if (_sct == NULL)
   //    return JNI_ENOMEM;
->>>>>>> other
   
   return JNI_OK;
 }
@@ -227,7 +221,6 @@ ShenandoahHeap* ShenandoahHeap::heap() {
   return _pgc;
 }
 
-<<<<<<< local
 class VM_ShenandoahVerifyHeap: public VM_GC_Operation {
 public:
   VM_ShenandoahVerifyHeap(unsigned int gc_count_before,
@@ -244,16 +237,10 @@ public:
     return "Shenandoah verify trigger";
   }
 };
-=======
->>>>>>> other
 
 HeapWord* ShenandoahHeap::mem_allocate_locked(size_t size,
 					      bool* gc_overhead_limit_was_exceeded) {
-<<<<<<< local
 
-
-=======
->>>>>>> other
    if (currentRegion == NULL) {
      assert(false, "No GC implemented");
    }
@@ -264,7 +251,6 @@ HeapWord* ShenandoahHeap::mem_allocate_locked(size_t size,
      result = currentRegion->allocate(size);
      if (result != NULL) {
        CollectedHeap::fill_with_array(filler, BROOKS_POINTER_OBJ_SIZE, false);
-       CollectedHeap::post_allocation_install_obj_klass(SystemDictionary::ShenandoahBrooksPointer_klass(), oop(filler));
        // Set the brooks pointer
        HeapWord* first = filler + (BROOKS_POINTER_OBJ_SIZE - 1);
        uintptr_t first_ptr = (uintptr_t) first;
@@ -299,7 +285,6 @@ HeapWord* ShenandoahHeap::mem_allocate_locked(size_t size,
 HeapWord*  ShenandoahHeap::mem_allocate(size_t size, 
 					bool*  gc_overhead_limit_was_exceeded) {
 
-<<<<<<< local
   if (numAllocs > 1000000) {
     numAllocs = 0;
     VM_ShenandoahVerifyHeap op(0, 0, GCCause::_allocation_failure);
@@ -309,7 +294,9 @@ HeapWord*  ShenandoahHeap::mem_allocate(size_t size,
       // ...and get the VM thread to execute it.
       VMThread::execute(&op);
     }
-=======
+  }
+  numAllocs++;
+
   // This is just an arbitrary number for now.  CHF
   size_t targetStartMarking = capacity() / 64;
 
@@ -317,19 +304,8 @@ HeapWord*  ShenandoahHeap::mem_allocate(size_t size,
     tty->print("Capacity = "SIZE_FORMAT" Used = "SIZE_FORMAT" Target = "SIZE_FORMAT" doing initMark\n", capacity(), used(), targetStartMarking);
     VM_ShenandoahInitMark initMark;
     VMThread::execute(&initMark);
->>>>>>> other
   }
-<<<<<<< local
-     numAllocs++;
-=======
-    
->>>>>>> other
 
-<<<<<<< local
-
-
-=======
->>>>>>> other
   MutexLocker ml(Heap_lock);
   return mem_allocate_locked(size, gc_overhead_limit_was_exceeded);
 }
