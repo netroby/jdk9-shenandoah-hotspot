@@ -1,7 +1,9 @@
 #include "gc_implementation/shenandoah/shenandoahHeap.hpp"
-#include "memory/universe.hpp"
+#include "gc_implementation/shenandoah/vm_operations_shenandoah.hpp"
 #include "runtime/vmThread.hpp"
+#include "memory/iterator.hpp"
 #include "memory/oopFactory.hpp"
+#include "memory/universe.hpp"
 
 #include "gc_implementation/shared/vmGCOperations.hpp"
 
@@ -69,10 +71,16 @@ jint ShenandoahHeap::initialize() {
   //  PrintHeapRegionsClosure pc;
   //  heap_region_iterate(&pc);
 
+<<<<<<< local
   numAllocs = 0;
   _sct = new ShenandoahConcurrentThread();
   if (_sct == NULL)
     return JNI_ENOMEM;
+=======
+  //  _sct = new ShenandoahConcurrentThread();
+  //  if (_sct == NULL)
+  //    return JNI_ENOMEM;
+>>>>>>> other
   
   return JNI_OK;
 }
@@ -80,10 +88,12 @@ jint ShenandoahHeap::initialize() {
 ShenandoahHeap::ShenandoahHeap(ShenandoahCollectorPolicy* policy) : 
   SharedHeap(policy),
   _pgc_policy(policy), 
-  _sct(),
+  //  _sct(),
+  _concurrent_mark_in_progress(false),
   _pgc_barrierSet(new ShenandoahBarrierSet()) {
   _pgc = this;
-  epoch = 1;
+  _scm = new ShenandoahConcurrentMark();
+  epoch = 2;
   set_barrier_set(_pgc_barrierSet);
   // Where does this really belong?
   oopDesc::set_bs(_pgc_barrierSet);
@@ -102,11 +112,7 @@ void ShenandoahHeap::print_on(outputStream* st) const {
 }
 
 void ShenandoahHeap::post_initialize() {
-  ShenandoahConcurrentThread* first = new ShenandoahConcurrentThread();
-}
-
-size_t ShenandoahHeap::capacity() const {
-  return initialSize;
+  //  ShenandoahConcurrentThread* first = new ShenandoahConcurrentThread();
 }
 
 class CalculateUsedRegionClosure : public ShenandoahHeapRegionClosure {
@@ -126,11 +132,19 @@ public:
 
   size_t getResult() { return sum;}
 };
+
+
   
 size_t ShenandoahHeap::used() const {
   CalculateUsedRegionClosure calc;
   heap_region_iterate(&calc);
   return calc.getResult();
+}
+
+
+size_t ShenandoahHeap::capacity() const {
+  return numRegions * ShenandoahHeapRegion::RegionSizeBytes;
+
 }
 
 bool ShenandoahHeap::is_maximal_no_gc() const {
@@ -139,7 +153,7 @@ bool ShenandoahHeap::is_maximal_no_gc() const {
 }
 
 size_t ShenandoahHeap::max_capacity() const {
-  return initialSize;
+  return numRegions * ShenandoahHeapRegion::RegionSizeBytes;
 }
 
 class IsInRegionClosure : public ShenandoahHeapRegionClosure {
@@ -213,6 +227,7 @@ ShenandoahHeap* ShenandoahHeap::heap() {
   return _pgc;
 }
 
+<<<<<<< local
 class VM_ShenandoahVerifyHeap: public VM_GC_Operation {
 public:
   VM_ShenandoahVerifyHeap(unsigned int gc_count_before,
@@ -229,11 +244,16 @@ public:
     return "Shenandoah verify trigger";
   }
 };
+=======
+>>>>>>> other
 
 HeapWord* ShenandoahHeap::mem_allocate_locked(size_t size,
 					      bool* gc_overhead_limit_was_exceeded) {
+<<<<<<< local
 
 
+=======
+>>>>>>> other
    if (currentRegion == NULL) {
      assert(false, "No GC implemented");
    }
@@ -279,6 +299,7 @@ HeapWord* ShenandoahHeap::mem_allocate_locked(size_t size,
 HeapWord*  ShenandoahHeap::mem_allocate(size_t size, 
 					bool*  gc_overhead_limit_was_exceeded) {
 
+<<<<<<< local
   if (numAllocs > 1000000) {
     numAllocs = 0;
     VM_ShenandoahVerifyHeap op(0, 0, GCCause::_allocation_failure);
@@ -288,11 +309,27 @@ HeapWord*  ShenandoahHeap::mem_allocate(size_t size,
       // ...and get the VM thread to execute it.
       VMThread::execute(&op);
     }
+=======
+  // This is just an arbitrary number for now.  CHF
+  size_t targetStartMarking = capacity() / 64;
+
+  if (used() > targetStartMarking && !concurrent_mark_in_progress()) {
+    tty->print("Capacity = "SIZE_FORMAT" Used = "SIZE_FORMAT" Target = "SIZE_FORMAT" doing initMark\n", capacity(), used(), targetStartMarking);
+    VM_ShenandoahInitMark initMark;
+    VMThread::execute(&initMark);
+>>>>>>> other
   }
+<<<<<<< local
      numAllocs++;
+=======
+    
+>>>>>>> other
+
+<<<<<<< local
 
 
-
+=======
+>>>>>>> other
   MutexLocker ml(Heap_lock);
   return mem_allocate_locked(size, gc_overhead_limit_was_exceeded);
 }
@@ -335,7 +372,7 @@ AdaptiveSizePolicy* ShenandoahHeap::size_policy() {
   
 }
 
-CollectorPolicy* ShenandoahHeap::collector_policy() const {
+ShenandoahCollectorPolicy* ShenandoahHeap::collector_policy() const {
   return _pgc_policy;
 }
 
@@ -640,3 +677,51 @@ public:
    IsInReservedClosure blk(p);
    heap_region_iterate(&blk);
  }
+
+
+class ShenandoahMarkRefsClosure : public OopsInGenClosure {
+  uint epoch;
+public: 
+  ShenandoahMarkRefsClosure(uint e) : epoch(e) {
+    tty->print("Created a closure"); 
+  }
+
+  void do_oop_work(oop* p) {
+    //    oop foo = *p;
+    // tty->print("Before calling do_oop_work on "PTR_FORMAT"\n", foo);
+    // foo->mark()->print_on(tty);
+    // foo->print();
+
+    // if (foo->has_displaced_mark()) {
+    //   foo->set_displaced_mark(foo->displaced_mark()->set_age(epoch));
+    // } else {
+    //   foo->set_mark(foo->mark()->set_age(epoch));
+    // }
+    // tty->print("After do_oop_work on "PTR_FORMAT"\n", foo);
+    // foo->mark()->print_on(tty);
+    // foo->print();
+  }
+
+  void do_oop(narrowOop* p) {assert(false, "narrorOops not supported");}
+  void do_oop(oop* p) {do_oop_work(p);}
+};
+
+
+
+void ShenandoahHeap::do_concurrent_marking() {
+  ShenandoahMarkRefsClosure rootsCl(epoch);
+  CodeBlobToOopClosure blobsCl(&rootsCl, false);
+  KlassToOopClosure klassCl(&rootsCl);
+
+  HandleMark _hm;
+
+  const int so = SO_AllClasses | SO_Strings | SO_CodeCache;
+
+  if (! concurrent_mark_in_progress()) {
+    set_concurrent_mark_in_progress();
+    tty->print("Got to call to do_concurrent_marking()");
+
+    // This is not a concurrent marking yet.  it's a stop the world marking.
+    process_strong_roots(true, false, ScanningOption(so), &rootsCl, &blobsCl, &klassCl);
+  }
+}  

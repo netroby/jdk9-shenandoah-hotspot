@@ -28,47 +28,53 @@
 #include "utilities/taskqueue.hpp"
 #include "utilities/workgroup.hpp"
 
-typedef GenericTaskQueue<oop, mtGC>            CMTaskQueue;
-typedef GenericTaskQueueSet<CMTaskQueue, mtGC> CMTaskQueueSet;
+class SCMTask;
+
+typedef GenericTaskQueue<oop, mtGC>            SCMTaskQueue;
+typedef GenericTaskQueueSet<SCMTaskQueue, mtGC> SCMTaskQueueSet;
 
 
 class ShenandoahConcurrentMark: public CHeapObj<mtGC> {
 private:
   uint                    _max_worker_id; // maximum worker id
   uint                    _active_tasks;  // task num currently active
-  CMTask**                _tasks;         // task queue array (max_worker_id len)
-  CMTaskQueueSet*         _task_queues;   // task queue set
+  SCMTask**                _tasks;         // task queue array (max_worker_id len)
+  SCMTaskQueueSet*         _task_queues;   // task queue set
   ParallelTaskTerminator  _terminator;    // for termination
+  bool                    _aborted;       
 
 public:
   ShenandoahConcurrentMark();
   void scanRootRegions();
   void markFromRoots();
+  void checkpointRootsFinal();
+  void finishMarkFromRoots();
+  bool has_aborted() {return _aborted;}
 
 };
 
 
-class CMRootRegionScanTask : public AbstractGangTask {
+class SCMRootRegionScanTask : public AbstractGangTask {
 private:
   ShenandoahConcurrentMark* _cm;
 
 public:
-  CMRootRegionScanTask(ShenandoahConcurrentMark* cm);
+  SCMRootRegionScanTask(ShenandoahConcurrentMark* cm);
 
   void work(uint worker_id);
 };
 
-class CMConcurrentMarkingTask : public AbstractGangTask {
+class SCMConcurrentMarkingTask : public AbstractGangTask {
 private:
   ShenandoahConcurrentMark* _cm;
 
 public:
-  CMConcurrentMarkingTask(ShenandoahConcurrentMark* cm);
+  SCMConcurrentMarkingTask(ShenandoahConcurrentMark* cm);
 
   void work(uint worker_id);
 };
 
-class CMTask : public TerminatorTerminator {
+class SCMTask : public TerminatorTerminator {
 
 public:
   void do_marking_step();

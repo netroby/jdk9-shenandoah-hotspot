@@ -3,6 +3,7 @@
 
 #include "gc_implementation/shenandoah/shenandoahBarrierSet.hpp"
 #include "gc_implementation/shenandoah/shenandoahCollectorPolicy.hpp"
+#include "gc_implementation/shenandoah/shenandoahConcurrentMark.hpp"
 #include "gc_implementation/shenandoah/shenandoahConcurrentThread.hpp"
 #include "gc_implementation/shenandoah/shenandoahHeapRegion.hpp"
 #include "memory/barrierSet.hpp"
@@ -44,8 +45,13 @@ private:
   size_t numRegions;
   size_t initialSize;
 
+<<<<<<< local
   uint numAllocs;
   ShenandoahConcurrentThread* _sct;
+=======
+  //  ShenandoahConcurrentThread* _sct;
+  ShenandoahConcurrentMark* _scm;
+>>>>>>> other
   uint epoch;
   
 
@@ -64,8 +70,7 @@ public:
   
   static ShenandoahHeap* heap();
 
- ShenandoahCollectorPolicy *shenandoahPolicy() { return _pgc_policy;}
-
+  ShenandoahCollectorPolicy *shenandoahPolicy() { return _pgc_policy;}
   void nyi() const;
   jint initialize();
   void post_initialize();
@@ -86,7 +91,7 @@ public:
   void collect(GCCause::Cause);
   void do_full_collection(bool clear_all_soft_refs);
   AdaptiveSizePolicy* size_policy();
-  CollectorPolicy* collector_policy() const;
+  ShenandoahCollectorPolicy* collector_policy() const;
   void oop_iterate(ExtendedOopClosure* cl );
   void object_iterate(ObjectClosure* cl);
   void safe_object_iterate(ObjectClosure* cl);
@@ -119,18 +124,22 @@ public:
 
   bool is_in_reserved(void* p);
 
-  void mark(HeapWord* addr) {
-    markOop m = (markOop) addr;
-    m->set_age(epoch);
+  void temp();
+
+  bool _concurrent_mark_in_progress;
+
+  bool concurrent_mark_in_progress() {
+    return _concurrent_mark_in_progress;
   }
 
-  bool isMarked(HeapWord* addr) {
-    markOop m = (markOop) addr;
-    uint age = m->age();
-    return age >= (epoch - 1);
+  bool set_concurrent_mark_in_progress() {
+    _concurrent_mark_in_progress = true;
   }
+
+  void do_concurrent_marking();
+  ShenandoahConcurrentMark* concurrentMark() { return _scm;}
 
 };
 
-
+  
 #endif // SHARE_VM_GC_IMPLEMENTATION_SHENANDOAH_SHENANDOAHHEAP_HPP
