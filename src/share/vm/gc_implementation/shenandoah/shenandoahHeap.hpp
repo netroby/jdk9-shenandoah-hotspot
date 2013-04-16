@@ -11,6 +11,8 @@
 #include "oops/oop.hpp"
 #include "oops/markOop.hpp"
 
+#define BROOKS_POINTER_OBJ_SIZE 4
+
 class SpaceClosure;
 
 class ShenandoahHeapRegionClosure : public StackObj {
@@ -42,6 +44,7 @@ private:
   size_t numRegions;
   size_t initialSize;
 
+  uint numAllocs;
   ShenandoahConcurrentThread* _sct;
   uint epoch;
   

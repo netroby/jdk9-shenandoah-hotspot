@@ -9,3 +9,8 @@ jint ShenandoahHeapRegion::initialize(HeapWord* start,
   ContiguousSpace::initialize(reserved, true, false);
   return JNI_OK;
 }
+
+bool ShenandoahHeapRegion::rollback_allocation(uint size) {
+  set_top(top() - size);
+  return true;
+}

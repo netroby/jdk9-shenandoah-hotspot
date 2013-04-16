@@ -3,6 +3,7 @@
 #include "runtime/vmThread.hpp"
 #include "memory/oopFactory.hpp"
 
+#include "gc_implementation/shared/vmGCOperations.hpp"
 
 ShenandoahHeap* ShenandoahHeap::_pgc = NULL;
 
@@ -68,6 +69,7 @@ jint ShenandoahHeap::initialize() {
   //  PrintHeapRegionsClosure pc;
   //  heap_region_iterate(&pc);
 
+  numAllocs = 0;
   _sct = new ShenandoahConcurrentThread();
   if (_sct == NULL)
     return JNI_ENOMEM;
@@ -211,24 +213,46 @@ ShenandoahHeap* ShenandoahHeap::heap() {
   return _pgc;
 }
 
+class VM_ShenandoahVerifyHeap: public VM_GC_Operation {
+public:
+  VM_ShenandoahVerifyHeap(unsigned int gc_count_before,
+                   unsigned int full_gc_count_before,
+                   GCCause::Cause cause)
+    : VM_GC_Operation(gc_count_before, cause, full_gc_count_before) { }
+  virtual VMOp_Type type() const { return VMOp_G1CollectFull; }
+  virtual void doit() {
+    tty->print_cr("verifying heap");
+     Universe::heap()->prepare_for_verify();
+     Universe::verify();
+  }
+  virtual const char* name() const {
+    return "Shenandoah verify trigger";
+  }
+};
+
 HeapWord* ShenandoahHeap::mem_allocate_locked(size_t size,
 					      bool* gc_overhead_limit_was_exceeded) {
+
 
    if (currentRegion == NULL) {
      assert(false, "No GC implemented");
    }
 
-   HeapWord* filler = currentRegion->allocate(4);
+   HeapWord* filler = currentRegion->allocate(BROOKS_POINTER_OBJ_SIZE);
    HeapWord* result = NULL;
    if (filler != NULL) {
-     CollectedHeap::fill_with_array(filler, 4, false);
      result = currentRegion->allocate(size);
      if (result != NULL) {
+       CollectedHeap::fill_with_array(filler, BROOKS_POINTER_OBJ_SIZE, false);
+       CollectedHeap::post_allocation_install_obj_klass(SystemDictionary::ShenandoahBrooksPointer_klass(), oop(filler));
        // Set the brooks pointer
-       HeapWord* first = filler+3;
+       HeapWord* first = filler + (BROOKS_POINTER_OBJ_SIZE - 1);
        uintptr_t first_ptr = (uintptr_t) first;
        *(unsigned long*)(((unsigned long*)first_ptr)) = (unsigned long) result;
+       //tty->print_cr("result, brooks obj, brooks ptr: %p, %p, %p", result, filler, first);
        return result;
+     } else {
+       currentRegion->rollback_allocation(BROOKS_POINTER_OBJ_SIZE);
      }
    }
    assert (result == NULL, "expect result==NULL");
@@ -254,6 +278,20 @@ HeapWord* ShenandoahHeap::mem_allocate_locked(size_t size,
 
 HeapWord*  ShenandoahHeap::mem_allocate(size_t size, 
 					bool*  gc_overhead_limit_was_exceeded) {
+
+  if (numAllocs > 1000000) {
+    numAllocs = 0;
+    VM_ShenandoahVerifyHeap op(0, 0, GCCause::_allocation_failure);
+    if (Thread::current()->is_VM_thread()) {
+      op.doit();
+    } else {
+      // ...and get the VM thread to execute it.
+      VMThread::execute(&op);
+    }
+  }
+     numAllocs++;
+
+
 
   MutexLocker ml(Heap_lock);
   return mem_allocate_locked(size, gc_overhead_limit_was_exceeded);
@@ -323,6 +361,9 @@ jlong ShenandoahHeap::millis_since_last_gc() {
 }
 
 void ShenandoahHeap::prepare_for_verify() {
+  if (SafepointSynchronize::is_at_safepoint() || ! UseTLAB) {
+    ensure_parsability(false);
+  }
 }
 
 void ShenandoahHeap::print_gc_threads_on(outputStream* st) const {
@@ -337,18 +378,132 @@ void ShenandoahHeap::print_tracing_info() const {
   // Needed to keep going
 }
 
+class ShenandoahVerifyRootsClosure: public ExtendedOopClosure {
+private:
+  ShenandoahHeap*  _heap;
+  VerifyOption     _vo;
+  bool             _failures;
+public:
+  // _vo == UsePrevMarking -> use "prev" marking information,
+  // _vo == UseNextMarking -> use "next" marking information,
+  // _vo == UseMarkWord    -> use mark word from object header.
+  ShenandoahVerifyRootsClosure(VerifyOption vo) :
+    _heap(ShenandoahHeap::heap()),
+    _vo(vo),
+    _failures(false) { }
+
+  bool failures() { return _failures; }
+
+  template <class T> void do_oop_nv(T* p) {
+    T heap_oop = oopDesc::load_heap_oop(p);
+    if (!oopDesc::is_null(heap_oop)) {
+      oop obj = oopDesc::decode_heap_oop_not_null(heap_oop);
+      guarantee(obj->is_oop(), "is_oop");
+      /*
+      { // Just for debugging.
+        gclog_or_tty->print_cr("Root location "PTR_FORMAT" "
+                              "verified "PTR_FORMAT, p, (void*) obj);
+        obj->print_on(gclog_or_tty);
+      }
+      */
+    }
+  }
+
+  void do_oop(oop* p)       { do_oop_nv(p); }
+  void do_oop(narrowOop* p) { do_oop_nv(p); }
+
+};
+
+class ShenandoahVerifyHeapClosure: public ObjectClosure {
+private:
+  ShenandoahVerifyRootsClosure _rootsCl;
+  HeapWord* _lastObject;
+public:
+  ShenandoahVerifyHeapClosure(ShenandoahVerifyRootsClosure rc) :
+    _rootsCl(rc), _lastObject(NULL) {};
+
+  void do_object(oop p) {
+    _rootsCl.do_oop(&p);
+
+    HeapWord* oopWord = (HeapWord*) p;
+    // tty->print_cr("checking heap object: %p", oopWord);
+    if (_lastObject != NULL) {
+      HeapWord* brooksPOop = (oopWord - BROOKS_POINTER_OBJ_SIZE);
+      HeapWord** brooksP = (HeapWord**) (brooksPOop + (BROOKS_POINTER_OBJ_SIZE - 1));
+      /*
+      if (*brooksP == oopWord) {
+	tty->print_cr("good oop: %p, %p, %p", oopWord, brooksP, *brooksP);
+      } else {
+	tty->print_cr("bad  oop: %p, %p, %p", oopWord, brooksP, *brooksP);
+      }
+      */
+      guarantee(*brooksP == oopWord,
+		err_msg("brooks pointer points to next oop: "PTR_FORMAT": "PTR_FORMAT"->"PTR_FORMAT,
+			brooksPOop, *brooksP, oopWord));
+      _lastObject = NULL;
+    } else {
+      _lastObject = oopWord;
+    }
+  }
+
+};
+
+class ShenandoahVerifyKlassClosure: public KlassClosure {
+  OopClosure *_oop_closure;
+ public:
+  ShenandoahVerifyKlassClosure(OopClosure* cl) : _oop_closure(cl) {}
+  void do_klass(Klass* k) {
+    k->oops_do(_oop_closure);
+  }
+};
+
 void ShenandoahHeap::verify(bool silent , VerifyOption vo) {
-  // Needed to keep going
+  if (SafepointSynchronize::is_at_safepoint() || ! UseTLAB) {
+
+    ShenandoahVerifyRootsClosure rootsCl(vo);
+
+    assert(Thread::current()->is_VM_thread(),
+	   "Expected to be executed serially by the VM thread at this point");
+
+    CodeBlobToOopClosure blobsCl(&rootsCl, /*do_marking=*/ false);
+    ShenandoahVerifyKlassClosure klassCl(&rootsCl);
+
+    // We apply the relevant closures to all the oops in the
+    // system dictionary, the string table and the code cache.
+    const int so = SO_AllClasses | SO_Strings | SO_CodeCache;
+
+    // Need cleared claim bits for the strong roots processing
+    ClassLoaderDataGraph::clear_claimed_marks();
+
+    process_strong_roots(true,      // activate StrongRootsScope
+			 false,     // we set "is scavenging" to false,
+			 // so we don't reset the dirty cards.
+			 ScanningOption(so),  // roots scanning options
+			 &rootsCl,
+			 &blobsCl,
+			 &klassCl
+			 );
+
+    bool failures = rootsCl.failures();
+    gclog_or_tty->print("verify failures: %d", failures); 
+
+    ShenandoahVerifyHeapClosure heapCl(rootsCl);
+
+    object_iterate(&heapCl);
+    // TODO: Implement rest of it.
+  } else {
+    if (!silent) gclog_or_tty->print("(SKIPPING roots, heapRegions, remset) ");
+  }
 }
 
 size_t ShenandoahHeap::tlab_capacity(Thread *thr) const {
   return 0;
 }
 
-class IterateObjectClosureRegionClosure: public ShenandoahHeapRegionClosure {
+class ShenandoahIterateObjectClosureRegionClosure: public ShenandoahHeapRegionClosure {
   ObjectClosure* _cl;
 public:
-  IterateObjectClosureRegionClosure(ObjectClosure* cl) : _cl(cl) {}
+  ShenandoahIterateObjectClosureRegionClosure(ObjectClosure* cl) : _cl(cl) {}
   bool doHeapRegion(ShenandoahHeapRegion* r) {
     r->object_iterate(_cl);
     return false;
@@ -356,7 +511,7 @@ public:
 };
 
 void ShenandoahHeap::object_iterate(ObjectClosure* cl) {
-  IterateObjectClosureRegionClosure blk(cl);
+  ShenandoahIterateObjectClosureRegionClosure blk(cl);
   heap_region_iterate(&blk);
 }
 
@@ -364,12 +519,12 @@ void ShenandoahHeap::safe_object_iterate(ObjectClosure* cl) {
   nyi();
 }
 
-class IterateOopClosureRegionClosure : public ShenandoahHeapRegionClosure {
+class ShenandoahIterateOopClosureRegionClosure : public ShenandoahHeapRegionClosure {
   MemRegion _mr;
   ExtendedOopClosure* _cl;
 public:
-  IterateOopClosureRegionClosure(ExtendedOopClosure* cl) : _cl(cl) {}
-  IterateOopClosureRegionClosure(MemRegion mr, ExtendedOopClosure* cl) 
+  ShenandoahIterateOopClosureRegionClosure(ExtendedOopClosure* cl) : _cl(cl) {}
+  ShenandoahIterateOopClosureRegionClosure(MemRegion mr, ExtendedOopClosure* cl) 
     :_mr(mr), _cl(cl) {}
   bool doHeapRegion(ShenandoahHeapRegion* r) {
     r->oop_iterate(_cl);
@@ -378,13 +533,13 @@ public:
 };
 
 void ShenandoahHeap::oop_iterate(ExtendedOopClosure* cl) {
-  IterateOopClosureRegionClosure blk(cl);
+  ShenandoahIterateOopClosureRegionClosure blk(cl);
   heap_region_iterate(&blk);
 }
 
 void ShenandoahHeap::oop_iterate(MemRegion mr, 
 				 ExtendedOopClosure* cl) {
-  IterateOopClosureRegionClosure blk(mr, cl);
+  ShenandoahIterateOopClosureRegionClosure blk(mr, cl);
   heap_region_iterate(&blk);
 }
 
@@ -452,7 +607,7 @@ void  ShenandoahHeap::gc_epilogue(bool b) {
 // terminating the iteration early if doHeapRegion() returns true.
 void ShenandoahHeap::heap_region_iterate(ShenandoahHeapRegionClosure* blk) const {
   ShenandoahHeapRegion* current  = firstRegion;
-  while (!blk->doHeapRegion(current)) {
+  while (current != NULL && !blk->doHeapRegion(current)) {
     current = current->next();
   }
 }

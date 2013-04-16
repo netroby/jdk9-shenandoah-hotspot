@@ -19,6 +19,12 @@ public:
    ShenandoahHeapRegion* next() {
       return _next;
    }
+
+  // Roll back the previous allocation of an object with specified size.
+  // Returns TRUE when successful, FALSE if not successful or not supported.
+  bool rollback_allocation(uint size);
 };
+
+
 
 #endif // SHARE_VM_GC_IMPLEMENTATION_SHENANDOAH_SHENANDOAHHEAPREGION_HPP
