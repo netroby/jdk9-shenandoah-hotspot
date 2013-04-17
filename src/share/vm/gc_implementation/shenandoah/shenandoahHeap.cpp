@@ -263,12 +263,12 @@ HeapWord* ShenandoahHeap::mem_allocate_locked(size_t size,
    }
    assert (result == NULL, "expect result==NULL");
 
-   tty->print("Closing region %d "PTR_FORMAT"["PTR_FORMAT":%d] and starting region %d "PTR_FORMAT" total used in bytes = "SIZE_FORMAT" M \n", 
-	      currentRegion->regionNumber, currentRegion, 
-	      currentRegion->top(), currentRegion->used(),
-	      currentRegion->next() != NULL ? currentRegion->next()->regionNumber : -1,
-	      currentRegion->next(),
-	      used_in_bytes()/M);
+   // tty->print("Closing region %d "PTR_FORMAT"["PTR_FORMAT":%d] and starting region %d "PTR_FORMAT" total used in bytes = "SIZE_FORMAT" M \n", 
+   // 	      currentRegion->regionNumber, currentRegion, 
+   // 	      currentRegion->top(), currentRegion->used(),
+   // 	      currentRegion->next() != NULL ? currentRegion->next()->regionNumber : -1,
+   // 	      currentRegion->next(),
+   // 	      used_in_bytes()/M);
 
    /*
      printHeapObjects(currentRegion->bottom(), currentRegion->top());
@@ -663,19 +663,18 @@ public:
   }
 
   void do_oop_work(oop* p) {
-    //    oop foo = *p;
-    // tty->print("Before calling do_oop_work on "PTR_FORMAT"\n", foo);
-    // foo->mark()->print_on(tty);
-    // foo->print();
-
-    // if (foo->has_displaced_mark()) {
-    //   foo->set_displaced_mark(foo->displaced_mark()->set_age(epoch));
-    // } else {
-    //   foo->set_mark(foo->mark()->set_age(epoch));
-    // }
-    // tty->print("After do_oop_work on "PTR_FORMAT"\n", foo);
-    // foo->mark()->print_on(tty);
-    // foo->print();
+    oop obj = *p;
+    if (obj != NULL && ((ShenandoahHeap *)Universe::heap())->is_in(p)) {
+      if(obj->has_displaced_mark() && 
+	 obj->displaced_mark()->age() != epoch) {
+	obj->set_displaced_mark(obj->displaced_mark()->set_age(epoch));
+      } else if (obj->mark()->age() != epoch) {
+	obj->set_mark(obj->mark()->set_age(epoch));
+      }
+    tty->print("After do_oop_work on "PTR_FORMAT"\n", obj);
+    obj->mark()->print_on(tty);
+    obj->print();
+    }
   }
 
   void do_oop(narrowOop* p) {assert(false, "narrorOops not supported");}
