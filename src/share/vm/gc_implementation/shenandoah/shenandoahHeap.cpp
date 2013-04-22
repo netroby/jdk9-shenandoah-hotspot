@@ -666,20 +666,21 @@ public:
 
   void do_oop_work(oop* p) {
     oop obj = *p;
-    if (obj != NULL && ((ShenandoahHeap *)Universe::heap())->is_in(p)) {
-      if(obj->has_displaced_mark() && 
-	 obj->displaced_mark()->age() != epoch) {
-	obj->set_displaced_mark(obj->displaced_mark()->set_age(epoch));
-      } else if (obj->mark()->age() != epoch) {
-	obj->set_mark(obj->mark()->set_age(epoch));
-      }
-      tty->print("After do_oop_work on "PTR_FORMAT"\n", obj);
-      if (foo->has_displaced_mark()) {
-        foo->displaced_mark()->print_on(tty);
+    //tty->print_cr("is p in heap? p=%p is_in: %d", p, ((ShenandoahHeap *) Universe::heap())->is_in(obj));
+    if (obj != NULL && ((ShenandoahHeap *) Universe::heap())->is_in(obj)) {
+      if (obj->has_displaced_mark()) {
+	if (obj->displaced_mark()->age() != epoch) {
+	  obj->set_displaced_mark(obj->displaced_mark()->set_age(epoch));
+	  // obj->displaced_mark()->print_on(tty);
+	}
       } else {
-        foo->mark()->print_on(tty);
+	if (obj->mark()->age() != epoch) {
+	  obj->set_mark(obj->mark()->set_age(epoch));
+	  // obj->mark()->print_on(tty);
+	}
       }
-      obj->print();
+      // tty->print("After do_oop_work on "PTR_FORMAT"\n", obj);
+      // obj->print();
     }
   }
 
@@ -700,7 +701,7 @@ void ShenandoahHeap::do_concurrent_marking() {
 
   if (! concurrent_mark_in_progress()) {
     set_concurrent_mark_in_progress();
-    tty->print("Got to call to do_concurrent_marking()");
+    tty->print_cr("Got to call to do_concurrent_marking()");
 
     // This is not a concurrent marking yet.  it's a stop the world marking.
     process_strong_roots(true, false, ScanningOption(so), &rootsCl, &blobsCl, &klassCl);

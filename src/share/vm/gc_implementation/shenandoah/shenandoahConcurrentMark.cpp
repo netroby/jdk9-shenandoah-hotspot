@@ -57,7 +57,7 @@ void ShenandoahConcurrentMark::scanRootRegions() {
 }
 
 void ShenandoahConcurrentMark::markFromRoots() {
-  tty->print("Starting markFromRoots");
+  tty->print_cr("Starting markFromRoots");
   //  SCMConcurrentMarkingTask markingTask(this);
   //  markingTask.work(0);
   ShenandoahHeap* sh = (ShenandoahHeap *) Universe::heap();
