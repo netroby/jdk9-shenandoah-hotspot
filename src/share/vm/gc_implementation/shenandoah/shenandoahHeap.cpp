@@ -251,6 +251,10 @@ HeapWord* ShenandoahHeap::mem_allocate_locked(size_t size,
      result = currentRegion->allocate(size);
      if (result != NULL) {
        CollectedHeap::fill_with_array(filler, BROOKS_POINTER_OBJ_SIZE, false);
+       markOop mark = oop(filler)->mark();
+       oop(filler)->set_mark(mark->set_age(15));
+       assert(oop(filler)->mark()->age() == 15, "age must be 15 here");
+
        // Set the brooks pointer
        HeapWord* first = filler + (BROOKS_POINTER_OBJ_SIZE - 1);
        uintptr_t first_ptr = (uintptr_t) first;
@@ -430,18 +434,19 @@ public:
 class ShenandoahVerifyHeapClosure: public ObjectClosure {
 private:
   ShenandoahVerifyRootsClosure _rootsCl;
-  HeapWord* _lastObject;
 public:
   ShenandoahVerifyHeapClosure(ShenandoahVerifyRootsClosure rc) :
-    _rootsCl(rc), _lastObject(NULL) {};
+    _rootsCl(rc) {};
 
   void do_object(oop p) {
     _rootsCl.do_oop(&p);
 
     HeapWord* oopWord = (HeapWord*) p;
-    // tty->print_cr("checking heap object: %p", oopWord);
-    if (_lastObject != NULL) {
+    if (oop(oopWord)->mark()->age() == 15) { // Brooks pointer
+      // TODO: Implement brooks pointer checking.
+    } else {
       HeapWord* brooksPOop = (oopWord - BROOKS_POINTER_OBJ_SIZE);
+      guarantee(oop(brooksPOop)->mark()->age() == 15, "age in mark word of brooks obj must be 15");
       HeapWord** brooksP = (HeapWord**) (brooksPOop + (BROOKS_POINTER_OBJ_SIZE - 1));
       /*
       if (*brooksP == oopWord) {
@@ -453,9 +458,6 @@ public:
       guarantee(*brooksP == oopWord,
 		err_msg("brooks pointer points to next oop: "PTR_FORMAT": "PTR_FORMAT"->"PTR_FORMAT,
 			brooksPOop, *brooksP, oopWord));
-      _lastObject = NULL;
-    } else {
-      _lastObject = oopWord;
     }
   }
 
