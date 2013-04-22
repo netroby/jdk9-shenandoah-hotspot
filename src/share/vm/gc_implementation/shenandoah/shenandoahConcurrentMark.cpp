@@ -39,7 +39,7 @@ void SCMConcurrentMarkingTask::work(uint worker_id) {
   tty->print("SCMConcurrentMarkingTask work worker = %d\n", worker_id);
   Thread::current()->print_on(tty);
   ShenandoahHeap* sh = (ShenandoahHeap *) Universe::heap();
-  //  sh->do_concurrent_marking();
+  sh->do_concurrent_marking();
 }
 
 ShenandoahConcurrentMark::ShenandoahConcurrentMark() :

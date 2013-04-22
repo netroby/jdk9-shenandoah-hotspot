@@ -665,19 +665,30 @@ public:
   }
 
   void do_oop_work(oop* p) {
-    //    oop foo = *p;
-    // tty->print("Before calling do_oop_work on "PTR_FORMAT"\n", foo);
-    // foo->mark()->print_on(tty);
-    // foo->print();
+     oop foo = *p;
+     if (foo == NULL) {
+       return;
+     }
 
-    // if (foo->has_displaced_mark()) {
-    //   foo->set_displaced_mark(foo->displaced_mark()->set_age(epoch));
-    // } else {
-    //   foo->set_mark(foo->mark()->set_age(epoch));
-    // }
-    // tty->print("After do_oop_work on "PTR_FORMAT"\n", foo);
-    // foo->mark()->print_on(tty);
-    // foo->print();
+     // tty->print("Before calling do_oop_work on "PTR_FORMAT"\n", foo);
+     //foo->print();
+
+     if (foo->has_displaced_mark()) {
+       //foo->displaced_mark()->print_on(tty);
+       foo->set_displaced_mark(foo->displaced_mark()->set_age(epoch));
+     } else {
+       //foo->mark()->print_on(tty);
+       foo->set_mark(foo->mark()->set_age(epoch));
+     }
+     /*
+     tty->print("After do_oop_work on "PTR_FORMAT"\n", foo);
+     if (foo->has_displaced_mark()) {
+       foo->displaced_mark()->print_on(tty);
+     } else {
+       foo->mark()->print_on(tty);
+     }
+     foo->print();
+     */
   }
 
   void do_oop(narrowOop* p) {assert(false, "narrorOops not supported");}
