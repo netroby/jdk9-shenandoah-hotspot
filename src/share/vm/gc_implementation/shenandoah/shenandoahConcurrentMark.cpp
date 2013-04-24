@@ -32,36 +32,70 @@ SCMRootRegionScanTask::SCMRootRegionScanTask(ShenandoahConcurrentMark* cm) :
 void SCMRootRegionScanTask::work(uint worker_id) {
 }
 
+// Fixme CHF should be merged with version in  shenandoahHeap.cpp
+class ShenandoahMarkRefsClosure2 : public OopsInGenClosure {
+  uint epoch;
+public: 
+  ShenandoahMarkRefsClosure2(uint e) : epoch(e) {}
+
+  void do_oop_work(oop* p) {
+    oop obj = *p;
+    ShenandoahHeap* sh = (ShenandoahHeap* ) Universe::heap();
+    if (obj != NULL && (sh->is_in(obj))) {
+      sh->concurrentMark()->addTask(obj);
+	if (obj->has_displaced_mark()) {
+	  if (obj->displaced_mark()->age() != epoch) {
+	    obj->set_displaced_mark(obj->displaced_mark()->set_age(epoch));
+	  }
+	} else {
+	  if (obj->mark()->age() != epoch) {
+	    obj->set_mark(obj->mark()->set_age(epoch));
+	  }
+	}
+      }
+  }
+
+  void do_oop(narrowOop* p) {assert(false, "narrorOops not supported");}
+  void do_oop(oop* p) {do_oop_work(p);}
+};
+
 SCMConcurrentMarkingTask::SCMConcurrentMarkingTask(ShenandoahConcurrentMark* cm) :
   AbstractGangTask("Root Region Scan"), _cm(cm) { }
 
 void SCMConcurrentMarkingTask::work(uint worker_id) {
-  tty->print("SCMConcurrentMarkingTask work worker = %d\n", worker_id);
-  Thread::current()->print_on(tty);
-  ShenandoahHeap* sh = (ShenandoahHeap *) Universe::heap();
-  sh->do_concurrent_marking();
+  oop obj = _cm->popTask(worker_id);
+  while (obj != NULL) {
+    ShenandoahMarkRefsClosure2 cl(_cm->getEpoch());
+    obj->oop_iterate(&cl);
+    obj = _cm->popTask(worker_id);
+  }
 }
 
 ShenandoahConcurrentMark::ShenandoahConcurrentMark() :
-
   _max_worker_id(MAX2((uint)ParallelGCThreads, 1U)),
   _task_queues(new SCMTaskQueueSet((int) _max_worker_id)),
   _terminator(ParallelTaskTerminator((int) _max_worker_id, _task_queues))
 
-{}
+{
+  for (uint i = 0; i < _max_worker_id; ++i) {
+    SCMTaskQueue* task_queue = new SCMTaskQueue();
+    task_queue->initialize();
+    _task_queues->register_queue(i, task_queue);
+  }
+
+}
 
 void ShenandoahConcurrentMark::scanRootRegions() {
-
   SCMRootRegionScanTask task(this);
   task.work(0);
 }
 
 void ShenandoahConcurrentMark::markFromRoots() {
   tty->print_cr("Starting markFromRoots");
-  //  SCMConcurrentMarkingTask markingTask(this);
-  //  markingTask.work(0);
   ShenandoahHeap* sh = (ShenandoahHeap *) Universe::heap();
-  sh->do_concurrent_marking();
+  sh->start_concurrent_marking();
+  SCMConcurrentMarkingTask markingTask(this);
+  markingTask.work(0);
 }
 
 void ShenandoahConcurrentMark::finishMarkFromRoots() {
@@ -72,4 +106,28 @@ void ShenandoahConcurrentMark::finishMarkFromRoots() {
 void ShenandoahConcurrentMark::checkpointRootsFinal() {
   SCMConcurrentMarkingTask markingTask(this);
   markingTask.work(0);
+}
+
+
+
+void ShenandoahConcurrentMark::addTask(oop obj, int q) {
+  if (obj->age() != epoch) {
+    if (!_task_queues->queue(q)->push(obj)) {
+      assert(false, "oops_overflowed_our_queues");
+    }
+  }
+}
+
+
+void ShenandoahConcurrentMark::addTask(oop obj) {
+  addTask(obj, 0);
+}
+
+// This queue implementation is wonky
+oop ShenandoahConcurrentMark::popTask(int q) {
+  oop obj;
+  bool result = _task_queues->queue(q)->pop_local(obj);
+  if (result) 
+    return obj;
+  else return NULL;
 }

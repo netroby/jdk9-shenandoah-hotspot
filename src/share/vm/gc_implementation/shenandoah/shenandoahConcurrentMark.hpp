@@ -28,7 +28,7 @@
 #include "utilities/taskqueue.hpp"
 #include "utilities/workgroup.hpp"
 
-class SCMTask;
+class SCMTask; 
 
 typedef GenericTaskQueue<oop, mtGC>            SCMTaskQueue;
 typedef GenericTaskQueueSet<SCMTaskQueue, mtGC> SCMTaskQueueSet;
@@ -42,6 +42,7 @@ private:
   SCMTaskQueueSet*         _task_queues;   // task queue set
   ParallelTaskTerminator  _terminator;    // for termination
   bool                    _aborted;       
+  uint epoch;
 
 public:
   ShenandoahConcurrentMark();
@@ -50,6 +51,12 @@ public:
   void checkpointRootsFinal();
   void finishMarkFromRoots();
   bool has_aborted() {return _aborted;}
+
+  void addTask(oop obj);
+  void addTask(oop obj, int worker_id);
+  oop popTask(int worker_id);
+  void setEpoch(uint x) { epoch = x;}
+  uint getEpoch() { return epoch;}
 
 };
 

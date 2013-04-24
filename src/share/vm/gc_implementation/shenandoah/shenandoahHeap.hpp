@@ -132,7 +132,7 @@ public:
     _concurrent_mark_in_progress = true;
   }
 
-  void do_concurrent_marking();
+  void start_concurrent_marking();
   ShenandoahConcurrentMark* concurrentMark() { return _scm;}
 
 };
