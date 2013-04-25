@@ -71,18 +71,26 @@ void SCMConcurrentMarkingTask::work(uint worker_id) {
   }
 }
 
-ShenandoahConcurrentMark::ShenandoahConcurrentMark() :
-  _max_worker_id(MAX2((uint)ParallelGCThreads, 1U)),
-  _task_queues(new SCMTaskQueueSet((int) _max_worker_id)),
-  _terminator(ParallelTaskTerminator((int) _max_worker_id, _task_queues))
+// ShenandoahConcurrentMark::ShenandoahConcurrentMark() :
+//   _max_worker_id(MAX2((uint)ParallelGCThreads, 1U)),
+//   _task_queues(new SCMTaskQueueSet((int) _max_worker_id)),
+//   _terminator(ParallelTaskTerminator((int) _max_worker_id, _task_queues))
+// {
+  
+// }
 
-{
+void ShenandoahConcurrentMark::initialize(FlexibleWorkGang* workers) {
+  uint _max_worker_id = MAX2((uint)ParallelGCThreads, 1U);
+ _task_queues = new SCMObjToScanQueueSet((int) _max_worker_id);
+
+  tty->print("ActiveWorkers  = %d total workers = %d\n", workers->active_workers(), 
+	     workers->total_workers());
+
   for (uint i = 0; i < _max_worker_id; ++i) {
-    SCMTaskQueue* task_queue = new SCMTaskQueue();
+    SCMObjToScanQueue* task_queue = new SCMObjToScanQueue();
     task_queue->initialize();
     _task_queues->register_queue(i, task_queue);
   }
-
 }
 
 void ShenandoahConcurrentMark::scanRootRegions() {
@@ -94,8 +102,8 @@ void ShenandoahConcurrentMark::markFromRoots() {
   tty->print_cr("Starting markFromRoots");
   ShenandoahHeap* sh = (ShenandoahHeap *) Universe::heap();
   sh->start_concurrent_marking();
-  SCMConcurrentMarkingTask markingTask(this);
-  markingTask.work(0);
+  SCMConcurrentMarkingTask* markingTask = new SCMConcurrentMarkingTask(this);
+  sh->workers()->run_task(markingTask);
 }
 
 void ShenandoahConcurrentMark::finishMarkFromRoots() {
@@ -111,6 +119,7 @@ void ShenandoahConcurrentMark::checkpointRootsFinal() {
 
 
 void ShenandoahConcurrentMark::addTask(oop obj, int q) {
+  //  tty->print("addTask q = %d\n", q);
   if (obj->age() != epoch) {
     if (!_task_queues->queue(q)->push(obj)) {
       assert(false, "oops_overflowed_our_queues");
@@ -127,7 +136,15 @@ void ShenandoahConcurrentMark::addTask(oop obj) {
 oop ShenandoahConcurrentMark::popTask(int q) {
   oop obj;
   bool result = _task_queues->queue(q)->pop_local(obj);
+  //  tty->print"popTask: q = %d\n", q);
   if (result) 
     return obj;
-  else return NULL;
+  else {
+    int seed = 17;
+    result = _task_queues->steal(q, &seed, obj);
+    if (result)
+      return obj;
+    else 
+      return NULL;
+  }
 }

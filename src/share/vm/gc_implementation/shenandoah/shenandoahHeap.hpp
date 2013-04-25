@@ -1,10 +1,10 @@
 #ifndef SHARE_VM_GC_IMPLEMENTATION_SHENANDOAH_SHENANDOAHHEAP_HPP
 #define SHARE_VM_GC_IMPLEMENTATION_SHENANDOAH_SHENANDOAHHEAP_HPP
 
+
 #include "gc_implementation/shenandoah/shenandoahBarrierSet.hpp"
 #include "gc_implementation/shenandoah/shenandoahCollectorPolicy.hpp"
 #include "gc_implementation/shenandoah/shenandoahConcurrentMark.hpp"
-#include "gc_implementation/shenandoah/shenandoahConcurrentThread.hpp"
 #include "gc_implementation/shenandoah/shenandoahHeapRegion.hpp"
 #include "memory/barrierSet.hpp"
 #include "memory/sharedHeap.hpp"
@@ -41,13 +41,12 @@ private:
   ShenandoahBarrierSet* _pgc_barrierSet;
   ShenandoahHeapRegion* firstRegion;
   ShenandoahHeapRegion* currentRegion;
+  ShenandoahConcurrentMark* _scm;
+
 
   size_t numRegions;
   size_t initialSize;
-
   uint numAllocs;
-  //  ShenandoahConcurrentThread* _sct;
-  ShenandoahConcurrentMark* _scm;
   uint epoch;
   
 

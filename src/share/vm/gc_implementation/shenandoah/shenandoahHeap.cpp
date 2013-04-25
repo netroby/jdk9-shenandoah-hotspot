@@ -113,7 +113,6 @@ jint ShenandoahHeap::initialize() {
 ShenandoahHeap::ShenandoahHeap(ShenandoahCollectorPolicy* policy) : 
   SharedHeap(policy),
   _pgc_policy(policy), 
-  //  _sct(),
   _concurrent_mark_in_progress(false),
   _pgc_barrierSet(new ShenandoahBarrierSet()) {
   _pgc = this;
@@ -138,6 +137,7 @@ void ShenandoahHeap::print_on(outputStream* st) const {
 
 void ShenandoahHeap::post_initialize() {
   //  ShenandoahConcurrentThread* first = new ShenandoahConcurrentThread();
+  _scm->initialize(workers());
 }
 
 class CalculateUsedRegionClosure : public ShenandoahHeapRegionClosure {

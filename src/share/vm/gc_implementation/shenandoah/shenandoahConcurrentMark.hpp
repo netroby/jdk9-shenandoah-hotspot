@@ -28,24 +28,21 @@
 #include "utilities/taskqueue.hpp"
 #include "utilities/workgroup.hpp"
 
-class SCMTask; 
-
-typedef GenericTaskQueue<oop, mtGC>            SCMTaskQueue;
-typedef GenericTaskQueueSet<SCMTaskQueue, mtGC> SCMTaskQueueSet;
-
+typedef Padded<OopTaskQueue> SCMObjToScanQueue;
+typedef GenericTaskQueueSet<SCMObjToScanQueue, mtGC> SCMObjToScanQueueSet;
 
 class ShenandoahConcurrentMark: public CHeapObj<mtGC> {
+
 private:
-  uint                    _max_worker_id; // maximum worker id
-  uint                    _active_tasks;  // task num currently active
-  SCMTask**                _tasks;         // task queue array (max_worker_id len)
-  SCMTaskQueueSet*         _task_queues;   // task queue set
-  ParallelTaskTerminator  _terminator;    // for termination
+  // The per-worker-thread work queues
+  SCMObjToScanQueueSet* _task_queues;
+  //  Stack<oop, mtGC>* const _overflow_stack;
+
   bool                    _aborted;       
-  uint epoch;
+  uint                    epoch;
 
 public:
-  ShenandoahConcurrentMark();
+
   void scanRootRegions();
   void markFromRoots();
   void checkpointRootsFinal();
@@ -57,6 +54,12 @@ public:
   oop popTask(int worker_id);
   void setEpoch(uint x) { epoch = x;}
   uint getEpoch() { return epoch;}
+
+  uint _max_worker_id;
+
+
+  // We need to do this later when the heap is already created.
+  void initialize(FlexibleWorkGang* workers);
 
 };
 
