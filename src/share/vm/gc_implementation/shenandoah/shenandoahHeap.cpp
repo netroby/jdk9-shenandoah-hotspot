@@ -43,6 +43,8 @@ jint ShenandoahHeap::initialize() {
   _reserved.set_start((HeapWord*)heap_rs.base());
   _reserved.set_end((HeapWord*) (heap_rs.base() + heap_rs.size()));
 
+  set_barrier_set(new ShenandoahBarrierSet());
+
   ReservedSpace pgc_rs = heap_rs.first_part(max_byte_size);
 
   tty->print("Calling initialize on reserved space base = %p end = %p\n", 
@@ -75,7 +77,14 @@ jint ShenandoahHeap::initialize() {
   //  _sct = new ShenandoahConcurrentThread();
   //  if (_sct == NULL)
   //    return JNI_ENOMEM;
-  
+
+  // The call below uses stuff (the SATB* things) that are in G1, but probably
+  // belong into a shared location.
+  JavaThread::satb_mark_queue_set().initialize(SATB_Q_CBL_mon,
+                                               SATB_Q_FL_lock,
+                                               20 /*G1SATBProcessCompletedThreshold */,
+                                               Shared_SATB_Q_lock);
+
   return JNI_OK;
 }
 
@@ -83,14 +92,10 @@ ShenandoahHeap::ShenandoahHeap(ShenandoahCollectorPolicy* policy) :
   SharedHeap(policy),
   _pgc_policy(policy), 
   //  _sct(),
-  _concurrent_mark_in_progress(false),
-  _pgc_barrierSet(new ShenandoahBarrierSet()) {
+  _concurrent_mark_in_progress(false) {
   _pgc = this;
   _scm = new ShenandoahConcurrentMark();
   epoch = 2;
-  set_barrier_set(_pgc_barrierSet);
-  // Where does this really belong?
-  oopDesc::set_bs(_pgc_barrierSet);
 }
 
 

@@ -777,7 +777,7 @@ address InterpreterGenerator::generate_Reference_get_entry(void) {
   const int referent_offset = java_lang_ref_Reference::referent_offset;
   guarantee(referent_offset > 0, "referent offset not initialized");
 
-  if (UseG1GC) {
+  if (UseG1GC || UseShenandoahGC) {
     Label slow_path;
     // rbx: method
 

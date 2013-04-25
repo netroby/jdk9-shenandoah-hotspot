@@ -195,6 +195,11 @@ void mutex_init() {
     def(HotCardCache_lock          , Mutex  , special  ,   true );
     def(EvacFailureStack_lock      , Mutex  , nonleaf  ,   true );
   }
+  if (UseShenandoahGC) {
+    def(SATB_Q_FL_lock             , Mutex  , special,     true );
+    def(SATB_Q_CBL_mon             , Monitor, nonleaf,     true );
+    def(Shared_SATB_Q_lock         , Mutex,   nonleaf,     true );
+  }
   def(ParGCRareEvent_lock          , Mutex  , leaf     ,   true );
   def(DerivedPointerTableGC_lock   , Mutex,   leaf,        true );
   def(CodeCache_lock               , Mutex  , special,     true );

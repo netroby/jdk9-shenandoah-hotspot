@@ -38,7 +38,6 @@ class ShenandoahHeap : public SharedHeap {
 private:
   static ShenandoahHeap* _pgc;
   ShenandoahCollectorPolicy* _pgc_policy;
-  ShenandoahBarrierSet* _pgc_barrierSet;
   ShenandoahHeapRegion* firstRegion;
   ShenandoahHeapRegion* currentRegion;
 

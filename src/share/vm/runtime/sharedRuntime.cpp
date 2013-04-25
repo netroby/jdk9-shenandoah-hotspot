@@ -227,7 +227,9 @@ JRT_END
 
 // G1 write-barrier post: executed after a pointer store.
 JRT_LEAF(void, SharedRuntime::g1_wb_post(void* card_addr, JavaThread* thread))
-  thread->dirty_card_queue().enqueue(card_addr);
+  if (! UseShenandoahGC) {
+    thread->dirty_card_queue().enqueue(card_addr);
+  }
 JRT_END
 
 #endif // !SERIALGC

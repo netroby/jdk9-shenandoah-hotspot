@@ -28,8 +28,8 @@ public:
   bool has_write_prim_array_opt(){return true;}
   bool has_write_prim_barrier() {return false;}
   bool has_write_ref_array_opt(){return true;}
-  bool has_write_ref_barrier() { return false;}
-  bool has_write_ref_pre_barrier() {return false;}
+  bool has_write_ref_barrier() { return true;}
+  bool has_write_ref_pre_barrier() {return true;}
   bool has_write_region_opt(){return true;}
   bool is_aligned(HeapWord* hw) {return true;}
   void read_prim_array(MemRegion mr) {nyi();}

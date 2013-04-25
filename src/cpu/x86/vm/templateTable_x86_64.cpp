@@ -139,6 +139,7 @@ static void do_oop_store(InterpreterMacroAssembler* _masm,
 #ifndef SERIALGC
     case BarrierSet::G1SATBCT:
     case BarrierSet::G1SATBCTLogging:
+    case BarrierSet::ShenandoahBarrierSet:
       {
         // flatten object address if needed
         if (obj.index() == noreg && obj.disp() == 0) {
@@ -158,25 +159,17 @@ static void do_oop_store(InterpreterMacroAssembler* _masm,
           __ store_heap_oop_null(Address(rdx, 0));
         } else {
           __ store_heap_oop(Address(rdx, 0), val);
+          if (barrier != BarrierSet::ShenandoahBarrierSet) {
           __ g1_write_barrier_post(rdx /* store_adr */,
                                    val /* new_val */,
                                    r15_thread /* thread */,
                                    r8 /* tmp */,
                                    rbx /* tmp2 */);
+          }
         }
 
       }
       break;
-    case BarrierSet::ShenandoahBarrierSet: 
-      {
-	if (val == noreg) {
-	  __ store_heap_oop_null(obj);
-	} else {
-	  __ store_heap_oop(obj, val);
-	}
-      }
-      break;
-
 #endif // SERIALGC
     case BarrierSet::CardTableModRef:
     case BarrierSet::CardTableExtension:
