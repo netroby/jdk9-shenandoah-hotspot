@@ -9,11 +9,42 @@
 
 ShenandoahHeap* ShenandoahHeap::_pgc = NULL;
 
+void printHeapLocations(HeapWord* start, HeapWord* end) {
+  HeapWord* cur = NULL;
+  int *val = NULL;
+  for (cur = start; cur < end; cur++) {
+      val = (int *) cur;
+      tty->print(PTR_FORMAT":"PTR_FORMAT"\n", val, *val);
+    }
+}
+
+void printHeapObjects(HeapWord* start, HeapWord* end) {
+  HeapWord* cur = NULL;
+  int *val = NULL;
+  for (cur = start; cur < end; cur = cur + oop(cur)->size()) {
+    oop(cur)->print();
+    printHeapLocations(cur, cur + oop(cur)->size());
+  }
+}
+
 class PrintHeapRegionsClosure : public ShenandoahHeapRegionClosure {
 public:
   bool doHeapRegion(ShenandoahHeapRegion* r) {
     tty->print("Region %d top = "PTR_FORMAT" used = %x free = %x\n", 
 	       r->regionNumber, r->top(), r->used(), r->free());
+    if (r->next() == NULL)
+      return true;
+    else return false;
+  }
+};
+
+class PrintHeapObjectsClosure : public ShenandoahHeapRegionClosure {
+public:
+  bool doHeapRegion(ShenandoahHeapRegion* r) {
+    tty->print("Region %d top = "PTR_FORMAT" used = %x free = %x\n", 
+	       r->regionNumber, r->top(), r->used(), r->free());
+    
+    printHeapObjects(r->bottom(), r->top());
     if (r->next() == NULL)
       return true;
     else return false;
@@ -91,11 +122,10 @@ jint ShenandoahHeap::initialize() {
 ShenandoahHeap::ShenandoahHeap(ShenandoahCollectorPolicy* policy) : 
   SharedHeap(policy),
   _pgc_policy(policy), 
-  //  _sct(),
   _concurrent_mark_in_progress(false) {
   _pgc = this;
   _scm = new ShenandoahConcurrentMark();
-  epoch = 2;
+  epoch = 12;
 }
 
 
@@ -112,6 +142,7 @@ void ShenandoahHeap::print_on(outputStream* st) const {
 
 void ShenandoahHeap::post_initialize() {
   //  ShenandoahConcurrentThread* first = new ShenandoahConcurrentThread();
+  _scm->initialize(workers());
 }
 
 class CalculateUsedRegionClosure : public ShenandoahHeapRegionClosure {
@@ -202,23 +233,6 @@ HeapWord* ShenandoahHeap::allocate_new_tlab(size_t word_size) {
   return mem_allocate(word_size, limit_exceeded);
 }
 
-void printHeapLocations(HeapWord* start, HeapWord* end) {
-  HeapWord* cur = NULL;
-  int *val = NULL;
-  for (cur = start; cur < end; cur++) {
-      val = (int *) cur;
-      tty->print(PTR_FORMAT":"PTR_FORMAT"\n", val, *val);
-    }
-}
-
-void printHeapObjects(HeapWord* start, HeapWord* end) {
-  HeapWord* cur = NULL;
-  int *val = NULL;
-  for (cur = start; cur < end; cur = cur + oop(cur)->size()) {
-    oop(cur)->print();
-    printHeapLocations(cur, cur + oop(cur)->size());
-  }
-}
 
 ShenandoahHeap* ShenandoahHeap::heap() {
   assert(_pgc != NULL, "Unitialized access to ShenandoahHeap::heap()");
@@ -290,6 +304,18 @@ HeapWord* ShenandoahHeap::mem_allocate_locked(size_t size,
    }
 }
 
+class PrintOopContents: public OopClosure {
+public:
+  void do_oop(oop* o) {
+    oop obj = *o;
+    tty->print("References oop "PTR_FORMAT"\n", obj);
+    obj->print();
+  }
+
+  void do_oop(narrowOop* o) {
+    assert(false, "narrowOops aren't implemented");
+  }
+};
 
 HeapWord*  ShenandoahHeap::mem_allocate(size_t size, 
 					bool*  gc_overhead_limit_was_exceeded) {
@@ -313,11 +339,15 @@ HeapWord*  ShenandoahHeap::mem_allocate(size_t size,
     tty->print("Capacity = "SIZE_FORMAT" Used = "SIZE_FORMAT" Target = "SIZE_FORMAT" doing initMark\n", capacity(), used(), targetStartMarking);
     VM_ShenandoahInitMark initMark;
     VMThread::execute(&initMark);
+
+    //    PrintHeapObjectsClosure printObjs;
+    //    heap_region_iterate(&printObjs);
   }
 
   MutexLocker ml(Heap_lock);
   return mem_allocate_locked(size, gc_overhead_limit_was_exceeded);
 }
+
 
 size_t  ShenandoahHeap::unsafe_max_tlab_alloc(Thread *thread) const {
   return 0;
@@ -666,36 +696,33 @@ class ShenandoahMarkRefsClosure : public OopsInGenClosure {
   uint epoch;
 public: 
   ShenandoahMarkRefsClosure(uint e) : epoch(e) {
-    tty->print("Created a closure"); 
   }
 
   void do_oop_work(oop* p) {
     oop obj = *p;
-    //tty->print_cr("is p in heap? p=%p is_in: %d", p, ((ShenandoahHeap *) Universe::heap())->is_in(obj));
-    if (obj != NULL && ((ShenandoahHeap *) Universe::heap())->is_in(obj)) {
-      if (obj->has_displaced_mark()) {
-	if (obj->displaced_mark()->age() != epoch) {
-	  obj->set_displaced_mark(obj->displaced_mark()->set_age(epoch));
-	  // obj->displaced_mark()->print_on(tty);
-	}
-      } else {
-	if (obj->mark()->age() != epoch) {
-	  obj->set_mark(obj->mark()->set_age(epoch));
-	  // obj->mark()->print_on(tty);
+    ShenandoahHeap* sh = (ShenandoahHeap* ) Universe::heap();
+    if (obj != NULL && (sh->is_in(obj))) {
+	sh->concurrentMark()->addTask(obj);
+	if (obj->has_displaced_mark()) {
+	  if (obj->displaced_mark()->age() != epoch) {
+	    obj->set_displaced_mark(obj->displaced_mark()->set_age(epoch));
+	  }
+	} else {
+	  if (obj->mark()->age() != epoch) {
+	    obj->set_mark(obj->mark()->set_age(epoch));
+	  }
 	}
       }
-      // tty->print("After do_oop_work on "PTR_FORMAT"\n", obj);
-      // obj->print();
-    }
   }
 
   void do_oop(narrowOop* p) {assert(false, "narrorOops not supported");}
   void do_oop(oop* p) {do_oop_work(p);}
 };
 
+  /* We are going to add all the roots to taskqueue 0 for now.  Later on we should experiment with a better partioning. */
 
-
-void ShenandoahHeap::do_concurrent_marking() {
+void ShenandoahHeap::start_concurrent_marking() {
+  concurrentMark()->setEpoch(epoch);
   ShenandoahMarkRefsClosure rootsCl(epoch);
   CodeBlobToOopClosure blobsCl(&rootsCl, false);
   KlassToOopClosure klassCl(&rootsCl);
@@ -706,9 +733,8 @@ void ShenandoahHeap::do_concurrent_marking() {
 
   if (! concurrent_mark_in_progress()) {
     set_concurrent_mark_in_progress();
-    tty->print_cr("Got to call to do_concurrent_marking()");
 
     // This is not a concurrent marking yet.  it's a stop the world marking.
     process_strong_roots(true, false, ScanningOption(so), &rootsCl, &blobsCl, &klassCl);
   }
-}  
+}
