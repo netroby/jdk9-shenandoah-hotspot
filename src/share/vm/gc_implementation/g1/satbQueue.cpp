@@ -23,7 +23,6 @@
  */
 
 #include "precompiled.hpp"
-#include "gc_implementation/g1/g1CollectedHeap.inline.hpp"
 #include "gc_implementation/g1/satbQueue.hpp"
 #include "memory/allocation.inline.hpp"
 #include "memory/sharedHeap.hpp"
@@ -59,7 +58,7 @@ void ObjPtrQueue::flush() {
 // references into the CSet will be removed during filtering.
 
 void ObjPtrQueue::filter() {
-  G1CollectedHeap* g1h = G1CollectedHeap::heap();
+  SharedHeap* heap = SharedHeap::heap();
   void** buf = _buf;
   size_t sz = _sz;
 
@@ -86,7 +85,7 @@ void ObjPtrQueue::filter() {
     // far, we'll just end up copying it to the same place.
     *p = NULL;
 
-    bool retain = g1h->is_obj_ill(obj);
+    bool retain = heap->is_obj_ill(obj);
     if (retain) {
       assert(new_index > 0, "we should not have already filled up the buffer");
       new_index -= oopSize;

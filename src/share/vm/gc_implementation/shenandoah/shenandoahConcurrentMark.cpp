@@ -91,6 +91,7 @@ void ShenandoahConcurrentMark::initialize(FlexibleWorkGang* workers) {
     task_queue->initialize();
     _task_queues->register_queue(i, task_queue);
   }
+  JavaThread::satb_mark_queue_set().set_buffer_size(1014 /* G1SATBBufferSize */);
 }
 
 void ShenandoahConcurrentMark::scanRootRegions() {
@@ -136,7 +137,7 @@ void ShenandoahConcurrentMark::addTask(oop obj) {
 oop ShenandoahConcurrentMark::popTask(int q) {
   oop obj;
   bool result = _task_queues->queue(q)->pop_local(obj);
-  //  tty->print"popTask: q = %d\n", q);
+  //  tty->print("popTask: q = %d\n", q);
   if (result) 
     return obj;
   else {

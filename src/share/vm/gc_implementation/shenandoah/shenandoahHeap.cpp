@@ -732,9 +732,18 @@ void ShenandoahHeap::start_concurrent_marking() {
   const int so = SO_AllClasses | SO_Strings | SO_CodeCache;
 
   if (! concurrent_mark_in_progress()) {
-    set_concurrent_mark_in_progress();
+    set_concurrent_mark_in_progress(true);
 
     // This is not a concurrent marking yet.  it's a stop the world marking.
     process_strong_roots(true, false, ScanningOption(so), &rootsCl, &blobsCl, &klassCl);
   }
+}
+
+bool ShenandoahHeap::concurrent_mark_in_progress() {
+  return _concurrent_mark_in_progress;
+}
+
+bool ShenandoahHeap::set_concurrent_mark_in_progress(bool in_progress) {
+  _concurrent_mark_in_progress = in_progress;
+  JavaThread::satb_mark_queue_set().set_active_all_threads(in_progress, ! in_progress);
 }

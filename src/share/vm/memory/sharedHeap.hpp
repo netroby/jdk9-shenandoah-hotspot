@@ -278,6 +278,8 @@ public:
                              size_t bytes_before,
                              size_t bytes_after,
                              size_t capacity);
+
+  virtual bool is_obj_ill(const oop obj);
 };
 
 #endif // SHARE_VM_MEMORY_SHAREDHEAP_HPP
