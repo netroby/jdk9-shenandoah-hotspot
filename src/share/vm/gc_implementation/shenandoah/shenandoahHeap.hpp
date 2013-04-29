@@ -127,6 +127,12 @@ public:
 
   ShenandoahConcurrentMark* concurrentMark() { return _scm;}
 
+  void mark_object_live(oop obj, bool enqueue);
+
+  // Prepares unmarked root objects by marking them and putting
+  // them into the marking task queue.
+  void prepare_unmarked_root_objs();
+
 private:
   bool set_concurrent_mark_in_progress(bool in_progress);
   bool concurrent_mark_in_progress();
@@ -136,5 +142,23 @@ private:
   // TODO: Important! Implement is_obj_ill() in order to make the write barrier correct.
 };
 
+class ShenandoahMarkRefsClosure : public OopsInGenClosure {
+  uint epoch;
+public: 
+  ShenandoahMarkRefsClosure(uint e);
+
+  void do_oop_work(oop* p);
+
+  void do_oop(narrowOop* p);
+  void do_oop(oop* p);
+};
   
+class ShenandoahMarkObjsClosure : public ObjectClosure {
+  uint epoch;
+public: 
+  ShenandoahMarkObjsClosure(uint e);
+
+  void do_object(oop p);
+};
+
 #endif // SHARE_VM_GC_IMPLEMENTATION_SHENANDOAH_SHENANDOAHHEAP_HPP

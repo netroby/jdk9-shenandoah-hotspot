@@ -47,6 +47,7 @@ public:
   void markFromRoots();
   void checkpointRootsFinal();
   void finishMarkFromRoots();
+  void drain_satb_buffers();
   bool has_aborted() {return _aborted;}
 
   void addTask(oop obj);
