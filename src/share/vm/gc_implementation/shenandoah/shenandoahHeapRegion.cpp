@@ -7,6 +7,7 @@ jint ShenandoahHeapRegion::initialize(HeapWord* start,
 				      size_t regionSizeWords) {
   reserved = MemRegion((HeapWord*) start, regionSizeWords);
   ContiguousSpace::initialize(reserved, true, false);
+  liveData = 0;
   return JNI_OK;
 }
 

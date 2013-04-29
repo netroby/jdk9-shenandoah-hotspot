@@ -20,7 +20,6 @@ void printHeapLocations(HeapWord* start, HeapWord* end) {
 
 void printHeapObjects(HeapWord* start, HeapWord* end) {
   HeapWord* cur = NULL;
-  int *val = NULL;
   for (cur = start; cur < end; cur = cur + oop(cur)->size()) {
     oop(cur)->print();
     printHeapLocations(cur, cur + oop(cur)->size());
@@ -30,8 +29,8 @@ void printHeapObjects(HeapWord* start, HeapWord* end) {
 class PrintHeapRegionsClosure : public ShenandoahHeapRegionClosure {
 public:
   bool doHeapRegion(ShenandoahHeapRegion* r) {
-    tty->print("Region %d top = "PTR_FORMAT" used = %x free = %x\n", 
-	       r->regionNumber, r->top(), r->used(), r->free());
+    tty->print("Region %d top = "PTR_FORMAT" used = %x free = %x live = %x\n", 
+	       r->regionNumber, r->top(), r->used(), r->free(), r->getLiveData());
     if (r->next() == NULL)
       return true;
     else return false;
@@ -125,7 +124,7 @@ ShenandoahHeap::ShenandoahHeap(ShenandoahCollectorPolicy* policy) :
   _concurrent_mark_in_progress(false) {
   _pgc = this;
   _scm = new ShenandoahConcurrentMark();
-  epoch = 12;
+  epoch = 1;
 }
 
 
@@ -333,7 +332,7 @@ HeapWord*  ShenandoahHeap::mem_allocate(size_t size,
   numAllocs++;
 
   // This is just an arbitrary number for now.  CHF
-  size_t targetStartMarking = capacity() / 64;
+  size_t targetStartMarking = capacity() / 8;
 
   if (used() > targetStartMarking && !concurrent_mark_in_progress()) {
     tty->print("Capacity = "SIZE_FORMAT" Used = "SIZE_FORMAT" Target = "SIZE_FORMAT" doing initMark\n", capacity(), used(), targetStartMarking);
@@ -661,7 +660,6 @@ void  ShenandoahHeap::gc_epilogue(bool b) {
   nyi();
 }
 
-
 // Apply blk->doHeapRegion() on all committed regions in address order,
 // terminating the iteration early if doHeapRegion() returns true.
 void ShenandoahHeap::heap_region_iterate(ShenandoahHeapRegionClosure* blk) const {
@@ -758,8 +756,83 @@ void ShenandoahHeap::start_concurrent_marking() {
   }
 }
 
+// this should really be a closure as should printHeapLocations
+size_t ShenandoahHeap::calcLiveness(HeapWord* start, HeapWord* end) {
+  HeapWord* cur = NULL;
+  size_t result = 0;
+  for (cur = start; cur < end; cur = cur + oop(cur)->size()) {
+    if (isMarkedCurrent(oop(cur)))
+      result = result + oop(cur)->size();
+  }
+  return result;
+}
+
+
+class CalcLivenessClosure : public ShenandoahHeapRegionClosure {
+  ShenandoahHeap* sh;
+public:
+  CalcLivenessClosure(ShenandoahHeap* heap) : sh(heap) { }
+  
+  bool doHeapRegion(ShenandoahHeapRegion* r) {
+    r-> setLiveData(sh->calcLiveness(r->bottom(), r->top()));
+  if (r->next() == NULL) 
+      return true;
+  else return false;
+  }
+};
+
+
+class VerifyLivenessChildClosure : public ExtendedOopClosure {
+ private:
+
+   template<class T> void do_oop_nv(T* p) {
+   T heap_oop = oopDesc::load_heap_oop(p);
+    if (!oopDesc::is_null(heap_oop)) {
+      oop obj = oopDesc::decode_heap_oop_not_null(heap_oop);
+      guarantee(obj->is_oop(), "is_oop");
+      ShenandoahHeap* sh = (ShenandoahHeap*) Universe::heap();
+      assert(sh->isMarkedCurrent(obj), "Referenced Objects should be marked");
+    }
+   }
+
+  void do_oop(oop* p)       { do_oop_nv(p); }
+  void do_oop(narrowOop* p) { do_oop_nv(p); }
+
+};
+
+class VerifyLivenessParentClosure : public ExtendedOopClosure {
+private:
+
+  template<class T> void do_oop_nv(T* p) {
+    T heap_oop = oopDesc::load_heap_oop(p);
+    if (!oopDesc::is_null(heap_oop)) {
+      oop obj = oopDesc::decode_heap_oop_not_null(heap_oop);
+      guarantee(obj->is_oop(), "is_oop");
+      ShenandoahHeap* sh = (ShenandoahHeap*) Universe::heap();
+      if (sh->isMarkedCurrent(obj)) {
+ 	VerifyLivenessChildClosure childClosure;
+ 	obj->oop_iterate(&childClosure);
+      }
+    }
+  }
+
+  void do_oop(oop* p)       { do_oop_nv(p); }
+  void do_oop(narrowOop* p) { do_oop_nv(p); }
+
+};
+
+void ShenandoahHeap::verify_live() {
+  VerifyLivenessParentClosure verifyLive;
+  oop_iterate(&verifyLive);
+}
+
 void ShenandoahHeap::stop_concurrent_marking() {
+  assert(concurrent_mark_in_progress(), "How else could we get here?");
   set_concurrent_mark_in_progress(false);
+  CalcLivenessClosure clc(this);
+  heap_region_iterate(&clc);
+  PrintHeapRegionsClosure pc;
+  heap_region_iterate(&pc);
 }
 
 bool ShenandoahHeap::concurrent_mark_in_progress() {
@@ -770,3 +843,5 @@ bool ShenandoahHeap::set_concurrent_mark_in_progress(bool in_progress) {
   _concurrent_mark_in_progress = in_progress;
   JavaThread::satb_mark_queue_set().set_active_all_threads(in_progress, ! in_progress);
 }
+
+
