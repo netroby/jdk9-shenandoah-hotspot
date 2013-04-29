@@ -49,8 +49,10 @@ void ShenandoahConcurrentThread::run() {
          scm->markFromRoots();
       } 
       SCMCheckpointRootsFinalClosure final_cl(scm);
+      /*
       VM_ShenandoahFinal op;
       VMThread::execute(&op);
+      */
       }
    }
 }

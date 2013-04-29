@@ -7,7 +7,7 @@
 // VM_operations for the Shenandoah Collector.
 // For now we are just doing two pauses.  The initial marking pause, and the final finish up marking and perform evacuation pause.
 //    VM_ShenandoahInitMark
-//    VM_ShenandoahFinal
+//    VM_ShenandoahFinishMark
 
 class VM_ShenandoahInitMark: public VM_Operation {
   
@@ -21,14 +21,14 @@ public:
   }
 };
 
-class VM_ShenandoahFinal: public VM_Operation {
+class VM_ShenandoahFinishMark: public VM_Operation {
 
  public:
-  virtual VMOp_Type type() const { return VMOp_ShenandoahFinal;}
+  virtual VMOp_Type type() const { return VMOp_ShenandoahFinishMark;}
   virtual void doit();
 
   virtual const char* name() const {
-    return "Shenandoah Final";
+    return "Shenandoah Finish Mark";
   }
 
 };

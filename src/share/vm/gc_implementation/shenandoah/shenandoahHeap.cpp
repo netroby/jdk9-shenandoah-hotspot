@@ -337,8 +337,7 @@ HeapWord*  ShenandoahHeap::mem_allocate(size_t size,
 
   if (used() > targetStartMarking && !concurrent_mark_in_progress()) {
     tty->print("Capacity = "SIZE_FORMAT" Used = "SIZE_FORMAT" Target = "SIZE_FORMAT" doing initMark\n", capacity(), used(), targetStartMarking);
-    VM_ShenandoahInitMark initMark;
-    VMThread::execute(&initMark);
+    mark();
 
     //    PrintHeapObjectsClosure printObjs;
     //    heap_region_iterate(&printObjs);
@@ -348,6 +347,16 @@ HeapWord*  ShenandoahHeap::mem_allocate(size_t size,
   return mem_allocate_locked(size, gc_overhead_limit_was_exceeded);
 }
 
+void ShenandoahHeap::mark() {
+    VM_ShenandoahInitMark initMark;
+    VMThread::execute(&initMark);
+    
+    concurrentMark()->markFromRoots();
+
+    VM_ShenandoahFinishMark finishMark;
+    VMThread::execute(&finishMark);
+
+}
 
 size_t  ShenandoahHeap::unsafe_max_tlab_alloc(Thread *thread) const {
   return 0;

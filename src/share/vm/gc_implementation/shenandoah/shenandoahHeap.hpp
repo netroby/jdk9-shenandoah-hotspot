@@ -131,6 +131,8 @@ private:
   bool set_concurrent_mark_in_progress(bool in_progress);
   bool concurrent_mark_in_progress();
 
+  void mark();
+
   // TODO: Important! Implement is_obj_ill() in order to make the write barrier correct.
 };
 

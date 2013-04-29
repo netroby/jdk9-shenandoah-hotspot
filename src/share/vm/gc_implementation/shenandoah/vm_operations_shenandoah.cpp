@@ -3,11 +3,12 @@
 
 void VM_ShenandoahInitMark::doit() {
   ShenandoahHeap *sh = (ShenandoahHeap*) Universe::heap();
-  sh->concurrentMark()->markFromRoots();
+  sh->start_concurrent_marking();
 }
 
-void VM_ShenandoahFinal::doit() {
+void VM_ShenandoahFinishMark::doit() {
   ShenandoahHeap *sh = (ShenandoahHeap*) Universe::heap();
+  sh->stop_concurrent_marking();
   sh->concurrentMark()->finishMarkFromRoots();
 }
   
