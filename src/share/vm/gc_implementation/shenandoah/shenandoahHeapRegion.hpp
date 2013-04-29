@@ -9,6 +9,7 @@ public:
    ShenandoahHeapRegion* _next;
    int regionNumber;
    static size_t RegionSizeBytes;
+   size_t liveData;
    MemRegion reserved;
 
 
@@ -23,6 +24,9 @@ public:
   // Roll back the previous allocation of an object with specified size.
   // Returns TRUE when successful, FALSE if not successful or not supported.
   bool rollback_allocation(uint size);
+  void clearLiveData() {liveData = 0;}
+  void setLiveData(size_t s) {liveData = s;}
+  size_t getLiveData() { return liveData;}
 };
 
 

@@ -124,16 +124,22 @@ public:
 
   void start_concurrent_marking();
   void stop_concurrent_marking();
-
   ShenandoahConcurrentMark* concurrentMark() { return _scm;}
+  size_t calcLiveness(HeapWord* start, HeapWord* end);
+  bool isMarkedPrev(oop obj) const { return obj->age() == epoch - 1;}
+  bool isMarkedCurrent(oop obj) const { return obj->age() == epoch;}
+  bool is_obj_ill(oop obj) const { return isMarkedPrev(obj);}
+
 
 private:
   bool set_concurrent_mark_in_progress(bool in_progress);
   bool concurrent_mark_in_progress();
-
+  void verify_live();
   void mark();
 
-  // TODO: Important! Implement is_obj_ill() in order to make the write barrier correct.
+
+
+
 };
 
   
