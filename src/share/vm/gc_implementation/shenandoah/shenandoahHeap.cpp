@@ -739,6 +739,10 @@ void ShenandoahHeap::start_concurrent_marking() {
   }
 }
 
+void ShenandoahHeap::stop_concurrent_marking() {
+  set_concurrent_mark_in_progress(false);
+}
+
 bool ShenandoahHeap::concurrent_mark_in_progress() {
   return _concurrent_mark_in_progress;
 }

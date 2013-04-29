@@ -100,11 +100,15 @@ void ShenandoahConcurrentMark::scanRootRegions() {
 }
 
 void ShenandoahConcurrentMark::markFromRoots() {
+  //tty->print_cr("STOPPING TEH WORLD: before marking");
   tty->print_cr("Starting markFromRoots");
   ShenandoahHeap* sh = (ShenandoahHeap *) Universe::heap();
   sh->start_concurrent_marking();
   SCMConcurrentMarkingTask* markingTask = new SCMConcurrentMarkingTask(this);
   sh->workers()->run_task(markingTask);
+
+  sh->stop_concurrent_marking();
+  //tty->print_cr("RESUMING TEH WORLD: after marking");
 }
 
 void ShenandoahConcurrentMark::finishMarkFromRoots() {

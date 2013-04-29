@@ -122,12 +122,14 @@ public:
 
   bool _concurrent_mark_in_progress;
 
-  bool concurrent_mark_in_progress();
-
-  bool set_concurrent_mark_in_progress(bool in_progress);
-
   void start_concurrent_marking();
+  void stop_concurrent_marking();
+
   ShenandoahConcurrentMark* concurrentMark() { return _scm;}
+
+private:
+  bool set_concurrent_mark_in_progress(bool in_progress);
+  bool concurrent_mark_in_progress();
 
   // TODO: Important! Implement is_obj_ill() in order to make the write barrier correct.
 };
