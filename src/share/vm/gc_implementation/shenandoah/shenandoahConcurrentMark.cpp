@@ -32,40 +32,13 @@ SCMRootRegionScanTask::SCMRootRegionScanTask(ShenandoahConcurrentMark* cm) :
 void SCMRootRegionScanTask::work(uint worker_id) {
 }
 
-// Fixme CHF should be merged with version in  shenandoahHeap.cpp
-class ShenandoahMarkRefsClosure2 : public OopsInGenClosure {
-  uint epoch;
-public: 
-  ShenandoahMarkRefsClosure2(uint e) : epoch(e) {}
-
-  void do_oop_work(oop* p) {
-    oop obj = *p;
-    ShenandoahHeap* sh = (ShenandoahHeap* ) Universe::heap();
-    if (obj != NULL && (sh->is_in(obj))) {
-      sh->concurrentMark()->addTask(obj);
-	if (obj->has_displaced_mark()) {
-	  if (obj->displaced_mark()->age() != epoch) {
-	    obj->set_displaced_mark(obj->displaced_mark()->set_age(epoch));
-	  }
-	} else {
-	  if (obj->mark()->age() != epoch) {
-	    obj->set_mark(obj->mark()->set_age(epoch));
-	  }
-	}
-      }
-  }
-
-  void do_oop(narrowOop* p) {assert(false, "narrorOops not supported");}
-  void do_oop(oop* p) {do_oop_work(p);}
-};
-
 SCMConcurrentMarkingTask::SCMConcurrentMarkingTask(ShenandoahConcurrentMark* cm) :
   AbstractGangTask("Root Region Scan"), _cm(cm) { }
 
 void SCMConcurrentMarkingTask::work(uint worker_id) {
   oop obj = _cm->popTask(worker_id);
   while (obj != NULL) {
-    ShenandoahMarkRefsClosure2 cl(_cm->getEpoch());
+    ShenandoahMarkRefsClosure cl(_cm->getEpoch());
     obj->oop_iterate(&cl);
     obj = _cm->popTask(worker_id);
   }
@@ -111,8 +84,28 @@ void ShenandoahConcurrentMark::markFromRoots() {
 }
 
 void ShenandoahConcurrentMark::finishMarkFromRoots() {
+
+  ShenandoahHeap* sh = (ShenandoahHeap *) Universe::heap();
+  // Trace any (new) unmarked root references.
+  sh->prepare_unmarked_root_objs();
+
+  drain_satb_buffers();
+
+  // TODO: I think we can parallelize this.
   SCMConcurrentMarkingTask markingTask(this);
   markingTask.work(0);
+}
+
+void ShenandoahConcurrentMark::drain_satb_buffers() {
+  ShenandoahMarkObjsClosure cl(epoch);
+
+  // This can be parallelized. See g1/concurrentMark.cpp
+  SATBMarkQueueSet& satb_mq_set = JavaThread::satb_mark_queue_set();
+  satb_mq_set.set_closure(&cl);
+  while (satb_mq_set.apply_closure_to_completed_buffer());
+  satb_mq_set.iterate_closure_all_threads();
+  satb_mq_set.set_closure(NULL);
+
 }
 
 void ShenandoahConcurrentMark::checkpointRootsFinal() {

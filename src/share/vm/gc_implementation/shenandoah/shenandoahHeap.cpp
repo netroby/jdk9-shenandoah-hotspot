@@ -698,50 +698,60 @@ public:
  }
 
 
-class ShenandoahMarkRefsClosure : public OopsInGenClosure {
-  uint epoch;
-public: 
-  ShenandoahMarkRefsClosure(uint e) : epoch(e) {
-  }
+ShenandoahMarkRefsClosure::ShenandoahMarkRefsClosure(uint e) : epoch(e) {
+}
 
-  void do_oop_work(oop* p) {
-    oop obj = *p;
-    ShenandoahHeap* sh = (ShenandoahHeap* ) Universe::heap();
-    if (obj != NULL && (sh->is_in(obj))) {
-	sh->concurrentMark()->addTask(obj);
-	if (obj->has_displaced_mark()) {
-	  if (obj->displaced_mark()->age() != epoch) {
-	    obj->set_displaced_mark(obj->displaced_mark()->set_age(epoch));
-	  }
-	} else {
-	  if (obj->mark()->age() != epoch) {
-	    obj->set_mark(obj->mark()->set_age(epoch));
-	  }
-	}
+void ShenandoahMarkRefsClosure::do_oop_work(oop* p) {
+  oop obj = *p;
+  ShenandoahMarkObjsClosure cl(epoch);
+  cl.do_object(obj);
+}
+
+void ShenandoahMarkRefsClosure::do_oop(narrowOop* p) {
+  assert(false, "narrorOops not supported");
+}
+
+void ShenandoahMarkRefsClosure::do_oop(oop* p) {
+  do_oop_work(p);
+}
+
+ShenandoahMarkObjsClosure::ShenandoahMarkObjsClosure(uint e) : epoch(e) {
+}
+
+void ShenandoahMarkObjsClosure::do_object(oop obj) {
+  ShenandoahHeap* sh = (ShenandoahHeap* ) Universe::heap();
+  if (obj != NULL && (sh->is_in(obj))) {
+    if (obj->has_displaced_mark()) {
+      if (obj->displaced_mark()->age() != epoch) {
+        obj->set_displaced_mark(obj->displaced_mark()->set_age(epoch));
+        sh->concurrentMark()->addTask(obj);
       }
+    } else {
+      if (obj->mark()->age() != epoch) {
+        obj->set_mark(obj->mark()->set_age(epoch));
+        sh->concurrentMark()->addTask(obj);
+      }
+    }
   }
-
-  void do_oop(narrowOop* p) {assert(false, "narrorOops not supported");}
-  void do_oop(oop* p) {do_oop_work(p);}
-};
+}
 
   /* We are going to add all the roots to taskqueue 0 for now.  Later on we should experiment with a better partioning. */
-
-void ShenandoahHeap::start_concurrent_marking() {
-  concurrentMark()->setEpoch(epoch);
+void ShenandoahHeap::prepare_unmarked_root_objs() {
   ShenandoahMarkRefsClosure rootsCl(epoch);
   CodeBlobToOopClosure blobsCl(&rootsCl, false);
   KlassToOopClosure klassCl(&rootsCl);
 
-  HandleMark _hm;
-
   const int so = SO_AllClasses | SO_Strings | SO_CodeCache;
 
+  process_strong_roots(true, false, ScanningOption(so), &rootsCl, &blobsCl, &klassCl);
+}
+
+void ShenandoahHeap::start_concurrent_marking() {
+  concurrentMark()->setEpoch(epoch);
   if (! concurrent_mark_in_progress()) {
     set_concurrent_mark_in_progress(true);
 
-    // This is not a concurrent marking yet.  it's a stop the world marking.
-    process_strong_roots(true, false, ScanningOption(so), &rootsCl, &blobsCl, &klassCl);
+    prepare_unmarked_root_objs();
   }
 }
 
