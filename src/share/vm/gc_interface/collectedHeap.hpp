@@ -72,8 +72,8 @@ class GCHeapLog : public EventLogBase<GCMessage> {
 //   SharedHeap
 //     GenCollectedHeap
 //     G1CollectedHeap
+//     ShenandoahHeap
 //   ParallelScavengeHeap
-//   ShenandoahHeap
 //
 class CollectedHeap : public CHeapObj<mtInternal> {
   friend class VMStructs;
@@ -152,6 +152,9 @@ class CollectedHeap : public CHeapObj<mtInternal> {
 
   // Clears an allocated object.
   inline static void init_obj(HeapWord* obj, size_t size);
+
+  // Collector specific initialization.
+  virtual void collector_specific_init_obj(HeapWord* obj, size_t size) { }
 
   // Filler object utilities.
   static inline size_t filler_array_hdr_size();

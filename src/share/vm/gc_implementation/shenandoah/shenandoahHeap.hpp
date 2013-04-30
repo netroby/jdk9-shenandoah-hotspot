@@ -129,7 +129,7 @@ public:
   bool isMarkedPrev(oop obj) const { return obj->age() == epoch - 1;}
   bool isMarkedCurrent(oop obj) const { return obj->age() == epoch;}
   bool is_obj_ill(oop obj) const { return isMarkedPrev(obj);}
-
+  virtual void collector_specific_init_obj(HeapWord* obj, size_t size);
 
 private:
   bool set_concurrent_mark_in_progress(bool in_progress);

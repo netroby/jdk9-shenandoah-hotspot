@@ -335,11 +335,10 @@ HeapWord*  ShenandoahHeap::mem_allocate(size_t size,
   size_t targetStartMarking = capacity() / 8;
 
   if (used() > targetStartMarking && !concurrent_mark_in_progress()) {
+
     tty->print("Capacity = "SIZE_FORMAT" Used = "SIZE_FORMAT" Target = "SIZE_FORMAT" doing initMark\n", capacity(), used(), targetStartMarking);
     mark();
 
-    //    PrintHeapObjectsClosure printObjs;
-    //    heap_region_iterate(&printObjs);
   }
 
   MutexLocker ml(Heap_lock);
@@ -834,4 +833,9 @@ bool ShenandoahHeap::set_concurrent_mark_in_progress(bool in_progress) {
   JavaThread::satb_mark_queue_set().set_active_all_threads(in_progress, ! in_progress);
 }
 
+void ShenandoahHeap::collector_specific_init_obj(HeapWord* hw, size_t size) {
+  oop obj = oop(hw);
 
+  // Assuming for now that objects can't be created already locked
+  obj->set_mark(obj->mark()->set_age(epoch));
+}
