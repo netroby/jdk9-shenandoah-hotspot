@@ -41,6 +41,7 @@ void CollectedHeap::post_allocation_setup_common(KlassHandle klass,
                                                  HeapWord* obj) {
   post_allocation_setup_no_klass_install(klass, obj);
   post_allocation_install_obj_klass(klass, oop(obj));
+  Universe::heap()->post_allocation_collector_specific_setup(obj);
 }
 
 void CollectedHeap::post_allocation_setup_no_klass_install(KlassHandle klass,
@@ -188,7 +189,6 @@ void CollectedHeap::init_obj(HeapWord* obj, size_t size) {
   assert(size >= hs, "unexpected object size");
   ((oop)obj)->set_klass_gap(0);
   Copy::fill_to_aligned_words(obj + hs, size - hs);
-  Universe::heap()->collector_specific_init_obj(obj, size);
 }
 
 oop CollectedHeap::obj_allocate(KlassHandle klass, int size, TRAPS) {

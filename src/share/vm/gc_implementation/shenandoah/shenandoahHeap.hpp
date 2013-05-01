@@ -126,10 +126,11 @@ public:
   void stop_concurrent_marking();
   ShenandoahConcurrentMark* concurrentMark() { return _scm;}
   size_t calcLiveness(HeapWord* start, HeapWord* end);
-  bool isMarkedPrev(oop obj) const { return obj->age() == epoch - 1;}
-  bool isMarkedCurrent(oop obj) const { return obj->age() == epoch;}
+  bool isMarkedPrev(oop obj) const;
+  bool isMarkedCurrent(oop obj) const;
+  bool isMarked(oop obj)  { return isMarkedPrev(obj) || isMarkedCurrent(obj);}
   bool is_obj_ill(oop obj) const { return isMarkedPrev(obj);}
-  virtual void collector_specific_init_obj(HeapWord* obj, size_t size);
+  virtual void post_allocation_collector_specific_setup(HeapWord* obj);
 
   void mark_object_live(oop obj, bool enqueue);
 
@@ -142,9 +143,8 @@ private:
   bool concurrent_mark_in_progress();
   void verify_live();
   void mark();
-
-
-
+  // This is just a temporary hack to limit us to one concurrent mark.
+  bool have_started_concurrent_mark;
 
 };
 

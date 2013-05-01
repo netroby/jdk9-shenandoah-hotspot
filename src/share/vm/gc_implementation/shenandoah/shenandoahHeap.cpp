@@ -121,10 +121,11 @@ jint ShenandoahHeap::initialize() {
 ShenandoahHeap::ShenandoahHeap(ShenandoahCollectorPolicy* policy) : 
   SharedHeap(policy),
   _pgc_policy(policy), 
-  _concurrent_mark_in_progress(false) {
+  _concurrent_mark_in_progress(false),
+  have_started_concurrent_mark(false),
+  epoch(1) {
   _pgc = this;
   _scm = new ShenandoahConcurrentMark();
-  epoch = 1;
 }
 
 
@@ -334,7 +335,8 @@ HeapWord*  ShenandoahHeap::mem_allocate(size_t size,
   // This is just an arbitrary number for now.  CHF
   size_t targetStartMarking = capacity() / 8;
 
-  if (used() > targetStartMarking && !concurrent_mark_in_progress()) {
+  if (used() > targetStartMarking && !concurrent_mark_in_progress() && !have_started_concurrent_mark) {
+    have_started_concurrent_mark = true;
 
     tty->print("Capacity = "SIZE_FORMAT" Used = "SIZE_FORMAT" Target = "SIZE_FORMAT" doing initMark\n", capacity(), used(), targetStartMarking);
     mark();
@@ -346,6 +348,8 @@ HeapWord*  ShenandoahHeap::mem_allocate(size_t size,
 }
 
 void ShenandoahHeap::mark() {
+
+    epoch = (epoch + 1) % 8;
     VM_ShenandoahInitMark initMark;
     VMThread::execute(&initMark);
     
@@ -548,6 +552,7 @@ void ShenandoahHeap::verify(bool silent , VerifyOption vo) {
 
     object_iterate(&heapCl);
     // TODO: Implement rest of it.
+    verify_live();
   } else {
     if (!silent) gclog_or_tty->print("(SKIPPING roots, heapRegions, remset) ");
   }
@@ -760,7 +765,7 @@ size_t ShenandoahHeap::calcLiveness(HeapWord* start, HeapWord* end) {
   HeapWord* cur = NULL;
   size_t result = 0;
   for (cur = start; cur < end; cur = cur + oop(cur)->size()) {
-    if (isMarkedCurrent(oop(cur)))
+    if (isMarked(oop(cur)))
       result = result + oop(cur)->size();
   }
   return result;
@@ -790,7 +795,7 @@ class VerifyLivenessChildClosure : public ExtendedOopClosure {
       oop obj = oopDesc::decode_heap_oop_not_null(heap_oop);
       guarantee(obj->is_oop(), "is_oop");
       ShenandoahHeap* sh = (ShenandoahHeap*) Universe::heap();
-      assert(sh->isMarkedCurrent(obj), "Referenced Objects should be marked");
+      assert(sh->isMarked(obj), "Referenced Objects should be marked");
     }
    }
 
@@ -808,7 +813,7 @@ private:
       oop obj = oopDesc::decode_heap_oop_not_null(heap_oop);
       guarantee(obj->is_oop(), "is_oop");
       ShenandoahHeap* sh = (ShenandoahHeap*) Universe::heap();
-      if (sh->isMarkedCurrent(obj)) {
+      if (sh->isMarked(obj)) {
  	VerifyLivenessChildClosure childClosure;
  	obj->oop_iterate(&childClosure);
       }
@@ -843,9 +848,27 @@ bool ShenandoahHeap::set_concurrent_mark_in_progress(bool in_progress) {
   JavaThread::satb_mark_queue_set().set_active_all_threads(in_progress, ! in_progress);
 }
 
-void ShenandoahHeap::collector_specific_init_obj(HeapWord* hw, size_t size) {
+markOop getMark(oop obj) {
+  if (obj->has_displaced_mark())
+    return obj->displaced_mark();
+  else
+    return obj->mark();
+}
+
+void ShenandoahHeap::post_allocation_collector_specific_setup(HeapWord* hw) {
   oop obj = oop(hw);
 
   // Assuming for now that objects can't be created already locked
-  obj->set_mark(obj->mark()->set_age(epoch));
+  obj->set_mark(getMark(obj)->set_age(epoch));
+
 }
+
+
+bool ShenandoahHeap::isMarkedPrev(oop obj) const {
+  return getMark(obj)->age() == epoch -1;
+}
+
+bool ShenandoahHeap::isMarkedCurrent(oop obj) const {
+  return getMark(obj)->age() == epoch;
+}
+  

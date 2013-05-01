@@ -154,7 +154,7 @@ class CollectedHeap : public CHeapObj<mtInternal> {
   inline static void init_obj(HeapWord* obj, size_t size);
 
   // Collector specific initialization.
-  virtual void collector_specific_init_obj(HeapWord* obj, size_t size) { }
+  virtual void post_allocation_collector_specific_setup(HeapWord* obj) { }
 
   // Filler object utilities.
   static inline size_t filler_array_hdr_size();
