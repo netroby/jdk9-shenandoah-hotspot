@@ -41,6 +41,7 @@ void CollectedHeap::post_allocation_setup_common(KlassHandle klass,
                                                  HeapWord* obj) {
   post_allocation_setup_no_klass_install(klass, obj);
   post_allocation_install_obj_klass(klass, oop(obj));
+  Universe::heap()->post_allocation_collector_specific_setup(obj);
 }
 
 void CollectedHeap::post_allocation_setup_no_klass_install(KlassHandle klass,
