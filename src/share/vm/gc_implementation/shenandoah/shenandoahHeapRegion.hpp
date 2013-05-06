@@ -27,6 +27,10 @@ public:
   void clearLiveData() {liveData = 0;}
   void setLiveData(size_t s) {liveData = s;}
   size_t getLiveData() { return liveData;}
+
+  size_t garbage() {
+    return used() - liveData;
+  }
 };
 
 
