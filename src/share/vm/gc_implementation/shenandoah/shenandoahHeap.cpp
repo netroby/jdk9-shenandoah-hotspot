@@ -333,7 +333,7 @@ HeapWord*  ShenandoahHeap::mem_allocate(size_t size,
   numAllocs++;
 
   // This is just an arbitrary number for now.  CHF
-  size_t targetStartMarking = capacity() / 8;
+  size_t targetStartMarking = capacity() / 4;
 
   if (used() > targetStartMarking && !concurrent_mark_in_progress() && !have_started_concurrent_mark) {
     have_started_concurrent_mark = true;
@@ -357,7 +357,8 @@ void ShenandoahHeap::mark() {
 
     VM_ShenandoahFinishMark finishMark;
     VMThread::execute(&finishMark);
-
+    
+    verify_liveness_after_concurrent_mark();
 }
 
 size_t  ShenandoahHeap::unsafe_max_tlab_alloc(Thread *thread) const {
@@ -752,7 +753,6 @@ void ShenandoahHeap::prepare_unmarked_root_objs() {
 }
 
 void ShenandoahHeap::start_concurrent_marking() {
-  concurrentMark()->setEpoch(epoch);
   if (! concurrent_mark_in_progress()) {
     set_concurrent_mark_in_progress(true);
 
@@ -765,7 +765,7 @@ size_t ShenandoahHeap::calcLiveness(HeapWord* start, HeapWord* end) {
   HeapWord* cur = NULL;
   size_t result = 0;
   for (cur = start; cur < end; cur = cur + oop(cur)->size()) {
-    if (isMarked(oop(cur)))
+    if (isMarkedCurrent(oop(cur)))
       result = result + oop(cur)->size();
   }
   return result;
@@ -833,8 +833,10 @@ void ShenandoahHeap::verify_live() {
 void ShenandoahHeap::stop_concurrent_marking() {
   assert(concurrent_mark_in_progress(), "How else could we get here?");
   set_concurrent_mark_in_progress(false);
+  
   CalcLivenessClosure clc(this);
   heap_region_iterate(&clc);
+  
   PrintHeapRegionsClosure pc;
   heap_region_iterate(&pc);
 }
@@ -872,3 +874,52 @@ bool ShenandoahHeap::isMarkedCurrent(oop obj) const {
   return getMark(obj)->age() == epoch;
 }
   
+class VerifyLivenessAfterConcurrentMarkChildClosure : public ExtendedOopClosure {
+ private:
+
+   template<class T> void do_oop_nv(T* p) {
+   T heap_oop = oopDesc::load_heap_oop(p);
+    if (!oopDesc::is_null(heap_oop)) {
+      oop obj = oopDesc::decode_heap_oop_not_null(heap_oop);
+      guarantee(obj->is_oop(), "is_oop");
+      ShenandoahHeap* sh = (ShenandoahHeap*) Universe::heap();
+      tty->print("Verifying liveness of reference obj "PTR_FORMAT"\n", obj);
+      obj->print();
+      assert(sh->isMarkedCurrent(obj), "Referenced Objects should be marked");
+    }
+   }
+
+  void do_oop(oop* p)       { do_oop_nv(p); }
+  void do_oop(narrowOop* p) { do_oop_nv(p); }
+
+};
+
+class VerifyLivenessAfterConcurrentMarkParentClosure : public ExtendedOopClosure {
+private:
+
+  template<class T> void do_oop_nv(T* p) {
+    T heap_oop = oopDesc::load_heap_oop(p);
+    if (!oopDesc::is_null(heap_oop)) {
+      oop obj = oopDesc::decode_heap_oop_not_null(heap_oop);
+      guarantee(obj->is_oop(), "is_oop");
+      ShenandoahHeap* sh = (ShenandoahHeap*) Universe::heap();
+      if (sh->isMarkedCurrent(obj)) {
+	tty->print("Verifying liveness of objects pointed to by "PTR_FORMAT"\n", obj);
+	obj->print();
+ 	VerifyLivenessAfterConcurrentMarkChildClosure childClosure;
+ 	obj->oop_iterate(&childClosure);
+      }
+    }
+  }
+
+  void do_oop(oop* p)       { do_oop_nv(p); }
+  void do_oop(narrowOop* p) { do_oop_nv(p); }
+
+};
+
+// This should only be called after we finish concurrent mark before we start up mutator threads again.
+
+void ShenandoahHeap::verify_liveness_after_concurrent_mark() {
+  VerifyLivenessAfterConcurrentMarkParentClosure verifyLive;
+  oop_iterate(&verifyLive);
+}

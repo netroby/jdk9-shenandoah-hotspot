@@ -32,32 +32,47 @@ SCMRootRegionScanTask::SCMRootRegionScanTask(ShenandoahConcurrentMark* cm) :
 void SCMRootRegionScanTask::work(uint worker_id) {
 }
 
-SCMConcurrentMarkingTask::SCMConcurrentMarkingTask(ShenandoahConcurrentMark* cm) :
-  AbstractGangTask("Root Region Scan"), _cm(cm) { }
+// We need to revisit this  CHF
+// class SCMTerminatorTerminator : public TerminatorTerminator  { // So good we named it twice
+//   bool should_exit_termination() {
+//     return true;
+//   }
+// };
+
+SCMConcurrentMarkingTask::SCMConcurrentMarkingTask(ShenandoahConcurrentMark* cm, 
+						   ParallelTaskTerminator* terminator) :
+  AbstractGangTask("Root Region Scan"), _cm(cm), _terminator(terminator) { }
 
 void SCMConcurrentMarkingTask::work(uint worker_id) {
-  oop obj = _cm->popTask(worker_id);
-  while (obj != NULL) {
-    ShenandoahMarkRefsClosure cl(_cm->getEpoch());
+  int seed = 17;
+  ShenandoahHeap* sh = (ShenandoahHeap*) Universe::heap();
+  ShenandoahMarkRefsClosure cl(sh->getEpoch());
+
+  while (true) {
+    oop obj;
+    
+    if (!_cm->task_queues()->queue(worker_id)->pop_local(obj)) {
+      if (!_cm->task_queues()->steal(worker_id, &seed, obj)) {
+	if (_terminator->offer_termination())
+	  break;  
+	else 
+	  continue;
+      }
+    }
+    // We got one.
+    
+    assert(obj->is_oop(), "Oops, not an oop");
+    tty->print("popping object: "PTR_FORMAT"\n", obj);
     obj->oop_iterate(&cl);
-    obj = _cm->popTask(worker_id);
   }
 }
 
-// ShenandoahConcurrentMark::ShenandoahConcurrentMark() :
-//   _max_worker_id(MAX2((uint)ParallelGCThreads, 1U)),
-//   _task_queues(new SCMTaskQueueSet((int) _max_worker_id)),
-//   _terminator(ParallelTaskTerminator((int) _max_worker_id, _task_queues))
-// {
-  
-// }
-
 void ShenandoahConcurrentMark::initialize(FlexibleWorkGang* workers) {
-  uint _max_worker_id = MAX2((uint)ParallelGCThreads, 1U);
- _task_queues = new SCMObjToScanQueueSet((int) _max_worker_id);
-
-  tty->print("ActiveWorkers  = %d total workers = %d\n", workers->active_workers(), 
+  tty->print("ActiveWorkers  = %d total workers = %d\n", 
+	     workers->active_workers(), 
 	     workers->total_workers());
+  _max_worker_id = MAX2((uint)ParallelGCThreads, 1U);
+  _task_queues = new SCMObjToScanQueueSet((int) _max_worker_id);
 
   for (uint i = 0; i < _max_worker_id; ++i) {
     SCMObjToScanQueue* task_queue = new SCMObjToScanQueue();
@@ -73,31 +88,63 @@ void ShenandoahConcurrentMark::scanRootRegions() {
 }
 
 void ShenandoahConcurrentMark::markFromRoots() {
-  //tty->print_cr("STOPPING TEH WORLD: before marking");
+  tty->print_cr("STOPPING THE WORLD: before marking");
   tty->print_cr("Starting markFromRoots");
   ShenandoahHeap* sh = (ShenandoahHeap *) Universe::heap();
+  ParallelTaskTerminator terminator(_max_worker_id, _task_queues);
 
-  SCMConcurrentMarkingTask* markingTask = new SCMConcurrentMarkingTask(this);
+  
+  SCMConcurrentMarkingTask* markingTask = new SCMConcurrentMarkingTask(this, &terminator);
   sh->workers()->run_task(markingTask);
-
-  //tty->print_cr("RESUMING TEH WORLD: after marking");
+  
+  tty->print_cr("Finishing markFromRoots");
+  tty->print_cr("RESUMING THE WORLD: after marking");
 }
 
 void ShenandoahConcurrentMark::finishMarkFromRoots() {
-
+  tty->print_cr("Starting finishMarkFromRoots");
   ShenandoahHeap* sh = (ShenandoahHeap *) Universe::heap();
+  //  ParallelTaskTerminator terminator(_max_worker_id, _task_queues);
   // Trace any (new) unmarked root references.
   sh->prepare_unmarked_root_objs();
 
   drain_satb_buffers();
 
   // TODO: I think we can parallelize this.
-  SCMConcurrentMarkingTask markingTask(this);
-  markingTask.work(0);
+  //  SCMConcurrentMarkingTask markingTask(this, &terminator);
+  //  markingTask.work(0);
+
+  // For Now doing this sequentially.
+
+  // First make sure queues other than 0 are empty.
+  for (int i = 1; i < (int)_max_worker_id; i++)
+    assert(_task_queues->queue(i)->is_empty(), "Only using task queue 0 for now");
+
+  ShenandoahMarkRefsClosure cl(sh->getEpoch());
+  oop obj;
+
+  bool found = _task_queues->queue(0)->pop_local(obj);
+
+  while (found) {
+    tty->print("Pop single threaded Task: obj = "PTR_FORMAT"\n", obj);
+    assert(obj->is_oop(), "Oops, not an oop");
+    obj->oop_iterate(&cl);
+    found = _task_queues->queue(0)->pop_local(obj);
+  }
+
+  assert(_task_queues->queue(0)->is_empty(), "Should be empty");
+  tty->print_cr("Finishing finishMarkFromRoots");
+  for (int i = 0; i <(int)_max_worker_id; i++) {
+    tty->print("Queue: %d:", i);
+    _task_queues->queue(i)->stats.print(tty, 10);
+    tty->print("/n");
+    //    _task_queues->queue(i)->stats.verify();
+  }
 }
 
 void ShenandoahConcurrentMark::drain_satb_buffers() {
-  ShenandoahMarkObjsClosure cl(epoch);
+  ShenandoahHeap* sh = (ShenandoahHeap*) Universe::heap();
+  ShenandoahMarkObjsClosure cl(sh->getEpoch());
 
   // This can be parallelized. See g1/concurrentMark.cpp
   SATBMarkQueueSet& satb_mq_set = JavaThread::satb_mark_queue_set();
@@ -109,18 +156,35 @@ void ShenandoahConcurrentMark::drain_satb_buffers() {
 }
 
 void ShenandoahConcurrentMark::checkpointRootsFinal() {
-  SCMConcurrentMarkingTask markingTask(this);
+  ParallelTaskTerminator terminator(_max_worker_id, _task_queues);
+  SCMConcurrentMarkingTask markingTask(this, &terminator);
   markingTask.work(0);
 }
 
+int getAge(oop obj) {
+  ShenandoahHeap* sh = (ShenandoahHeap*) Universe::heap();
+  assert(sh->is_in((HeapWord*) obj), "We are only interested in heap objects");
+  if (obj->has_displaced_mark())
+    return obj->displaced_mark()->age();
+  else return obj->mark()->age();
+}
 
 
 void ShenandoahConcurrentMark::addTask(oop obj, int q) {
-  //  tty->print("addTask q = %d\n", q);
-  if (obj->age() != epoch) {
-    if (!_task_queues->queue(q)->push(obj)) {
-      assert(false, "oops_overflowed_our_queues");
-    }
+  ShenandoahHeap* sh = (ShenandoahHeap*) Universe::heap();
+  //  tty->print("addTask:q = %d obj = "PTR_FORMAT"\n", q, obj);
+  int epoch = sh->getEpoch();
+  int age = getAge(obj);
+
+  assert(obj->is_oop(), "Oops, not an oop");
+
+  tty->print("addTask q = %d: obj = "PTR_FORMAT" epoch = %d object age = %d\n", q, obj, epoch, age);
+
+  assert(age == epoch, "Only push marked objects on the queue");
+  assert(sh->is_in((HeapWord*) obj), "Only push heap objects on the queue");
+
+  if (!_task_queues->queue(q)->push(obj)) {
+    assert(false, "oops_overflowed_our_queues");
   }
 }
 
@@ -129,19 +193,32 @@ void ShenandoahConcurrentMark::addTask(oop obj) {
   addTask(obj, 0);
 }
 
-// This queue implementation is wonky
-oop ShenandoahConcurrentMark::popTask(int q) {
-  oop obj;
-  bool result = _task_queues->queue(q)->pop_local(obj);
-  //  tty->print("popTask: q = %d\n", q);
-  if (result) 
-    return obj;
-  else {
-    int seed = 17;
-    result = _task_queues->steal(q, &seed, obj);
-    if (result)
-      return obj;
-    else 
-      return NULL;
-  }
-}
+// // This queue implementation is wonky
+// oop ShenandoahConcurrentMark::popTask(int q) {
+//   oop obj;
+
+//   while (true) {
+//     bool result = _task_queues->queue(q)->pop_local(obj);
+
+//     if (result) {
+//       tty->print("popTask:q = %d obj = "PTR_FORMAT"\n", q, obj);
+
+//       ShenandoahHeap* sh = (ShenandoahHeap*) Universe::heap();
+//       int epoch = sh->getEpoch();
+//       int age = getAge(obj);
+
+//       assert(age == epoch, "Only marked objects on the queue");
+
+//       tty->print("popTask: q = %d obj = "PTR_FORMAT" epoch  = %d objects mark = %d\n", q, obj, epoch, age);
+
+//       return obj;
+//     } else {
+//       int seed = 17;
+//     result = _task_queues->steal(q, &seed, obj);
+//     if (result) {
+//       tty->print("stealTask:q = %d obj = "PTR_FORMAT"\n", q, obj);
+//       return obj;
+//     } else 
+//       return NULL;
+//   }
+// }

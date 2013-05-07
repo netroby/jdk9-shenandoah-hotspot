@@ -39,9 +39,9 @@ private:
   //  Stack<oop, mtGC>* const _overflow_stack;
 
   bool                    _aborted;       
-  uint                    epoch;
 
 public:
+  //  ShenandoahConcurrentMark();
 
   void scanRootRegions();
   void markFromRoots();
@@ -52,12 +52,12 @@ public:
 
   void addTask(oop obj);
   void addTask(oop obj, int worker_id);
-  oop popTask(int worker_id);
-  void setEpoch(uint x) { epoch = x;}
-  uint getEpoch() { return epoch;}
+  //  oop popTask(int worker_id);
 
   uint _max_worker_id;
-
+  ParallelTaskTerminator* _terminator;
+  ParallelTaskTerminator* terminator() { return _terminator;}
+  SCMObjToScanQueueSet* task_queues() { return _task_queues;}
 
   // We need to do this later when the heap is already created.
   void initialize(FlexibleWorkGang* workers);
@@ -78,9 +78,9 @@ public:
 class SCMConcurrentMarkingTask : public AbstractGangTask {
 private:
   ShenandoahConcurrentMark* _cm;
-
+  ParallelTaskTerminator* _terminator;
 public:
-  SCMConcurrentMarkingTask(ShenandoahConcurrentMark* cm);
+  SCMConcurrentMarkingTask(ShenandoahConcurrentMark* cm, ParallelTaskTerminator* terminator);
 
   void work(uint worker_id);
 };

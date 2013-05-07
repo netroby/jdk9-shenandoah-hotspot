@@ -53,10 +53,11 @@ public:
   ShenandoahHeap(ShenandoahCollectorPolicy* policy);
   HeapWord* allocate_new_tlab(size_t word_size);
 
+  uint getEpoch() {return epoch;}
+
   // For now we are ignoring eden.
   inline bool should_alloc_in_eden(size_t size) { return false;}
   void print_on(outputStream* st) const ;
-public:
   
   ShenandoahHeap::Name kind() const {
     return CollectedHeap::ShenandoahHeap;
@@ -142,6 +143,7 @@ private:
   bool set_concurrent_mark_in_progress(bool in_progress);
   bool concurrent_mark_in_progress();
   void verify_live();
+  void verify_liveness_after_concurrent_mark();
   void mark();
   // This is just a temporary hack to limit us to one concurrent mark.
   bool have_started_concurrent_mark;
