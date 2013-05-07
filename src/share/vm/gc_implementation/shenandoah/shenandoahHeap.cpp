@@ -4,7 +4,7 @@
 #include "memory/iterator.hpp"
 #include "memory/oopFactory.hpp"
 #include "memory/universe.hpp"
-
+#include "utilities/copy.hpp"
 #include "gc_implementation/shared/vmGCOperations.hpp"
 
 ShenandoahHeap* ShenandoahHeap::_pgc = NULL;
@@ -122,7 +122,6 @@ ShenandoahHeap::ShenandoahHeap(ShenandoahCollectorPolicy* policy) :
   SharedHeap(policy),
   _pgc_policy(policy), 
   _concurrent_mark_in_progress(false),
-  have_started_concurrent_mark(false),
   epoch(1) {
   _pgc = this;
   _scm = new ShenandoahConcurrentMark();
@@ -269,16 +268,7 @@ HeapWord* ShenandoahHeap::mem_allocate_locked(size_t size,
    if (filler != NULL) {
      result = currentRegion->allocate(size);
      if (result != NULL) {
-       CollectedHeap::fill_with_array(filler, BROOKS_POINTER_OBJ_SIZE, false);
-       markOop mark = oop(filler)->mark();
-       oop(filler)->set_mark(mark->set_age(15));
-       assert(oop(filler)->mark()->age() == 15, "age must be 15 here");
-
-       // Set the brooks pointer
-       HeapWord* first = filler + (BROOKS_POINTER_OBJ_SIZE - 1);
-       uintptr_t first_ptr = (uintptr_t) first;
-       *(unsigned long*)(((unsigned long*)first_ptr)) = (unsigned long) result;
-       //tty->print_cr("result, brooks obj, brooks ptr: %p, %p, %p", result, filler, first);
+       initialize_brooks_ptr(filler, result);
        return result;
      } else {
        currentRegion->rollback_allocation(BROOKS_POINTER_OBJ_SIZE);
@@ -335,8 +325,7 @@ HeapWord*  ShenandoahHeap::mem_allocate(size_t size,
   // This is just an arbitrary number for now.  CHF
   size_t targetStartMarking = capacity() / 4;
 
-  if (used() > targetStartMarking && !concurrent_mark_in_progress() && !have_started_concurrent_mark) {
-    have_started_concurrent_mark = true;
+  if (used() > targetStartMarking && should_start_concurrent_marking()) {
 
     tty->print("Capacity = "SIZE_FORMAT" Used = "SIZE_FORMAT" Target = "SIZE_FORMAT" doing initMark\n", capacity(), used(), targetStartMarking);
     mark();
@@ -359,6 +348,168 @@ void ShenandoahHeap::mark() {
     VMThread::execute(&finishMark);
     
     verify_liveness_after_concurrent_mark();
+}
+
+class SelectEvacuationRegionsClosure : public ShenandoahHeapRegionClosure {
+
+private:
+  ShenandoahHeapRegion* _empty_region;
+  ShenandoahHeapRegion* _evacuation_region;
+  size_t _most_garbage;
+public:
+  SelectEvacuationRegionsClosure() : _empty_region(NULL), _evacuation_region(NULL), _most_garbage(0) {}
+
+  bool doHeapRegion(ShenandoahHeapRegion* r) {
+    //tty->print_cr("used: %d, live: %d, garbage: %d", r->used(), r->getLiveData(), r->garbage());
+    if (r->garbage() > _most_garbage) {
+      _evacuation_region = r;
+      _most_garbage = r->garbage();
+    }
+    if (_empty_region == NULL && r->used() == 0) {
+      _empty_region = r;
+    }
+
+    // TODO: Maybe use smarter heuristic above and stop earlier?
+    if (r->next() == NULL)
+      return true;
+    else return false;
+  }
+
+
+  ShenandoahHeapRegion* evacuation_region() {
+    return _evacuation_region;
+  }
+
+  ShenandoahHeapRegion* empty_region() {
+    return _empty_region;
+  }
+
+};
+
+class EvacuateRegionObjectClosure: public ObjectClosure {
+private:
+  uint _epoch;
+  ShenandoahHeap* _heap;
+  ShenandoahHeapRegion* _to_region;
+public:
+  EvacuateRegionObjectClosure(uint epoch, ShenandoahHeap* heap, ShenandoahHeapRegion* to_region) :
+    _epoch(epoch),
+    _heap(heap),
+    _to_region(to_region) {};
+
+  void do_object(oop p) {
+    // if (! _heap->is_brooks_ptr(p)) { // Copy everything except brooks ptrs.
+    if (p->mark()->age() == _epoch) { // Ignores brooks ptr objects because epoch is never 15.
+      //tty->print_cr("copying object: %p", p);
+      // Allocate brooks ptr object for copy.
+      HeapWord* filler = _to_region->allocate(BROOKS_POINTER_OBJ_SIZE);
+      assert(filler != NULL, "brooks ptr for copied object must not be NULL");
+      // Copy original object.
+      HeapWord* copy = _to_region->allocate(p->size());
+      assert(copy != NULL, "allocation of copy object must not fail");
+      Copy::aligned_disjoint_words((HeapWord*) p, copy, p->size());
+      _heap->initialize_brooks_ptr(filler, copy);
+      HeapWord* old_brooks_ptr = ((HeapWord*) p) - BROOKS_POINTER_OBJ_SIZE;
+      //tty->print_cr("setting old brooks ptr: p: %p, old_brooks_ptr: %p", p, old_brooks_ptr);
+      _heap->set_brooks_ptr(old_brooks_ptr, copy);
+    }
+    else {
+      //tty->print_cr("ignoring object: %p", p);
+    }
+  }
+};
+
+bool ShenandoahHeap::is_brooks_ptr(oop p) {
+  return p->mark()->age() == 15;
+}
+
+void ShenandoahHeap::set_brooks_ptr(HeapWord* brooks_ptr, HeapWord* obj) {
+  // Set the brooks pointer
+  HeapWord* first = brooks_ptr + (BROOKS_POINTER_OBJ_SIZE - 1);
+  uintptr_t first_ptr = (uintptr_t) first;
+  *(unsigned long*)(((unsigned long*)first_ptr)) = (unsigned long) obj;
+  //tty->print_cr("result, brooks obj, brooks ptr: %p, %p, %p", obj, filler, first);
+
+}
+
+void ShenandoahHeap::initialize_brooks_ptr(HeapWord* filler, HeapWord* obj) {
+  CollectedHeap::fill_with_array(filler, BROOKS_POINTER_OBJ_SIZE, false);
+  markOop mark = oop(filler)->mark();
+  oop(filler)->set_mark(mark->set_age(15));
+  assert(is_brooks_ptr(oop(filler)), "brooks pointer must be brooks pointer");
+  arrayOop(filler)->set_length(1);
+  set_brooks_ptr(filler, obj);
+}
+
+void ShenandoahHeap::evacuate_region(ShenandoahHeapRegion* from_region, ShenandoahHeapRegion* to_region) {
+  EvacuateRegionObjectClosure evacuate_region(epoch, this, to_region);
+  from_region->object_iterate(&evacuate_region);
+}
+
+void ShenandoahHeap::evacuate() {
+
+  SelectEvacuationRegionsClosure cl;
+  heap_region_iterate(&cl);
+
+  // tty->print_cr("evacuate region with garbage: %d, to empty region with used: %d", cl.evacuation_region()->garbage(), cl.empty_region()->used());
+  //  tty->print_cr("evacuating region: " );
+  // cl.evacuation_region()->print_on(tty);
+  // tty->print_cr("\n to region");
+  // cl.empty_region()->print_on(tty);
+
+  evacuate_region(cl.evacuation_region(), cl.empty_region());
+
+  update_references_after_evacuation();
+
+  cl.evacuation_region()->clear(false);
+}
+
+oop ShenandoahHeap::get_brooks_ptr_oop_for(oop p) {
+  HeapWord* oopWord = (HeapWord*) p;
+  HeapWord* brooksPOop = oopWord - BROOKS_POINTER_OBJ_SIZE;
+  assert(is_brooks_ptr(oop(brooksPOop)), "brooks pointer must be a brooks pointer");
+  HeapWord** brooksP = (HeapWord**) (brooksPOop + BROOKS_POINTER_OBJ_SIZE - 1);
+  HeapWord* forwarded = *brooksP;
+  return (oop) forwarded;
+}
+
+class UpdateRefsAfterEvacuationClosure: public ExtendedOopClosure {
+private:
+  ShenandoahHeap*  _heap;
+public:
+  UpdateRefsAfterEvacuationClosure() :
+    _heap(ShenandoahHeap::heap()) { }
+
+  template <class T> void do_oop_nv(T* p) {
+  }
+
+  void do_oop(oop* p)       {
+    oop heap_oop = *p;
+    if (! oopDesc::is_null(heap_oop)) {
+      oop forwarded_oop = _heap->get_brooks_ptr_oop_for(heap_oop);
+      if (forwarded_oop != heap_oop) {
+        // tty->print_cr("updating old ref: %p to new ref: %p", heap_oop, forwarded_oop);
+        *p = forwarded_oop;
+        assert(*p == forwarded_oop, "make sure to update reference correctly");
+      }
+    }
+  }
+
+  void do_oop(narrowOop* p) {
+    _heap->nyi();
+  }
+
+};
+
+void ShenandoahHeap::update_references_after_evacuation() {
+
+  UpdateRefsAfterEvacuationClosure rootsCl;
+  CodeBlobToOopClosure blobsCl(&rootsCl, false);
+  KlassToOopClosure klassCl(&rootsCl);
+  const int so = SO_AllClasses | SO_Strings | SO_CodeCache;
+  process_strong_roots(true, false, ScanningOption(so), &rootsCl, &blobsCl, &klassCl);
+
+  oop_iterate(&rootsCl);
 }
 
 size_t  ShenandoahHeap::unsafe_max_tlab_alloc(Thread *thread) const {
@@ -481,30 +632,20 @@ public:
 class ShenandoahVerifyHeapClosure: public ObjectClosure {
 private:
   ShenandoahVerifyRootsClosure _rootsCl;
+  ShenandoahHeap* _heap;
 public:
   ShenandoahVerifyHeapClosure(ShenandoahVerifyRootsClosure rc) :
-    _rootsCl(rc) {};
+    _rootsCl(rc), _heap(ShenandoahHeap::heap()) {};
 
   void do_object(oop p) {
     _rootsCl.do_oop(&p);
 
     HeapWord* oopWord = (HeapWord*) p;
-    if (oop(oopWord)->mark()->age() == 15) { // Brooks pointer
-      // TODO: Implement brooks pointer checking.
+    if (_heap->is_brooks_ptr(oop(oopWord))) { // Brooks pointer
+      guarantee(arrayOop(oopWord)->length() == 1, "brooks ptr objects must have length == 1");
     } else {
       HeapWord* brooksPOop = (oopWord - BROOKS_POINTER_OBJ_SIZE);
-      guarantee(oop(brooksPOop)->mark()->age() == 15, "age in mark word of brooks obj must be 15");
-      HeapWord** brooksP = (HeapWord**) (brooksPOop + (BROOKS_POINTER_OBJ_SIZE - 1));
-      /*
-      if (*brooksP == oopWord) {
-	tty->print_cr("good oop: %p, %p, %p", oopWord, brooksP, *brooksP);
-      } else {
-	tty->print_cr("bad  oop: %p, %p, %p", oopWord, brooksP, *brooksP);
-      }
-      */
-      guarantee(*brooksP == oopWord,
-		err_msg("brooks pointer points to next oop: "PTR_FORMAT": "PTR_FORMAT"->"PTR_FORMAT,
-			brooksPOop, *brooksP, oopWord));
+      guarantee(_heap->is_brooks_ptr(oop(brooksPOop)), "age in mark word of brooks obj must be 15");
     }
   }
 
@@ -753,11 +894,16 @@ void ShenandoahHeap::prepare_unmarked_root_objs() {
 }
 
 void ShenandoahHeap::start_concurrent_marking() {
+<<<<<<< local
   if (! concurrent_mark_in_progress()) {
     set_concurrent_mark_in_progress(true);
+=======
+  concurrentMark()->setEpoch(epoch);
+>>>>>>> other
 
-    prepare_unmarked_root_objs();
-  }
+  set_concurrent_mark_in_progress(true);
+
+  prepare_unmarked_root_objs();
 }
 
 // this should really be a closure as should printHeapLocations
@@ -765,8 +911,13 @@ size_t ShenandoahHeap::calcLiveness(HeapWord* start, HeapWord* end) {
   HeapWord* cur = NULL;
   size_t result = 0;
   for (cur = start; cur < end; cur = cur + oop(cur)->size()) {
+<<<<<<< local
     if (isMarkedCurrent(oop(cur)))
       result = result + oop(cur)->size();
+=======
+    if (isMarked(oop(cur)))
+      result = result + oop(cur)->size() * HeapWordSize + (BROOKS_POINTER_OBJ_SIZE * HeapWordSize);
+>>>>>>> other
   }
   return result;
 }
@@ -841,6 +992,10 @@ void ShenandoahHeap::stop_concurrent_marking() {
   heap_region_iterate(&pc);
 }
 
+bool ShenandoahHeap::should_start_concurrent_marking() {
+  return ! Atomic::cmpxchg(true, &_concurrent_mark_in_progress, false);
+}
+
 bool ShenandoahHeap::concurrent_mark_in_progress() {
   return _concurrent_mark_in_progress;
 }
@@ -874,9 +1029,13 @@ bool ShenandoahHeap::isMarkedCurrent(oop obj) const {
   return getMark(obj)->age() == epoch;
 }
   
+<<<<<<< local
 class VerifyLivenessAfterConcurrentMarkChildClosure : public ExtendedOopClosure {
  private:
+=======
+>>>>>>> other
 
+<<<<<<< local
    template<class T> void do_oop_nv(T* p) {
    T heap_oop = oopDesc::load_heap_oop(p);
     if (!oopDesc::is_null(heap_oop)) {
@@ -888,7 +1047,10 @@ class VerifyLivenessAfterConcurrentMarkChildClosure : public ExtendedOopClosure 
       assert(sh->isMarkedCurrent(obj), "Referenced Objects should be marked");
     }
    }
+=======
+>>>>>>> other
 
+<<<<<<< local
   void do_oop(oop* p)       { do_oop_nv(p); }
   void do_oop(narrowOop* p) { do_oop_nv(p); }
 
@@ -923,3 +1085,5 @@ void ShenandoahHeap::verify_liveness_after_concurrent_mark() {
   VerifyLivenessAfterConcurrentMarkParentClosure verifyLive;
   oop_iterate(&verifyLive);
 }
+=======
+>>>>>>> other
