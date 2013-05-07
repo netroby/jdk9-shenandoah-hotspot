@@ -420,6 +420,9 @@ public:
 };
 
 bool ShenandoahHeap::is_brooks_ptr(oop p) {
+  if (p->is_locked()) {
+    return false;
+  }
   return p->mark()->age() == 15;
 }
 
