@@ -905,8 +905,9 @@ size_t ShenandoahHeap::calcLiveness(HeapWord* start, HeapWord* end) {
   HeapWord* cur = NULL;
   size_t result = 0;
   for (cur = start; cur < end; cur = cur + oop(cur)->size()) {
-    if (isMarkedCurrent(oop(cur)))
+    if (isMarkedCurrent(oop(cur))) {
       result = result + oop(cur)->size() * HeapWordSize + (BROOKS_POINTER_OBJ_SIZE * HeapWordSize);
+    }
   }
   return result;
 }
@@ -1019,6 +1020,7 @@ bool ShenandoahHeap::isMarkedCurrent(oop obj) const {
 }
   
 class VerifyLivenessAfterConcurrentMarkChildClosure : public ExtendedOopClosure {
+
  private:
 
    template<class T> void do_oop_nv(T* p) {
