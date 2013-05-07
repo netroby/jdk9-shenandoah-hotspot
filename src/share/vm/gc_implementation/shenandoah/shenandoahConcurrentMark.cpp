@@ -62,7 +62,9 @@ void SCMConcurrentMarkingTask::work(uint worker_id) {
     // We got one.
     
     assert(obj->is_oop(), "Oops, not an oop");
-    tty->print("popping object: "PTR_FORMAT"\n", obj);
+    if (ShenandoahGCVerbose) {
+      tty->print("popping object: "PTR_FORMAT"\n", obj);
+    }
     obj->oop_iterate(&cl);
   }
 }
@@ -172,13 +174,14 @@ int getAge(oop obj) {
 
 void ShenandoahConcurrentMark::addTask(oop obj, int q) {
   ShenandoahHeap* sh = (ShenandoahHeap*) Universe::heap();
-  //  tty->print("addTask:q = %d obj = "PTR_FORMAT"\n", q, obj);
   int epoch = sh->getEpoch();
   int age = getAge(obj);
 
   assert(obj->is_oop(), "Oops, not an oop");
 
-  tty->print("addTask q = %d: obj = "PTR_FORMAT" epoch = %d object age = %d\n", q, obj, epoch, age);
+  if (ShenandoahGCVerbose) {
+    tty->print("addTask q = %d: obj = "PTR_FORMAT" epoch = %d object age = %d\n", q, obj, epoch, age);
+  }
 
   assert(age == epoch, "Only push marked objects on the queue");
   assert(sh->is_in((HeapWord*) obj), "Only push heap objects on the queue");

@@ -420,6 +420,8 @@ public:
 };
 
 bool ShenandoahHeap::is_brooks_ptr(oop p) {
+  if (p->is_locked())
+    return false;
   return p->mark()->age() == 15;
 }
 
@@ -894,15 +896,7 @@ void ShenandoahHeap::prepare_unmarked_root_objs() {
 }
 
 void ShenandoahHeap::start_concurrent_marking() {
-<<<<<<< local
-  if (! concurrent_mark_in_progress()) {
-    set_concurrent_mark_in_progress(true);
-=======
-  concurrentMark()->setEpoch(epoch);
->>>>>>> other
-
   set_concurrent_mark_in_progress(true);
-
   prepare_unmarked_root_objs();
 }
 
@@ -911,13 +905,8 @@ size_t ShenandoahHeap::calcLiveness(HeapWord* start, HeapWord* end) {
   HeapWord* cur = NULL;
   size_t result = 0;
   for (cur = start; cur < end; cur = cur + oop(cur)->size()) {
-<<<<<<< local
     if (isMarkedCurrent(oop(cur)))
-      result = result + oop(cur)->size();
-=======
-    if (isMarked(oop(cur)))
       result = result + oop(cur)->size() * HeapWordSize + (BROOKS_POINTER_OBJ_SIZE * HeapWordSize);
->>>>>>> other
   }
   return result;
 }
@@ -1029,28 +1018,23 @@ bool ShenandoahHeap::isMarkedCurrent(oop obj) const {
   return getMark(obj)->age() == epoch;
 }
   
-<<<<<<< local
 class VerifyLivenessAfterConcurrentMarkChildClosure : public ExtendedOopClosure {
  private:
-=======
->>>>>>> other
 
-<<<<<<< local
    template<class T> void do_oop_nv(T* p) {
    T heap_oop = oopDesc::load_heap_oop(p);
     if (!oopDesc::is_null(heap_oop)) {
       oop obj = oopDesc::decode_heap_oop_not_null(heap_oop);
       guarantee(obj->is_oop(), "is_oop");
       ShenandoahHeap* sh = (ShenandoahHeap*) Universe::heap();
-      tty->print("Verifying liveness of reference obj "PTR_FORMAT"\n", obj);
-      obj->print();
+      if (ShenandoahGCVerbose) {
+	tty->print("Verifying liveness of reference obj "PTR_FORMAT"\n", obj);
+	obj->print();
+      }
       assert(sh->isMarkedCurrent(obj), "Referenced Objects should be marked");
     }
    }
-=======
->>>>>>> other
 
-<<<<<<< local
   void do_oop(oop* p)       { do_oop_nv(p); }
   void do_oop(narrowOop* p) { do_oop_nv(p); }
 
@@ -1066,8 +1050,10 @@ private:
       guarantee(obj->is_oop(), "is_oop");
       ShenandoahHeap* sh = (ShenandoahHeap*) Universe::heap();
       if (sh->isMarkedCurrent(obj)) {
-	tty->print("Verifying liveness of objects pointed to by "PTR_FORMAT"\n", obj);
-	obj->print();
+	if (ShenandoahGCVerbose) {
+	  tty->print("Verifying liveness of objects pointed to by "PTR_FORMAT"\n", obj);
+	  obj->print();
+	}
  	VerifyLivenessAfterConcurrentMarkChildClosure childClosure;
  	obj->oop_iterate(&childClosure);
       }
@@ -1085,5 +1071,3 @@ void ShenandoahHeap::verify_liveness_after_concurrent_mark() {
   VerifyLivenessAfterConcurrentMarkParentClosure verifyLive;
   oop_iterate(&verifyLive);
 }
-=======
->>>>>>> other
