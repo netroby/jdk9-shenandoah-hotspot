@@ -139,7 +139,7 @@ void ShenandoahConcurrentMark::finishMarkFromRoots() {
   for (int i = 0; i <(int)_max_worker_id; i++) {
     tty->print("Queue: %d:", i);
     _task_queues->queue(i)->stats.print(tty, 10);
-    tty->print("/n");
+    tty->print("\n");
     //    _task_queues->queue(i)->stats.verify();
   }
 }

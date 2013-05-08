@@ -354,6 +354,7 @@ HeapWord*  ShenandoahHeap::mem_allocate(size_t size,
 void ShenandoahHeap::mark() {
 
     epoch = (epoch + 1) % 8;
+    tty->print("epoch = %d", epoch);
     VM_ShenandoahInitMark initMark;
     VMThread::execute(&initMark);
     
@@ -395,10 +396,23 @@ public:
     return _evacuation_region;
   }
 
+  bool found_evacuation_region() {
+    if (_evacuation_region == NULL)
+      return false;
+    else 
+      return true;
+  }
+
   ShenandoahHeapRegion* empty_region() {
     return _empty_region;
   }
 
+  bool found_empty_region() {
+    if (_empty_region == NULL)
+      return false;
+    else 
+      return true;
+  }
 };
 
 class EvacuateRegionObjectClosure: public ObjectClosure {
@@ -470,19 +484,25 @@ void ShenandoahHeap::evacuate() {
   SelectEvacuationRegionsClosure cl;
   heap_region_iterate(&cl);
 
-  // tty->print_cr("evacuate region with garbage: %d, to empty region with used: %d", cl.evacuation_region()->garbage(), cl.empty_region()->used());
-  // tty->print_cr("evacuating region: " );
-  // cl.evacuation_region()->print_on(tty);
-  // tty->print_cr("\n to region");
-  // cl.empty_region()->print_on(tty);
+  if (ShenandoahGCVerbose) {
+    tty->print_cr("evacuate region with garbage: %d, to empty region with used: %d", cl.evacuation_region()->garbage(), cl.empty_region()->used());
+    tty->print_cr("evacuating region: " );
+    cl.evacuation_region()->print_on(tty);
+   tty->print_cr("\n to region");
+   cl.empty_region()->print_on(tty);
+  }
 
-  evacuate_region(cl.evacuation_region(), cl.empty_region());
-
-  update_references_after_evacuation();
-
-  verify_evacuation(cl.evacuation_region());
-
-  cl.evacuation_region()->clear(false);
+  if (cl.found_empty_region()) {
+    if (cl.found_evacuation_region()) {
+      evacuate_region(cl.evacuation_region(), cl.empty_region());
+      update_references_after_evacuation();
+      verify_evacuation(cl.evacuation_region());
+      cl.evacuation_region()->clear(false);
+    }
+  } else {
+    // FIXME
+    vm_exit_out_of_memory(17, "No Free Regions for evacuation");      
+  }
 }
 
 class VerifyEvacuationClosure: public ExtendedOopClosure {
