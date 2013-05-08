@@ -161,8 +161,9 @@ private:
 
 class ShenandoahMarkRefsClosure : public OopsInGenClosure {
   uint epoch;
+  uint _worker_id;
 public: 
-  ShenandoahMarkRefsClosure(uint e);
+  ShenandoahMarkRefsClosure(uint e, uint worker_id);
 
   void do_oop_work(oop* p);
 
@@ -172,8 +173,9 @@ public:
   
 class ShenandoahMarkObjsClosure : public ObjectClosure {
   uint epoch;
+  uint _worker_id;
 public: 
-  ShenandoahMarkObjsClosure(uint e);
+  ShenandoahMarkObjsClosure(uint e, uint worker_id);
 
   void do_object(oop p);
 };

@@ -933,12 +933,12 @@ public:
  }
 
 
-ShenandoahMarkRefsClosure::ShenandoahMarkRefsClosure(uint e) : epoch(e) {
+ShenandoahMarkRefsClosure::ShenandoahMarkRefsClosure(uint e, uint worker_id) : epoch(e), _worker_id(worker_id) {
 }
 
 void ShenandoahMarkRefsClosure::do_oop_work(oop* p) {
   oop obj = *p;
-  ShenandoahMarkObjsClosure cl(epoch);
+  ShenandoahMarkObjsClosure cl(epoch, _worker_id);
   cl.do_object(obj);
 }
 
@@ -950,7 +950,7 @@ void ShenandoahMarkRefsClosure::do_oop(oop* p) {
   do_oop_work(p);
 }
 
-ShenandoahMarkObjsClosure::ShenandoahMarkObjsClosure(uint e) : epoch(e) {
+ShenandoahMarkObjsClosure::ShenandoahMarkObjsClosure(uint e, uint worker_id) : epoch(e), _worker_id(worker_id) {
 }
 
 void ShenandoahMarkObjsClosure::do_object(oop obj) {
@@ -959,7 +959,7 @@ void ShenandoahMarkObjsClosure::do_object(oop obj) {
     // tty->print_cr("probably marking root object %p, %d, %d", obj, getMark(obj)->age(), epoch);
     if (getMark(obj)->age() != epoch) {
       setMark(obj, getMark(obj)->set_age(epoch));
-      sh->concurrentMark()->addTask(obj);
+      sh->concurrentMark()->addTask(obj, _worker_id);
     }
   }
   /*
@@ -973,7 +973,7 @@ void ShenandoahMarkObjsClosure::do_object(oop obj) {
 
   /* We are going to add all the roots to taskqueue 0 for now.  Later on we should experiment with a better partioning. */
 void ShenandoahHeap::prepare_unmarked_root_objs() {
-  ShenandoahMarkRefsClosure rootsCl(epoch);
+  ShenandoahMarkRefsClosure rootsCl(epoch, 0);
   CodeBlobToOopClosure blobsCl(&rootsCl, false);
   KlassToOopClosure klassCl(&rootsCl);
 
