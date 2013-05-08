@@ -150,6 +150,7 @@ public:
 
 private:
   void evacuate_region(ShenandoahHeapRegion* from_region, ShenandoahHeapRegion* to_region);
+  void verify_evacuation(ShenandoahHeapRegion* from_region);
   bool set_concurrent_mark_in_progress(bool in_progress);
   bool concurrent_mark_in_progress();
   void verify_live();

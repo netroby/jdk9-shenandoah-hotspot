@@ -9,6 +9,21 @@
 
 ShenandoahHeap* ShenandoahHeap::_pgc = NULL;
 
+markOop getMark(oop obj) {
+  if (obj->has_displaced_mark())
+    return obj->displaced_mark();
+  else
+    return obj->mark();
+}
+
+void setMark(oop obj, markOop mark) {
+  if (obj->has_displaced_mark()) {
+    obj->set_displaced_mark(mark);
+  } else {
+    obj->set_mark(mark);
+  }
+}
+
 void printHeapLocations(HeapWord* start, HeapWord* end) {
   HeapWord* cur = NULL;
   int *val = NULL;
@@ -399,8 +414,8 @@ public:
 
   void do_object(oop p) {
     // if (! _heap->is_brooks_ptr(p)) { // Copy everything except brooks ptrs.
-    if (p->mark()->age() == _epoch) { // Ignores brooks ptr objects because epoch is never 15.
-      //tty->print_cr("copying object: %p", p);
+    if (getMark(p)->age() == _epoch) { // Ignores brooks ptr objects because epoch is never 15.
+      // tty->print_cr("evacuating object: %p, %d, %d", p, getMark(p)->age(), _epoch);
       // Allocate brooks ptr object for copy.
       HeapWord* filler = _to_region->allocate(BROOKS_POINTER_OBJ_SIZE);
       assert(filler != NULL, "brooks ptr for copied object must not be NULL");
@@ -413,14 +428,16 @@ public:
       //tty->print_cr("setting old brooks ptr: p: %p, old_brooks_ptr: %p", p, old_brooks_ptr);
       _heap->set_brooks_ptr(old_brooks_ptr, copy);
     }
+    /*
     else {
-      //tty->print_cr("ignoring object: %p", p);
+      tty->print_cr("not evacuating object: %p, %d, %d", p, getMark(p)->age(), _epoch);
     }
+    */
   }
 };
 
 bool ShenandoahHeap::is_brooks_ptr(oop p) {
-  if (p->is_locked())
+  if (p->has_displaced_mark())
     return false;
   return p->mark()->age() == 15;
 }
@@ -454,7 +471,7 @@ void ShenandoahHeap::evacuate() {
   heap_region_iterate(&cl);
 
   // tty->print_cr("evacuate region with garbage: %d, to empty region with used: %d", cl.evacuation_region()->garbage(), cl.empty_region()->used());
-  //  tty->print_cr("evacuating region: " );
+  // tty->print_cr("evacuating region: " );
   // cl.evacuation_region()->print_on(tty);
   // tty->print_cr("\n to region");
   // cl.empty_region()->print_on(tty);
@@ -463,7 +480,47 @@ void ShenandoahHeap::evacuate() {
 
   update_references_after_evacuation();
 
+  verify_evacuation(cl.evacuation_region());
+
   cl.evacuation_region()->clear(false);
+}
+
+class VerifyEvacuationClosure: public ExtendedOopClosure {
+private:
+  ShenandoahHeap*  _heap;
+  ShenandoahHeapRegion* _from_region;
+
+public:
+  VerifyEvacuationClosure(ShenandoahHeapRegion* from_region) :
+    _heap(ShenandoahHeap::heap()), _from_region(from_region) { }
+
+  void do_oop(oop* p)       {
+    oop heap_oop = *p;
+    if (! oopDesc::is_null(heap_oop)) {
+      guarantee(! _from_region->is_in(heap_oop), err_msg("no references to from-region allowed after evacuation: %p", heap_oop));
+    }
+  }
+
+  void do_oop(narrowOop* p) {
+    _heap->nyi();
+  }
+
+};
+
+void ShenandoahHeap::verify_evacuation(ShenandoahHeapRegion* from_region) {
+
+  VerifyEvacuationClosure rootsCl(from_region);
+  CodeBlobToOopClosure blobsCl(&rootsCl, false);
+  KlassToOopClosure klassCl(&rootsCl);
+
+  const int so = SO_AllClasses | SO_Strings | SO_CodeCache;
+
+  ClassLoaderDataGraph::clear_claimed_marks();
+
+  process_strong_roots(true, false, ScanningOption(so), &rootsCl, &blobsCl, &klassCl);
+
+  //oop_iterate(&rootsCl);
+
 }
 
 oop ShenandoahHeap::get_brooks_ptr_oop_for(oop p) {
@@ -494,6 +551,11 @@ public:
         *p = forwarded_oop;
         assert(*p == forwarded_oop, "make sure to update reference correctly");
       }
+      /*
+      else {
+        tty->print_cr("not updating ref: %p", heap_oop);
+      }
+      */
     }
   }
 
@@ -508,7 +570,11 @@ void ShenandoahHeap::update_references_after_evacuation() {
   UpdateRefsAfterEvacuationClosure rootsCl;
   CodeBlobToOopClosure blobsCl(&rootsCl, false);
   KlassToOopClosure klassCl(&rootsCl);
+
   const int so = SO_AllClasses | SO_Strings | SO_CodeCache;
+
+  ClassLoaderDataGraph::clear_claimed_marks();
+
   process_strong_roots(true, false, ScanningOption(so), &rootsCl, &blobsCl, &klassCl);
 
   oop_iterate(&rootsCl);
@@ -870,18 +936,19 @@ ShenandoahMarkObjsClosure::ShenandoahMarkObjsClosure(uint e) : epoch(e) {
 void ShenandoahMarkObjsClosure::do_object(oop obj) {
   ShenandoahHeap* sh = (ShenandoahHeap* ) Universe::heap();
   if (obj != NULL && (sh->is_in(obj))) {
-    if (obj->has_displaced_mark()) {
-      if (obj->displaced_mark()->age() != epoch) {
-        obj->set_displaced_mark(obj->displaced_mark()->set_age(epoch));
-        sh->concurrentMark()->addTask(obj);
-      }
-    } else {
-      if (obj->mark()->age() != epoch) {
-        obj->set_mark(obj->mark()->set_age(epoch));
-        sh->concurrentMark()->addTask(obj);
-      }
+    // tty->print_cr("probably marking root object %p, %d, %d", obj, getMark(obj)->age(), epoch);
+    if (getMark(obj)->age() != epoch) {
+      setMark(obj, getMark(obj)->set_age(epoch));
+      sh->concurrentMark()->addTask(obj);
     }
   }
+  /*
+  else {
+    if (obj != NULL) {
+      tty->print_cr("not marking root object because it's not in heap: %p", obj);
+    }
+  }
+  */
 }
 
   /* We are going to add all the roots to taskqueue 0 for now.  Later on we should experiment with a better partioning. */
@@ -891,6 +958,8 @@ void ShenandoahHeap::prepare_unmarked_root_objs() {
   KlassToOopClosure klassCl(&rootsCl);
 
   const int so = SO_AllClasses | SO_Strings | SO_CodeCache;
+
+  ClassLoaderDataGraph::clear_claimed_marks();
 
   process_strong_roots(true, false, ScanningOption(so), &rootsCl, &blobsCl, &klassCl);
 }
@@ -995,18 +1064,12 @@ bool ShenandoahHeap::set_concurrent_mark_in_progress(bool in_progress) {
   JavaThread::satb_mark_queue_set().set_active_all_threads(in_progress, ! in_progress);
 }
 
-markOop getMark(oop obj) {
-  if (obj->has_displaced_mark())
-    return obj->displaced_mark();
-  else
-    return obj->mark();
-}
-
 void ShenandoahHeap::post_allocation_collector_specific_setup(HeapWord* hw) {
   oop obj = oop(hw);
 
   // Assuming for now that objects can't be created already locked
-  obj->set_mark(getMark(obj)->set_age(epoch));
+  assert(! obj->has_displaced_mark(), "hopefully new objects don't have displaced mark");
+  setMark(obj, getMark(obj)->set_age(epoch));
 
 }
 
