@@ -1,4 +1,5 @@
 #include "gc_implementation/shenandoah/shenandoahHeap.hpp"
+#include "gc_implementation/shenandoah/shenandoahCollectionSetChooser.hpp"
 #include "gc_implementation/shenandoah/vm_operations_shenandoah.hpp"
 #include "runtime/vmThread.hpp"
 #include "memory/iterator.hpp"
@@ -381,7 +382,7 @@ public:
   SelectEvacuationRegionsClosure() : _empty_region(NULL), _evacuation_region(NULL), _most_garbage(0) {}
 
   bool doHeapRegion(ShenandoahHeapRegion* r) {
-    //tty->print_cr("used: %d, live: %d, garbage: %d", r->used(), r->getLiveData(), r->garbage());
+    tty->print_cr("used: %d, live: %d, garbage: %d", r->used(), r->getLiveData(), r->garbage());
     if (r->garbage() > _most_garbage) {
       _evacuation_region = r;
       _most_garbage = r->garbage();
@@ -485,6 +486,9 @@ void ShenandoahHeap::evacuate_region(ShenandoahHeapRegion* from_region, Shenando
 }
 
 void ShenandoahHeap::evacuate() {
+
+  ShenandoahCollectionSetChooser chooser;
+  chooser.initialize(firstRegion);
 
   SelectEvacuationRegionsClosure cl;
   heap_region_iterate(&cl);
