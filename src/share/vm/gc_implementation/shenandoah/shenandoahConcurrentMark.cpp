@@ -46,7 +46,7 @@ SCMConcurrentMarkingTask::SCMConcurrentMarkingTask(ShenandoahConcurrentMark* cm,
 void SCMConcurrentMarkingTask::work(uint worker_id) {
   int seed = 17;
   ShenandoahHeap* sh = (ShenandoahHeap*) Universe::heap();
-  ShenandoahMarkRefsClosure cl(sh->getEpoch());
+  ShenandoahMarkRefsClosure cl(sh->getEpoch(), worker_id);
 
   while (true) {
     oop obj;
@@ -122,7 +122,7 @@ void ShenandoahConcurrentMark::finishMarkFromRoots() {
   for (int i = 1; i < (int)_max_worker_id; i++)
     assert(_task_queues->queue(i)->is_empty(), "Only using task queue 0 for now");
 
-  ShenandoahMarkRefsClosure cl(sh->getEpoch());
+  ShenandoahMarkRefsClosure cl(sh->getEpoch(), 0);
   oop obj;
 
   bool found = _task_queues->queue(0)->pop_local(obj);
@@ -146,7 +146,7 @@ void ShenandoahConcurrentMark::finishMarkFromRoots() {
 
 void ShenandoahConcurrentMark::drain_satb_buffers() {
   ShenandoahHeap* sh = (ShenandoahHeap*) Universe::heap();
-  ShenandoahMarkObjsClosure cl(sh->getEpoch());
+  ShenandoahMarkObjsClosure cl(sh->getEpoch(), 0);
 
   // This can be parallelized. See g1/concurrentMark.cpp
   SATBMarkQueueSet& satb_mq_set = JavaThread::satb_mark_queue_set();
@@ -189,11 +189,6 @@ void ShenandoahConcurrentMark::addTask(oop obj, int q) {
   if (!_task_queues->queue(q)->push(obj)) {
     assert(false, "oops_overflowed_our_queues");
   }
-}
-
-
-void ShenandoahConcurrentMark::addTask(oop obj) {
-  addTask(obj, 0);
 }
 
 // // This queue implementation is wonky
