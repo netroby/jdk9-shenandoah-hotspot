@@ -495,7 +495,9 @@ void ShenandoahHeap::evacuate() {
   if (cl.found_empty_region()) {
     if (cl.found_evacuation_region()) {
       evacuate_region(cl.evacuation_region(), cl.empty_region());
-      update_references_after_evacuation();
+      if (! ShenandoahUseNewUpdateRefs) {
+        update_references_after_evacuation();
+      }
       verify_evacuation(cl.evacuation_region());
       cl.evacuation_region()->clear(false);
     }
@@ -552,6 +554,23 @@ oop ShenandoahHeap::get_brooks_ptr_oop_for(oop p) {
   return (oop) forwarded;
 }
 
+void ShenandoahHeap::maybe_update_oop_ref(oop* p) {
+  oop heap_oop = *p;
+  if (! oopDesc::is_null(heap_oop)) {
+    oop forwarded_oop = get_brooks_ptr_oop_for(heap_oop);
+    if (forwarded_oop != heap_oop) {
+      // tty->print_cr("updating old ref: %p to new ref: %p", heap_oop, forwarded_oop);
+      *p = forwarded_oop;
+      assert(*p == forwarded_oop, "make sure to update reference correctly");
+    }
+    /*
+      else {
+      tty->print_cr("not updating ref: %p", heap_oop);
+      }
+    */
+  }
+}
+
 class UpdateRefsAfterEvacuationClosure: public ExtendedOopClosure {
 private:
   ShenandoahHeap*  _heap;
@@ -559,24 +578,8 @@ public:
   UpdateRefsAfterEvacuationClosure() :
     _heap(ShenandoahHeap::heap()) { }
 
-  template <class T> void do_oop_nv(T* p) {
-  }
-
-  void do_oop(oop* p)       {
-    oop heap_oop = *p;
-    if (! oopDesc::is_null(heap_oop)) {
-      oop forwarded_oop = _heap->get_brooks_ptr_oop_for(heap_oop);
-      if (forwarded_oop != heap_oop) {
-        // tty->print_cr("updating old ref: %p to new ref: %p", heap_oop, forwarded_oop);
-        *p = forwarded_oop;
-        assert(*p == forwarded_oop, "make sure to update reference correctly");
-      }
-      /*
-      else {
-        tty->print_cr("not updating ref: %p", heap_oop);
-      }
-      */
-    }
+  void do_oop(oop* p) {
+    _heap->maybe_update_oop_ref(p);
   }
 
   void do_oop(narrowOop* p) {
@@ -933,11 +936,15 @@ public:
  }
 
 
-ShenandoahMarkRefsClosure::ShenandoahMarkRefsClosure(uint e, uint worker_id) : epoch(e), _worker_id(worker_id) {
+ShenandoahMarkRefsClosure::ShenandoahMarkRefsClosure(uint e, uint worker_id) :
+  epoch(e), _worker_id(worker_id), _heap(ShenandoahHeap::heap()) {
 }
 
 void ShenandoahMarkRefsClosure::do_oop_work(oop* p) {
   oop obj = *p;
+  if (ShenandoahUseNewUpdateRefs) {
+    _heap->maybe_update_oop_ref(p);
+  }
   ShenandoahMarkObjsClosure cl(epoch, _worker_id);
   cl.do_object(obj);
 }

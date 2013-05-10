@@ -1309,8 +1309,11 @@ class CommandLineFlags {
   product(bool, UseShenandoahGC, false,                                     \
           "Use the Shenandoah pauseless garbage collector")                 \
                                                                             \
- develop(bool, ShenandoahGCVerbose, false,                                  \
+  develop(bool, ShenandoahGCVerbose, false,                                 \
           "Use the Shenandoah pauseless garbage collector")                 \
+                                                                            \
+  develop(bool, ShenandoahUseNewUpdateRefs, false,                          \
+          "Update references in next marking phase")                        \
                                                                             \
   product(bool, UseParallelGC, false,                                       \
           "Use the Parallel Scavenge garbage collector")                    \

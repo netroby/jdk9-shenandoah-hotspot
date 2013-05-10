@@ -148,6 +148,7 @@ public:
   void set_brooks_ptr(HeapWord* brooks_ptr, HeapWord* object);
   bool is_brooks_ptr(oop p);
 
+  void maybe_update_oop_ref(oop* p);
 private:
   void evacuate_region(ShenandoahHeapRegion* from_region, ShenandoahHeapRegion* to_region);
   void verify_evacuation(ShenandoahHeapRegion* from_region);
@@ -162,11 +163,12 @@ private:
 class ShenandoahMarkRefsClosure : public OopsInGenClosure {
   uint epoch;
   uint _worker_id;
+  ShenandoahHeap* _heap;
+
 public: 
   ShenandoahMarkRefsClosure(uint e, uint worker_id);
 
   void do_oop_work(oop* p);
-
   void do_oop(narrowOop* p);
   void do_oop(oop* p);
 };
