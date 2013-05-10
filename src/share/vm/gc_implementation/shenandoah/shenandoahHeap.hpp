@@ -47,7 +47,7 @@ private:
   size_t initialSize;
   uint numAllocs;
   uint epoch;
-  
+  size_t bytesAllocSinceCM;
 
 public:
   ShenandoahHeap(ShenandoahCollectorPolicy* policy);

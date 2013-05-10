@@ -28,6 +28,7 @@ public:
   void setLiveData(size_t s) {liveData = s;}
   size_t getLiveData() { return liveData;}
 
+  void print();
   size_t garbage() {
     return used() - liveData;
   }

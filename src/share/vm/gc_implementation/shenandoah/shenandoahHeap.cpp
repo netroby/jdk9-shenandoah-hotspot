@@ -1,4 +1,5 @@
 #include "gc_implementation/shenandoah/shenandoahHeap.hpp"
+#include "gc_implementation/shenandoah/shenandoahCollectionSetChooser.hpp"
 #include "gc_implementation/shenandoah/vm_operations_shenandoah.hpp"
 #include "runtime/vmThread.hpp"
 #include "memory/iterator.hpp"
@@ -137,7 +138,8 @@ ShenandoahHeap::ShenandoahHeap(ShenandoahCollectorPolicy* policy) :
   SharedHeap(policy),
   _pgc_policy(policy), 
   _concurrent_mark_in_progress(false),
-  epoch(1) {
+  epoch(1),
+  bytesAllocSinceCM(0) {
   _pgc = this;
   _scm = new ShenandoahConcurrentMark();
 }
@@ -284,6 +286,7 @@ HeapWord* ShenandoahHeap::mem_allocate_locked(size_t size,
      result = currentRegion->allocate(size);
      if (result != NULL) {
        initialize_brooks_ptr(filler, result);
+       bytesAllocSinceCM+= size;
        return result;
      } else {
        currentRegion->rollback_allocation(BROOKS_POINTER_OBJ_SIZE);
@@ -337,11 +340,14 @@ HeapWord*  ShenandoahHeap::mem_allocate(size_t size,
   }
   numAllocs++;
 
-  // This is just an arbitrary number for now.  CHF
+  // These are just arbitrary numbers for now.  CHF
   size_t targetStartMarking = capacity() / 4;
+  size_t targetBytesAllocated = ShenandoahHeapRegion::RegionSizeBytes;
+  if (ShenandoahGCVerbose) 
+    tty->print("targetBytesAllocated = %d bytesAllocSinceCM = %d\n", targetBytesAllocated, bytesAllocSinceCM);
 
-  if (used() > targetStartMarking && should_start_concurrent_marking()) {
-
+  if (used() > targetStartMarking && bytesAllocSinceCM > targetBytesAllocated && should_start_concurrent_marking()) {
+    bytesAllocSinceCM = 0;
     tty->print("Capacity = "SIZE_FORMAT" Used = "SIZE_FORMAT" Target = "SIZE_FORMAT" doing initMark\n", capacity(), used(), targetStartMarking);
     mark();
 
@@ -376,7 +382,7 @@ public:
   SelectEvacuationRegionsClosure() : _empty_region(NULL), _evacuation_region(NULL), _most_garbage(0) {}
 
   bool doHeapRegion(ShenandoahHeapRegion* r) {
-    //tty->print_cr("used: %d, live: %d, garbage: %d", r->used(), r->getLiveData(), r->garbage());
+    tty->print_cr("used: %d, live: %d, garbage: %d", r->used(), r->getLiveData(), r->garbage());
     if (r->garbage() > _most_garbage) {
       _evacuation_region = r;
       _most_garbage = r->garbage();
@@ -481,19 +487,23 @@ void ShenandoahHeap::evacuate_region(ShenandoahHeapRegion* from_region, Shenando
 
 void ShenandoahHeap::evacuate() {
 
+  ShenandoahCollectionSetChooser chooser;
+  chooser.initialize(firstRegion);
+
   SelectEvacuationRegionsClosure cl;
   heap_region_iterate(&cl);
 
-  if (ShenandoahGCVerbose) {
+
+  if (cl.found_empty_region()) {
+    if (cl.found_evacuation_region()) {
+  //  if (ShenandoahGCVerbose) {
     tty->print_cr("evacuate region with garbage: %d, to empty region with used: %d", cl.evacuation_region()->garbage(), cl.empty_region()->used());
     tty->print_cr("evacuating region: " );
     cl.evacuation_region()->print_on(tty);
    tty->print_cr("\n to region");
    cl.empty_region()->print_on(tty);
-  }
+   //  }
 
-  if (cl.found_empty_region()) {
-    if (cl.found_evacuation_region()) {
       evacuate_region(cl.evacuation_region(), cl.empty_region());
       if (! ShenandoahUseNewUpdateRefs) {
         update_references_after_evacuation();

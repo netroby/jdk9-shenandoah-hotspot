@@ -49,7 +49,7 @@ public:
   void finishMarkFromRoots();
   void drain_satb_buffers();
   bool has_aborted() {return _aborted;}
-
+  
   void addTask(oop obj, int worker_id);
   //  oop popTask(int worker_id);
 
