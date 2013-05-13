@@ -157,7 +157,8 @@ private:
   void verify_live();
   void verify_liveness_after_concurrent_mark();
   void mark();
-
+  ShenandoahHeapRegion* nextEmptyRegion();
+  
 };
 
 class ShenandoahMarkRefsClosure : public OopsInGenClosure {

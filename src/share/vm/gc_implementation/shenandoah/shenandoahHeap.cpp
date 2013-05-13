@@ -273,10 +273,41 @@ public:
   }
 };
 
+class FindEmptyRegionClosure: public ShenandoahHeapRegionClosure {
+  ShenandoahHeapRegion* _result;
+
+public:
+
+  FindEmptyRegionClosure() {
+    _result = NULL;
+  }
+
+  bool doHeapRegion(ShenandoahHeapRegion* r) {
+    if (r->is_empty()) {
+      _result = r;
+      return true;
+    }
+    if (r->next() == NULL) 
+      return true;
+    else return false;
+  }
+  ShenandoahHeapRegion* result() { return _result;}
+
+};
+
+ShenandoahHeapRegion* ShenandoahHeap::nextEmptyRegion() {
+  FindEmptyRegionClosure cl;
+  heap_region_iterate(&cl);
+  return cl.result();
+}
+
 HeapWord* ShenandoahHeap::mem_allocate_locked(size_t size,
 					      bool* gc_overhead_limit_was_exceeded) {
 
    if (currentRegion == NULL) {
+     tty->print("About to assert that no GC is implemented\n");
+     PrintHeapRegionsClosure pc;
+     heap_region_iterate(&pc);
      assert(false, "No GC implemented");
    }
 
@@ -304,8 +335,13 @@ HeapWord* ShenandoahHeap::mem_allocate_locked(size_t size,
    /*
      printHeapObjects(currentRegion->bottom(), currentRegion->top());
    */
-   currentRegion = currentRegion->next();
+   currentRegion->setLiveData(currentRegion->used());
+
+   currentRegion = nextEmptyRegion();
    if (currentRegion == NULL) {
+     tty->print("About to assert that no GC is implemented\n");
+     PrintHeapRegionsClosure pc;
+     heap_region_iterate(&pc);
      assert(false, "No GC implemented");
    } else {
      return mem_allocate_locked(size, gc_overhead_limit_was_exceeded);
@@ -490,30 +526,32 @@ void ShenandoahHeap::evacuate() {
   ShenandoahCollectionSetChooser chooser;
   chooser.initialize(firstRegion);
 
-  SelectEvacuationRegionsClosure cl;
-  heap_region_iterate(&cl);
+  GrowableArray<ShenandoahHeapRegion*> collectionSet = chooser.cs_regions();
+  GrowableArray<ShenandoahHeapRegion*> emptySet = chooser.empty_regions();
+  GrowableArray<ShenandoahHeapRegion*> finishedRegions;
 
+  while (collectionSet.length() > 0) {
+    ShenandoahHeapRegion* fromRegion = collectionSet.pop();
+    ShenandoahHeapRegion* toRegion = emptySet.pop();
+    //    tty->print("From Region:\n");
+    //    fromRegion->print();
+    //    tty->print("To Region:\n");
+    //    toRegion->print();
 
-  if (cl.found_empty_region()) {
-    if (cl.found_evacuation_region()) {
-  //  if (ShenandoahGCVerbose) {
-    tty->print_cr("evacuate region with garbage: %d, to empty region with used: %d", cl.evacuation_region()->garbage(), cl.empty_region()->used());
-    tty->print_cr("evacuating region: " );
-    cl.evacuation_region()->print_on(tty);
-   tty->print_cr("\n to region");
-   cl.empty_region()->print_on(tty);
-   //  }
+    evacuate_region(fromRegion, toRegion);
+    finishedRegions.append(fromRegion);
+  }
 
-      evacuate_region(cl.evacuation_region(), cl.empty_region());
-      if (! ShenandoahUseNewUpdateRefs) {
-        update_references_after_evacuation();
-      }
-      verify_evacuation(cl.evacuation_region());
-      cl.evacuation_region()->clear(false);
+  if (! ShenandoahUseNewUpdateRefs) {
+    tty->print("After evacuation:");
+    update_references_after_evacuation();
+    for (int i = 0; i < finishedRegions.length(); i++) {
+      ShenandoahHeapRegion* current = finishedRegions.at(i);
+
+      current->print();
+      verify_evacuation(current);
+      current->recycle();
     }
-  } else {
-    // FIXME
-    vm_exit_out_of_memory(17, "No Free Regions for evacuation");      
   }
 }
 

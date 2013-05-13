@@ -32,6 +32,17 @@ public:
   size_t garbage() {
     return used() - liveData;
   }
+
+  void printDetails() {
+    tty->print("Region %d top = "PTR_FORMAT" used = %x free = %x live = %x\n", 
+	       regionNumber,top(), used(), free(), getLiveData());
+  }
+
+  void recycle() {
+    Space::initialize(reserved, true, false);
+    clearLiveData();
+  }
+
 };
 
 
