@@ -515,6 +515,15 @@ void ShenandoahHeap::initialize_brooks_ptr(HeapWord* filler, HeapWord* obj) {
 }
 
 void ShenandoahHeap::evacuate_region(ShenandoahHeapRegion* from_region, ShenandoahHeapRegion* to_region) {
+
+  if (ShenandoahGCVerbose) {
+    tty->print_cr("evacuate region with garbage: %d, to empty region with used: %d", from_region->garbage(), to_region->used());
+    tty->print_cr("from region: " );
+    from_region->print_on(tty);
+    tty->print_cr("\nto region");
+    to_region->print_on(tty);
+  }
+
   EvacuateRegionObjectClosure evacuate_region(epoch, this, to_region);
   from_region->object_iterate(&evacuate_region);
   from_region->set_dirty(true);
@@ -565,7 +574,30 @@ public:
   }
 };
 
+class RecycleDirtyRegionsClosure: public ShenandoahHeapRegionClosure {
+public:
+  RecycleDirtyRegionsClosure() {}
+
+  bool doHeapRegion(ShenandoahHeapRegion* r) {
+
+    if (r->is_dirty()) {
+      // tty->print_cr("recycling region:");
+      // r->print_on(tty);
+      // tty->print_cr("");
+      r->recycle();
+      r->set_dirty(false);
+    }
+
+  }
+};
+
 void ShenandoahHeap::parallel_evacuate() {
+
+  if (ShenandoahUseNewUpdateRefs) {
+    RecycleDirtyRegionsClosure cl;
+    heap_region_iterate(&cl);
+  }
+
   // We need to refactor this
 
   ShenandoahCollectionSetChooser chooser;
@@ -609,13 +641,6 @@ void ShenandoahHeap::evacuate() {
     //    tty->print("To Region:\n");
     //    toRegion->print();
 
-    if (ShenandoahGCVerbose) {
-      tty->print_cr("evacuate region with garbage: %d, to empty region with used: %d", fromRegion->garbage(), toRegion->used());
-      tty->print_cr("from region: " );
-      fromRegion->print_on(tty);
-      tty->print_cr("\nto region");
-      toRegion->print_on(tty);
-    }
     evacuate_region(fromRegion, toRegion);
     finishedRegions.append(fromRegion);
   }
@@ -1039,6 +1064,7 @@ public:
    IsInReservedClosure blk(p);
    heap_region_iterate(&blk);
  }
+
 
 
 ShenandoahMarkRefsClosure::ShenandoahMarkRefsClosure(uint e, uint worker_id) :
