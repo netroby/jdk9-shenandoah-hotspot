@@ -521,6 +521,79 @@ void ShenandoahHeap::evacuate_region(ShenandoahHeapRegion* from_region, Shenando
   from_region->object_iterate(&evacuate_region);
 }
 
+class ParallelEvacuationTask : public AbstractGangTask {
+private:
+  ShenandoahHeap* _sh;
+  GrowableArray<ShenandoahHeapRegion*> _collectionSet;
+  GrowableArray<ShenandoahHeapRegion*> _emptySet;
+  GrowableArray<ShenandoahHeapRegion*> _finishedRegions;
+  
+public:  
+  ParallelEvacuationTask(ShenandoahHeap* sh, 
+			 GrowableArray<ShenandoahHeapRegion*> collectionSet,
+			 GrowableArray<ShenandoahHeapRegion*> emptySet,
+			 GrowableArray<ShenandoahHeapRegion*> finishedRegions) :
+    AbstractGangTask("Parallel Evacuation Task"), 
+    _sh(sh), 
+    _collectionSet(collectionSet),
+    _emptySet(emptySet),
+    _finishedRegions(finishedRegions){}
+  
+  void work(uint worker_id) {
+  
+    for (int i = 0; i < _collectionSet.length(); i++) {
+      ShenandoahHeapRegion* from_hr = _collectionSet.at(i);
+      if (from_hr->claim()) {
+	if (ShenandoahGCVerbose) {
+	  tty->print("Thread %d claimed Heap Region %d\n",
+		     worker_id,
+		     from_hr->regionNumber);
+	}
+	int j = 0;
+	bool done = false;
+
+	// We have an earlier assert that ensures we have enough empty regions.
+	// This will go away once we have parallel evacuation of regions.
+	while (!done && j < _emptySet.length()) {
+	  ShenandoahHeapRegion* to_hr = _emptySet.at(j++);
+	  if (to_hr->claim()) {
+	    done = true;
+	    _sh->evacuate_region(from_hr, to_hr);
+	  }
+	}
+      }
+    }
+  }
+};
+
+void ShenandoahHeap::parallel_evacuate() {
+  // We need to refactor this
+
+  ShenandoahCollectionSetChooser chooser;
+  chooser.initialize(firstRegion);
+
+  GrowableArray<ShenandoahHeapRegion*> collectionSet = chooser.cs_regions();
+  GrowableArray<ShenandoahHeapRegion*> emptySet = chooser.empty_regions();
+  GrowableArray<ShenandoahHeapRegion*> finishedRegions;
+
+  ParallelEvacuationTask* evacuationTask = 
+    new ParallelEvacuationTask(this, collectionSet, emptySet, finishedRegions);
+
+  assert(emptySet.length() >= collectionSet.length(), 
+	 "Collection set chooser should have provided the right number of empty regions");
+  workers()->run_task(evacuationTask);
+  
+  if (! ShenandoahUseNewUpdateRefs) {
+    update_references_after_evacuation();
+    for (int i = 0; i < collectionSet.length(); i++) {
+      ShenandoahHeapRegion* current = collectionSet.at(i);
+      verify_evacuation(current);
+      current->recycle();
+    }
+  }
+  
+}
+
 void ShenandoahHeap::evacuate() {
 
   ShenandoahCollectionSetChooser chooser;
@@ -542,17 +615,6 @@ void ShenandoahHeap::evacuate() {
     finishedRegions.append(fromRegion);
   }
 
-  if (! ShenandoahUseNewUpdateRefs) {
-    tty->print("After evacuation:");
-    update_references_after_evacuation();
-    for (int i = 0; i < finishedRegions.length(); i++) {
-      ShenandoahHeapRegion* current = finishedRegions.at(i);
-
-      current->print();
-      verify_evacuation(current);
-      current->recycle();
-    }
-  }
 }
 
 class VerifyEvacuationClosure: public ExtendedOopClosure {
@@ -1063,10 +1125,11 @@ public:
   CalcLivenessClosure(ShenandoahHeap* heap) : sh(heap) { }
   
   bool doHeapRegion(ShenandoahHeapRegion* r) {
-    r-> setLiveData(sh->calcLiveness(r->bottom(), r->top()));
-  if (r->next() == NULL) 
+    r->setLiveData(sh->calcLiveness(r->bottom(), r->top()));
+    r->clearClaim();
+    if (r->next() == NULL) 
       return true;
-  else return false;
+    else return false;
   }
 };
 

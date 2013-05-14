@@ -11,7 +11,7 @@ public:
    static size_t RegionSizeBytes;
    size_t liveData;
    MemRegion reserved;
-
+   volatile unsigned int claimed;
 
    jint initialize(HeapWord* start, size_t regionSize);
    void setNext(ShenandoahHeapRegion* next) {
@@ -41,6 +41,15 @@ public:
   void recycle() {
     Space::initialize(reserved, true, false);
     clearLiveData();
+  }
+
+  bool claim() {
+    bool previous = Atomic::cmpxchg(true, &claimed, false);
+    return !previous;
+  }
+
+  void clearClaim() {
+    claimed = false;
   }
 
 };

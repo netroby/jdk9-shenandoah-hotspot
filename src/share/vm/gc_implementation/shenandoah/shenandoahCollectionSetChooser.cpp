@@ -49,20 +49,22 @@ void ShenandoahCollectionSetChooser::initialize(ShenandoahHeapRegion* first) {
   if (_empty_regions.length() < _cs_regions.length())
     _cs_regions.trunc_to(_empty_regions.length());
     
+  if (ShenandoahGCVerbose) {
   
-  tty->print("printing sorted regions\n");
-  for (int i = 0; i < _regions.length(); i++) {
-    _regions.at(i)->print();
-  }
+    tty->print("printing sorted regions\n");
+    for (int i = 0; i < _regions.length(); i++) {
+      _regions.at(i)->print();
+    }
 
-  tty->print("printing collection set\n");
-  for (int i = 0; i < _cs_regions.length(); i++) {
-    _cs_regions.at(i)->print();
-  }
+    tty->print("printing collection set\n");
+    for (int i = 0; i < _cs_regions.length(); i++) {
+      _cs_regions.at(i)->print();
+    }
 
-  tty->print("printing empty regions\n");
-  for (int i = 0; i < _empty_regions.length(); i++) {
-    _empty_regions.at(i)->print();
+    tty->print("printing empty regions\n");
+    for (int i = 0; i < _empty_regions.length(); i++) {
+      _empty_regions.at(i)->print();
+    }
   }
   
 }

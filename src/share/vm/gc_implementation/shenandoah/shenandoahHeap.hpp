@@ -141,6 +141,7 @@ public:
   void prepare_unmarked_root_objs();
 
   void evacuate();
+  void parallel_evacuate();
   void update_references_after_evacuation();
   oop get_brooks_ptr_oop_for(oop p);
 
@@ -149,8 +150,9 @@ public:
   bool is_brooks_ptr(oop p);
 
   void maybe_update_oop_ref(oop* p);
-private:
   void evacuate_region(ShenandoahHeapRegion* from_region, ShenandoahHeapRegion* to_region);
+private:
+
   void verify_evacuation(ShenandoahHeapRegion* from_region);
   bool set_concurrent_mark_in_progress(bool in_progress);
   bool concurrent_mark_in_progress();
