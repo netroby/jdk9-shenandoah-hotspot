@@ -832,9 +832,13 @@ inline HeapWord* ContiguousSpace::allocate_impl(size_t size,
   // race with other GC workers (we ensure that no other GC worker can
   // access the same region at the same time). So the assert below is
   // too strong in the case of G1.
+
+  // Shenandoah is currently partitioning by region so this assertion
+  // is too strong.  If we move to a smaller granularity we will 
+  // need to revisit this.
   assert(Heap_lock->owned_by_self() ||
          (SafepointSynchronize::is_at_safepoint() &&
-                               (Thread::current()->is_VM_thread() || UseG1GC)),
+                               (Thread::current()->is_VM_thread() || UseG1GC || UseShenandoahGC)),
          "not locked");
   HeapWord* obj = top();
   if (pointer_delta(end_value, obj) >= size) {

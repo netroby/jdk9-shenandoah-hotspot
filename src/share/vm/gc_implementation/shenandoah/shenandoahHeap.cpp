@@ -273,10 +273,41 @@ public:
   }
 };
 
+class FindEmptyRegionClosure: public ShenandoahHeapRegionClosure {
+  ShenandoahHeapRegion* _result;
+
+public:
+
+  FindEmptyRegionClosure() {
+    _result = NULL;
+  }
+
+  bool doHeapRegion(ShenandoahHeapRegion* r) {
+    if (r->is_empty()) {
+      _result = r;
+      return true;
+    }
+    if (r->next() == NULL) 
+      return true;
+    else return false;
+  }
+  ShenandoahHeapRegion* result() { return _result;}
+
+};
+
+ShenandoahHeapRegion* ShenandoahHeap::nextEmptyRegion() {
+  FindEmptyRegionClosure cl;
+  heap_region_iterate(&cl);
+  return cl.result();
+}
+
 HeapWord* ShenandoahHeap::mem_allocate_locked(size_t size,
 					      bool* gc_overhead_limit_was_exceeded) {
 
    if (currentRegion == NULL) {
+     tty->print("About to assert that no GC is implemented\n");
+     PrintHeapRegionsClosure pc;
+     heap_region_iterate(&pc);
      assert(false, "No GC implemented");
    }
 
@@ -304,8 +335,13 @@ HeapWord* ShenandoahHeap::mem_allocate_locked(size_t size,
    /*
      printHeapObjects(currentRegion->bottom(), currentRegion->top());
    */
-   currentRegion = currentRegion->next();
+   currentRegion->setLiveData(currentRegion->used());
+
+   currentRegion = nextEmptyRegion();
    if (currentRegion == NULL) {
+     tty->print("About to assert that no GC is implemented\n");
+     PrintHeapRegionsClosure pc;
+     heap_region_iterate(&pc);
      assert(false, "No GC implemented");
    } else {
      return mem_allocate_locked(size, gc_overhead_limit_was_exceeded);
@@ -484,35 +520,104 @@ void ShenandoahHeap::evacuate_region(ShenandoahHeapRegion* from_region, Shenando
   from_region->set_dirty(true);
 }
 
+class ParallelEvacuationTask : public AbstractGangTask {
+private:
+  ShenandoahHeap* _sh;
+  GrowableArray<ShenandoahHeapRegion*> _collectionSet;
+  GrowableArray<ShenandoahHeapRegion*> _emptySet;
+  GrowableArray<ShenandoahHeapRegion*> _finishedRegions;
+  
+public:  
+  ParallelEvacuationTask(ShenandoahHeap* sh, 
+			 GrowableArray<ShenandoahHeapRegion*> collectionSet,
+			 GrowableArray<ShenandoahHeapRegion*> emptySet,
+			 GrowableArray<ShenandoahHeapRegion*> finishedRegions) :
+    AbstractGangTask("Parallel Evacuation Task"), 
+    _sh(sh), 
+    _collectionSet(collectionSet),
+    _emptySet(emptySet),
+    _finishedRegions(finishedRegions){}
+  
+  void work(uint worker_id) {
+  
+    for (int i = 0; i < _collectionSet.length(); i++) {
+      ShenandoahHeapRegion* from_hr = _collectionSet.at(i);
+      if (from_hr->claim()) {
+	if (ShenandoahGCVerbose) {
+	  tty->print("Thread %d claimed Heap Region %d\n",
+		     worker_id,
+		     from_hr->regionNumber);
+	}
+	int j = 0;
+	bool done = false;
+
+	// We have an earlier assert that ensures we have enough empty regions.
+	// This will go away once we have parallel evacuation of regions.
+	while (!done && j < _emptySet.length()) {
+	  ShenandoahHeapRegion* to_hr = _emptySet.at(j++);
+	  if (to_hr->claim()) {
+	    done = true;
+	    _sh->evacuate_region(from_hr, to_hr);
+	  }
+	}
+      }
+    }
+  }
+};
+
+void ShenandoahHeap::parallel_evacuate() {
+  // We need to refactor this
+
+  ShenandoahCollectionSetChooser chooser;
+  chooser.initialize(firstRegion);
+
+  GrowableArray<ShenandoahHeapRegion*> collectionSet = chooser.cs_regions();
+  GrowableArray<ShenandoahHeapRegion*> emptySet = chooser.empty_regions();
+  GrowableArray<ShenandoahHeapRegion*> finishedRegions;
+
+  ParallelEvacuationTask* evacuationTask = 
+    new ParallelEvacuationTask(this, collectionSet, emptySet, finishedRegions);
+
+  assert(emptySet.length() >= collectionSet.length(), 
+	 "Collection set chooser should have provided the right number of empty regions");
+  workers()->run_task(evacuationTask);
+  
+  if (! ShenandoahUseNewUpdateRefs) {
+    update_references_after_evacuation();
+    for (int i = 0; i < collectionSet.length(); i++) {
+      ShenandoahHeapRegion* current = collectionSet.at(i);
+      verify_evacuation(current);
+      current->recycle();
+    }
+  }
+}
+
 void ShenandoahHeap::evacuate() {
 
   ShenandoahCollectionSetChooser chooser;
   chooser.initialize(firstRegion);
 
-  SelectEvacuationRegionsClosure cl;
-  heap_region_iterate(&cl);
+  GrowableArray<ShenandoahHeapRegion*> collectionSet = chooser.cs_regions();
+  GrowableArray<ShenandoahHeapRegion*> emptySet = chooser.empty_regions();
+  GrowableArray<ShenandoahHeapRegion*> finishedRegions;
 
+  while (collectionSet.length() > 0) {
+    ShenandoahHeapRegion* fromRegion = collectionSet.pop();
+    ShenandoahHeapRegion* toRegion = emptySet.pop();
+    //    tty->print("From Region:\n");
+    //    fromRegion->print();
+    //    tty->print("To Region:\n");
+    //    toRegion->print();
 
-  if (cl.found_empty_region()) {
-    if (cl.found_evacuation_region()) {
-      if (ShenandoahGCVerbose) {
-        tty->print_cr("evacuate region with garbage: %d, to empty region with used: %d", cl.evacuation_region()->garbage(), cl.empty_region()->used());
-        tty->print_cr("evacuating region: " );
-        cl.evacuation_region()->print_on(tty);
-        tty->print_cr("\n to region");
-        cl.empty_region()->print_on(tty);
-      }
-
-      evacuate_region(cl.evacuation_region(), cl.empty_region());
-      if (! ShenandoahUseNewUpdateRefs) {
-        update_references_after_evacuation();
-      }
-      verify_evacuation(cl.evacuation_region());
-      cl.evacuation_region()->clear(false);
+    if (ShenandoahGCVerbose) {
+      tty->print_cr("evacuate region with garbage: %d, to empty region with used: %d", fromRegion->garbage(), toRegion->used());
+      tty->print_cr("from region: " );
+      fromRegion->print_on(tty);
+      tty->print_cr("\nto region");
+      toRegion->print_on(tty);
     }
-  } else {
-    // FIXME
-    vm_exit_out_of_memory(17, "No Free Regions for evacuation");      
+    evacuate_region(fromRegion, toRegion);
+    finishedRegions.append(fromRegion);
   }
 }
 
@@ -1016,10 +1121,11 @@ public:
   CalcLivenessClosure(ShenandoahHeap* heap) : sh(heap) { }
   
   bool doHeapRegion(ShenandoahHeapRegion* r) {
-    r-> setLiveData(sh->calcLiveness(r->bottom(), r->top()));
-  if (r->next() == NULL) 
+    r->setLiveData(sh->calcLiveness(r->bottom(), r->top()));
+    r->clearClaim();
+    if (r->next() == NULL) 
       return true;
-  else return false;
+    else return false;
   }
 };
 

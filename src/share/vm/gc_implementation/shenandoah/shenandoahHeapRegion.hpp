@@ -11,9 +11,9 @@ public:
    static size_t RegionSizeBytes;
    size_t liveData;
    MemRegion reserved;
+   volatile unsigned int claimed;
 private:
   bool _dirty;
-
 public:
    jint initialize(HeapWord* start, size_t regionSize);
    void setNext(ShenandoahHeapRegion* next) {
@@ -39,9 +39,29 @@ public:
     return _dirty;
   }
 
+  void printDetails() {
+    tty->print("Region %d top = "PTR_FORMAT" used = %x free = %x live = %x\n", 
+	       regionNumber,top(), used(), free(), getLiveData());
+  }
+
   void set_dirty(bool dirty) {
     _dirty = dirty;
   }
+
+  void recycle() {
+    Space::initialize(reserved, true, false);
+    clearLiveData();
+  }
+
+  bool claim() {
+    bool previous = Atomic::cmpxchg(true, &claimed, false);
+    return !previous;
+  }
+
+  void clearClaim() {
+    claimed = false;
+  }
+
 };
 
 

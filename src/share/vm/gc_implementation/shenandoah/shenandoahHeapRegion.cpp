@@ -18,5 +18,5 @@ bool ShenandoahHeapRegion::rollback_allocation(uint size) {
 }
 
 void ShenandoahHeapRegion::print() {
-  tty->print("ShenandoahHeapRegion: %d live = %d garbage = %d\n", regionNumber, liveData, garbage());
+  tty->print("ShenandoahHeapRegion: %d live = %d garbage = %d claimed = %d\n", regionNumber, liveData, garbage(), claimed);
 }

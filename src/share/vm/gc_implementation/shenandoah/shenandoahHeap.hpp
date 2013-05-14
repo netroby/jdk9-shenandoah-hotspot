@@ -142,21 +142,24 @@ public:
   void prepare_unmarked_root_objs();
 
   void evacuate();
+  void parallel_evacuate();
   void update_references_after_evacuation();
 
   void initialize_brooks_ptr(HeapWord* brooks_ptr, HeapWord* object);
   void set_brooks_ptr(HeapWord* brooks_ptr, HeapWord* object);
 
   void maybe_update_oop_ref(oop* p);
-private:
   void evacuate_region(ShenandoahHeapRegion* from_region, ShenandoahHeapRegion* to_region);
+private:
+
   void verify_evacuation(ShenandoahHeapRegion* from_region);
   bool set_concurrent_mark_in_progress(bool in_progress);
   bool concurrent_mark_in_progress();
   void verify_live();
   void verify_liveness_after_concurrent_mark();
   void mark();
-
+  ShenandoahHeapRegion* nextEmptyRegion();
+  
 };
 
 class ShenandoahMarkRefsClosure : public OopsInGenClosure {
