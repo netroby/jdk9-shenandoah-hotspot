@@ -12,8 +12,6 @@
 #include "oops/oop.hpp"
 #include "oops/markOop.hpp"
 
-#define BROOKS_POINTER_OBJ_SIZE 4
-
 class SpaceClosure;
 
 class ShenandoahHeapRegionClosure : public StackObj {
@@ -87,7 +85,10 @@ public:
   void do_full_collection(bool clear_all_soft_refs);
   AdaptiveSizePolicy* size_policy();
   ShenandoahCollectorPolicy* collector_policy() const;
-  void oop_iterate(ExtendedOopClosure* cl );
+  void oop_iterate(ExtendedOopClosure* cl, bool skip_dirty_regions);
+  void oop_iterate(ExtendedOopClosure* cl) {
+    oop_iterate(cl, false);
+  }
   void object_iterate(ObjectClosure* cl);
   void safe_object_iterate(ObjectClosure* cl);
 
@@ -114,7 +115,7 @@ public:
   size_t used_in_bytes() { return used() * HeapWordSize;}
   size_t capacity_in_bytes() { return capacity() * HeapWordSize;}
 
-  void heap_region_iterate(ShenandoahHeapRegionClosure* blk) const;
+  void heap_region_iterate(ShenandoahHeapRegionClosure* blk, bool skip_dirty_regions = false) const;
   template<class T> inline ShenandoahHeapRegion* heap_region_containing(const T addr) const;  
 
   bool is_in_reserved(void* p);
@@ -142,11 +143,9 @@ public:
 
   void evacuate();
   void update_references_after_evacuation();
-  oop get_brooks_ptr_oop_for(oop p);
 
   void initialize_brooks_ptr(HeapWord* brooks_ptr, HeapWord* object);
   void set_brooks_ptr(HeapWord* brooks_ptr, HeapWord* object);
-  bool is_brooks_ptr(oop p);
 
   void maybe_update_oop_ref(oop* p);
 private:

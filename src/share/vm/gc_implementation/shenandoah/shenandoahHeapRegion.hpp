@@ -11,8 +11,10 @@ public:
    static size_t RegionSizeBytes;
    size_t liveData;
    MemRegion reserved;
+private:
+  bool _dirty;
 
-
+public:
    jint initialize(HeapWord* start, size_t regionSize);
    void setNext(ShenandoahHeapRegion* next) {
       _next = next;
@@ -31,6 +33,14 @@ public:
   void print();
   size_t garbage() {
     return used() - liveData;
+  }
+
+  bool is_dirty() {
+    return _dirty;
+  }
+
+  void set_dirty(bool dirty) {
+    _dirty = dirty;
   }
 };
 

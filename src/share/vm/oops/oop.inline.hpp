@@ -56,6 +56,10 @@
 # include "bytes_ppc.hpp"
 #endif
 
+
+// This is used by Shenandoah
+#define BROOKS_POINTER_OBJ_SIZE 4
+
 // Implementation of all inlined member functions defined in oop.hpp
 // We need a separate file to avoid circular references
 
@@ -258,7 +262,34 @@ inline Klass* oopDesc::decode_klass(narrowOop v) {
 
 // Load an oop out of the Java heap as is without decoding.
 // Called by GC to check for null before decoding.
-inline oop       oopDesc::load_heap_oop(oop* p)          { return *p; }
+inline oop       oopDesc::load_heap_oop(oop* p)          {
+  oop heap_oop = *p;
+  if (UseShenandoahGC) {
+    if (! is_null(heap_oop)) {
+      heap_oop = get_shenandoah_forwardee(heap_oop);
+    }
+  }
+  return heap_oop;
+}
+
+inline oop oopDesc::get_shenandoah_forwardee(oop p) {
+  assert(UseShenandoahGC, "must only be called when Shenandoah is used.");
+  assert(! is_brooks_ptr(p), "oop must not be a brooks pointer itself");
+  HeapWord* oopWord = (HeapWord*) p;
+  HeapWord* brooksPOop = oopWord - BROOKS_POINTER_OBJ_SIZE;
+  assert(is_brooks_ptr(oop(brooksPOop)), "brooks pointer must be a brooks pointer");
+  HeapWord** brooksP = (HeapWord**) (brooksPOop + BROOKS_POINTER_OBJ_SIZE - 1);
+  HeapWord* forwarded = *brooksP;
+  return (oop) forwarded;
+}
+
+inline bool oopDesc::is_brooks_ptr(oop p) {
+  if (p->has_displaced_mark())
+    return false;
+  return p->mark()->age() == 15;
+}
+
+
 inline narrowOop oopDesc::load_heap_oop(narrowOop* p)    { return *p; }
 
 // Load and decode an oop out of the Java heap into a wide oop.

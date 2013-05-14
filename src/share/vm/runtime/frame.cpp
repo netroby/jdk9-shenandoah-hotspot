@@ -1070,7 +1070,7 @@ oop frame::retrieve_receiver(RegisterMap* reg_map) {
 
   // First consult the ADLC on where it puts parameter 0 for this signature.
   VMReg reg = SharedRuntime::name_for_receiver();
-  oop r = *caller.oopmapreg_to_location(reg, reg_map);
+  oop r = oopDesc::load_heap_oop(caller.oopmapreg_to_location(reg, reg_map));
   assert(Universe::heap()->is_in_or_null(r), err_msg("bad receiver: " INTPTR_FORMAT " (" INTX_FORMAT ")", (intptr_t) r, (intptr_t) r));
   return r;
 }

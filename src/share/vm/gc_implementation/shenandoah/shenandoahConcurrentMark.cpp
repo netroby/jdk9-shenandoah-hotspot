@@ -128,7 +128,9 @@ void ShenandoahConcurrentMark::finishMarkFromRoots() {
   bool found = _task_queues->queue(0)->pop_local(obj);
 
   while (found) {
-    tty->print("Pop single threaded Task: obj = "PTR_FORMAT"\n", obj);
+    if (ShenandoahGCVerbose) {
+      tty->print("Pop single threaded Task: obj = "PTR_FORMAT"\n", obj);
+    }
     assert(obj->is_oop(), "Oops, not an oop");
     obj->oop_iterate(&cl);
     found = _task_queues->queue(0)->pop_local(obj);

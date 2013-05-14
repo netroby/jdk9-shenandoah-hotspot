@@ -382,6 +382,8 @@ public:
   SelectEvacuationRegionsClosure() : _empty_region(NULL), _evacuation_region(NULL), _most_garbage(0) {}
 
   bool doHeapRegion(ShenandoahHeapRegion* r) {
+    // We piggy-back clearing the heap regions here because it's convenient.
+    r->set_dirty(false);
     tty->print_cr("used: %d, live: %d, garbage: %d", r->used(), r->getLiveData(), r->garbage());
     if (r->garbage() > _most_garbage) {
       _evacuation_region = r;
@@ -433,9 +435,11 @@ public:
     _to_region(to_region) {};
 
   void do_object(oop p) {
-    // if (! _heap->is_brooks_ptr(p)) { // Copy everything except brooks ptrs.
+    // if (! oopDesc::is_brooks_ptr(p)) { // Copy everything except brooks ptrs.
     if (getMark(p)->age() == _epoch) { // Ignores brooks ptr objects because epoch is never 15.
-      // tty->print_cr("evacuating object: %p, %d, %d", p, getMark(p)->age(), _epoch);
+      if (ShenandoahGCVerbose) {
+        tty->print_cr("evacuating object: %p, %d, %d", p, getMark(p)->age(), _epoch);
+      }
       // Allocate brooks ptr object for copy.
       HeapWord* filler = _to_region->allocate(BROOKS_POINTER_OBJ_SIZE);
       assert(filler != NULL, "brooks ptr for copied object must not be NULL");
@@ -445,7 +449,7 @@ public:
       Copy::aligned_disjoint_words((HeapWord*) p, copy, p->size());
       _heap->initialize_brooks_ptr(filler, copy);
       HeapWord* old_brooks_ptr = ((HeapWord*) p) - BROOKS_POINTER_OBJ_SIZE;
-      //tty->print_cr("setting old brooks ptr: p: %p, old_brooks_ptr: %p", p, old_brooks_ptr);
+      // tty->print_cr("setting old brooks ptr: p: %p, old_brooks_ptr: %p to copy: %p", p, old_brooks_ptr, copy);
       _heap->set_brooks_ptr(old_brooks_ptr, copy);
     }
     /*
@@ -455,12 +459,6 @@ public:
     */
   }
 };
-
-bool ShenandoahHeap::is_brooks_ptr(oop p) {
-  if (p->has_displaced_mark())
-    return false;
-  return p->mark()->age() == 15;
-}
 
 void ShenandoahHeap::set_brooks_ptr(HeapWord* brooks_ptr, HeapWord* obj) {
   // Set the brooks pointer
@@ -475,7 +473,7 @@ void ShenandoahHeap::initialize_brooks_ptr(HeapWord* filler, HeapWord* obj) {
   CollectedHeap::fill_with_array(filler, BROOKS_POINTER_OBJ_SIZE, false);
   markOop mark = oop(filler)->mark();
   oop(filler)->set_mark(mark->set_age(15));
-  assert(is_brooks_ptr(oop(filler)), "brooks pointer must be brooks pointer");
+  assert(oopDesc::is_brooks_ptr(oop(filler)), "brooks pointer must be brooks pointer");
   arrayOop(filler)->set_length(1);
   set_brooks_ptr(filler, obj);
 }
@@ -483,6 +481,7 @@ void ShenandoahHeap::initialize_brooks_ptr(HeapWord* filler, HeapWord* obj) {
 void ShenandoahHeap::evacuate_region(ShenandoahHeapRegion* from_region, ShenandoahHeapRegion* to_region) {
   EvacuateRegionObjectClosure evacuate_region(epoch, this, to_region);
   from_region->object_iterate(&evacuate_region);
+  from_region->set_dirty(true);
 }
 
 void ShenandoahHeap::evacuate() {
@@ -496,13 +495,13 @@ void ShenandoahHeap::evacuate() {
 
   if (cl.found_empty_region()) {
     if (cl.found_evacuation_region()) {
-  //  if (ShenandoahGCVerbose) {
-    tty->print_cr("evacuate region with garbage: %d, to empty region with used: %d", cl.evacuation_region()->garbage(), cl.empty_region()->used());
-    tty->print_cr("evacuating region: " );
-    cl.evacuation_region()->print_on(tty);
-   tty->print_cr("\n to region");
-   cl.empty_region()->print_on(tty);
-   //  }
+      if (ShenandoahGCVerbose) {
+        tty->print_cr("evacuate region with garbage: %d, to empty region with used: %d", cl.evacuation_region()->garbage(), cl.empty_region()->used());
+        tty->print_cr("evacuating region: " );
+        cl.evacuation_region()->print_on(tty);
+        tty->print_cr("\n to region");
+        cl.empty_region()->print_on(tty);
+      }
 
       evacuate_region(cl.evacuation_region(), cl.empty_region());
       if (! ShenandoahUseNewUpdateRefs) {
@@ -527,7 +526,7 @@ public:
     _heap(ShenandoahHeap::heap()), _from_region(from_region) { }
 
   void do_oop(oop* p)       {
-    oop heap_oop = *p;
+    oop heap_oop = oopDesc::load_heap_oop(p);
     if (! oopDesc::is_null(heap_oop)) {
       guarantee(! _from_region->is_in(heap_oop), err_msg("no references to from-region allowed after evacuation: %p", heap_oop));
     }
@@ -555,19 +554,10 @@ void ShenandoahHeap::verify_evacuation(ShenandoahHeapRegion* from_region) {
 
 }
 
-oop ShenandoahHeap::get_brooks_ptr_oop_for(oop p) {
-  HeapWord* oopWord = (HeapWord*) p;
-  HeapWord* brooksPOop = oopWord - BROOKS_POINTER_OBJ_SIZE;
-  assert(is_brooks_ptr(oop(brooksPOop)), "brooks pointer must be a brooks pointer");
-  HeapWord** brooksP = (HeapWord**) (brooksPOop + BROOKS_POINTER_OBJ_SIZE - 1);
-  HeapWord* forwarded = *brooksP;
-  return (oop) forwarded;
-}
-
 void ShenandoahHeap::maybe_update_oop_ref(oop* p) {
   oop heap_oop = *p;
   if (! oopDesc::is_null(heap_oop)) {
-    oop forwarded_oop = get_brooks_ptr_oop_for(heap_oop);
+    oop forwarded_oop = oopDesc::get_shenandoah_forwardee(heap_oop);
     if (forwarded_oop != heap_oop) {
       // tty->print_cr("updating old ref: %p to new ref: %p", heap_oop, forwarded_oop);
       *p = forwarded_oop;
@@ -710,43 +700,43 @@ public:
 
   bool failures() { return _failures; }
 
-  template <class T> void do_oop_nv(T* p) {
-    T heap_oop = oopDesc::load_heap_oop(p);
-    if (!oopDesc::is_null(heap_oop)) {
+  void do_oop(oop* p)       {
+    if (*p != NULL && ! oopDesc::is_brooks_ptr(*p)) {
+      oop heap_oop = oopDesc::load_heap_oop(p);
       oop obj = oopDesc::decode_heap_oop_not_null(heap_oop);
       guarantee(obj->is_oop(), "is_oop");
       /*
-      { // Just for debugging.
+        { // Just for debugging.
         gclog_or_tty->print_cr("Root location "PTR_FORMAT" "
-                              "verified "PTR_FORMAT, p, (void*) obj);
+        "verified "PTR_FORMAT, p, (void*) obj);
         obj->print_on(gclog_or_tty);
-      }
+        }
       */
     }
   }
 
-  void do_oop(oop* p)       { do_oop_nv(p); }
-  void do_oop(narrowOop* p) { do_oop_nv(p); }
+  void do_oop(narrowOop* p) {
+    _heap->nyi();
+  }
 
 };
 
 class ShenandoahVerifyHeapClosure: public ObjectClosure {
 private:
   ShenandoahVerifyRootsClosure _rootsCl;
-  ShenandoahHeap* _heap;
 public:
   ShenandoahVerifyHeapClosure(ShenandoahVerifyRootsClosure rc) :
-    _rootsCl(rc), _heap(ShenandoahHeap::heap()) {};
+    _rootsCl(rc) {};
 
   void do_object(oop p) {
     _rootsCl.do_oop(&p);
 
     HeapWord* oopWord = (HeapWord*) p;
-    if (_heap->is_brooks_ptr(oop(oopWord))) { // Brooks pointer
+    if (oopDesc::is_brooks_ptr(oop(oopWord))) { // Brooks pointer
       guarantee(arrayOop(oopWord)->length() == 1, "brooks ptr objects must have length == 1");
     } else {
       HeapWord* brooksPOop = (oopWord - BROOKS_POINTER_OBJ_SIZE);
-      guarantee(_heap->is_brooks_ptr(oop(brooksPOop)), "age in mark word of brooks obj must be 15");
+      guarantee(oopDesc::is_brooks_ptr(oop(brooksPOop)), "age in mark word of brooks obj must be 15");
     }
   }
 
@@ -837,9 +827,9 @@ public:
   }
 };
 
-void ShenandoahHeap::oop_iterate(ExtendedOopClosure* cl) {
+void ShenandoahHeap::oop_iterate(ExtendedOopClosure* cl, bool skip_dirty_regions) {
   ShenandoahIterateOopClosureRegionClosure blk(cl);
-  heap_region_iterate(&blk);
+  heap_region_iterate(&blk, skip_dirty_regions);
 }
 
 void ShenandoahHeap::oop_iterate(MemRegion mr, 
@@ -909,9 +899,9 @@ void  ShenandoahHeap::gc_epilogue(bool b) {
 
 // Apply blk->doHeapRegion() on all committed regions in address order,
 // terminating the iteration early if doHeapRegion() returns true.
-void ShenandoahHeap::heap_region_iterate(ShenandoahHeapRegionClosure* blk) const {
+void ShenandoahHeap::heap_region_iterate(ShenandoahHeapRegionClosure* blk, bool skip_dirty_regions) const {
   ShenandoahHeapRegion* current  = firstRegion;
-  while (current != NULL && !blk->doHeapRegion(current)) {
+  while (current != NULL && ((skip_dirty_regions && current->is_dirty()) || !blk->doHeapRegion(current))) {
     current = current->next();
   }
 }
@@ -951,10 +941,11 @@ ShenandoahMarkRefsClosure::ShenandoahMarkRefsClosure(uint e, uint worker_id) :
 }
 
 void ShenandoahMarkRefsClosure::do_oop_work(oop* p) {
-  oop obj = *p;
   if (ShenandoahUseNewUpdateRefs) {
     _heap->maybe_update_oop_ref(p);
   }
+  oop obj = oopDesc::load_heap_oop(p);
+  assert(obj == *p, "we just updated the referrer");
   ShenandoahMarkObjsClosure cl(epoch, _worker_id);
   cl.do_object(obj);
 }
@@ -1074,7 +1065,7 @@ private:
 
 void ShenandoahHeap::verify_live() {
   VerifyLivenessParentClosure verifyLive;
-  oop_iterate(&verifyLive);
+  oop_iterate(&verifyLive, true);
 }
 
 void ShenandoahHeap::stop_concurrent_marking() {
@@ -1133,6 +1124,11 @@ class VerifyLivenessAfterConcurrentMarkChildClosure : public ExtendedOopClosure 
 	tty->print("Verifying liveness of reference obj "PTR_FORMAT"\n", obj);
 	obj->print();
       }
+      /*
+      if (! sh->isMarkedCurrent(obj)) {
+        tty->print_cr("obj should be marked: %p, forwardee: %p", obj, oopDesc::get_shenandoah_forwardee(obj));
+      }
+      */
       assert(sh->isMarkedCurrent(obj), "Referenced Objects should be marked");
     }
    }
@@ -1155,7 +1151,7 @@ private:
 	if (ShenandoahGCVerbose) {
 	  tty->print("Verifying liveness of objects pointed to by "PTR_FORMAT"\n", obj);
 	  obj->print();
-	}
+        }
  	VerifyLivenessAfterConcurrentMarkChildClosure childClosure;
  	obj->oop_iterate(&childClosure);
       }
@@ -1171,5 +1167,5 @@ private:
 
 void ShenandoahHeap::verify_liveness_after_concurrent_mark() {
   VerifyLivenessAfterConcurrentMarkParentClosure verifyLive;
-  oop_iterate(&verifyLive);
+  oop_iterate(&verifyLive, true);
 }
