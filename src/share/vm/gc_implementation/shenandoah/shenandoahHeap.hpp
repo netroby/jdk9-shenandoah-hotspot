@@ -85,9 +85,10 @@ public:
   void do_full_collection(bool clear_all_soft_refs);
   AdaptiveSizePolicy* size_policy();
   ShenandoahCollectorPolicy* collector_policy() const;
-  void oop_iterate(ExtendedOopClosure* cl, bool skip_dirty_regions);
+  void oop_iterate(ExtendedOopClosure* cl, bool skip_dirty_regions,
+                   bool skip_unreachable_objects);
   void oop_iterate(ExtendedOopClosure* cl) {
-    oop_iterate(cl, false);
+    oop_iterate(cl, false, false);
   }
   void object_iterate(ObjectClosure* cl);
   void safe_object_iterate(ObjectClosure* cl);

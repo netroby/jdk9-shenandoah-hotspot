@@ -62,6 +62,7 @@ public:
     claimed = false;
   }
 
+  void oop_iterate(ExtendedOopClosure* cl, bool skip_unreachable_objects);
 };
 
 

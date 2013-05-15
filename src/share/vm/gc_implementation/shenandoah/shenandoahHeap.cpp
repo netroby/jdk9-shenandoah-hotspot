@@ -947,18 +947,20 @@ void ShenandoahHeap::safe_object_iterate(ObjectClosure* cl) {
 class ShenandoahIterateOopClosureRegionClosure : public ShenandoahHeapRegionClosure {
   MemRegion _mr;
   ExtendedOopClosure* _cl;
+  bool _skip_unreachable_objects;
 public:
-  ShenandoahIterateOopClosureRegionClosure(ExtendedOopClosure* cl) : _cl(cl) {}
+  ShenandoahIterateOopClosureRegionClosure(ExtendedOopClosure* cl, bool skip_unreachable_objects) :
+    _cl(cl), _skip_unreachable_objects(skip_unreachable_objects) {}
   ShenandoahIterateOopClosureRegionClosure(MemRegion mr, ExtendedOopClosure* cl) 
     :_mr(mr), _cl(cl) {}
   bool doHeapRegion(ShenandoahHeapRegion* r) {
-    r->oop_iterate(_cl);
+    r->oop_iterate(_cl, _skip_unreachable_objects);
     return false;
   }
 };
 
-void ShenandoahHeap::oop_iterate(ExtendedOopClosure* cl, bool skip_dirty_regions) {
-  ShenandoahIterateOopClosureRegionClosure blk(cl);
+void ShenandoahHeap::oop_iterate(ExtendedOopClosure* cl, bool skip_dirty_regions, bool skip_unreachable_objects) {
+  ShenandoahIterateOopClosureRegionClosure blk(cl, skip_unreachable_objects);
   heap_region_iterate(&blk, skip_dirty_regions);
 }
 
@@ -1197,7 +1199,7 @@ private:
 
 void ShenandoahHeap::verify_live() {
   VerifyLivenessParentClosure verifyLive;
-  oop_iterate(&verifyLive, true);
+  oop_iterate(&verifyLive, true, true);
 }
 
 void ShenandoahHeap::stop_concurrent_marking() {
@@ -1299,5 +1301,5 @@ private:
 
 void ShenandoahHeap::verify_liveness_after_concurrent_mark() {
   VerifyLivenessAfterConcurrentMarkParentClosure verifyLive;
-  oop_iterate(&verifyLive, true);
+  oop_iterate(&verifyLive, true, true);
 }
