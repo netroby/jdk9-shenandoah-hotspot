@@ -1138,6 +1138,10 @@ size_t ShenandoahHeap::calcLiveness(HeapWord* start, HeapWord* end) {
     if (isMarkedCurrent(oop(cur))) {
       result = result + oop(cur)->size() * HeapWordSize + (BROOKS_POINTER_OBJ_SIZE * HeapWordSize);
     }
+    markOop mark = getMark(oop(cur));
+    if (mark->age() == (epoch + 1) % 8) {
+      setMark(oop(cur), mark->set_age((epoch + 2) % 8));
+    }
   }
   return result;
 }
