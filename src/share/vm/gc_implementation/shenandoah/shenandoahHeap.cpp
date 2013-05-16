@@ -318,6 +318,7 @@ HeapWord* ShenandoahHeap::mem_allocate_locked(size_t size,
      if (result != NULL) {
        initialize_brooks_ptr(filler, result);
        bytesAllocSinceCM+= size;
+       //       tty->print("Allocating an object of size %d at "PTR_FORMAT"\n", size, result);
        return result;
      } else {
        currentRegion->rollback_allocation(BROOKS_POINTER_OBJ_SIZE);
@@ -379,8 +380,6 @@ HeapWord*  ShenandoahHeap::mem_allocate(size_t size,
   // These are just arbitrary numbers for now.  CHF
   size_t targetStartMarking = capacity() / 4;
   size_t targetBytesAllocated = ShenandoahHeapRegion::RegionSizeBytes;
-  if (ShenandoahGCVerbose) 
-    tty->print("targetBytesAllocated = %d bytesAllocSinceCM = %d\n", targetBytesAllocated, bytesAllocSinceCM);
 
   if (used() > targetStartMarking && bytesAllocSinceCM > targetBytesAllocated && should_start_concurrent_marking()) {
     bytesAllocSinceCM = 0;
@@ -473,9 +472,6 @@ public:
   void do_object(oop p) {
     // if (! oopDesc::is_brooks_ptr(p)) { // Copy everything except brooks ptrs.
     if (getMark(p)->age() == _epoch) { // Ignores brooks ptr objects because epoch is never 15.
-      if (ShenandoahGCVerbose) {
-        tty->print_cr("evacuating object: %p, %d, %d", p, getMark(p)->age(), _epoch);
-      }
       // Allocate brooks ptr object for copy.
       HeapWord* filler = _to_region->allocate(BROOKS_POINTER_OBJ_SIZE);
       assert(filler != NULL, "brooks ptr for copied object must not be NULL");
@@ -483,6 +479,10 @@ public:
       HeapWord* copy = _to_region->allocate(p->size());
       assert(copy != NULL, "allocation of copy object must not fail");
       Copy::aligned_disjoint_words((HeapWord*) p, copy, p->size());
+      //      if (ShenandoahGCVerbose) {
+      //        tty->print_cr("evacuating object: %p, age %d, epoch %d to %p", 
+      //		      p, getMark(p)->age(), _epoch, copy);
+      //      }
       _heap->initialize_brooks_ptr(filler, copy);
       HeapWord* old_brooks_ptr = ((HeapWord*) p) - BROOKS_POINTER_OBJ_SIZE;
       // tty->print_cr("setting old brooks ptr: p: %p, old_brooks_ptr: %p to copy: %p", p, old_brooks_ptr, copy);
@@ -1253,7 +1253,11 @@ class VerifyLivenessAfterConcurrentMarkChildClosure : public ExtendedOopClosure 
       guarantee(obj->is_oop(), "is_oop");
       ShenandoahHeap* sh = (ShenandoahHeap*) Universe::heap();
       if (ShenandoahGCVerbose) {
-	tty->print("Verifying liveness of reference obj "PTR_FORMAT"\n", obj);
+	if (obj->has_displaced_mark()) 
+	  tty->print("Verifying liveness of reference obj "PTR_FORMAT" with displaced mark %x\n", 
+		     obj, getMark(obj)->age());
+	else tty->print("Verifying liveness of reference obj "PTR_FORMAT" with mark %x\n", 
+			obj, getMark(obj)->age());
 	obj->print();
       }
       /*
@@ -1281,7 +1285,11 @@ private:
       ShenandoahHeap* sh = (ShenandoahHeap*) Universe::heap();
       if (sh->isMarkedCurrent(obj)) {
 	if (ShenandoahGCVerbose) {
-	  tty->print("Verifying liveness of objects pointed to by "PTR_FORMAT"\n", obj);
+	  if (obj->has_displaced_mark())
+	    tty->print("Verifying liveness of objects pointed to by "PTR_FORMAT" with displaced mark %d\n", 
+		       obj, getMark(obj)->age());
+	  else tty->print("Verifying liveness of objects pointed to by "PTR_FORMAT" with mark %d\n", 
+			  obj, getMark(obj)->age());
 	  obj->print();
         }
  	VerifyLivenessAfterConcurrentMarkChildClosure childClosure;
