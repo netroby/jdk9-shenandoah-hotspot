@@ -4798,16 +4798,23 @@ void MacroAssembler::load_heap_oop(Register dst, Address src) {
     decode_heap_oop(dst);
   } else
 #endif
-    {
-      Label is_null;
       movptr(dst, src);
-      if (UseShenandoahGC) {
-        testptr(dst, dst);
-        jcc(Assembler::zero, is_null);
-        movptr(dst, Address(dst, -8));
-        bind(is_null);
-      }
-    }
+}
+
+void MacroAssembler::shenandoah_resolve_oop(Register dst) {
+  if (UseShenandoahGC) {
+    Label is_null;
+    testptr(dst, dst);
+    jcc(Assembler::zero, is_null);
+    shenandoah_resolve_oop_not_null(dst);
+    bind(is_null);
+  }
+}
+
+void MacroAssembler::shenandoah_resolve_oop_not_null(Register dst) {
+  if (UseShenandoahGC) {
+    movptr(dst, Address(dst, -8));
+  }
 }
 
 // Doesn't do verfication, generates fixed size code

@@ -264,11 +264,6 @@ inline Klass* oopDesc::decode_klass(narrowOop v) {
 // Called by GC to check for null before decoding.
 inline oop       oopDesc::load_heap_oop(oop* p)          {
   oop heap_oop = *p;
-  if (UseShenandoahGC) {
-    if (! is_null(heap_oop)) {
-      heap_oop = get_shenandoah_forwardee(heap_oop);
-    }
-  }
   return heap_oop;
 }
 

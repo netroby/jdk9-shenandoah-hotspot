@@ -329,6 +329,8 @@ class MacroAssembler: public Assembler {
   void load_klass(Register dst, Register src);
   void store_klass(Register dst, Register src);
 
+  void shenandoah_resolve_oop(Register dst);
+  void shenandoah_resolve_oop_not_null(Register dst);
   void load_heap_oop(Register dst, Address src);
   void load_heap_oop_not_null(Register dst, Address src);
   void store_heap_oop(Address dst, Register src);
