@@ -27,6 +27,7 @@
 
 #include "utilities/taskqueue.hpp"
 #include "utilities/workgroup.hpp"
+#include "gc_implementation/shenandoah/sharedOverflowMarkQueue.hpp"
 
 typedef Padded<OopTaskQueue> SCMObjToScanQueue;
 typedef GenericTaskQueueSet<SCMObjToScanQueue, mtGC> SCMObjToScanQueueSet;
@@ -36,7 +37,9 @@ class ShenandoahConcurrentMark: public CHeapObj<mtGC> {
 private:
   // The per-worker-thread work queues
   SCMObjToScanQueueSet* _task_queues;
-  //  Stack<oop, mtGC>* const _overflow_stack;
+
+  // The shared mark stack that is used in case of overflow.
+  SharedOverflowMarkQueue* _overflow_queue;
 
   bool                    _aborted;       
 
@@ -49,7 +52,8 @@ public:
   void finishMarkFromRoots();
   void drain_satb_buffers();
   bool has_aborted() {return _aborted;}
-  
+  SharedOverflowMarkQueue* overflow_queue();
+
   void addTask(oop obj, int worker_id);
   //  oop popTask(int worker_id);
 

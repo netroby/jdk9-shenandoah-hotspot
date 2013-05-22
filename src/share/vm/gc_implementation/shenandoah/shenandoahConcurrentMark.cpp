@@ -53,10 +53,13 @@ void SCMConcurrentMarkingTask::work(uint worker_id) {
     
     if (!_cm->task_queues()->queue(worker_id)->pop_local(obj)) {
       if (!_cm->task_queues()->steal(worker_id, &seed, obj)) {
-	if (_terminator->offer_termination())
-	  break;  
-	else 
-	  continue;
+        obj = _cm->overflow_queue()->pop();
+        if (obj == NULL) {
+          if (_terminator->offer_termination())
+            break;  
+          else 
+            continue;
+        }
       }
     }
     // We got one.
@@ -75,6 +78,7 @@ void ShenandoahConcurrentMark::initialize(FlexibleWorkGang* workers) {
 	     workers->total_workers());
   _max_worker_id = MAX2((uint)ParallelGCThreads, 1U);
   _task_queues = new SCMObjToScanQueueSet((int) _max_worker_id);
+  _overflow_queue = new SharedOverflowMarkQueue();
 
   for (uint i = 0; i < _max_worker_id; ++i) {
     SCMObjToScanQueue* task_queue = new SCMObjToScanQueue();
@@ -136,6 +140,14 @@ void ShenandoahConcurrentMark::finishMarkFromRoots() {
     found = _task_queues->queue(0)->pop_local(obj);
   }
 
+  // Also drain our overflow queue.
+  obj = _overflow_queue->pop();
+  while (obj != NULL) {
+    assert(obj->is_oop(), "Oops, not an oop");
+    obj->oop_iterate(&cl);
+    obj = _overflow_queue->pop();
+  }
+
   assert(_task_queues->queue(0)->is_empty(), "Should be empty");
   tty->print_cr("Finishing finishMarkFromRoots");
   for (int i = 0; i <(int)_max_worker_id; i++) {
@@ -189,8 +201,13 @@ void ShenandoahConcurrentMark::addTask(oop obj, int q) {
   assert(sh->is_in((HeapWord*) obj), "Only push heap objects on the queue");
 
   if (!_task_queues->queue(q)->push(obj)) {
-    assert(false, "oops_overflowed_our_queues");
+    tty->print_cr("WARNING: Shenandoah mark queues overflown, increase mark queue size -XX:MarkStackSize=VALUE");
+    _overflow_queue->push(obj);
   }
+}
+
+SharedOverflowMarkQueue* ShenandoahConcurrentMark::overflow_queue() {
+  return _overflow_queue;
 }
 
 // // This queue implementation is wonky
