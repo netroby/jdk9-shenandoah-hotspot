@@ -1006,6 +1006,10 @@ public:
     }
     return false;
   }
+
+  ShenandoahHeapRegion* get_result() {
+    return result;
+  }
 };
 
 template<class T>
@@ -1013,6 +1017,7 @@ inline ShenandoahHeapRegion*
 ShenandoahHeap::heap_region_containing(const T addr) const {
   ContainsRegionClosure blk((HeapWord*) addr);
   heap_region_iterate(&blk);
+  return blk.get_result();
 }
 
 
@@ -1100,6 +1105,10 @@ void ShenandoahMarkObjsClosure::do_object(oop obj) {
     // tty->print_cr("probably marking root object %p, %d, %d", obj, getMark(obj)->age(), epoch);
     if (getMark(obj)->age() != epoch) {
       setMark(obj, getMark(obj)->set_age(epoch));
+      // Calculate liveness of heap region containing object.
+      ShenandoahHeapRegion* region = sh->heap_region_containing(obj);
+      region->increase_live_data(obj->size() * HeapWordSize + (BROOKS_POINTER_OBJ_SIZE * HeapWordSize));
+
       sh->concurrentMark()->addTask(obj, _worker_id);
     }
   }
@@ -1125,19 +1134,35 @@ void ShenandoahHeap::prepare_unmarked_root_objs() {
   process_strong_roots(true, false, ScanningOption(so), &rootsCl, &blobsCl, &klassCl);
 }
 
+class ClearLivenessClosure : public ShenandoahHeapRegionClosure {
+  ShenandoahHeap* sh;
+public:
+  ClearLivenessClosure(ShenandoahHeap* heap) : sh(heap) { }
+  
+  bool doHeapRegion(ShenandoahHeapRegion* r) {
+    r->clearLiveData();
+    r->clearClaim();
+    return false;
+  }
+};
+
 void ShenandoahHeap::start_concurrent_marking() {
   set_concurrent_mark_in_progress(true);
+
+  ClearLivenessClosure clc(this);
+  heap_region_iterate(&clc);
+
   prepare_unmarked_root_objs();
 }
 
 // this should really be a closure as should printHeapLocations
-size_t ShenandoahHeap::calcLiveness(HeapWord* start, HeapWord* end) {
+size_t ShenandoahHeap::bump_object_age(HeapWord* start, HeapWord* end) {
   HeapWord* cur = NULL;
   size_t result = 0;
   for (cur = start; cur < end; cur = cur + oop(cur)->size()) {
-    if (isMarkedCurrent(oop(cur))) {
-      result = result + oop(cur)->size() * HeapWordSize + (BROOKS_POINTER_OBJ_SIZE * HeapWordSize);
-    }
+
+    // TODO: This should only ever be done for debug builds (i.e.
+    // builds where we also do liveness verification).
     markOop mark = getMark(oop(cur));
     if (mark->age() == (epoch + 1) % 8) {
       setMark(oop(cur), mark->set_age((epoch + 2) % 8));
@@ -1147,17 +1172,15 @@ size_t ShenandoahHeap::calcLiveness(HeapWord* start, HeapWord* end) {
 }
 
 
-class CalcLivenessClosure : public ShenandoahHeapRegionClosure {
+class BumpObjectAgeClosure : public ShenandoahHeapRegionClosure {
   ShenandoahHeap* sh;
 public:
-  CalcLivenessClosure(ShenandoahHeap* heap) : sh(heap) { }
+  BumpObjectAgeClosure(ShenandoahHeap* heap) : sh(heap) { }
   
   bool doHeapRegion(ShenandoahHeapRegion* r) {
-    r->setLiveData(sh->calcLiveness(r->bottom(), r->top()));
-    r->clearClaim();
-    if (r->next() == NULL) 
-      return true;
-    else return false;
+
+    sh->bump_object_age(r->bottom(), r->top());
+    return false;
   }
 };
 
@@ -1209,8 +1232,9 @@ void ShenandoahHeap::verify_live() {
 void ShenandoahHeap::stop_concurrent_marking() {
   assert(concurrent_mark_in_progress(), "How else could we get here?");
   set_concurrent_mark_in_progress(false);
-  
-  CalcLivenessClosure clc(this);
+
+  // TODO: This should only be done for debug builds.
+  BumpObjectAgeClosure clc(this);
   heap_region_iterate(&clc);
   
   PrintHeapRegionsClosure pc;

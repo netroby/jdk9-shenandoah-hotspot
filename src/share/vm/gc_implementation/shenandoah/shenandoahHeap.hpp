@@ -129,7 +129,7 @@ public:
   void start_concurrent_marking();
   void stop_concurrent_marking();
   ShenandoahConcurrentMark* concurrentMark() { return _scm;}
-  size_t calcLiveness(HeapWord* start, HeapWord* end);
+  size_t bump_object_age(HeapWord* start, HeapWord* end);
   bool isMarkedPrev(oop obj) const;
   bool isMarkedCurrent(oop obj) const;
   bool isMarked(oop obj)  { return isMarkedPrev(obj) || isMarkedCurrent(obj);}
