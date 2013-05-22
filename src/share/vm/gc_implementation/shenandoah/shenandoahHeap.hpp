@@ -144,7 +144,6 @@ public:
 
   void evacuate();
   void parallel_evacuate();
-  void update_references_after_evacuation();
 
   void initialize_brooks_ptr(HeapWord* brooks_ptr, HeapWord* object);
   void set_brooks_ptr(HeapWord* brooks_ptr, HeapWord* object);

@@ -593,10 +593,8 @@ public:
 
 void ShenandoahHeap::parallel_evacuate() {
 
-  if (ShenandoahUseNewUpdateRefs) {
-    RecycleDirtyRegionsClosure cl;
-    heap_region_iterate(&cl);
-  }
+  RecycleDirtyRegionsClosure cl;
+  heap_region_iterate(&cl);
 
   // We need to refactor this
 
@@ -614,14 +612,6 @@ void ShenandoahHeap::parallel_evacuate() {
 	 "Collection set chooser should have provided the right number of empty regions");
   workers()->run_task(evacuationTask);
   
-  if (! ShenandoahUseNewUpdateRefs) {
-    update_references_after_evacuation();
-    for (int i = 0; i < collectionSet.length(); i++) {
-      ShenandoahHeapRegion* current = collectionSet.at(i);
-      verify_evacuation(current);
-      current->recycle();
-    }
-  }
 }
 
 void ShenandoahHeap::evacuate() {
@@ -717,21 +707,6 @@ public:
   }
 
 };
-
-void ShenandoahHeap::update_references_after_evacuation() {
-
-  UpdateRefsAfterEvacuationClosure rootsCl;
-  CodeBlobToOopClosure blobsCl(&rootsCl, false);
-  KlassToOopClosure klassCl(&rootsCl);
-
-  const int so = SO_AllClasses | SO_Strings | SO_CodeCache;
-
-  ClassLoaderDataGraph::clear_claimed_marks();
-
-  process_strong_roots(true, false, ScanningOption(so), &rootsCl, &blobsCl, &klassCl);
-
-  oop_iterate(&rootsCl);
-}
 
 size_t  ShenandoahHeap::unsafe_max_tlab_alloc(Thread *thread) const {
   return 0;
@@ -1079,9 +1054,10 @@ ShenandoahMarkRefsClosure::ShenandoahMarkRefsClosure(uint e, uint worker_id) :
 }
 
 void ShenandoahMarkRefsClosure::do_oop_work(oop* p) {
-  if (ShenandoahUseNewUpdateRefs) {
-    _heap->maybe_update_oop_ref(p);
-  }
+
+  // We piggy-back reference updating to the marking tasks.
+  _heap->maybe_update_oop_ref(p);
+
   oop obj = oopDesc::load_heap_oop(p);
   assert(obj == *p, "we just updated the referrer");
   ShenandoahMarkObjsClosure cl(epoch, _worker_id);
