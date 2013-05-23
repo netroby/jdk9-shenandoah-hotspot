@@ -157,7 +157,7 @@ private:
   void verify_live();
   void verify_liveness_after_concurrent_mark();
   void mark();
-  ShenandoahHeapRegion* nextEmptyRegion();
+  ShenandoahHeapRegion* nextEmptyRegion(size_t required_size);
   
 };
 

@@ -275,28 +275,26 @@ public:
 
 class FindEmptyRegionClosure: public ShenandoahHeapRegionClosure {
   ShenandoahHeapRegion* _result;
-
+  size_t _required_size;
 public:
 
-  FindEmptyRegionClosure() {
+  FindEmptyRegionClosure(size_t required_size) : _required_size(required_size) {
     _result = NULL;
   }
 
   bool doHeapRegion(ShenandoahHeapRegion* r) {
-    if (r->is_empty()) {
+    if (r->free() >= _required_size) {
       _result = r;
       return true;
     }
-    if (r->next() == NULL) 
-      return true;
-    else return false;
+    return false;
   }
   ShenandoahHeapRegion* result() { return _result;}
 
 };
 
-ShenandoahHeapRegion* ShenandoahHeap::nextEmptyRegion() {
-  FindEmptyRegionClosure cl;
+ShenandoahHeapRegion* ShenandoahHeap::nextEmptyRegion(size_t required_size) {
+  FindEmptyRegionClosure cl(required_size);
   heap_region_iterate(&cl);
   return cl.result();
 }
@@ -337,7 +335,7 @@ HeapWord* ShenandoahHeap::mem_allocate_locked(size_t size,
    */
    currentRegion->setLiveData(currentRegion->used());
 
-   currentRegion = nextEmptyRegion();
+   currentRegion = nextEmptyRegion((size + BROOKS_POINTER_OBJ_SIZE) * HeapWordSize);
    if (currentRegion == NULL) {
      tty->print("About to assert that no GC is implemented\n");
      PrintHeapRegionsClosure pc;
