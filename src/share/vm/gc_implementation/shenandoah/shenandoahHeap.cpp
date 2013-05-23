@@ -614,28 +614,6 @@ void ShenandoahHeap::parallel_evacuate() {
   
 }
 
-void ShenandoahHeap::evacuate() {
-
-  ShenandoahCollectionSetChooser chooser;
-  chooser.initialize(firstRegion);
-
-  GrowableArray<ShenandoahHeapRegion*> collectionSet = chooser.cs_regions();
-  GrowableArray<ShenandoahHeapRegion*> emptySet = chooser.empty_regions();
-  GrowableArray<ShenandoahHeapRegion*> finishedRegions;
-
-  while (collectionSet.length() > 0) {
-    ShenandoahHeapRegion* fromRegion = collectionSet.pop();
-    ShenandoahHeapRegion* toRegion = emptySet.pop();
-    //    tty->print("From Region:\n");
-    //    fromRegion->print();
-    //    tty->print("To Region:\n");
-    //    toRegion->print();
-
-    evacuate_region(fromRegion, toRegion);
-    finishedRegions.append(fromRegion);
-  }
-}
-
 class VerifyEvacuationClosure: public ExtendedOopClosure {
 private:
   ShenandoahHeap*  _heap;

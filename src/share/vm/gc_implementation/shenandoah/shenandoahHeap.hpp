@@ -142,7 +142,6 @@ public:
   // them into the marking task queue.
   void prepare_unmarked_root_objs();
 
-  void evacuate();
   void parallel_evacuate();
 
   void initialize_brooks_ptr(HeapWord* brooks_ptr, HeapWord* object);
