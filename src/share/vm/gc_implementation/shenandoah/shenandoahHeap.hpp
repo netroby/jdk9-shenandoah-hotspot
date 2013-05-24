@@ -12,6 +12,8 @@
 #include "oops/oop.hpp"
 #include "oops/markOop.hpp"
 
+#define MAX_EPOCH 14
+
 class SpaceClosure;
 
 class ShenandoahHeapRegionClosure : public StackObj {
@@ -117,7 +119,7 @@ public:
   size_t capacity_in_bytes() { return capacity() * HeapWordSize;}
 
   void heap_region_iterate(ShenandoahHeapRegionClosure* blk, bool skip_dirty_regions = false) const;
-  template<class T> inline ShenandoahHeapRegion* heap_region_containing(const T addr) const;  
+  template<class T> ShenandoahHeapRegion* heap_region_containing(const T addr) const;  
 
   bool is_in_reserved(void* p);
 
@@ -130,6 +132,7 @@ public:
   void stop_concurrent_marking();
   ShenandoahConcurrentMark* concurrentMark() { return _scm;}
   size_t bump_object_age(HeapWord* start, HeapWord* end);
+  void mark_current(oop obj) const;
   bool isMarkedPrev(oop obj) const;
   bool isMarkedCurrent(oop obj) const;
   bool isMarked(oop obj)  { return isMarkedPrev(obj) || isMarkedCurrent(obj);}
