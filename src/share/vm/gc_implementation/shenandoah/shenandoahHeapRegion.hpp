@@ -6,22 +6,26 @@
 
 class ShenandoahHeapRegion : public ContiguousSpace {
 public:
-   ShenandoahHeapRegion* _next;
    int regionNumber;
    static size_t RegionSizeBytes;
    size_t liveData;
    MemRegion reserved;
    volatile unsigned int claimed;
+
+   ShenandoahHeapRegion* _next;
+
 private:
   bool _dirty;
 public:
    jint initialize(HeapWord* start, size_t regionSize);
+
    void setNext(ShenandoahHeapRegion* next) {
       _next = next;
    }
    ShenandoahHeapRegion* next() {
       return _next;
    }
+
 
   // Roll back the previous allocation of an object with specified size.
   // Returns TRUE when successful, FALSE if not successful or not supported.
@@ -63,6 +67,8 @@ public:
   }
 
   void oop_iterate(ExtendedOopClosure* cl, bool skip_unreachable_objects);
+
+  
 };
 
 

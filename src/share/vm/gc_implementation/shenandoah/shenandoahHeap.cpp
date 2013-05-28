@@ -1,5 +1,4 @@
 #include "gc_implementation/shenandoah/shenandoahHeap.hpp"
-#include "gc_implementation/shenandoah/shenandoahCollectionSetChooser.hpp"
 #include "gc_implementation/shenandoah/vm_operations_shenandoah.hpp"
 #include "runtime/vmThread.hpp"
 #include "memory/iterator.hpp"
@@ -90,39 +89,50 @@ jint ShenandoahHeap::initialize() {
   _reserved.set_end((HeapWord*) (heap_rs.base() + heap_rs.size()));
 
   set_barrier_set(new ShenandoahBarrierSet());
-
   ReservedSpace pgc_rs = heap_rs.first_part(max_byte_size);
 
   tty->print("Calling initialize on reserved space base = %p end = %p\n", 
 	     pgc_rs.base(), pgc_rs.base() + pgc_rs.size());
-  
-  ShenandoahHeapRegion* current = new ShenandoahHeapRegion();
-  firstRegion = current;
-  currentRegion = firstRegion;
-  numRegions = init_byte_size / ShenandoahHeapRegion::RegionSizeBytes;
-  initialSize = numRegions * ShenandoahHeapRegion::RegionSizeBytes;
+
+  _numRegions = init_byte_size / ShenandoahHeapRegion::RegionSizeBytes;
+  _initialSize = _numRegions * ShenandoahHeapRegion::RegionSizeBytes;
   size_t regionSizeWords = ShenandoahHeapRegion::RegionSizeBytes / HeapWordSize;
-  assert(init_byte_size == initialSize, "tautology");
+  assert(init_byte_size == _initialSize, "tautology");
+
+  ShenandoahHeapRegion* current = new ShenandoahHeapRegion();
+  _firstRegion = current;
+  _currentRegion = current;
   
-  for (size_t i = 0; i < numRegions - 1; i++) {
+  for (size_t i = 0; i < _numRegions - 1; i++) {
     ShenandoahHeapRegion* next = new ShenandoahHeapRegion();
-    current->initialize((HeapWord*) pgc_rs.base() + regionSizeWords * i, regionSizeWords);
+    current->initialize((HeapWord*) pgc_rs.base() + 
+			regionSizeWords * i, regionSizeWords);
     current->setNext(next);
     current->regionNumber = i;
     current = next;
   }
-  current->initialize((HeapWord*) pgc_rs.base() + regionSizeWords * (numRegions - 1), 
+
+  current->initialize((HeapWord*) pgc_rs.base() + regionSizeWords * (_numRegions - 1), 
 		      regionSizeWords);
   current->setNext(NULL);
-  current->regionNumber = numRegions - 1;
+  current->regionNumber = _numRegions - 1;
+  _numAllocs = 0;
 
-  //  PrintHeapRegionsClosure pc;
-  //  heap_region_iterate(&pc);
+  _regions = new ShenandoahHeapRegionSet(_numRegions);
+  _free_regions = new ShenandoahHeapRegionSet(_numRegions);
+  _collection_set = NULL;
 
-  numAllocs = 0;
-  //  _sct = new ShenandoahConcurrentThread();
-  //  if (_sct == NULL)
-  //    return JNI_ENOMEM;
+  ShenandoahHeapRegion* r = _firstRegion;
+  while (r != NULL) {
+    _regions->add(r);
+    _free_regions->add(r);
+    r = r->next();
+  }
+
+  tty->print("All Regions\n");
+  _regions->print();
+  tty->print("Free Regions\n");
+  _free_regions->print();
 
   // The call below uses stuff (the SATB* things) that are in G1, but probably
   // belong into a shared location.
@@ -138,8 +148,12 @@ ShenandoahHeap::ShenandoahHeap(ShenandoahCollectorPolicy* policy) :
   SharedHeap(policy),
   _pgc_policy(policy), 
   _concurrent_mark_in_progress(false),
-  epoch(1),
-  bytesAllocSinceCM(0) {
+  _epoch(1),
+  _regions(NULL),
+  _free_regions(NULL),
+  _collection_set(NULL),
+  _bytesAllocSinceCM(0),
+  _default_gclab_size(1024){
   _pgc = this;
   _scm = new ShenandoahConcurrentMark();
 }
@@ -189,7 +203,7 @@ size_t ShenandoahHeap::used() const {
 
 
 size_t ShenandoahHeap::capacity() const {
-  return numRegions * ShenandoahHeapRegion::RegionSizeBytes;
+  return _numRegions * ShenandoahHeapRegion::RegionSizeBytes;
 
 }
 
@@ -199,7 +213,7 @@ bool ShenandoahHeap::is_maximal_no_gc() const {
 }
 
 size_t ShenandoahHeap::max_capacity() const {
-  return numRegions * ShenandoahHeapRegion::RegionSizeBytes;
+  return _numRegions * ShenandoahHeapRegion::RegionSizeBytes;
 }
 
 class IsInRegionClosure : public ShenandoahHeapRegionClosure {
@@ -249,6 +263,13 @@ HeapWord* ShenandoahHeap::allocate_new_tlab(size_t word_size) {
   return mem_allocate(word_size, limit_exceeded);
 }
 
+// Once we start optimizing we'll want to do this with a CAS 
+// instead of grabbing the heap lock.
+HeapWord* ShenandoahHeap::allocate_new_gclab(size_t word_size) {
+  bool* limit_exceeded;
+  return mem_allocate(word_size, limit_exceeded);
+}
+  
 
 ShenandoahHeap* ShenandoahHeap::heap() {
   assert(_pgc != NULL, "Unitialized access to ShenandoahHeap::heap()");
@@ -298,54 +319,61 @@ public:
 ShenandoahHeapRegion* ShenandoahHeap::nextEmptyRegion() {
   FindEmptyRegionClosure cl;
   heap_region_iterate(&cl);
+
+  if (cl.result() == NULL)
+    assert(false, "Couldn't find an empty region");
+
+  _currentRegion = cl.result();
+
   return cl.result();
 }
 
 HeapWord* ShenandoahHeap::mem_allocate_locked(size_t size,
 					      bool* gc_overhead_limit_was_exceeded) {
 
-   if (currentRegion == NULL) {
+   if (_currentRegion == NULL) {
      tty->print("About to assert that no GC is implemented\n");
      PrintHeapRegionsClosure pc;
      heap_region_iterate(&pc);
      assert(false, "No GC implemented");
    }
 
-   HeapWord* filler = currentRegion->allocate(BROOKS_POINTER_OBJ_SIZE);
+   HeapWord* filler = _currentRegion->allocate(BROOKS_POINTER_OBJ_SIZE);
    HeapWord* result = NULL;
    if (filler != NULL) {
-     result = currentRegion->allocate(size);
+     result = _currentRegion->allocate(size);
      if (result != NULL) {
        initialize_brooks_ptr(filler, result);
-       bytesAllocSinceCM+= size;
+       _bytesAllocSinceCM+= size;
        return result;
      } else {
-       currentRegion->rollback_allocation(BROOKS_POINTER_OBJ_SIZE);
+       _currentRegion->rollback_allocation(BROOKS_POINTER_OBJ_SIZE);
      }
    }
    assert (result == NULL, "expect result==NULL");
 
    // tty->print("Closing region %d "PTR_FORMAT"["PTR_FORMAT":%d] and starting region %d "PTR_FORMAT" total used in bytes = "SIZE_FORMAT" M \n", 
-   // 	      currentRegion->regionNumber, currentRegion, 
-   // 	      currentRegion->top(), currentRegion->used(),
-   // 	      currentRegion->next() != NULL ? currentRegion->next()->regionNumber : -1,
-   // 	      currentRegion->next(),
+   // 	      _currentRegion->regionNumber, _currentRegion, 
+   // 	      _currentRegion->top(), _currentRegion->used(),
+   // 	      _currentRegion->next() != NULL ? _currentRegion->next()->regionNumber : -1,
+   // 	      _currentRegion->next(),
    // 	      used_in_bytes()/M);
 
    /*
-     printHeapObjects(currentRegion->bottom(), currentRegion->top());
+     printHeapObjects(_currentRegion->bottom(), _currentRegion->top());
    */
-   currentRegion->setLiveData(currentRegion->used());
+   _currentRegion->setLiveData(_currentRegion->used());
 
-   currentRegion = nextEmptyRegion();
-   if (currentRegion == NULL) {
-     tty->print("About to assert that no GC is implemented\n");
+   if (_free_regions->has_next())
+     _currentRegion = _free_regions->get_next();
+   else {
+     // Should trigger a GC HERE.
      PrintHeapRegionsClosure pc;
      heap_region_iterate(&pc);
      assert(false, "No GC implemented");
-   } else {
-     return mem_allocate_locked(size, gc_overhead_limit_was_exceeded);
-   }
+   } 
+   
+   return mem_allocate_locked(size, gc_overhead_limit_was_exceeded);
 }
 
 class PrintOopContents: public OopClosure {
@@ -364,8 +392,8 @@ public:
 HeapWord*  ShenandoahHeap::mem_allocate(size_t size, 
 					bool*  gc_overhead_limit_was_exceeded) {
 
-  if (numAllocs > 1000000) {
-    numAllocs = 0;
+  if (_numAllocs > 1000000) {
+    _numAllocs = 0;
     VM_ShenandoahVerifyHeap op(0, 0, GCCause::_allocation_failure);
     if (Thread::current()->is_VM_thread()) {
       op.doit();
@@ -374,16 +402,14 @@ HeapWord*  ShenandoahHeap::mem_allocate(size_t size,
       VMThread::execute(&op);
     }
   }
-  numAllocs++;
+  _numAllocs++;
 
   // These are just arbitrary numbers for now.  CHF
   size_t targetStartMarking = capacity() / 4;
   size_t targetBytesAllocated = ShenandoahHeapRegion::RegionSizeBytes;
-  if (ShenandoahGCVerbose) 
-    tty->print("targetBytesAllocated = %d bytesAllocSinceCM = %d\n", targetBytesAllocated, bytesAllocSinceCM);
 
-  if (used() > targetStartMarking && bytesAllocSinceCM > targetBytesAllocated && should_start_concurrent_marking()) {
-    bytesAllocSinceCM = 0;
+  if (used() > targetStartMarking && _bytesAllocSinceCM > targetBytesAllocated && should_start_concurrent_marking()) {
+    _bytesAllocSinceCM = 0;
     tty->print("Capacity = "SIZE_FORMAT" Used = "SIZE_FORMAT" Target = "SIZE_FORMAT" doing initMark\n", capacity(), used(), targetStartMarking);
     mark();
 
@@ -395,8 +421,8 @@ HeapWord*  ShenandoahHeap::mem_allocate(size_t size,
 
 void ShenandoahHeap::mark() {
 
-    epoch = (epoch + 1) % 8;
-    tty->print("epoch = %d", epoch);
+    _epoch = (_epoch + 1) % 8;
+    tty->print("epoch = %d", _epoch);
     VM_ShenandoahInitMark initMark;
     VMThread::execute(&initMark);
     
@@ -473,9 +499,6 @@ public:
   void do_object(oop p) {
     // if (! oopDesc::is_brooks_ptr(p)) { // Copy everything except brooks ptrs.
     if (getMark(p)->age() == _epoch) { // Ignores brooks ptr objects because epoch is never 15.
-      if (ShenandoahGCVerbose) {
-        tty->print_cr("evacuating object: %p, %d, %d", p, getMark(p)->age(), _epoch);
-      }
       // Allocate brooks ptr object for copy.
       HeapWord* filler = _to_region->allocate(BROOKS_POINTER_OBJ_SIZE);
       assert(filler != NULL, "brooks ptr for copied object must not be NULL");
@@ -483,6 +506,11 @@ public:
       HeapWord* copy = _to_region->allocate(p->size());
       assert(copy != NULL, "allocation of copy object must not fail");
       Copy::aligned_disjoint_words((HeapWord*) p, copy, p->size());
+      if (ShenandoahGCVerbose) {
+        tty->print_cr("evacuating object: %p, %d, %d to %p", 
+		      p, getMark(p)->age(), _epoch, copy);
+      }
+
       _heap->initialize_brooks_ptr(filler, copy);
       HeapWord* old_brooks_ptr = ((HeapWord*) p) - BROOKS_POINTER_OBJ_SIZE;
       // tty->print_cr("setting old brooks ptr: p: %p, old_brooks_ptr: %p to copy: %p", p, old_brooks_ptr, copy);
@@ -495,6 +523,50 @@ public:
     */
   }
 };
+
+class ParallelEvacuateRegionObjectClosure : public ObjectClosure {
+private:
+  uint _epoch;
+  ShenandoahHeap* _heap;
+  ShenandoahAllocRegion* _region;
+
+  public:
+  ParallelEvacuateRegionObjectClosure(uint epoch, 
+				      ShenandoahHeap* heap, 
+				      ShenandoahAllocRegion* allocRegion) :
+    _epoch(epoch),
+    _heap(heap),
+    _region(allocRegion) { 
+    tty->print("region closure allocRegion = "PTR_FORMAT"\n");
+  }
+  
+  void do_object(oop p) {
+    if (getMark(p)->age() == _epoch) {
+      // Allocate brooks ptr object for copy.
+      _region->ensure_space(BROOKS_POINTER_OBJ_SIZE + p->size());
+      HeapWord* filler = _region->allocate(BROOKS_POINTER_OBJ_SIZE);
+      assert(filler != NULL, "brooks ptr for copied object must not be NULL");
+      // Copy original object.
+      HeapWord* copy = _region->allocate(p->size());
+      assert(copy != NULL, "allocation of copy object must not fail");
+      Copy::aligned_disjoint_words((HeapWord*) p, copy, p->size());
+      if (ShenandoahGCVerbose) {
+        tty->print_cr("evacuating object: %p, of size %d with age %d, epoch %d to %p of size %d", 
+		      p, p->size(), getMark(p)->age(), _epoch, copy, oop(copy)->size());
+      }
+
+      // tty->print("old obj = \n");
+      // p->print();
+      // tty->print("new obj = \n");
+      // oop(copy)->print();
+      _heap->initialize_brooks_ptr(filler, copy);
+      HeapWord* old_brooks_ptr = ((HeapWord*) p) - BROOKS_POINTER_OBJ_SIZE;
+      // tty->print_cr("setting old brooks ptr: p: %p, old_brooks_ptr: %p to copy: %p", p, old_brooks_ptr, copy);
+      _heap->set_brooks_ptr(old_brooks_ptr, copy);
+    }
+  }
+};
+      
 
 void ShenandoahHeap::set_brooks_ptr(HeapWord* brooks_ptr, HeapWord* obj) {
   // Set the brooks pointer
@@ -524,7 +596,14 @@ void ShenandoahHeap::evacuate_region(ShenandoahHeapRegion* from_region, Shenando
     to_region->print_on(tty);
   }
 
-  EvacuateRegionObjectClosure evacuate_region(epoch, this, to_region);
+  EvacuateRegionObjectClosure evacuate_region(_epoch, this, to_region);
+  from_region->object_iterate(&evacuate_region);
+  from_region->set_dirty(true);
+}
+
+void ShenandoahHeap::parallel_evacuate_region(ShenandoahHeapRegion* from_region, 
+					      ShenandoahAllocRegion *alloc_region) {
+  ParallelEvacuateRegionObjectClosure evacuate_region(_epoch, this, alloc_region);
   from_region->object_iterate(&evacuate_region);
   from_region->set_dirty(true);
 }
@@ -532,45 +611,35 @@ void ShenandoahHeap::evacuate_region(ShenandoahHeapRegion* from_region, Shenando
 class ParallelEvacuationTask : public AbstractGangTask {
 private:
   ShenandoahHeap* _sh;
-  GrowableArray<ShenandoahHeapRegion*> _collectionSet;
-  GrowableArray<ShenandoahHeapRegion*> _emptySet;
-  GrowableArray<ShenandoahHeapRegion*> _finishedRegions;
+  ShenandoahHeapRegionSet* _cs;
   
 public:  
-  ParallelEvacuationTask(ShenandoahHeap* sh, 
-			 GrowableArray<ShenandoahHeapRegion*> collectionSet,
-			 GrowableArray<ShenandoahHeapRegion*> emptySet,
-			 GrowableArray<ShenandoahHeapRegion*> finishedRegions) :
+  ParallelEvacuationTask(ShenandoahHeap* sh, ShenandoahHeapRegionSet* cs) :
     AbstractGangTask("Parallel Evacuation Task"), 
-    _sh(sh), 
-    _collectionSet(collectionSet),
-    _emptySet(emptySet),
-    _finishedRegions(finishedRegions){}
+    _cs(cs),
+    _sh(sh) {}
   
   void work(uint worker_id) {
   
-    for (int i = 0; i < _collectionSet.length(); i++) {
-      ShenandoahHeapRegion* from_hr = _collectionSet.at(i);
-      if (from_hr->claim()) {
-	if (ShenandoahGCVerbose) {
-	  tty->print("Thread %d claimed Heap Region %d\n",
-		     worker_id,
-		     from_hr->regionNumber);
-	}
-	int j = 0;
-	bool done = false;
+    ShenandoahHeapRegion* from_hr = _cs->claim_next();
+    ShenandoahAllocRegion* allocRegion = new ShenandoahAllocRegion();
 
-	// We have an earlier assert that ensures we have enough empty regions.
-	// This will go away once we have parallel evacuation of regions.
-	while (!done && j < _emptySet.length()) {
-	  ShenandoahHeapRegion* to_hr = _emptySet.at(j++);
-	  if (to_hr->claim()) {
-	    done = true;
-	    _sh->evacuate_region(from_hr, to_hr);
-	  }
-	}
+    while (from_hr != NULL) {
+      if (ShenandoahGCVerbose) {
+     	tty->print("Thread %d claimed Heap Region %d\n",
+     		   worker_id,
+     		   from_hr->regionNumber);
+	from_hr->print();
       }
+      // Not sure if the check is worth it or not.
+      if (from_hr->getLiveData() != 0) {
+
+	_sh->parallel_evacuate_region(from_hr, allocRegion);
+      }
+      from_hr = _cs->claim_next();
     }
+    tty->print("Thread %d about to call fill_region on region\n", worker_id);
+    allocRegion->fill_region();
   }
 };
 
@@ -598,53 +667,28 @@ void ShenandoahHeap::parallel_evacuate() {
     heap_region_iterate(&cl);
   }
 
-  // We need to refactor this
-
-  ShenandoahCollectionSetChooser chooser;
-  chooser.initialize(firstRegion);
-
-  GrowableArray<ShenandoahHeapRegion*> collectionSet = chooser.cs_regions();
-  GrowableArray<ShenandoahHeapRegion*> emptySet = chooser.empty_regions();
-  GrowableArray<ShenandoahHeapRegion*> finishedRegions;
+  // For now pick at most 30 regions
+  _collection_set = _regions->choose_collection_set(10);
+  
+  tty->print("Printing collection set:\n");
+  _collection_set->print();
 
   ParallelEvacuationTask* evacuationTask = 
-    new ParallelEvacuationTask(this, collectionSet, emptySet, finishedRegions);
+    new ParallelEvacuationTask(this, _collection_set);
 
-  assert(emptySet.length() >= collectionSet.length(), 
-	 "Collection set chooser should have provided the right number of empty regions");
-  workers()->run_task(evacuationTask);
+    workers()->run_task(evacuationTask);
   
-  if (! ShenandoahUseNewUpdateRefs) {
-    update_references_after_evacuation();
-    for (int i = 0; i < collectionSet.length(); i++) {
-      ShenandoahHeapRegion* current = collectionSet.at(i);
-      verify_evacuation(current);
-      current->recycle();
+    if (! ShenandoahUseNewUpdateRefs) {
+      update_references_after_evacuation();
+      for (size_t i = 0; i < _collection_set->length(); i++) {
+	ShenandoahHeapRegion* current = _collection_set->at(i);
+	verify_evacuation(current);      
+	current->recycle();
+      }
     }
-  }
+    
 }
 
-void ShenandoahHeap::evacuate() {
-
-  ShenandoahCollectionSetChooser chooser;
-  chooser.initialize(firstRegion);
-
-  GrowableArray<ShenandoahHeapRegion*> collectionSet = chooser.cs_regions();
-  GrowableArray<ShenandoahHeapRegion*> emptySet = chooser.empty_regions();
-  GrowableArray<ShenandoahHeapRegion*> finishedRegions;
-
-  while (collectionSet.length() > 0) {
-    ShenandoahHeapRegion* fromRegion = collectionSet.pop();
-    ShenandoahHeapRegion* toRegion = emptySet.pop();
-    //    tty->print("From Region:\n");
-    //    fromRegion->print();
-    //    tty->print("To Region:\n");
-    //    toRegion->print();
-
-    evacuate_region(fromRegion, toRegion);
-    finishedRegions.append(fromRegion);
-  }
-}
 
 class VerifyEvacuationClosure: public ExtendedOopClosure {
 private:
@@ -1032,7 +1076,7 @@ void  ShenandoahHeap::gc_epilogue(bool b) {
 // Apply blk->doHeapRegion() on all committed regions in address order,
 // terminating the iteration early if doHeapRegion() returns true.
 void ShenandoahHeap::heap_region_iterate(ShenandoahHeapRegionClosure* blk, bool skip_dirty_regions) const {
-  ShenandoahHeapRegion* current  = firstRegion;
+  ShenandoahHeapRegion* current  = _firstRegion;
   while (current != NULL && ((skip_dirty_regions && current->is_dirty()) || !blk->doHeapRegion(current))) {
     current = current->next();
   }
@@ -1070,7 +1114,7 @@ public:
 
 
 ShenandoahMarkRefsClosure::ShenandoahMarkRefsClosure(uint e, uint worker_id) :
-  epoch(e), _worker_id(worker_id), _heap(ShenandoahHeap::heap()) {
+  _epoch(e), _worker_id(worker_id), _heap(ShenandoahHeap::heap()) {
 }
 
 void ShenandoahMarkRefsClosure::do_oop_work(oop* p) {
@@ -1079,7 +1123,7 @@ void ShenandoahMarkRefsClosure::do_oop_work(oop* p) {
   }
   oop obj = oopDesc::load_heap_oop(p);
   assert(obj == *p, "we just updated the referrer");
-  ShenandoahMarkObjsClosure cl(epoch, _worker_id);
+  ShenandoahMarkObjsClosure cl(_epoch, _worker_id);
   cl.do_object(obj);
 }
 
@@ -1091,15 +1135,15 @@ void ShenandoahMarkRefsClosure::do_oop(oop* p) {
   do_oop_work(p);
 }
 
-ShenandoahMarkObjsClosure::ShenandoahMarkObjsClosure(uint e, uint worker_id) : epoch(e), _worker_id(worker_id) {
+ShenandoahMarkObjsClosure::ShenandoahMarkObjsClosure(uint e, uint worker_id) : _epoch(e), _worker_id(worker_id) {
 }
 
 void ShenandoahMarkObjsClosure::do_object(oop obj) {
   ShenandoahHeap* sh = (ShenandoahHeap* ) Universe::heap();
   if (obj != NULL && (sh->is_in(obj))) {
-    // tty->print_cr("probably marking root object %p, %d, %d", obj, getMark(obj)->age(), epoch);
-    if (getMark(obj)->age() != epoch) {
-      setMark(obj, getMark(obj)->set_age(epoch));
+    // tty->print_cr("probably marking root object %p, %d, %d", obj, getMark(obj)->age(), _epoch);
+    if (getMark(obj)->age() != _epoch) {
+      setMark(obj, getMark(obj)->set_age(_epoch));
       sh->concurrentMark()->addTask(obj, _worker_id);
     }
   }
@@ -1114,7 +1158,7 @@ void ShenandoahMarkObjsClosure::do_object(oop obj) {
 
   /* We are going to add all the roots to taskqueue 0 for now.  Later on we should experiment with a better partioning. */
 void ShenandoahHeap::prepare_unmarked_root_objs() {
-  ShenandoahMarkRefsClosure rootsCl(epoch, 0);
+  ShenandoahMarkRefsClosure rootsCl(_epoch, 0);
   CodeBlobToOopClosure blobsCl(&rootsCl, false);
   KlassToOopClosure klassCl(&rootsCl);
 
@@ -1139,8 +1183,8 @@ size_t ShenandoahHeap::calcLiveness(HeapWord* start, HeapWord* end) {
       result = result + oop(cur)->size() * HeapWordSize + (BROOKS_POINTER_OBJ_SIZE * HeapWordSize);
     }
     markOop mark = getMark(oop(cur));
-    if (mark->age() == (epoch + 1) % 8) {
-      setMark(oop(cur), mark->set_age((epoch + 2) % 8));
+    if (mark->age() == (_epoch + 1) % 8) {
+      setMark(oop(cur), mark->set_age((_epoch + 2) % 8));
     }
   }
   return result;
@@ -1235,17 +1279,17 @@ void ShenandoahHeap::post_allocation_collector_specific_setup(HeapWord* hw) {
 
   // Assuming for now that objects can't be created already locked
   assert(! obj->has_displaced_mark(), "hopefully new objects don't have displaced mark");
-  setMark(obj, getMark(obj)->set_age(epoch));
+  setMark(obj, getMark(obj)->set_age(_epoch));
 
 }
 
 
 bool ShenandoahHeap::isMarkedPrev(oop obj) const {
-  return getMark(obj)->age() == epoch -1;
+  return getMark(obj)->age() == _epoch -1;
 }
 
 bool ShenandoahHeap::isMarkedCurrent(oop obj) const {
-  return getMark(obj)->age() == epoch;
+  return getMark(obj)->age() == _epoch;
 }
   
 class VerifyLivenessAfterConcurrentMarkChildClosure : public ExtendedOopClosure {

@@ -322,7 +322,10 @@ class Universe: AllStatic {
 
   static oop java_mirror(BasicType t) {
     assert((uint)t < T_VOID+1, "range check");
-    return check_mirror(_mirrors[t]);
+    oop mirror = check_mirror(_mirrors[t]);
+    if (UseShenandoahGC) {
+      mirror = oopDesc::get_shenandoah_forwardee(mirror); }
+    return mirror;
   }
   static oop      main_thread_group()                 { return _main_thread_group; }
   static void set_main_thread_group(oop group)        { _main_thread_group = group;}

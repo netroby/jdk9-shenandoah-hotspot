@@ -1,11 +1,14 @@
 #ifndef SHARE_VM_GC_IMPLEMENTATION_SHENANDOAH_SHENANDOAHHEAP_HPP
 #define SHARE_VM_GC_IMPLEMENTATION_SHENANDOAH_SHENANDOAHHEAP_HPP
 
-
+#include "gc_implementation/shenandoah/shenandoahAllocRegion.hpp"
 #include "gc_implementation/shenandoah/shenandoahBarrierSet.hpp"
 #include "gc_implementation/shenandoah/shenandoahCollectorPolicy.hpp"
 #include "gc_implementation/shenandoah/shenandoahConcurrentMark.hpp"
 #include "gc_implementation/shenandoah/shenandoahHeapRegion.hpp"
+#include "gc_implementation/shenandoah/shenandoahHeapRegionSet.hpp"
+
+
 #include "memory/barrierSet.hpp"
 #include "memory/sharedHeap.hpp"
 #include "memory/space.inline.hpp"
@@ -36,27 +39,37 @@ class ShenandoahHeap : public SharedHeap {
 private:
   static ShenandoahHeap* _pgc;
   ShenandoahCollectorPolicy* _pgc_policy;
-  ShenandoahHeapRegion* firstRegion;
-  ShenandoahHeapRegion* currentRegion;
+  ShenandoahHeapRegion* _firstRegion;
+  ShenandoahHeapRegion* _currentRegion;
+
+  ShenandoahHeapRegionSet* _regions;
+  ShenandoahHeapRegionSet* _free_regions;
+  ShenandoahHeapRegionSet* _collection_set;
+
+  ShenandoahHeapRegion* _currentAllocationRegion;
   ShenandoahConcurrentMark* _scm;
 
-
-  size_t numRegions;
-  size_t initialSize;
-  uint numAllocs;
-  uint epoch;
-  size_t bytesAllocSinceCM;
+  size_t _numRegions;
+  size_t _initialSize;
+  uint _numAllocs;
+  uint _epoch;
+  size_t _bytesAllocSinceCM;
+  size_t _default_gclab_size;
 
 public:
   ShenandoahHeap(ShenandoahCollectorPolicy* policy);
   HeapWord* allocate_new_tlab(size_t word_size);
+  HeapWord* allocate_new_gclab(size_t word_size);
+  HeapWord* allocate_new_gclab() { 
+    return allocate_new_gclab(_default_gclab_size);
+  }
 
-  uint getEpoch() {return epoch;}
+  uint getEpoch() {return _epoch;}
 
   // For now we are ignoring eden.
   inline bool should_alloc_in_eden(size_t size) { return false;}
   void print_on(outputStream* st) const ;
-  
+
   ShenandoahHeap::Name kind() const {
     return CollectedHeap::ShenandoahHeap;
   }
@@ -151,6 +164,10 @@ public:
 
   void maybe_update_oop_ref(oop* p);
   void evacuate_region(ShenandoahHeapRegion* from_region, ShenandoahHeapRegion* to_region);
+  void parallel_evacuate_region(ShenandoahHeapRegion* from_region,
+				ShenandoahAllocRegion* alloc_region);
+
+  ShenandoahHeapRegion* nextEmptyRegion();
 private:
 
   void verify_evacuation(ShenandoahHeapRegion* from_region);
@@ -159,12 +176,12 @@ private:
   void verify_live();
   void verify_liveness_after_concurrent_mark();
   void mark();
-  ShenandoahHeapRegion* nextEmptyRegion();
+
   
 };
 
 class ShenandoahMarkRefsClosure : public OopsInGenClosure {
-  uint epoch;
+  uint _epoch;
   uint _worker_id;
   ShenandoahHeap* _heap;
 
@@ -177,7 +194,7 @@ public:
 };
   
 class ShenandoahMarkObjsClosure : public ObjectClosure {
-  uint epoch;
+  uint _epoch;
   uint _worker_id;
 public: 
   ShenandoahMarkObjsClosure(uint e, uint worker_id);
