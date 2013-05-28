@@ -145,11 +145,6 @@ ShenandoahHeap::ShenandoahHeap(ShenandoahCollectorPolicy* policy) :
 }
 
 
-void ShenandoahHeap::nyi() const {
-  assert(false, "not yet implemented");
-  tty->print("not yet implmented\n");
-}
-
 void ShenandoahHeap::print_on(outputStream* st) const {
   st->print("Shenandoah Heap");
   st->print(" total = " SIZE_FORMAT " K, used " SIZE_FORMAT " K ", capacity()/ K, used() /K);
@@ -194,7 +189,7 @@ size_t ShenandoahHeap::capacity() const {
 }
 
 bool ShenandoahHeap::is_maximal_no_gc() const {
-  nyi();
+  Unimplemented();
   return true;
 }
 
@@ -232,7 +227,7 @@ bool ShenandoahHeap::is_in(const void* p) const {
 }
 
 bool ShenandoahHeap::is_in_partial_collection(const void* p ) {
-  nyi();
+  Unimplemented();
   return false;
 }  
 
@@ -645,7 +640,7 @@ public:
   }
 
   void do_oop(narrowOop* p) {
-    _heap->nyi();
+    Unimplemented();
   }
 
 };
@@ -695,7 +690,7 @@ public:
   }
 
   void do_oop(narrowOop* p) {
-    _heap->nyi();
+    Unimplemented();
   }
 
 };
@@ -725,7 +720,7 @@ size_t ShenandoahHeap::unsafe_max_alloc() {
 }
 
 void ShenandoahHeap::collect(GCCause::Cause) {
-  nyi();
+  // Unimplemented();
 }
 
 void ShenandoahHeap::do_full_collection(bool clear_all_soft_refs) {
@@ -733,7 +728,7 @@ void ShenandoahHeap::do_full_collection(bool clear_all_soft_refs) {
 }
 
 AdaptiveSizePolicy* ShenandoahHeap::size_policy() {
-  nyi();
+  Unimplemented();
   return NULL;
   
 }
@@ -744,22 +739,22 @@ ShenandoahCollectorPolicy* ShenandoahHeap::collector_policy() const {
 
 
 HeapWord* ShenandoahHeap::block_start(const void* addr) const {
-  nyi();
+  Unimplemented();
   return 0;
 }
 
 size_t ShenandoahHeap::block_size(const HeapWord* addr) const {
-  nyi();
+  Unimplemented();
   return 0;
 }
 
 bool ShenandoahHeap::block_is_obj(const HeapWord* addr) const {
-  nyi();
+  Unimplemented();
   return false;
 }
 
 jlong ShenandoahHeap::millis_since_last_gc() {
-  nyi();
+  Unimplemented();
   return 0;
 }
 
@@ -770,7 +765,7 @@ void ShenandoahHeap::prepare_for_verify() {
 }
 
 void ShenandoahHeap::print_gc_threads_on(outputStream* st) const {
-  nyi();
+  Unimplemented();
 }
 
 void ShenandoahHeap::gc_threads_do(ThreadClosure* tcl) const {
@@ -813,7 +808,7 @@ public:
   }
 
   void do_oop(narrowOop* p) {
-    _heap->nyi();
+    Unimplemented();
   }
 
 };
@@ -908,7 +903,7 @@ void ShenandoahHeap::object_iterate(ObjectClosure* cl) {
 }
 
 void ShenandoahHeap::safe_object_iterate(ObjectClosure* cl) {
-  nyi();
+  Unimplemented();
 }
 
 class ShenandoahIterateOopClosureRegionClosure : public ShenandoahHeapRegionClosure {
@@ -938,7 +933,7 @@ void ShenandoahHeap::oop_iterate(MemRegion mr,
 }
 
 void  ShenandoahHeap::object_iterate_since_last_GC(ObjectClosure* cl) {
-  nyi();
+  Unimplemented();
 }
 
 class SpaceClosureRegionClosure: public ShenandoahHeapRegionClosure {
@@ -971,11 +966,11 @@ Space*  ShenandoahHeap::space_containing(const void* oop) const {
 }
 
 void  ShenandoahHeap::gc_prologue(bool b) {
-  nyi();
+  Unimplemented();
 }
 
 void  ShenandoahHeap::gc_epilogue(bool b) {
-  nyi();
+  Unimplemented();
 }
 
 // Apply blk->doHeapRegion() on all committed regions in address order,
@@ -1182,8 +1177,10 @@ void ShenandoahHeap::stop_concurrent_marking() {
   assert(concurrent_mark_in_progress(), "How else could we get here?");
   set_concurrent_mark_in_progress(false);
 
-  PrintHeapRegionsClosure pc;
-  heap_region_iterate(&pc);
+  if (ShenandoahGCVerbose) {
+    PrintHeapRegionsClosure pc;
+    heap_region_iterate(&pc);
+  }
 }
 
 bool ShenandoahHeap::should_start_concurrent_marking() {

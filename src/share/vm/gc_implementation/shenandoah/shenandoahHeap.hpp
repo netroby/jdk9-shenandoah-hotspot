@@ -70,7 +70,6 @@ public:
   static ShenandoahHeap* heap();
 
   ShenandoahCollectorPolicy *shenandoahPolicy() { return _pgc_policy;}
-  void nyi() const;
   jint initialize();
   void post_initialize();
   size_t capacity() const;
