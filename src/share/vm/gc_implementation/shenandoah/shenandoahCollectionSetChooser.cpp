@@ -1,7 +1,6 @@
 #include "gc_implementation/shenandoah/shenandoahCollectionSetChooser.hpp"
 #include "gc_implementation/shenandoah/shenandoahHeapRegion.hpp"
 
-
 int compareHeapRegions(ShenandoahHeapRegion** a, ShenandoahHeapRegion** b) {
   if (*a == NULL) {
     if (*b == NULL) {
@@ -48,7 +47,7 @@ void ShenandoahCollectionSetChooser::initialize(ShenandoahHeapRegion* first) {
 
   if (_empty_regions.length() < _cs_regions.length())
     _cs_regions.trunc_to(_empty_regions.length());
-    
+
   if (ShenandoahGCVerbose) {
   
     tty->print("printing sorted regions\n");

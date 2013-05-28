@@ -47,9 +47,7 @@ public:
   bool doHeapRegion(ShenandoahHeapRegion* r) {
     tty->print("Region %d bottom = "PTR_FORMAT" end = "PTR_FORMAT" top = "PTR_FORMAT" used = %x free = %x live = %x dirty: %d\n", 
 	       r->regionNumber, r->bottom(), r->end(), r->top(), r->used(), r->free(), r->getLiveData(), r->is_dirty());
-    if (r->next() == NULL)
-      return true;
-    else return false;
+    return false;
   }
 };
 
@@ -60,9 +58,7 @@ public:
 	       r->regionNumber, r->top(), r->used(), r->free());
     
     printHeapObjects(r->bottom(), r->top());
-    if (r->next() == NULL)
-      return true;
-    else return false;
+    return false;
   }
 };
 
@@ -368,7 +364,7 @@ public:
 HeapWord*  ShenandoahHeap::mem_allocate(size_t size, 
 					bool*  gc_overhead_limit_was_exceeded) {
 
-#ifdef ASSERT
+#ifdef SLOWDEBUG
   if (numAllocs > 1000000) {
     numAllocs = 0;
     VM_ShenandoahVerifyHeap op(0, 0, GCCause::_allocation_failure);
@@ -409,7 +405,7 @@ void ShenandoahHeap::mark() {
     VM_ShenandoahFinishMark finishMark;
     VMThread::execute(&finishMark);
 
-#ifdef ASSERT    
+#ifdef SLOWDEBUG   
     verify_liveness_after_concurrent_mark();
 #endif
 }
@@ -594,11 +590,17 @@ public:
       r->recycle();
       r->set_dirty(false);
     }
-
+    return false;
   }
 };
 
 void ShenandoahHeap::parallel_evacuate() {
+
+  if (ShenandoahGCVerbose) {
+    tty->print_cr("starting parallel_evacuate");
+    PrintHeapRegionsClosure pc1;
+    heap_region_iterate(&pc1);
+  }
 
   RecycleDirtyRegionsClosure cl;
   heap_region_iterate(&cl);
@@ -618,7 +620,12 @@ void ShenandoahHeap::parallel_evacuate() {
   assert(emptySet.length() >= collectionSet.length(), 
 	 "Collection set chooser should have provided the right number of empty regions");
   workers()->run_task(evacuationTask);
-  
+
+  if (ShenandoahGCVerbose) {
+    tty->print_cr("finished parallel_evacuate");
+    PrintHeapRegionsClosure pc2;
+    heap_region_iterate(&pc2);
+  }
 }
 
 class VerifyEvacuationClosure: public ExtendedOopClosure {
@@ -1115,7 +1122,7 @@ void ShenandoahHeap::start_concurrent_marking() {
   assert(epoch > 0 && epoch <= MAX_EPOCH, err_msg("invalid epoch: %d", epoch));
   tty->print_cr("epoch = %d", epoch);
 
-#ifdef ASSERT
+#ifdef SLOWDEBUG
   BumpObjectAgeClosure boc(this);
   object_iterate(&boc);
 #endif

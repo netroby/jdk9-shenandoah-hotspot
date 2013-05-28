@@ -150,7 +150,7 @@ void ShenandoahConcurrentMark::finishMarkFromRoots() {
 
   assert(_task_queues->queue(0)->is_empty(), "Should be empty");
   tty->print_cr("Finishing finishMarkFromRoots");
-#ifdef ASSERT
+#ifdef SLOWDEBUG
   for (int i = 0; i <(int)_max_worker_id; i++) {
     tty->print("Queue: %d:", i);
     _task_queues->queue(i)->stats.print(tty, 10);
