@@ -40,6 +40,8 @@ private:
   ShenandoahCollectorPolicy* _pgc_policy;
   ShenandoahHeapRegion* firstRegion;
   ShenandoahHeapRegion* currentRegion;
+  ShenandoahHeapRegion** regions;
+
   ShenandoahConcurrentMark* _scm;
 
 

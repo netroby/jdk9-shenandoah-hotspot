@@ -95,11 +95,14 @@ jint ShenandoahHeap::initialize() {
 
   tty->print("Calling initialize on reserved space base = %p end = %p\n", 
 	     pgc_rs.base(), pgc_rs.base() + pgc_rs.size());
-  
+
+  numRegions = init_byte_size / ShenandoahHeapRegion::RegionSizeBytes;
+  regions = new ShenandoahHeapRegion*[numRegions];
+
   ShenandoahHeapRegion* current = new ShenandoahHeapRegion();
   firstRegion = current;
+  regions[0] = current;
   currentRegion = firstRegion;
-  numRegions = init_byte_size / ShenandoahHeapRegion::RegionSizeBytes;
   initialSize = numRegions * ShenandoahHeapRegion::RegionSizeBytes;
   size_t regionSizeWords = ShenandoahHeapRegion::RegionSizeBytes / HeapWordSize;
   assert(init_byte_size == initialSize, "tautology");
@@ -110,6 +113,7 @@ jint ShenandoahHeap::initialize() {
     current->setNext(next);
     current->regionNumber = i;
     current = next;
+    regions[i + 1] = current;
   }
   current->initialize((HeapWord*) pgc_rs.base() + regionSizeWords * (numRegions - 1), 
 		      regionSizeWords);
@@ -945,35 +949,12 @@ void  ShenandoahHeap::space_iterate(SpaceClosure* cl) {
   heap_region_iterate(&blk);
 }
 
-// We need a data structure that maps addresses to heap regions.
-// This will probably be the first thing to optimize.
-
-class ContainsRegionClosure: public ShenandoahHeapRegionClosure {
-  HeapWord* addr;
-  ShenandoahHeapRegion* result;
-
-public:
-  ContainsRegionClosure(HeapWord* hw) :addr(hw) {}
-    
-  bool doHeapRegion(ShenandoahHeapRegion* r) {
-    if (r->is_in(addr)) {
-      result = r;
-      return true;
-    }
-    return false;
-  }
-
-  ShenandoahHeapRegion* get_result() {
-    return result;
-  }
-};
-
 template<class T>
 inline ShenandoahHeapRegion*
 ShenandoahHeap::heap_region_containing(const T addr) const {
-  ContainsRegionClosure blk((HeapWord*) addr);
-  heap_region_iterate(&blk);
-  return blk.get_result();
+  intptr_t region_start = ((intptr_t) addr) & ~(ShenandoahHeapRegion::RegionSizeBytes - 1);
+  intptr_t index = (region_start - (intptr_t) firstRegion->bottom()) / ShenandoahHeapRegion::RegionSizeBytes;
+  return regions[index];
 }
 
 
