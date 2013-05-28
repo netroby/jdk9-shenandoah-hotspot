@@ -45,7 +45,9 @@ private:
 
   size_t numRegions;
   size_t initialSize;
+#ifndef NDEBUG
   uint numAllocs;
+#endif
   uint epoch;
   size_t bytesAllocSinceCM;
 

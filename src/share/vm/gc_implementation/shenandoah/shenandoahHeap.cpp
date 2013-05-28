@@ -364,6 +364,7 @@ public:
 HeapWord*  ShenandoahHeap::mem_allocate(size_t size, 
 					bool*  gc_overhead_limit_was_exceeded) {
 
+#ifdef ASSERT
   if (numAllocs > 1000000) {
     numAllocs = 0;
     VM_ShenandoahVerifyHeap op(0, 0, GCCause::_allocation_failure);
@@ -375,6 +376,7 @@ HeapWord*  ShenandoahHeap::mem_allocate(size_t size,
     }
   }
   numAllocs++;
+#endif
 
   // These are just arbitrary numbers for now.  CHF
   size_t targetStartMarking = capacity() / 4;
@@ -402,8 +404,10 @@ void ShenandoahHeap::mark() {
 
     VM_ShenandoahFinishMark finishMark;
     VMThread::execute(&finishMark);
-    
+
+#ifdef ASSERT    
     verify_liveness_after_concurrent_mark();
+#endif
 }
 
 class SelectEvacuationRegionsClosure : public ShenandoahHeapRegionClosure {
@@ -1130,9 +1134,10 @@ void ShenandoahHeap::start_concurrent_marking() {
   assert(epoch > 0 && epoch <= MAX_EPOCH, err_msg("invalid epoch: %d", epoch));
   tty->print_cr("epoch = %d", epoch);
 
-  // TODO: This should only be done for debug builds.
+#ifdef ASSERT
   BumpObjectAgeClosure boc(this);
   object_iterate(&boc);
+#endif
   
   ClearLivenessClosure clc(this);
   heap_region_iterate(&clc);
