@@ -624,6 +624,7 @@ void TemplateTable::iaload() {
   // eax: index
   // rdx: array
   index_check(rdx, rax); // kills rbx
+  __ shenandoah_resolve_oop_not_null(rdx);
   __ movl(rax, Address(rdx, rax,
                        Address::times_4,
                        arrayOopDesc::base_offset_in_bytes(T_INT)));
@@ -635,6 +636,7 @@ void TemplateTable::laload() {
   // eax: index
   // rdx: array
   index_check(rdx, rax); // kills rbx
+  __ shenandoah_resolve_oop_not_null(rdx);
   __ movq(rax, Address(rdx, rbx,
                        Address::times_8,
                        arrayOopDesc::base_offset_in_bytes(T_LONG)));
@@ -646,6 +648,7 @@ void TemplateTable::faload() {
   // eax: index
   // rdx: array
   index_check(rdx, rax); // kills rbx
+  __ shenandoah_resolve_oop_not_null(rdx);
   __ movflt(xmm0, Address(rdx, rax,
                          Address::times_4,
                          arrayOopDesc::base_offset_in_bytes(T_FLOAT)));
@@ -657,6 +660,7 @@ void TemplateTable::daload() {
   // eax: index
   // rdx: array
   index_check(rdx, rax); // kills rbx
+  __ shenandoah_resolve_oop_not_null(rdx);
   __ movdbl(xmm0, Address(rdx, rax,
                           Address::times_8,
                           arrayOopDesc::base_offset_in_bytes(T_DOUBLE)));
@@ -668,6 +672,7 @@ void TemplateTable::aaload() {
   // eax: index
   // rdx: array
   index_check(rdx, rax); // kills rbx
+  __ shenandoah_resolve_oop_not_null(rdx);
   __ load_heap_oop(rax, Address(rdx, rax,
                                 UseCompressedOops ? Address::times_4 : Address::times_8,
                                 arrayOopDesc::base_offset_in_bytes(T_OBJECT)));
@@ -679,6 +684,7 @@ void TemplateTable::baload() {
   // eax: index
   // rdx: array
   index_check(rdx, rax); // kills rbx
+  __ shenandoah_resolve_oop_not_null(rdx);
   __ load_signed_byte(rax,
                       Address(rdx, rax,
                               Address::times_1,
@@ -691,6 +697,7 @@ void TemplateTable::caload() {
   // eax: index
   // rdx: array
   index_check(rdx, rax); // kills rbx
+  __ shenandoah_resolve_oop_not_null(rdx);
   __ load_unsigned_short(rax,
                          Address(rdx, rax,
                                  Address::times_2,
@@ -708,6 +715,7 @@ void TemplateTable::fast_icaload() {
   // rdx: array
   __ pop_ptr(rdx);
   index_check(rdx, rax); // kills rbx
+  __ shenandoah_resolve_oop_not_null(rdx);
   __ load_unsigned_short(rax,
                          Address(rdx, rax,
                                  Address::times_2,
@@ -720,6 +728,7 @@ void TemplateTable::saload() {
   // eax: index
   // rdx: array
   index_check(rdx, rax); // kills rbx
+  __ shenandoah_resolve_oop_not_null(rdx);
   __ load_signed_short(rax,
                        Address(rdx, rax,
                                Address::times_2,
@@ -904,6 +913,7 @@ void TemplateTable::iastore() {
   // ebx: index
   // rdx: array
   index_check(rdx, rbx); // prefer index in ebx
+  __ shenandoah_resolve_oop_not_null(rdx);
   __ movl(Address(rdx, rbx,
                   Address::times_4,
                   arrayOopDesc::base_offset_in_bytes(T_INT)),
@@ -918,6 +928,7 @@ void TemplateTable::lastore() {
   // ebx: index
   // rdx: array
   index_check(rdx, rbx); // prefer index in ebx
+  __ shenandoah_resolve_oop_not_null(rdx);
   __ movq(Address(rdx, rbx,
                   Address::times_8,
                   arrayOopDesc::base_offset_in_bytes(T_LONG)),
@@ -932,6 +943,7 @@ void TemplateTable::fastore() {
   // ebx:  index
   // rdx:  array
   index_check(rdx, rbx); // prefer index in ebx
+  __ shenandoah_resolve_oop_not_null(rdx);
   __ movflt(Address(rdx, rbx,
                    Address::times_4,
                    arrayOopDesc::base_offset_in_bytes(T_FLOAT)),
@@ -946,6 +958,7 @@ void TemplateTable::dastore() {
   // ebx:  index
   // rdx:  array
   index_check(rdx, rbx); // prefer index in ebx
+  __ shenandoah_resolve_oop_not_null(rdx);
   __ movdbl(Address(rdx, rbx,
                    Address::times_8,
                    arrayOopDesc::base_offset_in_bytes(T_DOUBLE)),
@@ -959,6 +972,7 @@ void TemplateTable::aastore() {
   __ movptr(rax, at_tos());    // value
   __ movl(rcx, at_tos_p1()); // index
   __ movptr(rdx, at_tos_p2()); // array
+  __ shenandoah_resolve_oop(rdx);
 
   Address element_address(rdx, rcx,
                           UseCompressedOops? Address::times_4 : Address::times_8,
@@ -1015,6 +1029,7 @@ void TemplateTable::bastore() {
   // ebx: index
   // rdx: array
   index_check(rdx, rbx); // prefer index in ebx
+  __ shenandoah_resolve_oop_not_null(rdx);
   __ movb(Address(rdx, rbx,
                   Address::times_1,
                   arrayOopDesc::base_offset_in_bytes(T_BYTE)),
@@ -1029,6 +1044,7 @@ void TemplateTable::castore() {
   // ebx: index
   // rdx: array
   index_check(rdx, rbx);  // prefer index in ebx
+  __ shenandoah_resolve_oop_not_null(rdx);
   __ movw(Address(rdx, rbx,
                   Address::times_2,
                   arrayOopDesc::base_offset_in_bytes(T_CHAR)),
@@ -2158,6 +2174,7 @@ void TemplateTable::load_field_cp_cache_entry(Register obj,
                                     ConstantPoolCacheEntry::f1_offset())));
     const int mirror_offset = in_bytes(Klass::java_mirror_offset());
     __ movptr(obj, Address(obj, mirror_offset));
+    __ shenandoah_resolve_oop_not_null(obj);
   }
 }
 
@@ -2241,6 +2258,7 @@ void TemplateTable::pop_and_check_object(Register r) {
   __ pop_ptr(r);
   __ null_check(r);  // for field access must check obj.
   __ verify_oop(r);
+  __ shenandoah_resolve_oop_not_null(r);
 }
 
 void TemplateTable::getfield_or_static(int byte_no, bool is_static) {
@@ -2706,6 +2724,7 @@ void TemplateTable::fast_storefield(TosState state) {
 
   // Get object from stack
   pop_and_check_object(rcx);
+  __ shenandoah_resolve_oop_not_null(rcx);
 
   // field address
   const Address field(rcx, rbx, Address::times_1);
@@ -2792,6 +2811,7 @@ void TemplateTable::fast_accessfield(TosState state) {
   // rax: object
   __ verify_oop(rax);
   __ null_check(rax);
+  __ shenandoah_resolve_oop_not_null(rax);
   Address field(rax, rbx, Address::times_1);
 
   // access field

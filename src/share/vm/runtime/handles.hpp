@@ -67,7 +67,7 @@ class Handle VALUE_OBJ_CLASS_SPEC {
 
  protected:
   oop     obj() const                            { return _handle == NULL ? (oop)NULL : *_handle; }
-  oop     non_null_obj() const                   { assert(_handle != NULL, "resolving NULL handle"); return *_handle; }
+  oop     non_null_obj() const                   { assert(_handle != NULL, "resolving NULL handle"); return *_handle;}
 
  public:
   // Constructors

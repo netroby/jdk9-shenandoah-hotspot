@@ -388,6 +388,7 @@ class oopDesc {
   // Shenandoah support.
   static bool is_brooks_ptr(oop p);
   static oop get_shenandoah_forwardee(oop p);
+  static oop get_shenandoah_forwardee_helper(oop p);
 };
 
 #endif // SHARE_VM_OOPS_OOP_HPP

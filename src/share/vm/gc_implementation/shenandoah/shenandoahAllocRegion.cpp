@@ -7,14 +7,13 @@ ShenandoahAllocRegion::ShenandoahAllocRegion() {
   // arbitrary for now
   _start = 0;
   _end = 0;
-  _alignment_reserve = sh->min_fill_size();
+  _alignment_reserve = sh->min_fill_size() + BROOKS_POINTER_OBJ_SIZE;
   _hard_end = 0;
   allocRegionSize = 1024 * 4;
 }
 
 HeapWord* ShenandoahAllocRegion::allocate(size_t word_size) {
-  print();
-  if (word_size > allocRegionSize) {
+   if (word_size > allocRegionSize) {
     ShenandoahHeap* sh = (ShenandoahHeap*) Universe::heap();
     tty->print("Allocating new big object alloc region of size: %d\n", word_size);
     return sh->allocate_new_gclab(word_size);
@@ -47,8 +46,16 @@ void ShenandoahAllocRegion::allocate_new_region() {
 
 void ShenandoahAllocRegion::fill_region() {
   ShenandoahHeap* sh = (ShenandoahHeap*) Universe::heap();
-  if (_start != 0)
+  tty->print("About to fill region:");
+  print();
+
+  if (_start != 0) {
+    HeapWord* filler = _start;
+    _start = _start + BROOKS_POINTER_OBJ_SIZE;
+    sh->initialize_brooks_ptr(filler, _start);
     sh->fill_with_object(_start, _hard_end);
+  }
+  tty->print("After fill region:");
   print();
 }
   

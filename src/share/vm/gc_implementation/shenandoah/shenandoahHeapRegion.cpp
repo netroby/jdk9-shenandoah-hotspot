@@ -3,6 +3,7 @@
 #include "memory/universe.hpp"
 
 size_t ShenandoahHeapRegion::RegionSizeBytes = 1024 * 1024 * 8;
+size_t ShenandoahHeapRegion::GarbageThreshold = 1000 * 7500;
 
 jint ShenandoahHeapRegion::initialize(HeapWord* start, 
 				      size_t regionSizeWords) {

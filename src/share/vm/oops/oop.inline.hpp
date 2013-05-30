@@ -264,15 +264,9 @@ inline Klass* oopDesc::decode_klass(narrowOop v) {
 // Called by GC to check for null before decoding.
 inline oop       oopDesc::load_heap_oop(oop* p)          {
   oop heap_oop = *p;
-  if (UseShenandoahGC) {
-    if (! is_null(heap_oop)) {
-      heap_oop = get_shenandoah_forwardee(heap_oop);
-    }
-  }
   return heap_oop;
 }
-
-inline oop oopDesc::get_shenandoah_forwardee(oop p) {
+inline oop oopDesc::get_shenandoah_forwardee_helper(oop p) {
   assert(UseShenandoahGC, "must only be called when Shenandoah is used.");
   assert(! is_brooks_ptr(p), "oop must not be a brooks pointer itself");
   HeapWord* oopWord = (HeapWord*) p;
@@ -281,6 +275,14 @@ inline oop oopDesc::get_shenandoah_forwardee(oop p) {
   HeapWord** brooksP = (HeapWord**) (brooksPOop + BROOKS_POINTER_OBJ_SIZE - 1);
   HeapWord* forwarded = *brooksP;
   return (oop) forwarded;
+}
+
+
+inline oop oopDesc::get_shenandoah_forwardee(oop p) {
+  oop result = get_shenandoah_forwardee_helper(p);
+  // We should never be forwarded more than once.
+  assert(get_shenandoah_forwardee_helper(result) == result, "Only one fowarding per customer");  
+  return result;
 }
 
 inline bool oopDesc::is_brooks_ptr(oop p) {

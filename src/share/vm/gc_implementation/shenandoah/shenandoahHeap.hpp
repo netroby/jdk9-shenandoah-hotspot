@@ -15,6 +15,8 @@
 #include "oops/oop.hpp"
 #include "oops/markOop.hpp"
 
+#define MAX_EPOCH 14
+
 class SpaceClosure;
 
 class ShenandoahHeapRegionClosure : public StackObj {
@@ -130,7 +132,7 @@ public:
   size_t capacity_in_bytes() { return capacity() * HeapWordSize;}
 
   void heap_region_iterate(ShenandoahHeapRegionClosure* blk, bool skip_dirty_regions = false) const;
-  template<class T> inline ShenandoahHeapRegion* heap_region_containing(const T addr) const;  
+  template<class T> ShenandoahHeapRegion* heap_region_containing(const T addr) const;  
 
   bool is_in_reserved(void* p);
 
@@ -142,7 +144,8 @@ public:
   void start_concurrent_marking();
   void stop_concurrent_marking();
   ShenandoahConcurrentMark* concurrentMark() { return _scm;}
-  size_t calcLiveness(HeapWord* start, HeapWord* end);
+  size_t bump_object_age(HeapWord* start, HeapWord* end);
+  void mark_current(oop obj) const;
   bool isMarkedPrev(oop obj) const;
   bool isMarkedCurrent(oop obj) const;
   bool isMarked(oop obj)  { return isMarkedPrev(obj) || isMarkedCurrent(obj);}
@@ -155,9 +158,7 @@ public:
   // them into the marking task queue.
   void prepare_unmarked_root_objs();
 
-  void evacuate();
   void parallel_evacuate();
-  void update_references_after_evacuation();
 
   void initialize_brooks_ptr(HeapWord* brooks_ptr, HeapWord* object);
   void set_brooks_ptr(HeapWord* brooks_ptr, HeapWord* object);
@@ -167,7 +168,7 @@ public:
   void parallel_evacuate_region(ShenandoahHeapRegion* from_region,
 				ShenandoahAllocRegion* alloc_region);
 
-  ShenandoahHeapRegion* nextEmptyRegion();
+  //  ShenandoahHeapRegion* nextEmptyRegion();
 private:
 
   void verify_evacuation(ShenandoahHeapRegion* from_region);
@@ -176,6 +177,7 @@ private:
   void verify_live();
   void verify_liveness_after_concurrent_mark();
   void mark();
+  //  ShenandoahHeapRegion* nextEmptyRegion(size_t required_size);
 
   
 };
