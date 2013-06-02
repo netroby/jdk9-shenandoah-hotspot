@@ -1,6 +1,7 @@
 
 #include "gc_implementation/shenandoah/shenandoahAllocRegion.hpp"
 #include "gc_implementation/shenandoah/shenandoahHeap.hpp"
+#include "gc_implementation/shenandoah/shenandoahHeapRegion.hpp"
 
 ShenandoahAllocRegion::ShenandoahAllocRegion() {
   ShenandoahHeap* sh = (ShenandoahHeap*) Universe::heap();
@@ -40,14 +41,16 @@ void ShenandoahAllocRegion::allocate_new_region() {
   _start = sh->allocate_new_gclab(allocRegionSize + _alignment_reserve);
   _end = _start + allocRegionSize;
   _hard_end = _end + _alignment_reserve;
-  tty->print("Allocating a new region:");
-  print();
+  // There must be a better way.
+  //  ShenandoahHeapRegion* r = sh->heap_region_containing(_start);
+  //  jlong foo = (jlong) allocRegionSize;
+  //  r->increase_live_data(foo);
+  //  sh->heap_region_containing(_start)->increase_live_data((jlong)allocRegionSize);
+
 }
 
 void ShenandoahAllocRegion::fill_region() {
   ShenandoahHeap* sh = (ShenandoahHeap*) Universe::heap();
-  tty->print("About to fill region:");
-  print();
 
   if (_start != 0) {
     HeapWord* filler = _start;
@@ -55,8 +58,6 @@ void ShenandoahAllocRegion::fill_region() {
     sh->initialize_brooks_ptr(filler, _start);
     sh->fill_with_object(_start, _hard_end);
   }
-  tty->print("After fill region:");
-  print();
 }
   
 void ShenandoahAllocRegion::ensure_space(size_t word_size) {

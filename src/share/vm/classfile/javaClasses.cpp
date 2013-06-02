@@ -715,13 +715,7 @@ BasicType java_lang_Class::primitive_type(oop java_class) {
     assert(java_class == Universe::void_mirror(), "only valid non-array primitive");
   }
 
-  // We shouldn't have to do this.  Should use handles.
-
-  if (UseShenandoahGC)
-    assert(oopDesc::get_shenandoah_forwardee(oop(Universe::java_mirror(type))) == oopDesc::get_shenandoah_forwardee(java_class),
-	   "must be consistent");
-  else 
-    assert(Universe::java_mirror(type) == java_class, "must be consistent");
+  assert(Universe::java_mirror(type) == java_class, "must be consistent");
 
   return type;
 }

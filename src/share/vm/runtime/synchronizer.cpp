@@ -1210,36 +1210,7 @@ ObjectMonitor * ATTR ObjectSynchronizer::inflate (Thread * Self, oop object) {
       if (mark->has_monitor()) {
           ObjectMonitor * inf = mark->monitor() ;
           assert (inf->header()->is_neutral(), "invariant");
-
-	  oop foo = oop(inf->object());
-	  oop forwarded_foo = oopDesc::get_shenandoah_forwardee(foo);
-	  oop forwarded_forwarded_foo = oopDesc::get_shenandoah_forwardee(forwarded_foo);
-
-	  oop bar = object;
-	  oop forwarded_bar = oopDesc::get_shenandoah_forwardee(bar);
-	  oop forwarded_forwarded_bar = oopDesc::get_shenandoah_forwardee(forwarded_bar);
-
-	  if (inf->object() != object) {
-	    tty->print("inf->object(): %p\n", foo);
-	    foo->print();
-	    tty->print("get_shenandoah_forwardee(inf->object()): %p\n", forwarded_foo);
-	    forwarded_foo->print();
-	    tty->print("get_shenandoah_forwardee(get_shenandoah_forwardee(inf->object())): %p\n", forwarded_forwarded_foo);
-
-	    tty->print("object: %p\n", bar);
-	    bar->print();
-	    tty->print("get_shenandoah_forwardee(object): %p\n", forwarded_bar);
-	    forwarded_bar->print();
-	    tty->print("get_shenandoah_forwardee(get_shenandoah_forwardee(object)): %p\n", forwarded_forwarded_bar);
-	    forwarded_bar->print();
-
-
-	  }
-
-
-	  assert (oopDesc::get_shenandoah_forwardee(oop(inf->object())) == 
-		  oopDesc::get_shenandoah_forwardee(object), "invariant");
-
+	  assert(inf->object() == object, "invariant");
           assert (ObjectSynchronizer::verify_objmon_isinpool(inf), "monitor is invalid");
           return inf ;
       }

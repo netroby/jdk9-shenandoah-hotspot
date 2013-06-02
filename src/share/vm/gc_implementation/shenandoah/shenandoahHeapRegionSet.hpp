@@ -24,25 +24,28 @@ public:
     _garbage_threshold(ShenandoahHeapRegion::GarbageThreshold),
     _free_threshold(ShenandoahHeapRegion::RegionSizeBytes / 2) {}
 
-  void add(ShenandoahHeapRegion* region);
+  void put(size_t i, ShenandoahHeapRegion* region);
+  ShenandoahHeapRegion* at(uint i) { return _regions[i];}
+  size_t length() { return _numRegions;}
+  void print();
 
+  bool has_next();
+  ShenandoahHeapRegion* get_next();
+  ShenandoahHeapRegion* claim_next();
+
+  void choose_collection_set(ShenandoahHeapRegionSet* region_set, int max_regions);
+  void choose_collection_set(ShenandoahHeapRegionSet* region_set);
+  void choose_empty_regions(ShenandoahHeapRegionSet* region_set, int max_regions);
+  void choose_empty_regions(ShenandoahHeapRegionSet* region_set);
+
+  //  ShenandoahHeapRegion** regions() { return _regions;}
   // Sort from least garbage to most garbage.
   void sortAscendingGarbage();
 
   // Sort from most garbage to least garbage.
   void sortDescendingGarbage();
 
-  size_t length() { return _numRegions;}
-  ShenandoahHeapRegion* at(uint i) { return _regions[i];}
-  void print();
-  bool has_next();
-  ShenandoahHeapRegion* get_next();
-  ShenandoahHeapRegion* claim_next();
-  void choose_collection_set(ShenandoahHeapRegionSet* region_set, int max_regions);
-  void choose_collection_set(ShenandoahHeapRegionSet* region_set);
-  void choose_empty_regions(ShenandoahHeapRegionSet* region_set, int max_regions);
-  void choose_empty_regions(ShenandoahHeapRegionSet* region_set);
-  ShenandoahHeapRegion** regions() { return _regions;}
+
 };
 
 #endif //SHARE_VM_GC_IMPLEMENTATION_SHENANDOAH_SHENANDOAHHEAPREGIONSET_HPP

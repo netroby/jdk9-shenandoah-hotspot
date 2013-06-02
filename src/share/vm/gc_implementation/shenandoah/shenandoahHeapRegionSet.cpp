@@ -23,16 +23,22 @@ int compareHeapRegions(ShenandoahHeapRegion** a, ShenandoahHeapRegion** b) {
   else return 0;
 }
 
-void ShenandoahHeapRegionSet::add(ShenandoahHeapRegion* region) {
-  _regions[_inserted++] = region;
+void ShenandoahHeapRegionSet::put(size_t index, ShenandoahHeapRegion* region) {
+  _regions[index] = region;
+  _inserted++;
 }
 
 ShenandoahHeapRegion* ShenandoahHeapRegionSet::get_next() {
-  return _regions[_index++];
+  ShenandoahHeapRegion* result = NULL;
+
+  if (_index <= _inserted) 
+    result = _regions[_index++];
+
+  return result;
 }
 
 bool ShenandoahHeapRegionSet::has_next() {
-   return _index < _numRegions;
+  return _index < _inserted;
 }
 
 void ShenandoahHeapRegionSet::sortAscendingGarbage() {
@@ -71,7 +77,9 @@ void ShenandoahHeapRegionSet::print() {
   }
 }
 
-void ShenandoahHeapRegionSet::choose_collection_set(ShenandoahHeapRegionSet* region_set, int max_regions) {
+void ShenandoahHeapRegionSet::
+choose_collection_set(ShenandoahHeapRegionSet* region_set, 
+		      int max_regions) {
 
   sortDescendingGarbage();
   region_set->_inserted = 0;
@@ -119,6 +127,7 @@ void ShenandoahHeapRegionSet::choose_empty_regions(ShenandoahHeapRegionSet* regi
 
   for (int i = 0; i < r; i++)
     region_set->_regions[i] = _regions[i];
+
   region_set->_inserted = r;
   region_set->_index = 0;
 }  

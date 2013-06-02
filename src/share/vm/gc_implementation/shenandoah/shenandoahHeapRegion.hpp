@@ -42,7 +42,9 @@ public:
 
   void print();
   size_t garbage() {
-    return used() - liveData;
+    size_t result = used() - liveData;
+    assert(result >= 0, "Live Data must be a subset of used()");
+    return result;
   }
 
   bool is_dirty() {

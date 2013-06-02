@@ -41,19 +41,23 @@ class ShenandoahHeap : public SharedHeap {
 private:
   static ShenandoahHeap* _pgc;
   ShenandoahCollectorPolicy* _pgc_policy;
-  ShenandoahHeapRegion* _firstRegion;
-  ShenandoahHeapRegion* _currentRegion;
+  ShenandoahHeapRegion* _current_region;
+  ShenandoahHeapRegion* _first_region;
+  // Ordered array of regions
+  ShenandoahHeapRegion** regions;
 
+  // Sortable array of regions
   ShenandoahHeapRegionSet* _regions;
   ShenandoahHeapRegionSet* _free_regions;
   ShenandoahHeapRegionSet* _collection_set;
-
   ShenandoahHeapRegion* _currentAllocationRegion;
   ShenandoahConcurrentMark* _scm;
 
   size_t _numRegions;
   size_t _initialSize;
+#ifndef NDEBUG
   uint _numAllocs;
+#endif
   uint _epoch;
   size_t _bytesAllocSinceCM;
   size_t _default_gclab_size;
@@ -79,7 +83,6 @@ public:
   static ShenandoahHeap* heap();
 
   ShenandoahCollectorPolicy *shenandoahPolicy() { return _pgc_policy;}
-  void nyi() const;
   jint initialize();
   void post_initialize();
   size_t capacity() const;
@@ -178,6 +181,9 @@ private:
   void verify_liveness_after_concurrent_mark();
   void mark();
   //  ShenandoahHeapRegion* nextEmptyRegion(size_t required_size);
+
+  void update_current_region();
+
 
   
 };
