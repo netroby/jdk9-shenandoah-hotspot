@@ -486,7 +486,6 @@ public:
       HeapWord* copy = _to_region->allocate(p->size());
       assert(copy != NULL, "allocation of copy object must not fail");
       Copy::aligned_disjoint_words((HeapWord*) p, copy, p->size());
-
       _heap->initialize_brooks_ptr(filler, copy);
       HeapWord* old_brooks_ptr = ((HeapWord*) p) - BROOKS_POINTER_OBJ_SIZE;
       // tty->print_cr("setting old brooks ptr: p: %p, old_brooks_ptr: %p to copy: %p", p, old_brooks_ptr, copy);
@@ -1282,7 +1281,11 @@ class VerifyLivenessAfterConcurrentMarkChildClosure : public ExtendedOopClosure 
       guarantee(obj->is_oop(), "is_oop");
       ShenandoahHeap* sh = (ShenandoahHeap*) Universe::heap();
       if (ShenandoahGCVerbose) {
-	tty->print("Verifying liveness of reference obj "PTR_FORMAT"\n", obj);
+	if (obj->has_displaced_mark()) 
+	  tty->print("Verifying liveness of reference obj "PTR_FORMAT" with displaced mark %x\n", 
+		     obj, getMark(obj)->age());
+	else tty->print("Verifying liveness of reference obj "PTR_FORMAT" with mark %x\n", 
+			obj, getMark(obj)->age());
 	obj->print();
       }
       /*
@@ -1310,7 +1313,11 @@ private:
       ShenandoahHeap* sh = (ShenandoahHeap*) Universe::heap();
       if (sh->isMarkedCurrent(obj)) {
 	if (ShenandoahGCVerbose) {
-	  tty->print("Verifying liveness of objects pointed to by "PTR_FORMAT"\n", obj);
+	  if (obj->has_displaced_mark())
+	    tty->print("Verifying liveness of objects pointed to by "PTR_FORMAT" with displaced mark %d\n", 
+		       obj, getMark(obj)->age());
+	  else tty->print("Verifying liveness of objects pointed to by "PTR_FORMAT" with mark %d\n", 
+			  obj, getMark(obj)->age());
 	  obj->print();
         }
  	VerifyLivenessAfterConcurrentMarkChildClosure childClosure;
