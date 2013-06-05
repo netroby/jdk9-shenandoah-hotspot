@@ -4,6 +4,8 @@
 #include "memory/barrierSet.hpp"
 #include "memory/universe.hpp"
 
+#define BROOKS_POINTER_OBJ_SIZE 4
+
 class ShenandoahBarrierSet: public BarrierSet {
   
   bool is_a(BarrierSet::Name bsn) {
@@ -69,6 +71,36 @@ public:
     assert(false, "not yet implemented");
     tty->print_cr("Not yet implemented");
   }
+
+  inline oopDesc* get_shenandoah_forwardee_helper(oopDesc* p) {
+    assert(UseShenandoahGC, "must only be called when Shenandoah is used.");
+    assert(! is_brooks_ptr(p), "oop must not be a brooks pointer itself");
+    HeapWord* oopWord = (HeapWord*) p;
+    HeapWord* brooksPOop = oopWord - BROOKS_POINTER_OBJ_SIZE;
+    assert(is_brooks_ptr(oop(brooksPOop)), "brooks pointer must be a brooks pointer");
+    HeapWord** brooksP = (HeapWord**) (brooksPOop + BROOKS_POINTER_OBJ_SIZE - 1);
+    HeapWord* forwarded = *brooksP;
+    return (oopDesc*) forwarded;
+  }
+
+
+  inline oopDesc* get_shenandoah_forwardee(oopDesc* p) {
+    oop result = get_shenandoah_forwardee_helper(p);
+    // We should never be forwarded more than once.
+    assert(get_shenandoah_forwardee_helper(result) == result, "Only one fowarding per customer");  
+    return result;
+  }
+
+  static bool is_brooks_ptr(oopDesc* p) {
+    if (p->has_displaced_mark())
+      return false;
+    return p->mark()->age() == 15;
+  }
+
+  virtual oopDesc* resolve_oop(oopDesc* src) {
+    return get_shenandoah_forwardee(src);
+  }
+
 };
 
 #endif //SHARE_VM_GC_IMPLEMENTATION_SHENANDOAH_SHENANDOAHBARRIERSET_HPP

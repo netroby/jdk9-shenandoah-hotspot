@@ -477,7 +477,7 @@ public:
     _to_region(to_region) {};
 
   void do_object(oop p) {
-    // if (! oopDesc::is_brooks_ptr(p)) { // Copy everything except brooks ptrs.
+    // if (! ShenandoahBarrierSet::is_brooks_ptr(p)) { // Copy everything except brooks ptrs.
     if (_heap->isMarkedCurrent(p)) { // Ignores brooks ptr objects because epoch is never 15.
       // Allocate brooks ptr object for copy.
       HeapWord* filler = _to_region->allocate(BROOKS_POINTER_OBJ_SIZE);
@@ -560,7 +560,7 @@ void ShenandoahHeap::initialize_brooks_ptr(HeapWord* filler, HeapWord* obj) {
   CollectedHeap::fill_with_array(filler, BROOKS_POINTER_OBJ_SIZE, false);
   markOop mark = oop(filler)->mark();
   oop(filler)->set_mark(mark->set_age(15));
-  assert(oopDesc::is_brooks_ptr(oop(filler)), "brooks pointer must be brooks pointer");
+  assert(ShenandoahBarrierSet::is_brooks_ptr(oop(filler)), "brooks pointer must be brooks pointer");
   arrayOop(filler)->set_length(1);
   set_brooks_ptr(filler, obj);
 }
@@ -715,7 +715,7 @@ void ShenandoahHeap::verify_evacuation(ShenandoahHeapRegion* from_region) {
 void ShenandoahHeap::maybe_update_oop_ref(oop* p) {
   oop heap_oop = *p;
   if (! oopDesc::is_null(heap_oop)) {
-    oop forwarded_oop = oopDesc::get_shenandoah_forwardee(heap_oop);
+    oop forwarded_oop = oopDesc::bs()->resolve_oop(heap_oop);
     if (forwarded_oop != heap_oop) {
       // tty->print_cr("updating old ref: %p to new ref: %p", heap_oop, forwarded_oop);
       *p = forwarded_oop;
@@ -844,7 +844,7 @@ public:
   bool failures() { return _failures; }
 
   void do_oop(oop* p)       {
-    if (*p != NULL && ! oopDesc::is_brooks_ptr(*p)) {
+    if (*p != NULL && ! ShenandoahBarrierSet::is_brooks_ptr(*p)) {
       oop heap_oop = oopDesc::load_heap_oop(p);
       oop obj = oopDesc::decode_heap_oop_not_null(heap_oop);
       guarantee(obj->is_oop(), "is_oop");
@@ -875,11 +875,11 @@ public:
     _rootsCl.do_oop(&p);
 
     HeapWord* oopWord = (HeapWord*) p;
-    if (oopDesc::is_brooks_ptr(oop(oopWord))) { // Brooks pointer
+    if (ShenandoahBarrierSet::is_brooks_ptr(oop(oopWord))) { // Brooks pointer
       guarantee(arrayOop(oopWord)->length() == 1, "brooks ptr objects must have length == 1");
     } else {
       HeapWord* brooksPOop = (oopWord - BROOKS_POINTER_OBJ_SIZE);
-      guarantee(oopDesc::is_brooks_ptr(oop(brooksPOop)), "age in mark word of brooks obj must be 15");
+      guarantee(ShenandoahBarrierSet::is_brooks_ptr(oop(brooksPOop)), "age in mark word of brooks obj must be 15");
     }
   }
 

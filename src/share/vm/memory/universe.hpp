@@ -28,6 +28,7 @@
 #include "runtime/handles.hpp"
 #include "utilities/array.hpp"
 #include "utilities/growableArray.hpp"
+#include "memory/barrierSet.hpp"
 
 // Universe is a name space holding known system classes and objects in the VM.
 //
@@ -323,8 +324,7 @@ class Universe: AllStatic {
   static oop java_mirror(BasicType t) {
     assert((uint)t < T_VOID+1, "range check");
     oop mirror = check_mirror(_mirrors[t]);
-    if (UseShenandoahGC) {
-      mirror = oopDesc::get_shenandoah_forwardee(mirror); }
+    mirror = (oop) oopDesc::bs()->resolve_oop(mirror);
     return mirror;
   }
   static oop      main_thread_group()                 { return _main_thread_group; }

@@ -183,6 +183,11 @@ public:
 
   // Print a description of the memory for the barrier set
   virtual void print_on(outputStream* st) const = 0;
+
+  virtual oopDesc* resolve_oop(oopDesc* src) {
+    return src;
+  }
+
 };
 
 #endif // SHARE_VM_MEMORY_BARRIERSET_HPP
