@@ -1,10 +1,14 @@
 #ifndef SHARE_VM_GC_IMPLEMENTATION_SHENANDOAH_SHENANDOAHBARRIERSET_HPP
 #define SHARE_VM_GC_IMPLEMENTATION_SHENANDOAH_SHENANDOAHBARRIERSET_HPP
 
+#include "precompiled.hpp"
+#include "asm/macroAssembler.hpp"
 #include "memory/barrierSet.hpp"
 #include "memory/universe.hpp"
 
 #define BROOKS_POINTER_OBJ_SIZE 4
+
+#define __ masm->
 
 class ShenandoahBarrierSet: public BarrierSet {
   
@@ -101,6 +105,18 @@ public:
     return get_shenandoah_forwardee(src);
   }
 
+  // TODO: The following should really live in an X86 specific subclass.
+  virtual void compile_resolve_oop(MacroAssembler* masm, Register dst) {
+    Label is_null;
+    __ testptr(dst, dst);
+    __ jcc(Assembler::zero, is_null);
+    compile_resolve_oop_not_null(masm, dst);
+    __ bind(is_null);
+  }
+
+  virtual void compile_resolve_oop_not_null(MacroAssembler* masm, Register dst) {
+    __ movptr(dst, Address(dst, -8));
+  }
 };
 
 #endif //SHARE_VM_GC_IMPLEMENTATION_SHENANDOAH_SHENANDOAHBARRIERSET_HPP
