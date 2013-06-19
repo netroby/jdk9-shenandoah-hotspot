@@ -90,7 +90,7 @@ Klass* volatile SystemDictionary::_abstract_ownable_synchronizer_klass = NULL;
 // Java-level SystemLoader
 
 oop SystemDictionary::java_system_loader() {
-  return _java_system_loader;
+  return oopDesc::bs()->resolve_oop(_java_system_loader);
 }
 
 void SystemDictionary::compute_java_system_loader(TRAPS) {
@@ -470,7 +470,7 @@ void SystemDictionary::double_lock_wait(Handle lockObject, TRAPS) {
   bool calledholdinglock
       = ObjectSynchronizer::current_thread_holds_lock((JavaThread*)THREAD, lockObject);
   assert(calledholdinglock,"must hold lock for notify");
-  assert((!(lockObject() == _system_loader_lock_obj) && !is_parallelCapable(lockObject)), "unexpected double_lock_wait");
+  assert((!(lockObject() == oopDesc::bs()->resolve_oop(_system_loader_lock_obj)) && !is_parallelCapable(lockObject)), "unexpected double_lock_wait");
   ObjectSynchronizer::notifyall(lockObject, THREAD);
   intptr_t recursions =  ObjectSynchronizer::complete_exit(lockObject, THREAD);
   SystemDictionary_lock->wait();
@@ -1538,7 +1538,7 @@ instanceKlassHandle SystemDictionary::find_or_define_instance_class(Symbol* clas
 Handle SystemDictionary::compute_loader_lock_object(Handle class_loader, TRAPS) {
   // If class_loader is NULL we synchronize on _system_loader_lock_obj
   if (class_loader.is_null()) {
-    return Handle(THREAD, _system_loader_lock_obj);
+    return Handle(THREAD, oopDesc::bs()->resolve_oop(_system_loader_lock_obj));
   } else {
     return class_loader;
   }
@@ -1559,7 +1559,7 @@ void SystemDictionary::check_loader_lock_contention(Handle loader_lock, TRAPS) {
       == ObjectSynchronizer::owner_other) {
     // contention will likely happen, so increment the corresponding
     // contention counter.
-    if (loader_lock() == _system_loader_lock_obj) {
+    if (loader_lock() == oopDesc::bs()->resolve_oop(_system_loader_lock_obj)) {
       ClassLoader::sync_systemLoaderLockContentionRate()->inc();
     } else {
       ClassLoader::sync_nonSystemLoaderLockContentionRate()->inc();

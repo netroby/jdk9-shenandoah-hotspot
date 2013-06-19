@@ -141,7 +141,7 @@ class ProtectionDomainEntry :public CHeapObj<mtClass> {
   }
 
   ProtectionDomainEntry* next() { return _next; }
-  oop protection_domain() { return _protection_domain; }
+  oop protection_domain() { return oopDesc::bs()->resolve_oop(_protection_domain); }
 };
 
 // An entry in the system dictionary, this describes a class as
@@ -242,7 +242,7 @@ class SymbolPropertyEntry : public HashtableEntry<Symbol*, mtSymbol> {
   Method*        method() const     { return _method; }
   void set_method(Method* p)        { _method = p; }
 
-  oop      method_type() const      { return _method_type; }
+  oop      method_type() const      { return oopDesc::bs()->resolve_oop(_method_type); }
   oop*     method_type_addr()       { return &_method_type; }
   void set_method_type(oop p)       { _method_type = p; }
 
