@@ -102,7 +102,11 @@ public:
   }
 
   virtual oopDesc* resolve_oop(oopDesc* src) {
-    return get_shenandoah_forwardee(src);
+    if (src != NULL) {
+      return get_shenandoah_forwardee(src);
+    } else {
+      return NULL;
+    }
   }
 
   // TODO: The following should really live in an X86 specific subclass.
