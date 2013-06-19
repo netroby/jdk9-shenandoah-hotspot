@@ -297,7 +297,7 @@ void SensorInfo::trigger(int count, TRAPS) {
   if (_sensor_obj != NULL) {
     Klass* k = Management::sun_management_Sensor_klass(CHECK);
     instanceKlassHandle sensorKlass (THREAD, k);
-    Handle sensor_h(THREAD, _sensor_obj);
+    Handle sensor_h(THREAD, oopDesc::bs()->resolve_oop(_sensor_obj));
     Handle usage_h = MemoryService::create_MemoryUsage_obj(_usage, CHECK);
 
     JavaValue result(T_VOID);
@@ -326,7 +326,7 @@ void SensorInfo::clear(int count, TRAPS) {
   if (_sensor_obj != NULL) {
     Klass* k = Management::sun_management_Sensor_klass(CHECK);
     instanceKlassHandle sensorKlass (THREAD, k);
-    Handle sensor(THREAD, _sensor_obj);
+    Handle sensor(THREAD, oopDesc::bs()->resolve_oop(_sensor_obj));
 
     JavaValue result(T_VOID);
     JavaCallArguments args(sensor);

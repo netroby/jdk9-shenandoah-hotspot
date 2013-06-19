@@ -217,7 +217,7 @@ public:
 
   java_lang_Thread::ThreadStatus thread_status() { return _thread_status; }
 
-  oop         threadObj() const           { return _threadObj; }
+  oop         threadObj() const           { return oopDesc::bs()->resolve_oop(_threadObj); }
 
   void        set_next(ThreadSnapshot* n) { _next = n; }
 
@@ -232,8 +232,8 @@ public:
   jlong       sleep_ticks()               { return _sleep_ticks; }
 
 
-  oop         blocker_object()            { return _blocker_object; }
-  oop         blocker_object_owner()      { return _blocker_object_owner; }
+  oop         blocker_object()            { return oopDesc::bs()->resolve_oop(_blocker_object); }
+  oop         blocker_object_owner()      { return oopDesc::bs()->resolve_oop(_blocker_object_owner); }
 
   ThreadSnapshot*   next() const          { return _next; }
   ThreadStackTrace* get_stack_trace()     { return _stack_trace; }
