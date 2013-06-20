@@ -131,7 +131,7 @@ instanceOop MemoryPool::get_memory_pool_instance(TRAPS) {
     }
   }
 
-  return pool_obj;
+  return (instanceOop) oopDesc::bs()->resolve_oop((oop) pool_obj);
 }
 
 inline static size_t get_max_value(size_t val1, size_t val2) {

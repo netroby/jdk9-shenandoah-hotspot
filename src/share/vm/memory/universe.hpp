@@ -28,6 +28,7 @@
 #include "runtime/handles.hpp"
 #include "utilities/array.hpp"
 #include "utilities/growableArray.hpp"
+#include "memory/barrierSet.hpp"
 
 // Universe is a name space holding known system classes and objects in the VM.
 //
@@ -223,8 +224,12 @@ class Universe: AllStatic {
   static bool _bootstrapping;                         // true during genesis
   static bool _fully_initialized;                     // true after universe_init and initialize_vtables called
 
+  static oop resolve_oop(oop o) {
+    return (oop) oopDesc::bs()->resolve_oop(o);
+  }
+
   // the array of preallocated errors with backtraces
-  static objArrayOop  preallocated_out_of_memory_errors()     { return _preallocated_out_of_memory_error_array; }
+  static objArrayOop  preallocated_out_of_memory_errors()     { return (objArrayOop) resolve_oop((oop) _preallocated_out_of_memory_error_array); }
 
   // generate an out of memory error; if possible using an error with preallocated backtrace;
   // otherwise return the given default error.
@@ -247,7 +252,7 @@ class Universe: AllStatic {
   // Mirrors for primitive classes (created eagerly)
   static oop check_mirror(oop m) {
     assert(m != NULL, "mirror not initialized");
-    return m;
+    return resolve_oop(m);
   }
 
   // Narrow Oop encoding mode:
@@ -323,27 +328,25 @@ class Universe: AllStatic {
   static oop java_mirror(BasicType t) {
     assert((uint)t < T_VOID+1, "range check");
     oop mirror = check_mirror(_mirrors[t]);
-    if (UseShenandoahGC) {
-      mirror = oopDesc::get_shenandoah_forwardee(mirror); }
     return mirror;
   }
-  static oop      main_thread_group()                 { return _main_thread_group; }
+  static oop      main_thread_group()                 { return resolve_oop(_main_thread_group); }
   static void set_main_thread_group(oop group)        { _main_thread_group = group;}
 
-  static oop      system_thread_group()               { return _system_thread_group; }
+  static oop      system_thread_group()               { return resolve_oop(_system_thread_group); }
   static void set_system_thread_group(oop group)      { _system_thread_group = group;}
 
-  static objArrayOop  the_empty_class_klass_array ()  { return _the_empty_class_klass_array;   }
+  static objArrayOop  the_empty_class_klass_array ()  { return (objArrayOop) resolve_oop((oop) _the_empty_class_klass_array);   }
   static Array<Klass*>* the_array_interfaces_array() { return _the_array_interfaces_array;   }
-  static oop          the_null_string()               { return _the_null_string;               }
-  static oop          the_min_jint_string()          { return _the_min_jint_string;          }
+  static oop          the_null_string()               { return resolve_oop(_the_null_string);               }
+  static oop          the_min_jint_string()          { return resolve_oop(_the_min_jint_string);          }
   static Method*      finalizer_register_method()     { return _finalizer_register_cache->get_Method(); }
   static Method*      loader_addClass_method()        { return _loader_addClass_cache->get_Method(); }
   static ActiveMethodOopsCache* reflect_invoke_cache() { return _reflect_invoke_cache; }
-  static oop          null_ptr_exception_instance()   { return _null_ptr_exception_instance;   }
-  static oop          arithmetic_exception_instance() { return _arithmetic_exception_instance; }
-  static oop          virtual_machine_error_instance() { return _virtual_machine_error_instance; }
-  static oop          vm_exception()                  { return _vm_exception; }
+  static oop          null_ptr_exception_instance()   { return resolve_oop(_null_ptr_exception_instance);   }
+  static oop          arithmetic_exception_instance() { return resolve_oop(_arithmetic_exception_instance); }
+  static oop          virtual_machine_error_instance() { return resolve_oop(_virtual_machine_error_instance); }
+  static oop          vm_exception()                  { return resolve_oop(_vm_exception); }
 
   static Array<int>*       the_empty_int_array()    { return _the_empty_int_array; }
   static Array<u2>*        the_empty_short_array()  { return _the_empty_short_array; }

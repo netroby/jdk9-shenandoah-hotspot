@@ -57,9 +57,6 @@
 #endif
 
 
-// This is used by Shenandoah
-#define BROOKS_POINTER_OBJ_SIZE 4
-
 // Implementation of all inlined member functions defined in oop.hpp
 // We need a separate file to avoid circular references
 
@@ -157,7 +154,7 @@ inline bool oopDesc::is_array()              const { return klass()->oop_is_arra
 inline bool oopDesc::is_objArray()           const { return klass()->oop_is_objArray(); }
 inline bool oopDesc::is_typeArray()          const { return klass()->oop_is_typeArray(); }
 
-inline void*     oopDesc::field_base(int offset)        const { return (void*)&((char*)this)[offset]; }
+inline void*     oopDesc::field_base(int offset)        const { return (void*)&((char*)bs()->resolve_oop((oopDesc*) this))[offset]; }
 
 template <class T> inline T* oopDesc::obj_field_addr(int offset) const { return (T*)field_base(offset); }
 inline Metadata** oopDesc::metadata_field_addr(int offset) const { return (Metadata**)field_base(offset); }
@@ -266,31 +263,6 @@ inline oop       oopDesc::load_heap_oop(oop* p)          {
   oop heap_oop = *p;
   return heap_oop;
 }
-inline oop oopDesc::get_shenandoah_forwardee_helper(oop p) {
-  assert(UseShenandoahGC, "must only be called when Shenandoah is used.");
-  assert(! is_brooks_ptr(p), "oop must not be a brooks pointer itself");
-  HeapWord* oopWord = (HeapWord*) p;
-  HeapWord* brooksPOop = oopWord - BROOKS_POINTER_OBJ_SIZE;
-  assert(is_brooks_ptr(oop(brooksPOop)), "brooks pointer must be a brooks pointer");
-  HeapWord** brooksP = (HeapWord**) (brooksPOop + BROOKS_POINTER_OBJ_SIZE - 1);
-  HeapWord* forwarded = *brooksP;
-  return (oop) forwarded;
-}
-
-
-inline oop oopDesc::get_shenandoah_forwardee(oop p) {
-  oop result = get_shenandoah_forwardee_helper(p);
-  // We should never be forwarded more than once.
-  assert(get_shenandoah_forwardee_helper(result) == result, "Only one fowarding per customer");  
-  return result;
-}
-
-inline bool oopDesc::is_brooks_ptr(oop p) {
-  if (p->has_displaced_mark())
-    return false;
-  return p->mark()->age() == 15;
-}
-
 
 inline narrowOop oopDesc::load_heap_oop(narrowOop* p)    { return *p; }
 

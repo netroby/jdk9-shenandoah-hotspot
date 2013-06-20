@@ -574,6 +574,9 @@ oop Universe::gen_out_of_memory_error(oop default_err) {
   //   a filled in stack trace.
   // - if there are no preallocated errors with backtrace available then return
   //   an error without backtrace.
+
+  default_err = resolve_oop(default_err);
+
   int next;
   if (_preallocated_out_of_memory_error_avail_count > 0) {
     next = (int)Atomic::add(-1, &_preallocated_out_of_memory_error_avail_count);

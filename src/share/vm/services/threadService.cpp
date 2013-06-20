@@ -462,6 +462,7 @@ void StackFrameInfo::print_on(outputStream* st) const {
   int len = (_locked_monitors != NULL ? _locked_monitors->length() : 0);
   for (int i = 0; i < len; i++) {
     oop o = _locked_monitors->at(i);
+    o = oopDesc::bs()->resolve_oop(o);
     InstanceKlass* ik = InstanceKlass::cast(o->klass());
     st->print_cr("\t- locked <" INTPTR_FORMAT "> (a %s)", (address)o, ik->external_name());
   }

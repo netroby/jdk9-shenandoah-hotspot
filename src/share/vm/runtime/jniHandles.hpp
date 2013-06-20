@@ -66,7 +66,7 @@ class JNIHandles : AllStatic {
   // Sentinel marking deleted handles in block. Note that we cannot store NULL as
   // the sentinel, since clearing weak global JNI refs are done by storing NULL in
   // the handle. The handle may not be reused before destroy_weak_global is called.
-  static oop deleted_handle()   { return _deleted_handle; }
+  static oop deleted_handle()   { return oopDesc::bs()->resolve_oop(_deleted_handle); }
 
   // Initialization
   static void initialize();
@@ -166,10 +166,7 @@ class JNIHandleBlock : public CHeapObj<mtInternal> {
 
 inline oop JNIHandles::resolve(jobject handle) {
   oop result = (handle == NULL ? (oop)NULL : *(oop*)handle);
-  if (UseShenandoahGC) {
-    if (result != NULL)
-      result = oopDesc::get_shenandoah_forwardee(result);
-  }
+  result = oopDesc::bs()->resolve_oop(result);
   assert(result != NULL || (handle == NULL || !CheckJNICalls || is_weak_global_handle(handle)), "Invalid value read from jni handle");
   assert(result != badJNIHandle, "Pointing to zapped jni handle area");
   return result;

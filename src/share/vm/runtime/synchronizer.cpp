@@ -833,6 +833,7 @@ void ObjectSynchronizer::monitors_iterate(MonitorClosure* closure) {
     for (int i = _BLOCKSIZE - 1; i > 0; i--) {
       mid = block + i;
       oop object = (oop) mid->object();
+      object = oopDesc::bs()->resolve_oop(object);
       if (object != NULL) {
         closure->do_monitor(mid);
       }
@@ -1538,6 +1539,7 @@ void ObjectSynchronizer::deflate_idle_monitors() {
     for (int i = 1 ; i < _BLOCKSIZE; i++) {
       ObjectMonitor* mid = &block[i];
       oop obj = (oop) mid->object();
+      obj = oopDesc::bs()->resolve_oop(obj);
 
       if (obj == NULL) {
         // The monitor is not associated with an object.
@@ -1652,6 +1654,8 @@ void ObjectSynchronizer::verify() {
     for (int i = 1; i < _BLOCKSIZE; i++) {
       mid = block + i;
       oop object = (oop) mid->object();
+      object = oopDesc::bs()->resolve_oop(object);
+
       if (object != NULL) {
         mid->verify();
       }

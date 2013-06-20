@@ -89,6 +89,8 @@ private:
   static int symbols_removed;
   static int symbols_counted;
 
+  static Symbol* resolve_symbol(Symbol* sym);
+
   Symbol* allocate_symbol(const u1* name, int len, bool c_heap, TRAPS); // Assumes no characters larger than 0x7F
 
   // Adding elements

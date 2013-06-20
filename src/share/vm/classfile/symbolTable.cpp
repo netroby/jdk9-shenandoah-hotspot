@@ -44,6 +44,10 @@ SymbolTable* SymbolTable::_the_table = NULL;
 Arena* SymbolTable::_arena = NULL;
 bool SymbolTable::_needs_rehashing = false;
 
+Symbol* SymbolTable::resolve_symbol(Symbol* sym) {
+  return (Symbol*) oopDesc::bs()->resolve_oop((oop) sym);
+}
+
 Symbol* SymbolTable::allocate_symbol(const u1* name, int len, bool c_heap, TRAPS) {
   assert (len <= Symbol::max_length(), "should be checked by caller");
 
@@ -105,7 +109,7 @@ void SymbolTable::unlink() {
       if (entry->is_shared() && !use_alternate_hashcode()) {
         break;
       }
-      Symbol* s = entry->literal();
+      Symbol* s = resolve_symbol(entry->literal());
       memory_total += s->size();
       total++;
       assert(s != NULL, "just checking");
@@ -799,7 +803,7 @@ void StringTable::verify() {
   for (int i = 0; i < the_table()->table_size(); ++i) {
     HashtableEntry<oop, mtSymbol>* p = the_table()->bucket(i);
     for ( ; p != NULL; p = p->next()) {
-      oop s = p->literal();
+      oop s = oopDesc::bs()->resolve_oop(p->literal());
       guarantee(s != NULL, "interned string is NULL");
       unsigned int h = java_lang_String::hash_string(s);
       guarantee(p->hash() == h, "broken hash in string table entry");

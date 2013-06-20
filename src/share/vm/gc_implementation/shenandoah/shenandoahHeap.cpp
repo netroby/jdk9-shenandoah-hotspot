@@ -259,7 +259,6 @@ HeapWord* ShenandoahHeap::allocate_new_tlab(size_t word_size) {
 HeapWord* ShenandoahHeap::allocate_new_gclab(size_t word_size) {
   bool* limit_exceeded;
   HeapWord* result = _current_region->allocate(word_size);
-  tty->print("allocate_new_gclab");
   if (!result) {
     update_current_region();
     return allocate_new_gclab(word_size);
@@ -434,7 +433,6 @@ public:
   bool doHeapRegion(ShenandoahHeapRegion* r) {
     // We piggy-back clearing the heap regions here because it's convenient.
     r->set_dirty(false);
-    tty->print_cr("used: %d, live: %d, garbage: %d", r->used(), r->getLiveData(), r->garbage());
     if (r->garbage() > _most_garbage) {
       _evacuation_region = r;
       _most_garbage = r->garbage();
@@ -485,7 +483,7 @@ public:
     _to_region(to_region) {};
 
   void do_object(oop p) {
-    // if (! oopDesc::is_brooks_ptr(p)) { // Copy everything except brooks ptrs.
+    // if (! ShenandoahBarrierSet::is_brooks_ptr(p)) { // Copy everything except brooks ptrs.
     if (_heap->isMarkedCurrent(p)) { // Ignores brooks ptr objects because epoch is never 15.
       // Allocate brooks ptr object for copy.
       HeapWord* filler = _to_region->allocate(BROOKS_POINTER_OBJ_SIZE);
@@ -544,19 +542,17 @@ private:
     HeapWord* old_brooks_ptr = ((HeapWord*) p) - BROOKS_POINTER_OBJ_SIZE;
     _heap->set_brooks_ptr(old_brooks_ptr, copy);
     oop c = oop(copy);
-    assert(p != oopDesc::get_shenandoah_forwardee(p), "forwarded correctly");
-    assert(oopDesc::get_shenandoah_forwardee(p) == c, "verify pointer is correct");
+    assert(p != oopDesc::bs()->resolve_oop(p), "forwarded correctly");
+    assert(oopDesc::bs()->resolve_oop(p) == c, "verify pointer is correct");
     assert(p->klass() == c->klass(), "verify class");
     assert(p->size() == c->size(), "verify size");
     assert(p->mark() == c->mark(), "verify mark");
-    assert(c == oopDesc::get_shenandoah_forwardee(c), "verify only forwarded once");
+    assert(c == oopDesc::bs()->resolve_oop(c), "verify only forwarded once");
   }
   
   void do_object(oop p) {
     if (getMark(p)->age() == _epoch) {
       size_t required = BROOKS_POINTER_OBJ_SIZE + p->size();
-      tty->print("About to evacuate oop %p region = %p object size = %d required = %d\n", p, _region, p->size(), required);
-      _region->print();
       if (required < _region->space_available()) {
 	copy_object(p);
       } else if (required < _region->region_size()) {
@@ -593,7 +589,7 @@ void ShenandoahHeap::initialize_brooks_ptr(HeapWord* filler, HeapWord* obj) {
   CollectedHeap::fill_with_array(filler, BROOKS_POINTER_OBJ_SIZE, false);
   markOop mark = oop(filler)->mark();
   oop(filler)->set_mark(mark->set_age(15));
-  assert(oopDesc::is_brooks_ptr(oop(filler)), "brooks pointer must be brooks pointer");
+  assert(ShenandoahBarrierSet::is_brooks_ptr(oop(filler)), "brooks pointer must be brooks pointer");
   arrayOop(filler)->set_length(1);
   set_brooks_ptr(filler, obj);
 }
@@ -622,12 +618,12 @@ public:
   
   void do_object(oop p) {
     if (p->mark()->age() == _epoch) {
-      oop p_prime = oopDesc::get_shenandoah_forwardee(p);
+      oop p_prime = oopDesc::bs()->resolve_oop(p);
       assert(p != p_prime, "Should point to evacuated copy");
       assert(p->klass() == p_prime->klass(), "Should have the same class");
       assert(p->mark() == p_prime->mark(), "Should have the same mark");
       assert(p->size() == p_prime->size(), "Should be the same size");
-      assert(p_prime == oopDesc::get_shenandoah_forwardee(p_prime), "One forward once");
+      assert(p_prime == oopDesc::bs()->resolve_oop(p_prime), "One forward once");
     }
   }
 };
@@ -786,7 +782,7 @@ void ShenandoahHeap::verify_evacuation(ShenandoahHeapRegion* from_region) {
 void ShenandoahHeap::maybe_update_oop_ref(oop* p) {
   oop heap_oop = *p;
   if (! oopDesc::is_null(heap_oop)) {
-    oop forwarded_oop = oopDesc::get_shenandoah_forwardee(heap_oop);
+    oop forwarded_oop = oopDesc::bs()->resolve_oop(heap_oop);
     if (forwarded_oop != heap_oop) {
       // tty->print_cr("updating old ref: %p to new ref: %p", heap_oop, forwarded_oop);
       *p = forwarded_oop;
@@ -915,7 +911,7 @@ public:
   bool failures() { return _failures; }
 
   void do_oop(oop* p)       {
-    if (*p != NULL && ! oopDesc::is_brooks_ptr(*p)) {
+    if (*p != NULL && ! ShenandoahBarrierSet::is_brooks_ptr(*p)) {
       oop heap_oop = oopDesc::load_heap_oop(p);
       oop obj = oopDesc::decode_heap_oop_not_null(heap_oop);
       guarantee(obj->is_oop(), "is_oop");
@@ -946,11 +942,11 @@ public:
     _rootsCl.do_oop(&p);
 
     HeapWord* oopWord = (HeapWord*) p;
-    if (oopDesc::is_brooks_ptr(oop(oopWord))) { // Brooks pointer
+    if (ShenandoahBarrierSet::is_brooks_ptr(oop(oopWord))) { // Brooks pointer
       guarantee(arrayOop(oopWord)->length() == 1, "brooks ptr objects must have length == 1");
     } else {
       HeapWord* brooksPOop = (oopWord - BROOKS_POINTER_OBJ_SIZE);
-      guarantee(oopDesc::is_brooks_ptr(oop(brooksPOop)), "age in mark word of brooks obj must be 15");
+      guarantee(ShenandoahBarrierSet::is_brooks_ptr(oop(brooksPOop)), "age in mark word of brooks obj must be 15");
     }
   }
 
@@ -1076,7 +1072,6 @@ void  ShenandoahHeap::space_iterate(SpaceClosure* cl) {
 template<class T>
 inline ShenandoahHeapRegion*
 ShenandoahHeap::heap_region_containing(const T addr) const {
-  tty->print("heap region containing addr = %p\n", addr);
   intptr_t region_start = ((intptr_t) addr) & ~(ShenandoahHeapRegion::RegionSizeBytes - 1);
   intptr_t index = (region_start - (intptr_t) _first_region->bottom()) / ShenandoahHeapRegion::RegionSizeBytes;
   return regions[index];
@@ -1362,7 +1357,7 @@ class VerifyLivenessAfterConcurrentMarkChildClosure : public ExtendedOopClosure 
       }
       /*
       if (! sh->isMarkedCurrent(obj)) {
-        tty->print_cr("obj should be marked: %p, forwardee: %p", obj, oopDesc::get_shenandoah_forwardee(obj));
+        tty->print_cr("obj should be marked: %p, forwardee: %p", obj, oopDesc::bs()->resolve_oop(obj));
       }
       */
       assert(sh->isMarkedCurrent(obj), err_msg("Referenced Objects should be marked obj: %p, epoch: %d, obj-age: %d, is_in_heap: %d", obj, sh->getEpoch(), getMark(obj)->age(), sh->is_in(obj)));

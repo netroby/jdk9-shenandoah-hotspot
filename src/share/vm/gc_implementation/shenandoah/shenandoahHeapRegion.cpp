@@ -54,11 +54,12 @@ void ShenandoahHeapRegion::oop_iterate(ExtendedOopClosure* cl, bool skip_unreach
 
 void ShenandoahHeapRegion::fill_region() {
   ShenandoahHeap* sh = (ShenandoahHeap*) Universe::heap();
-  if (free() > BROOKS_POINTER_OBJ_SIZE + CollectedHeap::min_fill_size()) {
+  
+  if (free() > (HeapWordSize * (BROOKS_POINTER_OBJ_SIZE + CollectedHeap::min_fill_size()))) {
     HeapWord* filler = allocate(BROOKS_POINTER_OBJ_SIZE);
-    HeapWord* obj    = allocate(end()-top());
-    sh->initialize_brooks_ptr(filler, obj);
+    HeapWord* obj = allocate(end() - top());
     sh->fill_with_object(obj, end());
+    sh->initialize_brooks_ptr(filler, obj);
   }
 }
 

@@ -766,7 +766,7 @@ oop oop_Relocation::oop_value() {
   oop v = *oop_addr();
   // clean inline caches store a special pseudo-null
   if (v == (oop)Universe::non_oop_word())  v = NULL;
-  return v;
+  return oopDesc::bs()->resolve_oop(v);
 }
 
 
