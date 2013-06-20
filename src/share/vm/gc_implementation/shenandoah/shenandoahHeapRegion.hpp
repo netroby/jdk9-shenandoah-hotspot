@@ -8,7 +8,7 @@ class ShenandoahHeapRegion : public ContiguousSpace {
 public:
    int regionNumber;
    static size_t RegionSizeBytes;
-   static size_t GarbageThreshold;
+  //   static size_t GarbageThreshold;
    volatile jlong liveData;
    MemRegion reserved;
    volatile unsigned int claimed;
@@ -76,6 +76,8 @@ public:
 
   void oop_iterate(ExtendedOopClosure* cl, bool skip_unreachable_objects);
 
+  // Just before GC we need to fill the current region.
+  void fill_region();
   
 };
 

@@ -37,6 +37,15 @@ ShenandoahHeapRegion* ShenandoahHeapRegionSet::get_next() {
   return result;
 }
 
+ShenandoahHeapRegion* ShenandoahHeapRegionSet::peek_next() {
+  ShenandoahHeapRegion* result = NULL;
+
+  if (_index <= _inserted) 
+    result = _regions[_index];
+
+  return result;
+}
+
 bool ShenandoahHeapRegionSet::has_next() {
   return _index < _inserted;
 }
@@ -138,6 +147,7 @@ void ShenandoahHeapRegionSet::choose_empty_regions(ShenandoahHeapRegionSet* regi
      ShenandoahHeapRegion* result = _regions[_index];
      if (result->claim()) {
        Atomic::add(1, &_index);
+       tty->print("Claiming region %p\n", result);
        return result;
      }
    }

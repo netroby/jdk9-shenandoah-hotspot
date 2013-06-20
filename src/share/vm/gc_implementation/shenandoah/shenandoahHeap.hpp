@@ -61,6 +61,8 @@ private:
   uint _epoch;
   size_t _bytesAllocSinceCM;
   size_t _default_gclab_size;
+  WorkGangBarrierSync barrierSync;
+  int _max_workers;
 
 public:
   ShenandoahHeap(ShenandoahCollectorPolicy* policy);
@@ -170,6 +172,10 @@ public:
   void evacuate_region(ShenandoahHeapRegion* from_region, ShenandoahHeapRegion* to_region);
   void parallel_evacuate_region(ShenandoahHeapRegion* from_region,
 				ShenandoahAllocRegion* alloc_region);
+  void verify_evacuated_region(ShenandoahHeapRegion* from_region);
+
+  void update_current_region();
+  ShenandoahHeapRegion* current_region() { return _current_region;}
 
   //  ShenandoahHeapRegion* nextEmptyRegion();
 private:
@@ -182,7 +188,6 @@ private:
   void mark();
   //  ShenandoahHeapRegion* nextEmptyRegion(size_t required_size);
 
-  void update_current_region();
 
 
   

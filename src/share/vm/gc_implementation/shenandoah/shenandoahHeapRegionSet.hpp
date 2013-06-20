@@ -21,16 +21,18 @@ public:
     _inserted(0),
     _numRegions(numRegions),
     _regions(new ShenandoahHeapRegion*[numRegions]),
-    _garbage_threshold(ShenandoahHeapRegion::GarbageThreshold),
+    _garbage_threshold(ShenandoahHeapRegion::RegionSizeBytes / 2),
     _free_threshold(ShenandoahHeapRegion::RegionSizeBytes / 2) {}
 
   void put(size_t i, ShenandoahHeapRegion* region);
   ShenandoahHeapRegion* at(uint i) { return _regions[i];}
   size_t length() { return _numRegions;}
+  size_t available_regions() { return _inserted - _index;}
   void print();
 
   bool has_next();
   ShenandoahHeapRegion* get_next();
+  ShenandoahHeapRegion* peek_next();
   ShenandoahHeapRegion* claim_next();
 
   void choose_collection_set(ShenandoahHeapRegionSet* region_set, int max_regions);

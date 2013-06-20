@@ -3,7 +3,7 @@
 #include "memory/universe.hpp"
 
 size_t ShenandoahHeapRegion::RegionSizeBytes = 1024 * 1024 * 8;
-size_t ShenandoahHeapRegion::GarbageThreshold = 1000 * 7500;
+//size_t ShenandoahHeapRegion::GarbageThreshold = 1024 * 1024 *4;
 
 jint ShenandoahHeapRegion::initialize(HeapWord* start, 
 				      size_t regionSizeWords) {
@@ -51,3 +51,14 @@ void ShenandoahHeapRegion::oop_iterate(ExtendedOopClosure* cl, bool skip_unreach
   SkipUnreachableObjectToOopClosure cl2(cl, skip_unreachable_objects);
   object_iterate(&cl2);
 }
+
+void ShenandoahHeapRegion::fill_region() {
+  ShenandoahHeap* sh = (ShenandoahHeap*) Universe::heap();
+  if (free() > BROOKS_POINTER_OBJ_SIZE + CollectedHeap::min_fill_size()) {
+    HeapWord* filler = allocate(BROOKS_POINTER_OBJ_SIZE);
+    HeapWord* obj    = allocate(end()-top());
+    sh->initialize_brooks_ptr(filler, obj);
+    sh->fill_with_object(obj, end());
+  }
+}
+

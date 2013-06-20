@@ -41,17 +41,10 @@ void ShenandoahAllocRegion::allocate_new_region() {
   _start = sh->allocate_new_gclab(allocRegionSize + _alignment_reserve);
   _end = _start + allocRegionSize;
   _hard_end = _end + _alignment_reserve;
-  // There must be a better way.
-  //  ShenandoahHeapRegion* r = sh->heap_region_containing(_start);
-  //  jlong foo = (jlong) allocRegionSize;
-  //  r->increase_live_data(foo);
-  //  sh->heap_region_containing(_start)->increase_live_data((jlong)allocRegionSize);
-
 }
 
 void ShenandoahAllocRegion::fill_region() {
   ShenandoahHeap* sh = (ShenandoahHeap*) Universe::heap();
-
   if (_start != 0) {
     HeapWord* filler = _start;
     _start = _start + BROOKS_POINTER_OBJ_SIZE;
@@ -59,13 +52,11 @@ void ShenandoahAllocRegion::fill_region() {
     sh->fill_with_object(_start, _hard_end);
   }
 }
-  
-void ShenandoahAllocRegion::ensure_space(size_t word_size) {
-  if (word_size > allocRegionSize)
-    assert(false, "Not ready for humongous objects");
-  if (_start + word_size > _end) {
-    fill_region();
-    allocate_new_region();
-  }
+
+size_t ShenandoahAllocRegion::space_available() {
+  return (size_t) ( _end - _start) ;
 }
-  
+
+size_t ShenandoahAllocRegion::region_size() {
+  return allocRegionSize;
+}

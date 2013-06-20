@@ -18,7 +18,8 @@ public:
   void allocate_new_region();
   void fill_region();
   void print();
-  void ensure_space(size_t word_size);
+  size_t space_available();
+  size_t region_size();
   ShenandoahAllocRegion();
 };
 

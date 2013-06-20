@@ -27,6 +27,7 @@
 
 #include "runtime/handles.hpp"
 #include "utilities/top.hpp"
+#include "oops/oop.hpp"
 
 class JNIHandleBlock;
 
@@ -163,9 +164,12 @@ class JNIHandleBlock : public CHeapObj<mtInternal> {
   #endif
 };
 
-
 inline oop JNIHandles::resolve(jobject handle) {
   oop result = (handle == NULL ? (oop)NULL : *(oop*)handle);
+  if (UseShenandoahGC) {
+    if (result != NULL)
+      result = oopDesc::get_shenandoah_forwardee(result);
+  }
   assert(result != NULL || (handle == NULL || !CheckJNICalls || is_weak_global_handle(handle)), "Invalid value read from jni handle");
   assert(result != badJNIHandle, "Pointing to zapped jni handle area");
   return result;

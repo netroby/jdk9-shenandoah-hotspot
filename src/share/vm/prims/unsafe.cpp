@@ -69,7 +69,7 @@ HS_DTRACE_PROBE_DECL1(hotspot, thread__unpark, uintptr_t);
 
 #define UNSAFE_END JVM_END
 
-#define UnsafeWrapper(arg) /*nothing, for the present*/
+#define UnsafeWrapper(arg) tty->print("UnsafeWrapper: %s\n", arg); /*nothing, for the present*/
 
 
 inline void* addr_from_java(jlong addr) {
@@ -1198,12 +1198,15 @@ UNSAFE_ENTRY(jboolean, Unsafe_CompareAndSwapLong(JNIEnv *env, jobject unsafe, jo
   UnsafeWrapper("Unsafe_CompareAndSwapLong");
   Handle p (THREAD, JNIHandles::resolve(obj));
   jlong* addr = (jlong*)(index_oop_from_field_offset_long(p(), offset));
-  if (VM_Version::supports_cx8())
+  if (VM_Version::supports_cx8()) {
+    UnsafeWrapper("cx8: obj = ");
+    tty->print("%p", addr);
     return (jlong)(Atomic::cmpxchg(x, addr, e)) == e;
-  else {
+  } else {
     jboolean success = false;
     ObjectLocker ol(p, THREAD);
     if (*addr == e) { *addr = x; success = true; }
+    UnsafeWrapper("not cx8");
     return success;
   }
 UNSAFE_END
