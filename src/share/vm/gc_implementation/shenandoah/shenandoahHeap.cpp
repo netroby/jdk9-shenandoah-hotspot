@@ -534,14 +534,15 @@ private:
     HeapWord* copy = filler + BROOKS_POINTER_OBJ_SIZE;
     assert(copy != NULL, "allocation of copy object must not fail");
     Copy::aligned_disjoint_words((HeapWord*) p, copy, p->size());
-    if (ShenandoahGCVerbose) {
-      tty->print_cr("evacuating object: %p, of size %d with age %d, epoch %d to %p of size %d", 
-		    p, p->size(), getMark(p)->age(), _epoch, copy, oop(copy)->size());
-    }
     _heap->initialize_brooks_ptr(filler, copy);
     HeapWord* old_brooks_ptr = ((HeapWord*) p) - BROOKS_POINTER_OBJ_SIZE;
     _heap->set_brooks_ptr(old_brooks_ptr, copy);
     oop c = oop(copy);
+    if (ShenandoahGCVerbose) {
+      tty->print_cr("evacuating object: %p, of size %d with age %d, epoch %d to %p of size %d", 
+		    p, p->size(), getMark(p)->age(), _epoch, copy, oop(copy)->size());
+    }
+
     assert(p != oopDesc::bs()->resolve_oop(p), "forwarded correctly");
     assert(oopDesc::bs()->resolve_oop(p) == c, "verify pointer is correct");
     assert(p->klass() == c->klass(), "verify class");

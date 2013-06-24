@@ -81,6 +81,14 @@ public:
     assert(! is_brooks_ptr(p), "oop must not be a brooks pointer itself");
     HeapWord* oopWord = (HeapWord*) p;
     HeapWord* brooksPOop = oopWord - BROOKS_POINTER_OBJ_SIZE;
+    if (!is_brooks_ptr(oop(brooksPOop))) {
+      oopDesc* b = (oopDesc*) oop(brooksPOop);
+      if (b->has_displaced_mark())
+	tty->print("OOPSIE: displaced mark p = %p brooksPOop = %p mark = %p\n", oopWord, brooksPOop, b->mark());
+      else
+	tty->print("OOPSIE: oop = %p brooksPOop = %p age = %d   \n",
+		   oopWord, brooksPOop, b->mark()->age());
+    }
     assert(is_brooks_ptr(oop(brooksPOop)), "brooks pointer must be a brooks pointer");
     HeapWord** brooksP = (HeapWord**) (brooksPOop + BROOKS_POINTER_OBJ_SIZE - 1);
     HeapWord* forwarded = *brooksP;
