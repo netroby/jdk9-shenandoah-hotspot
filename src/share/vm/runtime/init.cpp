@@ -34,6 +34,7 @@
 #include "runtime/init.hpp"
 #include "runtime/safepoint.hpp"
 #include "runtime/sharedRuntime.hpp"
+#include "utilities/macros.hpp"
 
 // Initialization done by VM thread in vm_init_globals()
 void check_ThreadShadow();
@@ -130,15 +131,6 @@ jint init_globals() {
   }
   javaClasses_init();   // must happen after vtable initialization
   stubRoutines_init2(); // note: StubRoutines need 2-phase init
-
-  // Although we'd like to, we can't easily do a heap verify
-  // here because the main thread isn't yet a JavaThread, so
-  // its TLAB may not be made parseable from the usual interfaces.
-  if (VerifyBeforeGC && !UseTLAB &&
-      Universe::heap()->total_collections() >= VerifyGCStartAt) {
-    Universe::heap()->prepare_for_verify();
-    Universe::verify();   // make sure we're starting with a clean slate
-  }
 
   // All the flags that get adjusted by VM_Version_init and os::init_2
   // have been set so dump the flags now.

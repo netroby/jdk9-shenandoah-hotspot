@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -68,7 +68,7 @@
   template(java_lang_Float,                           "java/lang/Float")                          \
   template(java_lang_Double,                          "java/lang/Double")                         \
   template(java_lang_Byte,                            "java/lang/Byte")                           \
-  template(java_lang_Byte_Cache,                      "java/lang/Byte$ByteCache")                 \
+  template(java_lang_Byte_ByteCache,                  "java/lang/Byte$ByteCache")                 \
   template(java_lang_Short,                           "java/lang/Short")                          \
   template(java_lang_Short_ShortCache,                "java/lang/Short$ShortCache")               \
   template(java_lang_Integer,                         "java/lang/Integer")                        \
@@ -91,6 +91,7 @@
   template(java_lang_StringBuffer,                    "java/lang/StringBuffer")                   \
   template(java_lang_StringBuilder,                   "java/lang/StringBuilder")                  \
   template(java_lang_CharSequence,                    "java/lang/CharSequence")                   \
+  template(java_lang_SecurityManager,                 "java/lang/SecurityManager")                \
   template(java_security_AccessControlContext,        "java/security/AccessControlContext")       \
   template(java_security_ProtectionDomain,            "java/security/ProtectionDomain")           \
   template(java_io_OutputStream,                      "java/io/OutputStream")                     \
@@ -108,7 +109,6 @@
   template(java_lang_Compiler,                        "java/lang/Compiler")                       \
   template(sun_misc_Signal,                           "sun/misc/Signal")                          \
   template(java_lang_AssertionStatusDirectives,       "java/lang/AssertionStatusDirectives")      \
-  template(sun_jkernel_DownloadManager,               "sun/jkernel/DownloadManager")              \
   template(getBootClassPathEntryForClass_name,        "getBootClassPathEntryForClass")            \
   template(sun_misc_PostVMInitHook,                   "sun/misc/PostVMInitHook")                  \
   template(sun_misc_Launcher_ExtClassLoader,          "sun/misc/Launcher$ExtClassLoader")         \
@@ -212,6 +212,8 @@
   template(sun_reflect_SerializationConstructorAccessorImpl, "sun/reflect/SerializationConstructorAccessorImpl") \
   template(sun_reflect_DelegatingClassLoader,         "sun/reflect/DelegatingClassLoader")        \
   template(sun_reflect_Reflection,                    "sun/reflect/Reflection")                   \
+  template(sun_reflect_CallerSensitive,               "sun/reflect/CallerSensitive")              \
+  template(sun_reflect_CallerSensitive_signature,     "Lsun/reflect/CallerSensitive;")            \
   template(checkedExceptions_name,                    "checkedExceptions")                        \
   template(clazz_name,                                "clazz")                                    \
   template(exceptionTypes_name,                       "exceptionTypes")                           \
@@ -344,6 +346,7 @@
   template(contextClassLoader_name,                   "contextClassLoader")                       \
   template(inheritedAccessControlContext_name,        "inheritedAccessControlContext")            \
   template(isPrivileged_name,                         "isPrivileged")                             \
+  template(getClassContext_name,                      "getClassContext")                          \
   template(wait_name,                                 "wait")                                     \
   template(checkPackageAccess_name,                   "checkPackageAccess")                       \
   template(stackSize_name,                            "stackSize")                                \
@@ -389,6 +392,9 @@
   template(array_klass_name,                          "array_klass")                              \
   template(oop_size_name,                             "oop_size")                                 \
   template(static_oop_field_count_name,               "static_oop_field_count")                   \
+  template(protection_domain_name,                    "protection_domain")                        \
+  template(init_lock_name,                            "init_lock")                                \
+  template(signers_name,                              "signers_name")                             \
   template(loader_data_name,                          "loader_data")                              \
   template(dependencies_name,                         "dependencies")                             \
                                                                                                   \
@@ -464,6 +470,7 @@
   template(void_classloader_signature,                "()Ljava/lang/ClassLoader;")                                \
   template(void_object_signature,                     "()Ljava/lang/Object;")                                     \
   template(void_class_signature,                      "()Ljava/lang/Class;")                                      \
+  template(void_class_array_signature,                "()[Ljava/lang/Class;")                                     \
   template(void_string_signature,                     "()Ljava/lang/String;")                                     \
   template(object_array_object_signature,             "([Ljava/lang/Object;)Ljava/lang/Object;")                  \
   template(object_object_array_object_signature,      "(Ljava/lang/Object;[Ljava/lang/Object;)Ljava/lang/Object;")\
@@ -513,13 +520,18 @@
   template(sun_management_ManagementFactory,           "sun/management/ManagementFactory")                        \
   template(sun_management_Sensor,                      "sun/management/Sensor")                                   \
   template(sun_management_Agent,                       "sun/management/Agent")                                    \
+  template(sun_management_DiagnosticCommandImpl,       "sun/management/DiagnosticCommandImpl")                    \
   template(sun_management_GarbageCollectorImpl,        "sun/management/GarbageCollectorImpl")                     \
+  template(sun_management_ManagementFactoryHelper,     "sun/management/ManagementFactoryHelper")                  \
+  template(getDiagnosticCommandMBean_name,             "getDiagnosticCommandMBean")                               \
+  template(getDiagnosticCommandMBean_signature,        "()Lcom/sun/management/DiagnosticCommandMBean;")           \
   template(getGcInfoBuilder_name,                      "getGcInfoBuilder")                                        \
   template(getGcInfoBuilder_signature,                 "()Lsun/management/GcInfoBuilder;")                        \
   template(com_sun_management_GcInfo,                  "com/sun/management/GcInfo")                               \
   template(com_sun_management_GcInfo_constructor_signature, "(Lsun/management/GcInfoBuilder;JJJ[Ljava/lang/management/MemoryUsage;[Ljava/lang/management/MemoryUsage;[Ljava/lang/Object;)V") \
   template(createGCNotification_name,                  "createGCNotification")                                    \
   template(createGCNotification_signature,             "(JLjava/lang/String;Ljava/lang/String;Ljava/lang/String;Lcom/sun/management/GcInfo;)V") \
+  template(createDiagnosticFrameworkNotification_name, "createDiagnosticFrameworkNotification")                   \
   template(createMemoryPoolMBean_name,                 "createMemoryPoolMBean")                                   \
   template(createMemoryManagerMBean_name,              "createMemoryManagerMBean")                                \
   template(createGarbageCollectorMBean_name,           "createGarbageCollectorMBean")                             \
@@ -706,9 +718,8 @@
   do_intrinsic(_getLength,                java_lang_reflect_Array, getLength_name, object_int_signature,         F_SN)  \
    do_name(     getLength_name,                                   "getLength")                                          \
                                                                                                                         \
-  do_intrinsic(_getCallerClass,           sun_reflect_Reflection, getCallerClass_name, getCallerClass_signature, F_SN)  \
+  do_intrinsic(_getCallerClass,           sun_reflect_Reflection, getCallerClass_name, void_class_signature,     F_SN)  \
    do_name(     getCallerClass_name,                             "getCallerClass")                                      \
-   do_signature(getCallerClass_signature,                        "(I)Ljava/lang/Class;")                                \
                                                                                                                         \
   do_intrinsic(_newArray,                 java_lang_reflect_Array, newArray_name, newArray_signature,            F_SN)  \
    do_name(     newArray_name,                                    "newArray")                                           \

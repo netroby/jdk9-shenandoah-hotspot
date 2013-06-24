@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1999, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1999, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -790,6 +790,17 @@ int ciMethod::scale_count(int count, float prof_factor) {
   return count;
 }
 
+
+// ------------------------------------------------------------------
+// ciMethod::is_special_get_caller_class_method
+//
+bool ciMethod::is_ignored_by_security_stack_walk() const {
+  check_is_loaded();
+  VM_ENTRY_MARK;
+  return get_Method()->is_ignored_by_security_stack_walk();
+}
+
+
 // ------------------------------------------------------------------
 // invokedynamic support
 
@@ -894,6 +905,20 @@ ciMethodData* ciMethod::method_data_or_null() {
 }
 
 // ------------------------------------------------------------------
+// ciMethod::ensure_method_counters
+//
+address ciMethod::ensure_method_counters() {
+  check_is_loaded();
+  VM_ENTRY_MARK;
+  methodHandle mh(THREAD, get_Method());
+  MethodCounters *counter = mh->method_counters();
+  if (counter == NULL) {
+    counter = Method::build_method_counters(mh(), CHECK_AND_CLEAR_NULL);
+  }
+  return (address)counter;
+}
+
+// ------------------------------------------------------------------
 // ciMethod::should_exclude
 //
 // Should this method be excluded from compilation?
@@ -977,7 +1002,7 @@ bool ciMethod::can_be_compiled() {
 // ciMethod::set_not_compilable
 //
 // Tell the VM that this method cannot be compiled at all.
-void ciMethod::set_not_compilable() {
+void ciMethod::set_not_compilable(const char* reason) {
   check_is_loaded();
   VM_ENTRY_MARK;
   ciEnv* env = CURRENT_ENV;
@@ -986,7 +1011,7 @@ void ciMethod::set_not_compilable() {
   } else {
     _is_c2_compilable = false;
   }
-  get_Method()->set_not_compilable(env->comp_level());
+  get_Method()->set_not_compilable(env->comp_level(), true, reason);
 }
 
 // ------------------------------------------------------------------
@@ -1154,6 +1179,44 @@ bool ciMethod::has_jsrs       () const {         FETCH_FLAG_FROM_VM(has_jsrs);  
 bool ciMethod::is_accessor    () const {         FETCH_FLAG_FROM_VM(is_accessor); }
 bool ciMethod::is_initializer () const {         FETCH_FLAG_FROM_VM(is_initializer); }
 
+bool ciMethod::is_boxing_method() const {
+  if (holder()->is_box_klass()) {
+    switch (intrinsic_id()) {
+      case vmIntrinsics::_Boolean_valueOf:
+      case vmIntrinsics::_Byte_valueOf:
+      case vmIntrinsics::_Character_valueOf:
+      case vmIntrinsics::_Short_valueOf:
+      case vmIntrinsics::_Integer_valueOf:
+      case vmIntrinsics::_Long_valueOf:
+      case vmIntrinsics::_Float_valueOf:
+      case vmIntrinsics::_Double_valueOf:
+        return true;
+      default:
+        return false;
+    }
+  }
+  return false;
+}
+
+bool ciMethod::is_unboxing_method() const {
+  if (holder()->is_box_klass()) {
+    switch (intrinsic_id()) {
+      case vmIntrinsics::_booleanValue:
+      case vmIntrinsics::_byteValue:
+      case vmIntrinsics::_charValue:
+      case vmIntrinsics::_shortValue:
+      case vmIntrinsics::_intValue:
+      case vmIntrinsics::_longValue:
+      case vmIntrinsics::_floatValue:
+      case vmIntrinsics::_doubleValue:
+        return true;
+      default:
+        return false;
+    }
+  }
+  return false;
+}
+
 BCEscapeAnalyzer  *ciMethod::get_bcea() {
 #ifdef COMPILER2
   if (_bcea == NULL) {
@@ -1178,14 +1241,16 @@ ciMethodBlocks  *ciMethod::get_method_blocks() {
 
 void ciMethod::dump_replay_data(outputStream* st) {
   ASSERT_IN_VM;
+  ResourceMark rm;
   Method* method = get_Method();
+  MethodCounters* mcs = method->method_counters();
   Klass*  holder = method->method_holder();
   st->print_cr("ciMethod %s %s %s %d %d %d %d %d",
                holder->name()->as_quoted_ascii(),
                method->name()->as_quoted_ascii(),
                method->signature()->as_quoted_ascii(),
-               method->invocation_counter()->raw_counter(),
-               method->backedge_counter()->raw_counter(),
+               mcs == NULL ? 0 : mcs->invocation_counter()->raw_counter(),
+               mcs == NULL ? 0 : mcs->backedge_counter()->raw_counter(),
                interpreter_invocation_count(),
                interpreter_throwout_count(),
                _instructions_size);

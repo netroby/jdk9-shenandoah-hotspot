@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2000, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -32,6 +32,7 @@
 #include "runtime/orderAccess.hpp"
 
 class BytecodeStream;
+class KlassSizeStats;
 
 // The MethodData object collects counts and other profile information
 // during zeroth-tier (interpretive) and first-tier execution.
@@ -1283,12 +1284,15 @@ public:
     return bytecode_cell_count(code) != no_profile_data;
   }
 
-  // Perform initialization of a new MethodData*
-  void initialize(methodHandle method);
+  // reset into original state
+  void init();
 
   // My size
   int size_in_bytes() const { return _size; }
   int size() const    { return align_object_size(align_size_up(_size, BytesPerWord)/BytesPerWord); }
+#if INCLUDE_SERVICES
+  void collect_statistics(KlassSizeStats *sz) const;
+#endif
 
   int      creation_mileage() const  { return _creation_mileage; }
   void set_creation_mileage(int x)   { _creation_mileage = x; }
@@ -1334,9 +1338,9 @@ public:
   void set_would_profile(bool p)              { _would_profile = p;    }
   bool would_profile() const                  { return _would_profile; }
 
-  int highest_comp_level()                    { return _highest_comp_level;      }
+  int highest_comp_level() const              { return _highest_comp_level;      }
   void set_highest_comp_level(int level)      { _highest_comp_level = level;     }
-  int highest_osr_comp_level()                { return _highest_osr_comp_level;  }
+  int highest_osr_comp_level() const          { return _highest_osr_comp_level;  }
   void set_highest_osr_comp_level(int level)  { _highest_osr_comp_level = level; }
 
   int num_loops() const                       { return _num_loops;  }
@@ -1361,6 +1365,7 @@ public:
   intx arg_stack()                               { return _arg_stack; }
   intx arg_returned()                            { return _arg_returned; }
   uint arg_modified(int a)                       { ArgInfoData *aid = arg_info();
+                                                   assert(aid != NULL, "arg_info must be not null");
                                                    assert(a >= 0 && a < aid->number_of_args(), "valid argument number");
                                                    return aid->arg_modified(a); }
 
@@ -1369,8 +1374,8 @@ public:
   void set_arg_stack(intx v)                     { _arg_stack = v; }
   void set_arg_returned(intx v)                  { _arg_returned = v; }
   void set_arg_modified(int a, uint v)           { ArgInfoData *aid = arg_info();
+                                                   assert(aid != NULL, "arg_info must be not null");
                                                    assert(a >= 0 && a < aid->number_of_args(), "valid argument number");
-
                                                    aid->set_arg_modified(a, v); }
 
   void clear_escape_info()                       { _eflags = _arg_local = _arg_stack = _arg_returned = 0; }
@@ -1465,7 +1470,7 @@ public:
   void inc_decompile_count() {
     _nof_decompiles += 1;
     if (decompile_count() > (uint)PerMethodRecompilationCutoff) {
-      method()->set_not_compilable(CompLevel_full_optimization);
+      method()->set_not_compilable(CompLevel_full_optimization, true, "decompile_count > PerMethodRecompilationCutoff");
     }
   }
 

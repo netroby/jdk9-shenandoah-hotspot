@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
  * Copyright (c) 2012 Red Hat, Inc.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
@@ -32,9 +32,10 @@
 #include "classfile/systemDictionary.hpp"
 #include "classfile/vmSymbols.hpp"
 #include "interpreter/linkResolver.hpp"
-#ifndef SERIALGC
+#include "utilities/macros.hpp"
+#if INCLUDE_ALL_GCS
 #include "gc_implementation/g1/g1SATBCardTableModRefBS.hpp"
-#endif // SERIALGC
+#endif // INCLUDE_ALL_GCS
 #include "memory/allocation.hpp"
 #include "memory/allocation.inline.hpp"
 #include "memory/gcLocker.inline.hpp"
@@ -73,7 +74,6 @@
 #include "runtime/vm_operations.hpp"
 #include "services/runtimeService.hpp"
 #include "trace/tracing.hpp"
-#include "trace/traceEventTypes.hpp"
 #include "utilities/defaultStream.hpp"
 #include "utilities/dtrace.hpp"
 #include "utilities/events.hpp"
@@ -91,7 +91,7 @@
 # include "os_bsd.inline.hpp"
 #endif
 
-static jint CurrentVersion = JNI_VERSION_1_6;
+static jint CurrentVersion = JNI_VERSION_1_8;
 
 
 // The DT_RETURN_MARK macros create a scoped object to fire the dtrace
@@ -1287,32 +1287,6 @@ enum JNICallType {
   JNI_VIRTUAL,
   JNI_NONVIRTUAL
 };
-
-static methodHandle jni_resolve_interface_call(Handle recv, methodHandle method, TRAPS) {
-  assert(!method.is_null() , "method should not be null");
-
-  KlassHandle recv_klass; // Default to NULL (use of ?: can confuse gcc)
-  if (recv.not_null()) recv_klass = KlassHandle(THREAD, recv->klass());
-  KlassHandle spec_klass (THREAD, method->method_holder());
-  Symbol*  name  = method->name();
-  Symbol*  signature  = method->signature();
-  CallInfo info;
-  LinkResolver::resolve_interface_call(info, recv, recv_klass,  spec_klass, name, signature, KlassHandle(), false, true, CHECK_(methodHandle()));
-  return info.selected_method();
-}
-
-static methodHandle jni_resolve_virtual_call(Handle recv, methodHandle method, TRAPS) {
-  assert(!method.is_null() , "method should not be null");
-
-  KlassHandle recv_klass; // Default to NULL (use of ?: can confuse gcc)
-  if (recv.not_null()) recv_klass = KlassHandle(THREAD, recv->klass());
-  KlassHandle spec_klass (THREAD, method->method_holder());
-  Symbol*  name  = method->name();
-  Symbol*  signature  = method->signature();
-  CallInfo info;
-  LinkResolver::resolve_virtual_call(info, recv, recv_klass,  spec_klass, name, signature, KlassHandle(), false, true, CHECK_(methodHandle()));
-  return info.selected_method();
-}
 
 
 
@@ -2641,7 +2615,7 @@ JNI_ENTRY(jobject, jni_GetObjectField(JNIEnv *env, jobject obj, jfieldID fieldID
     o = JvmtiExport::jni_GetField_probe(thread, obj, o, k, fieldID, false);
   }
   jobject ret = JNIHandles::make_local(env, o->obj_field(offset));
-#ifndef SERIALGC
+#if INCLUDE_ALL_GCS
   // If G1 is enabled and we are accessing the value of the referent
   // field in a reference object then we need to register a non-null
   // referent with the SATB barrier.
@@ -2660,7 +2634,7 @@ JNI_ENTRY(jobject, jni_GetObjectField(JNIEnv *env, jobject obj, jfieldID fieldID
       G1SATBCardTableModRefBS::enqueue(referent);
     }
   }
-#endif // SERIALGC
+#endif // INCLUDE_ALL_GCS
 #ifndef USDT2
   DTRACE_PROBE1(hotspot_jni, GetObjectField__return, ret);
 #else /* USDT2 */
@@ -5039,7 +5013,11 @@ _JNI_IMPORT_OR_EXPORT_ jint JNICALL JNI_GetDefaultJavaVMInitArgs(void *args_) {
 
 #ifndef PRODUCT
 
+#include "gc_implementation/shared/gcTimer.hpp"
 #include "gc_interface/collectedHeap.hpp"
+#if INCLUDE_ALL_GCS
+#include "gc_implementation/g1/heapRegionRemSet.hpp"
+#endif
 #include "utilities/quickSort.hpp"
 #if INCLUDE_VM_STRUCTS
 #include "runtime/vmStructs.hpp"
@@ -5052,12 +5030,17 @@ _JNI_IMPORT_OR_EXPORT_ jint JNICALL JNI_GetDefaultJavaVMInitArgs(void *args_) {
 void execute_internal_vm_tests() {
   if (ExecuteInternalVMTests) {
     tty->print_cr("Running internal VM tests");
+    run_unit_test(GlobalDefinitions::test_globals());
+    run_unit_test(GCTimerAllTest::all());
     run_unit_test(arrayOopDesc::test_max_array_length());
     run_unit_test(CollectedHeap::test_is_in());
     run_unit_test(QuickSort::test_quick_sort());
     run_unit_test(AltHashing::test_alt_hash());
 #if INCLUDE_VM_STRUCTS
     run_unit_test(VMStructs::test());
+#endif
+#if INCLUDE_ALL_GCS
+    run_unit_test(HeapRegionRemSet::test_prt());
 #endif
     tty->print_cr("All internal VM tests passed");
   }
@@ -5149,9 +5132,11 @@ _JNI_IMPORT_OR_EXPORT_ jint JNICALL JNI_CreateJavaVM(JavaVM **vm, void **penv, v
        JvmtiExport::post_thread_start(thread);
     }
 
-    EVENT_BEGIN(TraceEventThreadStart, event);
-    EVENT_COMMIT(event,
-        EVENT_SET(event, javalangthread, java_lang_Thread::thread_id(thread->threadObj())));
+    EventThreadStart event;
+    if (event.should_commit()) {
+      event.set_javalangthread(java_lang_Thread::thread_id(thread->threadObj()));
+      event.commit();
+    }
 
     // Check if we should compile all classes on bootclasspath
     NOT_PRODUCT(if (CompileTheWorld) ClassLoader::compile_the_world();)
@@ -5352,9 +5337,11 @@ static jint attach_current_thread(JavaVM *vm, void **penv, void *_args, bool dae
     JvmtiExport::post_thread_start(thread);
   }
 
-  EVENT_BEGIN(TraceEventThreadStart, event);
-  EVENT_COMMIT(event,
-      EVENT_SET(event, javalangthread, java_lang_Thread::thread_id(thread->threadObj())));
+  EventThreadStart event;
+  if (event.should_commit()) {
+    event.set_javalangthread(java_lang_Thread::thread_id(thread->threadObj()));
+    event.commit();
+  }
 
   *(JNIEnv**)penv = thread->jni_environment();
 

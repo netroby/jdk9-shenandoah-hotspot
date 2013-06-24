@@ -44,9 +44,6 @@ class G1CMIsAliveClosure: public BoolObjectClosure {
  public:
   G1CMIsAliveClosure(G1CollectedHeap* g1) : _g1(g1) { }
 
-  void do_object(oop obj) {
-    ShouldNotCallThis();
-  }
   bool do_object_b(oop obj);
 };
 
@@ -97,7 +94,6 @@ class CMBitMapRO VALUE_OBJ_CLASS_SPEC {
                                        HeapWord* limit = NULL) const;
 
   // conversion utilities
-  // XXX Fix these so that offsets are size_t's...
   HeapWord* offsetToHeapWord(size_t offset) const {
     return _bmStartWord + (offset << _shifter);
   }
@@ -105,9 +101,16 @@ class CMBitMapRO VALUE_OBJ_CLASS_SPEC {
     return pointer_delta(addr, _bmStartWord) >> _shifter;
   }
   int heapWordDiffToOffsetDiff(size_t diff) const;
-  HeapWord* nextWord(HeapWord* addr) {
-    return offsetToHeapWord(heapWordToOffset(addr) + 1);
+
+  // The argument addr should be the start address of a valid object
+  HeapWord* nextObject(HeapWord* addr) {
+    oop obj = (oop) addr;
+    HeapWord* res =  addr + obj->size();
+    assert(offsetToHeapWord(heapWordToOffset(res)) == res, "sanity");
+    return res;
   }
+
+  void print_on_error(outputStream* st, const char* prefix) const;
 
   // debugging
   NOT_PRODUCT(bool covers(ReservedSpace rs) const;)
@@ -162,7 +165,7 @@ class CMBitMap : public CMBitMapRO {
 class CMMarkStack VALUE_OBJ_CLASS_SPEC {
   VirtualSpace _virtual_space;   // Underlying backing store for actual stack
   ConcurrentMark* _cm;
-  oop*   _base;        // bottom of stack
+  oop* _base;        // bottom of stack
   jint _index;       // one more than last occupied index
   jint _capacity;    // max #elements
   jint _saved_index; // value of _index saved at start of GC
@@ -371,8 +374,8 @@ class ConcurrentMark: public CHeapObj<mtGC> {
   friend class CalcLiveObjectsClosure;
   friend class G1CMRefProcTaskProxy;
   friend class G1CMRefProcTaskExecutor;
-  friend class G1CMParKeepAliveAndDrainClosure;
-  friend class G1CMParDrainMarkingStackClosure;
+  friend class G1CMKeepAliveAndDrainClosure;
+  friend class G1CMDrainMarkingStackClosure;
 
 protected:
   ConcurrentMarkThread* _cmThread;   // the thread doing the work
@@ -487,9 +490,12 @@ protected:
   // structures are initialised to a sensible and predictable state.
   void set_non_marking_state();
 
+  // Called to indicate how many threads are currently active.
+  void set_concurrency(uint active_tasks);
+
   // It should be called to indicate which phase we're in (concurrent
   // mark or remark) and how many threads are currently active.
-  void set_phase(uint active_tasks, bool concurrent);
+  void set_concurrency_and_phase(uint active_tasks, bool concurrent);
 
   // prints all gathered CM-related statistics
   void print_stats();
@@ -499,17 +505,26 @@ protected:
   }
 
   // accessor methods
-  uint parallel_marking_threads() { return _parallel_marking_threads; }
-  uint max_parallel_marking_threads() { return _max_parallel_marking_threads;}
-  double sleep_factor()             { return _sleep_factor; }
-  double marking_task_overhead()    { return _marking_task_overhead;}
-  double cleanup_sleep_factor()     { return _cleanup_sleep_factor; }
-  double cleanup_task_overhead()    { return _cleanup_task_overhead;}
+  uint parallel_marking_threads() const     { return _parallel_marking_threads; }
+  uint max_parallel_marking_threads() const { return _max_parallel_marking_threads;}
+  double sleep_factor()                     { return _sleep_factor; }
+  double marking_task_overhead()            { return _marking_task_overhead;}
+  double cleanup_sleep_factor()             { return _cleanup_sleep_factor; }
+  double cleanup_task_overhead()            { return _cleanup_task_overhead;}
 
-  HeapWord*               finger()        { return _finger;   }
-  bool                    concurrent()    { return _concurrent; }
-  uint                    active_tasks()  { return _active_tasks; }
-  ParallelTaskTerminator* terminator()    { return &_terminator; }
+  bool use_parallel_marking_threads() const {
+    assert(parallel_marking_threads() <=
+           max_parallel_marking_threads(), "sanity");
+    assert((_parallel_workers == NULL && parallel_marking_threads() == 0) ||
+           parallel_marking_threads() > 0,
+           "parallel workers not set up correctly");
+    return _parallel_workers != NULL;
+  }
+
+  HeapWord*               finger()          { return _finger;   }
+  bool                    concurrent()      { return _concurrent; }
+  uint                    active_tasks()    { return _active_tasks; }
+  ParallelTaskTerminator* terminator()      { return &_terminator; }
 
   // It claims the next available region to be scanned by a marking
   // task/thread. It might return NULL if the next region is empty or
@@ -553,8 +568,6 @@ protected:
   void set_has_overflown()       { _has_overflown = true; }
   void clear_has_overflown()     { _has_overflown = false; }
   bool restart_for_overflow()    { return _restart_for_overflow; }
-
-  bool has_aborted()             { return _has_aborted; }
 
   // Methods to enter the two overflow sync barriers
   void enter_first_sync_barrier(uint worker_id);
@@ -806,12 +819,16 @@ public:
   // Called to abort the marking cycle after a Full GC takes palce.
   void abort();
 
+  bool has_aborted()      { return _has_aborted; }
+
   // This prints the global/local fingers. It is used for debugging.
   NOT_PRODUCT(void print_finger();)
 
   void print_summary_info();
 
   void print_worker_threads_on(outputStream* st) const;
+
+  void print_on_error(outputStream* st) const;
 
   // The following indicate whether a given verbose level has been
   // set. Notice that anything above stats is conditional to
@@ -1133,7 +1150,9 @@ public:
   // trying not to exceed the given duration. However, it might exit
   // prematurely, according to some conditions (i.e. SATB buffers are
   // available for processing).
-  void do_marking_step(double target_ms, bool do_stealing, bool do_termination);
+  void do_marking_step(double target_ms,
+                       bool do_termination,
+                       bool is_serial);
 
   // These two calls start and stop the timer
   void record_start_time() {
@@ -1234,6 +1253,9 @@ private:
   size_t _hum_capacity_bytes;
   size_t _hum_prev_live_bytes;
   size_t _hum_next_live_bytes;
+
+  // Accumulator for the remembered set size
+  size_t _total_remset_bytes;
 
   static double perc(size_t val, size_t total) {
     if (total == 0) {

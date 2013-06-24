@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2012, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -50,11 +50,13 @@
 #include "classfile/classLoaderData.hpp"
 #include "classfile/classLoaderData.inline.hpp"
 #include "classfile/javaClasses.hpp"
+#include "classfile/metadataOnStackMark.hpp"
 #include "classfile/systemDictionary.hpp"
 #include "code/codeCache.hpp"
+#include "memory/gcLocker.hpp"
 #include "memory/metadataFactory.hpp"
 #include "memory/metaspaceShared.hpp"
-#include "prims/jvmtiRedefineClasses.hpp"
+#include "memory/oopFactory.hpp"
 #include "runtime/jniHandles.hpp"
 #include "runtime/mutex.hpp"
 #include "runtime/safepoint.hpp"
@@ -62,22 +64,33 @@
 #include "utilities/growableArray.hpp"
 #include "utilities/ostream.hpp"
 
+#if INCLUDE_TRACE
+ #include "trace/tracing.hpp"
+#endif
+
+
 ClassLoaderData * ClassLoaderData::_the_null_class_loader_data = NULL;
 
-ClassLoaderData::ClassLoaderData(Handle h_class_loader, bool is_anonymous) :
+ClassLoaderData::ClassLoaderData(Handle h_class_loader, bool is_anonymous, Dependencies dependencies) :
   _class_loader(h_class_loader()),
   _is_anonymous(is_anonymous), _keep_alive(is_anonymous), // initially
   _metaspace(NULL), _unloading(false), _klasses(NULL),
   _claimed(0), _jmethod_ids(NULL), _handles(NULL), _deallocate_list(NULL),
-  _next(NULL), _dependencies(NULL),
+  _next(NULL), _dependencies(dependencies),
   _metaspace_lock(new Mutex(Monitor::leaf+1, "Metaspace allocation lock", true)) {
     // empty
 }
 
 void ClassLoaderData::init_dependencies(TRAPS) {
+  assert(!Universe::is_fully_initialized(), "should only be called when initializing");
+  assert(is_the_null_class_loader_data(), "should only call this for the null class loader");
+  _dependencies.init(CHECK);
+}
+
+void ClassLoaderData::Dependencies::init(TRAPS) {
   // Create empty dependencies array to add to. CMS requires this to be
   // an oop so that it can track additions via card marks.  We think.
-  _dependencies = (oop)oopFactory::new_objectArray(2, CHECK);
+  _list_head = oopFactory::new_objectArray(2, CHECK);
 }
 
 bool ClassLoaderData::claim() {
@@ -94,16 +107,27 @@ void ClassLoaderData::oops_do(OopClosure* f, KlassClosure* klass_closure, bool m
   }
 
   f->do_oop(&_class_loader);
-  f->do_oop(&_dependencies);
+  _dependencies.oops_do(f);
   _handles->oops_do(f);
   if (klass_closure != NULL) {
     classes_do(klass_closure);
   }
 }
 
+void ClassLoaderData::Dependencies::oops_do(OopClosure* f) {
+  f->do_oop((oop*)&_list_head);
+}
+
 void ClassLoaderData::classes_do(KlassClosure* klass_closure) {
   for (Klass* k = _klasses; k != NULL; k = k->next_link()) {
     klass_closure->do_klass(k);
+    assert(k != k->next_link(), "no loops!");
+  }
+}
+
+void ClassLoaderData::classes_do(void f(Klass * const)) {
+  for (Klass* k = _klasses; k != NULL; k = k->next_link()) {
+    f(k);
   }
 }
 
@@ -112,6 +136,7 @@ void ClassLoaderData::classes_do(void f(InstanceKlass*)) {
     if (k->oop_is_instance()) {
       f(InstanceKlass::cast(k));
     }
+    assert(k != k->next_link(), "no loops!");
   }
 }
 
@@ -151,14 +176,14 @@ void ClassLoaderData::record_dependency(Klass* k, TRAPS) {
   // It's a dependency we won't find through GC, add it. This is relatively rare
   // Must handle over GC point.
   Handle dependency(THREAD, to);
-  from_cld->add_dependency(dependency, CHECK);
+  from_cld->_dependencies.add(dependency, CHECK);
 }
 
 
-void ClassLoaderData::add_dependency(Handle dependency, TRAPS) {
+void ClassLoaderData::Dependencies::add(Handle dependency, TRAPS) {
   // Check first if this dependency is already in the list.
   // Save a pointer to the last to add to under the lock.
-  objArrayOop ok = (objArrayOop)_dependencies;
+  objArrayOop ok = _list_head;
   objArrayOop last = NULL;
   while (ok != NULL) {
     last = ok;
@@ -181,16 +206,17 @@ void ClassLoaderData::add_dependency(Handle dependency, TRAPS) {
   objArrayHandle new_dependency(THREAD, deps);
 
   // Add the dependency under lock
-  locked_add_dependency(last_handle, new_dependency);
+  locked_add(last_handle, new_dependency, THREAD);
 }
 
-void ClassLoaderData::locked_add_dependency(objArrayHandle last_handle,
-                                            objArrayHandle new_dependency) {
+void ClassLoaderData::Dependencies::locked_add(objArrayHandle last_handle,
+                                               objArrayHandle new_dependency,
+                                               Thread* THREAD) {
 
   // Have to lock and put the new dependency on the end of the dependency
   // array so the card mark for CMS sees that this dependency is new.
   // Can probably do this lock free with some effort.
-  MutexLockerEx ml(metaspace_lock(),  Mutex::_no_safepoint_check_flag);
+  ObjectLocker ol(Handle(THREAD, _list_head), THREAD);
 
   oop loader_or_mirror = new_dependency->obj_at(0);
 
@@ -257,12 +283,16 @@ void ClassLoaderData::remove_class(Klass* scratch_class) {
       return;
     }
     prev = k;
+    assert(k != k->next_link(), "no loops!");
   }
   ShouldNotReachHere();   // should have found this class!!
 }
 
 void ClassLoaderData::unload() {
   _unloading = true;
+
+  // Tell serviceability tools these classes are unloading
+  classes_do(InstanceKlass::notify_unload_class);
 
   if (TraceClassLoaderData) {
     ResourceMark rm;
@@ -287,6 +317,9 @@ bool ClassLoaderData::is_alive(BoolObjectClosure* is_alive_closure) const {
 
 
 ClassLoaderData::~ClassLoaderData() {
+  // Release C heap structures for all the classes.
+  classes_do(InstanceKlass::release_C_heap_structures);
+
   Metaspace *m = _metaspace;
   if (m != NULL) {
     _metaspace = NULL;
@@ -315,6 +348,13 @@ ClassLoaderData::~ClassLoaderData() {
   if (_deallocate_list != NULL) {
     delete _deallocate_list;
   }
+}
+
+/**
+ * Returns true if this class loader data is for the extension class loader.
+ */
+bool ClassLoaderData::is_ext_class_loader_data() const {
+  return SystemDictionary::is_ext_class_loader(class_loader());
 }
 
 Metaspace* ClassLoaderData::metaspace_non_null() {
@@ -403,7 +443,7 @@ void ClassLoaderData::free_deallocate_list() {
 // These anonymous class loaders are to contain classes used for JSR292
 ClassLoaderData* ClassLoaderData::anonymous_class_loader_data(oop loader, TRAPS) {
   // Add a new class loader data to the graph.
-  return ClassLoaderDataGraph::add(NULL, loader, CHECK_NULL);
+  return ClassLoaderDataGraph::add(loader, true, CHECK_NULL);
 }
 
 const char* ClassLoaderData::loader_name() {
@@ -438,6 +478,7 @@ void ClassLoaderData::dump(outputStream * const out) {
     while (k != NULL) {
       out->print_cr("klass "PTR_FORMAT", %s, CT: %d, MUT: %d", k, k->name()->as_C_string(),
           k->has_modified_oops(), k->has_accumulated_modified_oops());
+      assert(k != k->next_link(), "no loops!");
       k = k->next_link();
     }
   }
@@ -464,6 +505,7 @@ void ClassLoaderData::verify() {
   for (Klass* k = _klasses; k != NULL; k = k->next_link()) {
     guarantee(k->class_loader_data() == this, "Must be the same");
     k->verify();
+    assert(k != k->next_link(), "no loops!");
   }
 }
 
@@ -473,19 +515,22 @@ ClassLoaderData* ClassLoaderDataGraph::_head = NULL;
 ClassLoaderData* ClassLoaderDataGraph::_unloading = NULL;
 ClassLoaderData* ClassLoaderDataGraph::_saved_head = NULL;
 
-
 // Add a new class loader data node to the list.  Assign the newly created
 // ClassLoaderData into the java/lang/ClassLoader object as a hidden field
-ClassLoaderData* ClassLoaderDataGraph::add(ClassLoaderData** cld_addr, Handle loader, TRAPS) {
-  // Not assigned a class loader data yet.
-  // Create one.
-  ClassLoaderData* *list_head = &_head;
-  ClassLoaderData* next = _head;
+ClassLoaderData* ClassLoaderDataGraph::add(Handle loader, bool is_anonymous, TRAPS) {
+  // We need to allocate all the oops for the ClassLoaderData before allocating the
+  // actual ClassLoaderData object.
+  ClassLoaderData::Dependencies dependencies(CHECK_NULL);
 
-  bool is_anonymous = (cld_addr == NULL);
-  ClassLoaderData* cld = new ClassLoaderData(loader, is_anonymous);
+  No_Safepoint_Verifier no_safepoints; // we mustn't GC until we've installed the
+                                       // ClassLoaderData in the graph since the CLD
+                                       // contains unhandled oops
 
-  if (cld_addr != NULL) {
+  ClassLoaderData* cld = new ClassLoaderData(loader, is_anonymous, dependencies);
+
+
+  if (!is_anonymous) {
+    ClassLoaderData** cld_addr = java_lang_ClassLoader::loader_data_addr(loader());
     // First, Atomically set it
     ClassLoaderData* old = (ClassLoaderData*) Atomic::cmpxchg_ptr(cld, cld_addr, NULL);
     if (old != NULL) {
@@ -497,6 +542,9 @@ ClassLoaderData* ClassLoaderDataGraph::add(ClassLoaderData** cld_addr, Handle lo
 
   // We won the race, and therefore the task of adding the data to the list of
   // class loader data
+  ClassLoaderData** list_head = &_head;
+  ClassLoaderData* next = _head;
+
   do {
     cld->set_next(next);
     ClassLoaderData* exchanged = (ClassLoaderData*)Atomic::cmpxchg_ptr(cld, list_head, next);
@@ -509,10 +557,6 @@ ClassLoaderData* ClassLoaderDataGraph::add(ClassLoaderData** cld_addr, Handle lo
                    cld->loader_name());
         tty->print_cr("]");
       }
-      // Create dependencies after the CLD is added to the list.  Otherwise,
-      // the GC GC will not find the CLD and the _class_loader field will
-      // not be updated.
-      cld->init_dependencies(CHECK_NULL);
       return cld;
     }
     next = exchanged;
@@ -547,6 +591,19 @@ void ClassLoaderDataGraph::always_strong_oops_do(OopClosure* f, KlassClosure* kl
 void ClassLoaderDataGraph::classes_do(KlassClosure* klass_closure) {
   for (ClassLoaderData* cld = _head; cld != NULL; cld = cld->next()) {
     cld->classes_do(klass_closure);
+  }
+}
+
+void ClassLoaderDataGraph::classes_do(void f(Klass* const)) {
+  for (ClassLoaderData* cld = _head; cld != NULL; cld = cld->next()) {
+    cld->classes_do(f);
+  }
+}
+
+void ClassLoaderDataGraph::classes_unloading_do(void f(Klass* const)) {
+  assert(SafepointSynchronize::is_at_safepoint(), "must be at safepoint!");
+  for (ClassLoaderData* cld = _unloading; cld != NULL; cld = cld->next()) {
+    cld->classes_do(f);
   }
 }
 
@@ -643,6 +700,8 @@ bool ClassLoaderDataGraph::do_unloading(BoolObjectClosure* is_alive_closure) {
     dead->unload();
     data = data->next();
     // Remove from loader list.
+    // This class loader data will no longer be found
+    // in the ClassLoaderDataGraph.
     if (prev != NULL) {
       prev->set_next(data);
     } else {
@@ -652,6 +711,11 @@ bool ClassLoaderDataGraph::do_unloading(BoolObjectClosure* is_alive_closure) {
     dead->set_next(_unloading);
     _unloading = dead;
   }
+
+  if (seen_dead_loader) {
+    post_class_unload_events();
+  }
+
   return seen_dead_loader;
 }
 
@@ -664,6 +728,21 @@ void ClassLoaderDataGraph::purge() {
     next = purge_me->next();
     delete purge_me;
   }
+  Metaspace::purge();
+}
+
+void ClassLoaderDataGraph::post_class_unload_events(void) {
+#if INCLUDE_TRACE
+  assert(SafepointSynchronize::is_at_safepoint(), "must be at safepoint!");
+  if (Tracing::enabled()) {
+    if (Tracing::is_event_enabled(TraceClassUnloadEvent)) {
+      assert(_unloading != NULL, "need class loader data unload list!");
+      _class_unload_time = Tracing::time();
+      classes_unloading_do(&class_unload_event);
+    }
+    Tracing::on_unloading_classes();
+  }
+#endif
 }
 
 // CDS support
@@ -723,13 +802,31 @@ void ClassLoaderDataGraph::dump_on(outputStream * const out) {
   }
   MetaspaceAux::dump(out);
 }
+#endif // PRODUCT
 
 void ClassLoaderData::print_value_on(outputStream* out) const {
   if (class_loader() == NULL) {
-    out->print_cr("NULL class_loader");
+    out->print("NULL class_loader");
   } else {
     out->print("class loader "PTR_FORMAT, this);
     class_loader()->print_value_on(out);
   }
 }
-#endif // PRODUCT
+
+#if INCLUDE_TRACE
+
+TracingTime ClassLoaderDataGraph::_class_unload_time;
+
+void ClassLoaderDataGraph::class_unload_event(Klass* const k) {
+
+  // post class unload event
+  EventClassUnload event(UNTIMED);
+  event.set_endtime(_class_unload_time);
+  event.set_unloadedClass(k);
+  oop defining_class_loader = k->class_loader();
+  event.set_definingClassLoader(defining_class_loader != NULL ?
+                                defining_class_loader->klass() : (Klass*)NULL);
+  event.commit();
+}
+
+#endif /* INCLUDE_TRACE */

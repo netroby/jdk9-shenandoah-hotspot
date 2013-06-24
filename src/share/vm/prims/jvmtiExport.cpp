@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2003, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2003, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -50,9 +50,10 @@
 #include "runtime/vframe.hpp"
 #include "services/attachListener.hpp"
 #include "services/serviceUtil.hpp"
-#ifndef SERIALGC
+#include "utilities/macros.hpp"
+#if INCLUDE_ALL_GCS
 #include "gc_implementation/parallelScavenge/psMarkSweep.hpp"
-#endif
+#endif // INCLUDE_ALL_GCS
 
 #ifdef JVMTI_TRACE
 #define EVT_TRACE(evt,out) if ((JvmtiTrace::event_trace_flags(evt) & JvmtiTrace::SHOW_EVENT_SENT) != 0) { SafeResourceMark rm; tty->print_cr out; }
@@ -618,6 +619,9 @@ class JvmtiClassFileLoadHookPoster : public StackObj {
         // data has been changed by the new retransformable agent
         // and it hasn't already been cached, cache it
         *_cached_data_ptr = (unsigned char *)os::malloc(_curr_len, mtInternal);
+        if (*_cached_data_ptr == NULL) {
+          vm_exit_out_of_memory(_curr_len, OOM_MALLOC_ERROR, "unable to allocate cached copy of original class bytes");
+        }
         memcpy(*_cached_data_ptr, _curr_data, _curr_len);
         *_cached_length_ptr = _curr_len;
       }
@@ -677,7 +681,6 @@ void JvmtiExport::report_unsupported(bool on) {
 }
 
 
-#ifndef JVMTI_KERNEL
 static inline Klass* oop_to_klass(oop obj) {
   Klass* k = obj->klass();
 
@@ -1621,15 +1624,19 @@ void JvmtiExport::post_raw_field_modification(JavaThread *thread, Method* method
     }
   }
 
+  assert(sig_type != '[', "array should have sig_type == 'L'");
+  bool handle_created = false;
+
   // convert oop to JNI handle.
-  if (sig_type == 'L' || sig_type == '[') {
+  if (sig_type == 'L') {
+    handle_created = true;
     value->l = (jobject)JNIHandles::make_local(thread, (oop)value->l);
   }
 
   post_field_modification(thread, method, location, field_klass, object, field, sig_type, value);
 
   // Destroy the JNI handle allocated above.
-  if (sig_type == 'L') {
+  if (handle_created) {
     JNIHandles::destroy_local(value->l);
   }
 }
@@ -2178,7 +2185,6 @@ extern "C" {
   typedef jint (JNICALL *OnAttachEntry_t)(JavaVM*, char *, void *);
 }
 
-#ifndef SERVICES_KERNEL
 jint JvmtiExport::load_agent_library(AttachOperation* op, outputStream* st) {
   char ebuf[1024];
   char buffer[JVM_MAXPATHLEN];
@@ -2259,7 +2265,6 @@ jint JvmtiExport::load_agent_library(AttachOperation* op, outputStream* st) {
   }
   return result;
 }
-#endif // SERVICES_KERNEL
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -2457,4 +2462,3 @@ JvmtiGCMarker::~JvmtiGCMarker() {
     JvmtiExport::post_garbage_collection_finish();
   }
 }
-#endif // JVMTI_KERNEL

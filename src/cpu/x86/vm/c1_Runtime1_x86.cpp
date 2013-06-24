@@ -36,6 +36,7 @@
 #include "runtime/sharedRuntime.hpp"
 #include "runtime/signature.hpp"
 #include "runtime/vframeArray.hpp"
+#include "utilities/macros.hpp"
 #include "vmreg_x86.inline.hpp"
 
 
@@ -1607,7 +1608,7 @@ OopMapSet* Runtime1::generate_code_for(StubID id, StubAssembler* sasm) {
       }
       break;
 
-#ifndef SERIALGC
+#if INCLUDE_ALL_GCS
     case g1_pre_barrier_slow_id:
       {
         StubFrame f(sasm, "g1_pre_barrier", dont_gc_arguments);
@@ -1804,7 +1805,25 @@ OopMapSet* Runtime1::generate_code_for(StubID id, StubAssembler* sasm) {
 
       }
       break;
-#endif // !SERIALGC
+#endif // INCLUDE_ALL_GCS
+
+    case predicate_failed_trap_id:
+      {
+        StubFrame f(sasm, "predicate_failed_trap", dont_gc_arguments);
+
+        OopMap* map = save_live_registers(sasm, 1);
+
+        int call_offset = __ call_RT(noreg, noreg, CAST_FROM_FN_PTR(address, predicate_failed_trap));
+        oop_maps = new OopMapSet();
+        oop_maps->add_gc_map(call_offset, map);
+        restore_live_registers(sasm);
+        __ leave();
+        DeoptimizationBlob* deopt_blob = SharedRuntime::deopt_blob();
+        assert(deopt_blob != NULL, "deoptimization blob must have been created");
+
+        __ jump(RuntimeAddress(deopt_blob->unpack_with_reexecution()));
+      }
+      break;
 
     default:
       { StubFrame f(sasm, "unimplemented entry", dont_gc_arguments);

@@ -53,7 +53,7 @@
 # include "os_bsd.inline.hpp"
 #endif
 
-#if defined(__GNUC__) && !defined(IA64)
+#if defined(__GNUC__)
   // Need to inhibit inlining for older versions of GCC to avoid build-time failures
   #define ATTR __attribute__((noinline))
 #else
@@ -213,7 +213,7 @@ void ObjectSynchronizer::fast_exit(oop object, BasicLock* lock, TRAPS) {
      }
   }
 
-  ObjectSynchronizer::inflate(THREAD, object)->exit (THREAD) ;
+  ObjectSynchronizer::inflate(THREAD, object)->exit (true, THREAD) ;
 }
 
 // -----------------------------------------------------------------------------
@@ -343,7 +343,7 @@ void ObjectSynchronizer::jni_exit(oop obj, Thread* THREAD) {
   // If this thread has locked the object, exit the monitor.  Note:  can't use
   // monitor->check(CHECK); must exit even if an exception is pending.
   if (monitor->check(THREAD)) {
-     monitor->exit(THREAD);
+     monitor->exit(true, THREAD);
   }
 }
 
@@ -448,8 +448,6 @@ void ObjectSynchronizer::notifyall(Handle obj, TRAPS) {
 // As a general policy we use "volatile" to control compiler-based reordering
 // and explicit fences (barriers) to control for architectural reordering performed
 // by the CPU(s) or platform.
-
-static int  MBFence (int x) { OrderAccess::fence(); return x; }
 
 struct SharedGlobals {
     // These are highly shared mostly-read variables.
@@ -813,6 +811,7 @@ JavaThread* ObjectSynchronizer::get_lock_owner(Handle h_obj, bool doLock) {
   }
 
   if (owner != NULL) {
+    // owning_thread_from_monitor_owner() may also return NULL here
     return Threads::owning_thread_from_monitor_owner(owner, doLock);
   }
 
@@ -1020,7 +1019,8 @@ ObjectMonitor * ATTR ObjectSynchronizer::omAlloc (Thread * Self) {
         // We might be able to induce a STW safepoint and scavenge enough
         // objectMonitors to permit progress.
         if (temp == NULL) {
-            vm_exit_out_of_memory (sizeof (ObjectMonitor[_BLOCKSIZE]), "Allocate ObjectMonitors") ;
+            vm_exit_out_of_memory (sizeof (ObjectMonitor[_BLOCKSIZE]), OOM_MALLOC_ERROR,
+                                   "Allocate ObjectMonitors");
         }
 
         // Format the block.
@@ -1639,11 +1639,6 @@ void ObjectSynchronizer::release_monitors_owned_by_thread(TRAPS) {
 // Non-product code
 
 #ifndef PRODUCT
-
-void ObjectSynchronizer::trace_locking(Handle locking_obj, bool is_compiled,
-                                       bool is_method, bool is_locking) {
-  // Don't know what to do here
-}
 
 // Verify all monitors in the monitor cache, the verification is weak.
 void ObjectSynchronizer::verify() {

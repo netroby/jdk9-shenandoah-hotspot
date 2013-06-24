@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -26,6 +26,7 @@
 #define SHARE_VM_OOPS_INSTANCEKLASS_HPP
 
 #include "classfile/classLoaderData.hpp"
+#include "memory/referenceType.hpp"
 #include "oops/annotations.hpp"
 #include "oops/constMethod.hpp"
 #include "oops/fieldInfo.hpp"
@@ -36,6 +37,8 @@
 #include "runtime/os.hpp"
 #include "utilities/accessFlags.hpp"
 #include "utilities/bitMap.inline.hpp"
+#include "utilities/macros.hpp"
+#include "trace/traceMacros.hpp"
 
 // An InstanceKlass is the VM level representation of a Java class.
 // It contains all information needed for at class at execution runtime.
@@ -57,8 +60,6 @@
 //    [fields                     ]
 //    [constants                  ]
 //    [class loader               ]
-//    [protection domain          ]
-//    [signers                    ]
 //    [source file name           ]
 //    [inner classes              ]
 //    [static field size          ]
@@ -89,6 +90,7 @@ class DepChange;
 class nmethodBucket;
 class PreviousVersionNode;
 class JvmtiCachedClassFieldMap;
+class MemberNameTable;
 
 // This is used in iterators below.
 class FieldClosure: public StackObj {
@@ -146,7 +148,8 @@ class InstanceKlass: public Klass {
                 AccessFlags access_flags,
                 bool is_anonymous);
  public:
-  static Klass* allocate_instance_klass(ClassLoaderData* loader_data,
+  static InstanceKlass* allocate_instance_klass(
+                                          ClassLoaderData* loader_data,
                                           int vtable_len,
                                           int itable_len,
                                           int static_field_size,
@@ -154,8 +157,8 @@ class InstanceKlass: public Klass {
                                           ReferenceType rt,
                                           AccessFlags access_flags,
                                           Symbol* name,
-                                        Klass* super_klass,
-                                          KlassHandle host_klass,
+                                          Klass* super_klass,
+                                          bool is_anonymous,
                                           TRAPS);
 
   InstanceKlass() { assert(DumpSharedSpaces || UseSharedSpaces, "only for CDS"); }
@@ -177,15 +180,6 @@ class InstanceKlass: public Klass {
   static volatile int _total_instanceKlass_count;
 
  protected:
-  // Protection domain.
-  oop             _protection_domain;
-  // Class signers.
-  objArrayOop     _signers;
-  // Initialization lock.  Must be one per class and it has to be a VM internal
-  // object so java code cannot lock it (like the mirror)
-  // It has to be an object not a Mutex because it's held through java calls.
-  volatile oop    _init_lock;
-
   // Annotations for this class
   Annotations*    _annotations;
   // Array classes holding elements of this class.
@@ -233,7 +227,7 @@ class InstanceKlass: public Klass {
     _misc_rewritten            = 1 << 0, // methods rewritten.
     _misc_has_nonstatic_fields = 1 << 1, // for sizing with UseCompressedOops
     _misc_should_verify_class  = 1 << 2, // allow caching of preverification
-    _misc_is_anonymous         = 1 << 3, // has embedded _inner_classes field
+    _misc_is_anonymous         = 1 << 3, // has embedded _host_klass field
     _misc_is_contended         = 1 << 4, // marked with contended annotation
     _misc_has_default_methods  = 1 << 5  // class/superclass/implemented interfaces has default methods
   };
@@ -244,6 +238,7 @@ class InstanceKlass: public Klass {
   int             _vtable_len;           // length of Java vtable (in words)
   int             _itable_len;           // length of Java itable (in words)
   OopMapCache*    volatile _oop_map_cache;   // OopMapCache for all methods in the klass (allocated lazily)
+  MemberNameTable* _member_names;        // Member names
   JNIid*          _jni_ids;              // First JNI identifier for static fields in this class
   jmethodID*      _methods_jmethod_ids;  // jmethodIDs corresponding to method_idnum, or NULL if none
   int*            _methods_cached_itable_indices;  // itable_index cache for JNI invoke corresponding to methods idnum, or NULL
@@ -256,7 +251,18 @@ class InstanceKlass: public Klass {
   // JVMTI fields can be moved to their own structure - see 6315920
   unsigned char * _cached_class_file_bytes;       // JVMTI: cached class file, before retransformable agent modified it in CFLH
   jint            _cached_class_file_len;         // JVMTI: length of above
+
+  volatile u2     _idnum_allocated_count;         // JNI/JVMTI: increments with the addition of methods, old ids don't change
+
+  // Class states are defined as ClassState (see above).
+  // Place the _init_state here to utilize the unused 2-byte after
+  // _idnum_allocated_count.
+  u1              _init_state;                    // state of class
+  u1              _reference_type;                // reference type
+
   JvmtiCachedClassFieldMap* _jvmti_cached_class_field_map;  // JVMTI: used during heap iteration
+
+  NOT_PRODUCT(int _verify_count;)  // to avoid redundant verifies
 
   // Method array.
   Array<Method*>* _methods;
@@ -280,15 +286,6 @@ class InstanceKlass: public Klass {
   //     [generic signature index]
   //     ...
   Array<u2>*      _fields;
-
-  volatile u2     _idnum_allocated_count;         // JNI/JVMTI: increments with the addition of methods, old ids don't change
-
-  // Class states are defined as ClassState (see above).
-  // Place the _init_state here to utilize the unused 2-byte after
-  // _idnum_allocated_count.
-  u1              _init_state;                    // state of class
-
-  u1              _reference_type;                // reference type
 
   // embedded Java vtable follows here
   // embedded Java itables follows here
@@ -354,16 +351,19 @@ class InstanceKlass: public Klass {
   // method ordering
   Array<int>* method_ordering() const     { return _method_ordering; }
   void set_method_ordering(Array<int>* m) { _method_ordering = m; }
+  void copy_method_ordering(intArray* m, TRAPS);
 
   // interfaces
   Array<Klass*>* local_interfaces() const          { return _local_interfaces; }
   void set_local_interfaces(Array<Klass*>* a)      {
     guarantee(_local_interfaces == NULL || a == NULL, "Just checking");
     _local_interfaces = a; }
+
   Array<Klass*>* transitive_interfaces() const     { return _transitive_interfaces; }
   void set_transitive_interfaces(Array<Klass*>* a) {
     guarantee(_transitive_interfaces == NULL || a == NULL, "Just checking");
-    _transitive_interfaces = a; }
+    _transitive_interfaces = a;
+  }
 
  private:
   friend class fieldDescriptor;
@@ -379,10 +379,9 @@ class InstanceKlass: public Klass {
   int java_fields_count() const           { return (int)_java_fields_count; }
 
   Array<u2>* fields() const            { return _fields; }
-
   void set_fields(Array<u2>* f, u2 java_fields_count) {
     guarantee(_fields == NULL || f == NULL, "Just checking");
-    _fields =  f;
+    _fields = f;
     _java_fields_count = java_fields_count;
   }
 
@@ -518,8 +517,10 @@ class InstanceKlass: public Klass {
   void set_constants(ConstantPool* c)    { _constants = c; }
 
   // protection domain
-  oop protection_domain()                  { return _protection_domain; }
-  void set_protection_domain(oop pd)       { klass_oop_store(&_protection_domain, pd); }
+  oop protection_domain() const;
+
+  // signers
+  objArrayOop signers() const;
 
   // host class
   Klass* host_klass() const              {
@@ -534,7 +535,9 @@ class InstanceKlass: public Klass {
     assert(is_anonymous(), "not anonymous");
     Klass** addr = (Klass**)adr_host_klass();
     assert(addr != NULL, "no reversed space");
-    *addr = host;
+    if (addr != NULL) {
+      *addr = host;
+    }
   }
   bool is_anonymous() const                {
     return (_misc_flags & _misc_is_anonymous) != 0;
@@ -564,10 +567,6 @@ class InstanceKlass: public Klass {
     }
   }
 
-  // signers
-  objArrayOop signers() const              { return _signers; }
-  void set_signers(objArrayOop s)          { klass_oop_store((oop*)&_signers, s); }
-
   // source file name
   Symbol* source_file_name() const         { return _source_file_name; }
   void set_source_file_name(Symbol* n);
@@ -584,7 +583,7 @@ class InstanceKlass: public Klass {
 
   // symbol unloading support (refcount already added)
   Symbol* array_name()                     { return _array_name; }
-  void set_array_name(Symbol* name)        { assert(_array_name == NULL, "name already created"); _array_name = name; }
+  void set_array_name(Symbol* name)        { assert(_array_name == NULL  || name == NULL, "name already created"); _array_name = name; }
 
   // nonstatic oop-map blocks
   static int nonstatic_oop_map_size(unsigned int oop_map_count) {
@@ -677,19 +676,19 @@ class InstanceKlass: public Klass {
   // annotations support
   Annotations* annotations() const          { return _annotations; }
   void set_annotations(Annotations* anno)   { _annotations = anno; }
+
   AnnotationArray* class_annotations() const {
-    if (annotations() == NULL) return NULL;
-    return annotations()->class_annotations();
+    return (_annotations != NULL) ? _annotations->class_annotations() : NULL;
   }
   Array<AnnotationArray*>* fields_annotations() const {
-    if (annotations() == NULL) return NULL;
-    return annotations()->fields_annotations();
+    return (_annotations != NULL) ? _annotations->fields_annotations() : NULL;
   }
-  Annotations* type_annotations() const {
-    if (annotations() == NULL) return NULL;
-    return annotations()->type_annotations();
+  AnnotationArray* class_type_annotations() const {
+    return (_annotations != NULL) ? _annotations->class_type_annotations() : NULL;
   }
-
+  Array<AnnotationArray*>* fields_type_annotations() const {
+    return (_annotations != NULL) ? _annotations->fields_type_annotations() : NULL;
+  }
   // allocation
   instanceOop allocate_instance(TRAPS);
 
@@ -728,7 +727,7 @@ class InstanceKlass: public Klass {
   void set_osr_nmethods_head(nmethod* h)     { _osr_nmethods_head = h; };
   void add_osr_nmethod(nmethod* n);
   void remove_osr_nmethod(nmethod* n);
-  nmethod* lookup_osr_nmethod(Method* const m, int bci, int level, bool match_level) const;
+  nmethod* lookup_osr_nmethod(const Method* m, int bci, int level, bool match_level) const;
 
   // Breakpoint support (see methods on Method* for details)
   BreakpointInfo* breakpoints() const       { return _breakpoints; };
@@ -756,7 +755,10 @@ class InstanceKlass: public Klass {
   void set_implementor(Klass* k) {
     assert(is_interface(), "not interface");
     Klass** addr = adr_implementor();
-    *addr = k;
+    assert(addr != NULL, "null addr");
+    if (addr != NULL) {
+      *addr = k;
+    }
   }
 
   int  nof_implementors() const       {
@@ -808,6 +810,7 @@ class InstanceKlass: public Klass {
 
   // Sizing (in words)
   static int header_size()            { return align_object_offset(sizeof(InstanceKlass)/HeapWordSize); }
+
   static int size(int vtable_length, int itable_length,
                   int nonstatic_oop_map_size,
                   bool is_interface, bool is_anonymous) {
@@ -826,6 +829,9 @@ class InstanceKlass: public Klass {
                                                is_interface(),
                                                is_anonymous());
   }
+#if INCLUDE_SERVICES
+  virtual void collect_statistics(KlassSizeStats *sz) const;
+#endif
 
   static int vtable_start_offset()    { return header_size(); }
   static int vtable_length_offset()   { return offset_of(InstanceKlass, _vtable_len) / HeapWordSize; }
@@ -842,10 +848,14 @@ class InstanceKlass: public Klass {
     return (OopMapBlock*)(start_of_itable() + align_object_offset(itable_length()));
   }
 
+  Klass** end_of_nonstatic_oop_maps() const {
+    return (Klass**)(start_of_nonstatic_oop_maps() +
+                     nonstatic_oop_map_count());
+  }
+
   Klass** adr_implementor() const {
     if (is_interface()) {
-      return (Klass**)(start_of_nonstatic_oop_maps() +
-                    nonstatic_oop_map_count());
+      return (Klass**)end_of_nonstatic_oop_maps();
     } else {
       return NULL;
     }
@@ -857,8 +867,7 @@ class InstanceKlass: public Klass {
       if (adr_impl != NULL) {
         return adr_impl + 1;
       } else {
-        return (Klass**)(start_of_nonstatic_oop_maps() +
-                      nonstatic_oop_map_count());
+        return end_of_nonstatic_oop_maps();
       }
     } else {
       return NULL;
@@ -891,8 +900,6 @@ class InstanceKlass: public Klass {
   Method* method_at_itable(Klass* holder, int index, TRAPS);
 
   // Garbage collection
-  virtual void oops_do(OopClosure* cl);
-
   void oop_follow_contents(oop obj);
   int  oop_adjust_pointers(oop obj);
 
@@ -900,14 +907,23 @@ class InstanceKlass: public Klass {
   void clean_method_data(BoolObjectClosure* is_alive);
 
   // Explicit metaspace deallocation of fields
-  // For RedefineClasses, we need to deallocate instanceKlasses
+  // For RedefineClasses and class file parsing errors, we need to deallocate
+  // instanceKlasses and the metadata they point to.
   void deallocate_contents(ClassLoaderData* loader_data);
+  static void deallocate_methods(ClassLoaderData* loader_data,
+                                 Array<Method*>* methods);
+  void static deallocate_interfaces(ClassLoaderData* loader_data,
+                                    Klass* super_klass,
+                                    Array<Klass*>* local_interfaces,
+                                    Array<Klass*>* transitive_interfaces);
 
   // The constant pool is on stack if any of the methods are executing or
   // referenced by handles.
   bool on_stack() const { return _constants->on_stack(); }
 
-  void release_C_heap_structures();
+  // callbacks for actions during class unloading
+  static void notify_unload_class(InstanceKlass* ik);
+  static void release_C_heap_structures(InstanceKlass* ik);
 
   // Parallel Scavenge and Parallel Old
   PARALLEL_GC_DECLS
@@ -932,15 +948,16 @@ class InstanceKlass: public Klass {
   ALL_OOP_OOP_ITERATE_CLOSURES_1(InstanceKlass_OOP_OOP_ITERATE_DECL)
   ALL_OOP_OOP_ITERATE_CLOSURES_2(InstanceKlass_OOP_OOP_ITERATE_DECL)
 
-#ifndef SERIALGC
+#if INCLUDE_ALL_GCS
 #define InstanceKlass_OOP_OOP_ITERATE_BACKWARDS_DECL(OopClosureType, nv_suffix) \
   int  oop_oop_iterate_backwards##nv_suffix(oop obj, OopClosureType* blk);
 
   ALL_OOP_OOP_ITERATE_CLOSURES_1(InstanceKlass_OOP_OOP_ITERATE_BACKWARDS_DECL)
   ALL_OOP_OOP_ITERATE_CLOSURES_2(InstanceKlass_OOP_OOP_ITERATE_BACKWARDS_DECL)
-#endif // !SERIALGC
+#endif // INCLUDE_ALL_GCS
 
   u2 idnum_allocated_count() const      { return _idnum_allocated_count; }
+
 private:
   // initialization state
 #ifdef ASSERT
@@ -967,14 +984,13 @@ private:
          { OrderAccess::release_store_ptr(&_methods_cached_itable_indices, indices); }
 
   // Lock during initialization
+public:
+  // Lock for (1) initialization; (2) access to the ConstantPool of this class.
+  // Must be one per class and it has to be a VM internal object so java code
+  // cannot lock it (like the mirror).
+  // It has to be an object not a Mutex because it's held through java calls.
   volatile oop init_lock() const;
-  void set_init_lock(oop value)      { klass_oop_store(&_init_lock, value); }
-  void fence_and_clear_init_lock();  // after fully_initialized
-
-  // Offsets for memory management
-  oop* adr_protection_domain() const { return (oop*)&this->_protection_domain;}
-  oop* adr_signers() const           { return (oop*)&this->_signers;}
-  oop* adr_init_lock() const         { return (oop*)&this->_init_lock;}
+private:
 
   // Static methods that are used to implement member methods where an exposed this pointer
   // is needed due to possible GCs
@@ -995,6 +1011,8 @@ private:
   // Returns the array class with this class as element type
   Klass* array_klass_impl(bool or_null, TRAPS);
 
+  // Free CHeap allocated fields.
+  void release_C_heap_structures();
 public:
   // CDS support - remove and restore oops from metadata. Oops are not shared.
   virtual void remove_unshareable_info();
@@ -1002,6 +1020,12 @@ public:
 
   // jvm support
   jint compute_modifier_flags(TRAPS) const;
+
+  // JSR-292 support
+  MemberNameTable* member_names() { return _member_names; }
+  void set_member_names(MemberNameTable* member_names) { _member_names = member_names; }
+  void add_member_name(int index, Handle member_name);
+  oop  get_member_name(int index);
 
 public:
   // JVMTI support

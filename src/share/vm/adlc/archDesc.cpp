@@ -29,8 +29,8 @@
 static FILE *errfile = stderr;
 
 //--------------------------- utility functions -----------------------------
-inline char  toUpper(char lower) {
-  return (('a' <= lower && lower <= 'z') ? (lower + ('A'-'a')) : lower);
+inline char toUpper(char lower) {
+  return (('a' <= lower && lower <= 'z') ? ((char) (lower + ('A'-'a'))) : lower);
 }
 char *toUpper(const char *str) {
   char *upper  = new char[strlen(str)+1];
@@ -832,6 +832,7 @@ static const char *getRegMask(const char *reg_class_name) {
     int         length  = (int)strlen(rc_name) + (int)strlen(mask) + 5;
     char       *regMask = new char[length];
     sprintf(regMask,"%s%s()", rc_name, mask);
+    delete[] rc_name;
     return regMask;
   }
 }

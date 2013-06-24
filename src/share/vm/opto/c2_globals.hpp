@@ -54,6 +54,12 @@
 
 #define C2_FLAGS(develop, develop_pd, product, product_pd, diagnostic, experimental, notproduct) \
                                                                             \
+  develop(bool, StressLCM, false,                                           \
+          "Randomize instruction scheduling in LCM")                        \
+                                                                            \
+  develop(bool, StressGCM, false,                                           \
+          "Randomize instruction scheduling in GCM")                        \
+                                                                            \
   notproduct(intx, CompileZapFirst, 0,                                      \
           "If +ZapDeadCompiledLocals, "                                     \
           "skip this many before compiling in zap calls")                   \
@@ -436,11 +442,14 @@
   notproduct(bool, PrintEliminateLocks, false,                              \
           "Print out when locks are eliminated")                            \
                                                                             \
-  diagnostic(bool, EliminateAutoBox, false,                                 \
-          "Private flag to control optimizations for autobox elimination")  \
+  product(bool, EliminateAutoBox, true,                                     \
+          "Control optimizations for autobox elimination")                  \
                                                                             \
   product(intx, AutoBoxCacheMax, 128,                                       \
           "Sets max value cached by the java.lang.Integer autobox cache")   \
+                                                                            \
+  experimental(bool, AggressiveUnboxing, false,                             \
+          "Control optimizations for aggressive boxing elimination")        \
                                                                             \
   product(bool, DoEscapeAnalysis, true,                                     \
           "Perform escape analysis")                                        \
@@ -618,6 +627,9 @@
                                                                             \
   product(intx, LiveNodeCountInliningCutoff, 20000,                         \
           "max number of live nodes in a method")                           \
+                                                                            \
+  diagnostic(bool, OptimizeExpensiveOps, true,                              \
+          "Find best control for expensive operations")                     \
 
 
 C2_FLAGS(DECLARE_DEVELOPER_FLAG, DECLARE_PD_DEVELOPER_FLAG, DECLARE_PRODUCT_FLAG, DECLARE_PD_PRODUCT_FLAG, DECLARE_DIAGNOSTIC_FLAG, DECLARE_EXPERIMENTAL_FLAG, DECLARE_NOTPRODUCT_FLAG)

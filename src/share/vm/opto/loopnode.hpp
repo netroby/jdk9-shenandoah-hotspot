@@ -263,9 +263,18 @@ public:
   bool stride_is_con() const        { Node *tmp = stride  (); return (tmp != NULL && tmp->is_Con()); }
   BoolTest::mask test_trip() const  { return in(TestValue)->as_Bool()->_test._test; }
   CountedLoopNode *loopnode() const {
+    // The CountedLoopNode that goes with this CountedLoopEndNode may
+    // have been optimized out by the IGVN so be cautious with the
+    // pattern matching on the graph
+    if (phi() == NULL) {
+      return NULL;
+    }
     Node *ln = phi()->in(0);
-    assert( ln->Opcode() == Op_CountedLoop, "malformed loop" );
-    return (CountedLoopNode*)ln; }
+    if (ln->is_CountedLoop() && ln->as_CountedLoop()->loopexit() == this) {
+      return (CountedLoopNode*)ln;
+    }
+    return NULL;
+  }
 
 #ifndef PRODUCT
   virtual void dump_spec(outputStream *st) const;
@@ -594,10 +603,14 @@ class PhaseIdealLoop : public PhaseTransform {
   }
 
 public:
-  bool has_node( Node* n ) const { return _nodes[n->_idx] != NULL; }
+  bool has_node( Node* n ) const {
+    guarantee(n != NULL, "No Node.");
+    return _nodes[n->_idx] != NULL;
+  }
   // check if transform created new nodes that need _ctrl recorded
   Node *get_late_ctrl( Node *n, Node *early );
   Node *get_early_ctrl( Node *n );
+  Node *get_early_ctrl_for_expensive(Node *n, Node* earliest);
   void set_early_ctrl( Node *n );
   void set_subtree_ctrl( Node *root );
   void set_ctrl( Node *n, Node *ctrl ) {
@@ -727,7 +740,8 @@ private:
     return n;
   }
   uint dom_depth(Node* d) const {
-    assert(d->_idx < _idom_size, "");
+    guarantee(d != NULL, "Null dominator info.");
+    guarantee(d->_idx < _idom_size, "");
     return _dom_depth[d->_idx];
   }
   void set_idom(Node* d, Node* n, uint dom_depth);
@@ -905,6 +919,16 @@ public:
   void collect_potentially_useful_predicates(IdealLoopTree *loop, Unique_Node_List &predicate_opaque1);
   void eliminate_useless_predicates();
 
+  // Change the control input of expensive nodes to allow commoning by
+  // IGVN when it is guaranteed to not result in a more frequent
+  // execution of the expensive node. Return true if progress.
+  bool process_expensive_nodes();
+
+  // Check whether node has become unreachable
+  bool is_node_unreachable(Node *n) const {
+    return !has_node(n) || n->is_unreachable(_igvn);
+  }
+
   // Eliminate range-checks and other trip-counter vs loop-invariant tests.
   void do_range_check( IdealLoopTree *loop, Node_List &old_new );
 
@@ -941,7 +965,7 @@ public:
   // Has use internal to the vector set (ie. not in a phi at the loop head)
   bool has_use_internal_to_set( Node* n, VectorSet& vset, IdealLoopTree *loop );
   // clone "n" for uses that are outside of loop
-  void clone_for_use_outside_loop( IdealLoopTree *loop, Node* n, Node_List& worklist );
+  int  clone_for_use_outside_loop( IdealLoopTree *loop, Node* n, Node_List& worklist );
   // clone "n" for special uses that are in the not_peeled region
   void clone_for_special_use_inside_loop( IdealLoopTree *loop, Node* n,
                                           VectorSet& not_peel, Node_List& sink_list, Node_List& worklist );
@@ -1043,7 +1067,7 @@ public:
   void register_new_node( Node *n, Node *blk );
 
 #ifdef ASSERT
-void dump_bad_graph(Node* n, Node* early, Node* LCA);
+  void dump_bad_graph(const char* msg, Node* n, Node* early, Node* LCA);
 #endif
 
 #ifndef PRODUCT

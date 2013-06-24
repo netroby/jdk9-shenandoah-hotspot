@@ -84,16 +84,18 @@ class MemTracker : AllStatic {
    static inline bool baseline() { return false; }
    static inline bool has_baseline() { return false; }
 
+   static inline void set_autoShutdown(bool value) { }
    static void shutdown(ShutdownReason reason) { }
-   static inline bool shutdown_in_progress() {  }
+   static inline bool shutdown_in_progress() { return false; }
    static bool print_memory_usage(BaselineOutputer& out, size_t unit,
-            bool summary_only = true) { }
+            bool summary_only = true) { return false; }
    static bool compare_memory_usage(BaselineOutputer& out, size_t unit,
-            bool summary_only = true) { }
+            bool summary_only = true) { return false; }
+
+   static bool wbtest_wait_for_data_merge() { return false; }
 
    static inline void sync() { }
    static inline void thread_exiting(JavaThread* thread) { }
-
 };
 
 
@@ -110,6 +112,10 @@ class MemTracker : AllStatic {
 #include "services/memTrackWorker.hpp"
 
 extern bool NMT_track_callsite;
+
+#ifndef MAX_UNSIGNED_LONG
+#define MAX_UNSIGNED_LONG    (unsigned long)(-1)
+#endif
 
 #ifdef ASSERT
   #define DEBUG_CALLER_PC  (NMT_track_callsite ? os::get_caller_pc(2) : 0)
@@ -232,6 +238,16 @@ class MemTracker : AllStatic {
 
   // if native memory tracking tracks callsite
   static inline bool track_callsite() { return _tracking_level == NMT_detail; }
+
+  // NMT automatically shuts itself down under extreme situation by default.
+  // When the value is set to false,  NMT will try its best to stay alive,
+  // even it has to slow down VM.
+  static inline void set_autoShutdown(bool value) {
+    AutoShutdownNMT = value;
+    if (AutoShutdownNMT && _slowdown_calling_thread) {
+      _slowdown_calling_thread = false;
+    }
+  }
 
   // shutdown native memory tracking capability. Native memory tracking
   // can be shutdown by VM when it encounters low memory scenarios.
@@ -380,6 +396,11 @@ class MemTracker : AllStatic {
   static bool compare_memory_usage(BaselineOutputer& out, size_t unit,
            bool summary_only = true);
 
+  // the version for whitebox testing support, it ensures that all memory
+  // activities before this method call, are reflected in the snapshot
+  // database.
+  static bool wbtest_wait_for_data_merge();
+
   // sync is called within global safepoint to synchronize nmt data
   static void sync();
 
@@ -400,7 +421,7 @@ class MemTracker : AllStatic {
 
  private:
   // start native memory tracking worker thread
-  static bool start_worker();
+  static bool start_worker(MemSnapshot* snapshot);
 
   // called by worker thread to complete shutdown process
   static void final_shutdown();
@@ -432,6 +453,15 @@ class MemTracker : AllStatic {
   static void create_record_in_recorder(address addr, MEMFLAGS type,
                    size_t size, address pc, JavaThread* thread);
 
+  static void set_current_processing_generation(unsigned long generation) {
+    _worker_thread_idle = false;
+    _processing_generation = generation;
+  }
+
+  static void report_worker_idle() {
+    _worker_thread_idle = true;
+  }
+
  private:
   // global memory snapshot
   static MemSnapshot*     _snapshot;
@@ -445,18 +475,18 @@ class MemTracker : AllStatic {
   // a thread can start to allocate memory before it is attached
   // to VM 'Thread', those memory activities are recorded here.
   // ThreadCritical is required to guard this global recorder.
-  static MemRecorder*     _global_recorder;
+  static MemRecorder* volatile _global_recorder;
 
   // main thread id
   debug_only(static intx   _main_thread_tid;)
 
   // pending recorders to be merged
-  static volatile MemRecorder*      _merge_pending_queue;
+  static MemRecorder* volatile     _merge_pending_queue;
 
   NOT_PRODUCT(static volatile jint   _pending_recorder_count;)
 
   // pooled memory recorders
-  static volatile MemRecorder*      _pooled_recorders;
+  static MemRecorder* volatile     _pooled_recorders;
 
   // memory recorder pool management, uses following
   // counter to determine if a released memory recorder
@@ -483,6 +513,15 @@ class MemTracker : AllStatic {
   static volatile enum NMTStates   _state;
   // the reason for shutting down nmt
   static enum ShutdownReason       _reason;
+  // the generation that NMT is processing
+  static volatile unsigned long    _processing_generation;
+  // although NMT is still procesing current generation, but
+  // there is not more recorder to process, set idle state
+  static volatile bool             _worker_thread_idle;
+
+  // if NMT should slow down calling thread to allow
+  // worker thread to catch up
+  static volatile bool             _slowdown_calling_thread;
 };
 
 #endif // !INCLUDE_NMT

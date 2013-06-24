@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -29,6 +29,7 @@
 #include "classfile/vmSymbols.hpp"
 #include "gc_implementation/shared/markSweep.inline.hpp"
 #include "gc_interface/collectedHeap.inline.hpp"
+#include "memory/heapInspection.hpp"
 #include "memory/metadataFactory.hpp"
 #include "memory/oopFactory.hpp"
 #include "memory/resourceArea.hpp"
@@ -36,19 +37,21 @@
 #include "oops/klass.inline.hpp"
 #include "oops/oop.inline2.hpp"
 #include "runtime/atomic.hpp"
+#include "trace/traceMacros.hpp"
 #include "utilities/stack.hpp"
-#ifndef SERIALGC
+#include "utilities/macros.hpp"
+#if INCLUDE_ALL_GCS
 #include "gc_implementation/parallelScavenge/psParallelCompact.hpp"
 #include "gc_implementation/parallelScavenge/psPromotionManager.hpp"
 #include "gc_implementation/parallelScavenge/psScavenge.hpp"
-#endif
+#endif // INCLUDE_ALL_GCS
 
 void Klass::set_name(Symbol* n) {
   _name = n;
   if (_name != NULL) _name->increment_refcount();
 }
 
-bool Klass::is_subclass_of(Klass* k) const {
+bool Klass::is_subclass_of(const Klass* k) const {
   // Run up the super chain and check
   if (this == k) return true;
 
@@ -138,22 +141,22 @@ Method* Klass::uncached_lookup_method(Symbol* name, Symbol* signature) const {
 
 void* Klass::operator new(size_t size, ClassLoaderData* loader_data, size_t word_size, TRAPS) {
   return Metaspace::allocate(loader_data, word_size, /*read_only*/false,
-                             Metaspace::ClassType, CHECK_NULL);
+                             MetaspaceObj::ClassType, CHECK_NULL);
 }
 
 Klass::Klass() {
   Klass* k = this;
 
-  { // Preinitialize supertype information.
-    // A later call to initialize_supers() may update these settings:
-    set_super(NULL);
-    for (juint i = 0; i < Klass::primary_super_limit(); i++) {
-      _primary_supers[i] = NULL;
-    }
-    set_secondary_supers(NULL);
-    _primary_supers[0] = k;
-    set_super_check_offset(in_bytes(primary_supers_offset()));
+  // Preinitialize supertype information.
+  // A later call to initialize_supers() may update these settings:
+  set_super(NULL);
+  for (juint i = 0; i < Klass::primary_super_limit(); i++) {
+    _primary_supers[i] = NULL;
   }
+  set_secondary_supers(NULL);
+  set_secondary_super_cache(NULL);
+  _primary_supers[0] = k;
+  set_super_check_offset(in_bytes(primary_supers_offset()));
 
   set_java_mirror(NULL);
   set_modifier_flags(0);
@@ -166,7 +169,7 @@ Klass::Klass() {
   set_next_sibling(NULL);
   set_next_link(NULL);
   set_alloc_count(0);
-  TRACE_SET_KLASS_TRACE_ID(this, 0);
+  TRACE_INIT_ID(this);
 
   set_prototype_header(markOopDesc::prototype());
   set_biased_lock_revocation_count(0);
@@ -484,6 +487,12 @@ void Klass::oops_do(OopClosure* cl) {
 }
 
 void Klass::remove_unshareable_info() {
+  if (!DumpSharedSpaces) {
+    // Clean up after OOM during class loading
+    if (class_loader_data() != NULL) {
+      class_loader_data()->remove_class(this);
+    }
+  }
   set_subklass(NULL);
   set_next_sibling(NULL);
   // Clear the java mirror
@@ -503,8 +512,9 @@ void Klass::restore_unshareable_info(TRAPS) {
   // (same order as class file parsing)
   loader_data->add_class(this);
 
-  // Recreate the class mirror
-  java_lang_Class::create_mirror(this, CHECK);
+  // Recreate the class mirror.  The protection_domain is always null for
+  // boot loader, for now.
+  java_lang_Class::create_mirror(this, Handle(NULL), CHECK);
 }
 
 Klass* Klass::array_klass_or_null(int rank) {
@@ -624,6 +634,17 @@ void Klass::oop_print_value_on(oop obj, outputStream* st) {
   obj->print_address_on(st);
 }
 
+#if INCLUDE_SERVICES
+// Size Statistics
+void Klass::collect_statistics(KlassSizeStats *sz) const {
+  sz->_klass_bytes = sz->count(this);
+  sz->_mirror_bytes = sz->count(java_mirror());
+  sz->_secondary_supers_bytes = sz->count_array(secondary_supers());
+
+  sz->_ro_bytes += sz->_secondary_supers_bytes;
+  sz->_rw_bytes += sz->_klass_bytes + sz->_mirror_bytes;
+}
+#endif // INCLUDE_SERVICES
 
 // Verification
 

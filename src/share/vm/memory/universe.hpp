@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -91,8 +91,8 @@ class ActiveMethodOopsCache : public CommonMethodOopCache {
   ActiveMethodOopsCache()   { _prev_methods = NULL; }
   ~ActiveMethodOopsCache();
 
-  void add_previous_version(Method* const method);
-  bool is_same_method(Method* const method) const;
+  void add_previous_version(Method* method);
+  bool is_same_method(const Method* method) const;
 };
 
 
@@ -212,6 +212,9 @@ class Universe: AllStatic {
   static struct NarrowPtrStruct _narrow_klass;
   static address _narrow_ptrs_base;
 
+  // Aligned size of the metaspace.
+  static size_t _class_metaspace_size;
+
   // array of dummy objects used with +FullGCAlot
   debug_only(static objArrayOop _fullgc_alot_dummy_array;)
   // index of next entry to clear
@@ -255,19 +258,6 @@ class Universe: AllStatic {
     return resolve_oop(m);
   }
 
-  // Narrow Oop encoding mode:
-  // 0 - Use 32-bits oops without encoding when
-  //     NarrowOopHeapBaseMin + heap_size < 4Gb
-  // 1 - Use zero based compressed oops with encoding when
-  //     NarrowOopHeapBaseMin + heap_size < 32Gb
-  // 2 - Use compressed oops with heap base + encoding.
-  enum NARROW_OOP_MODE {
-    UnscaledNarrowOop  = 0,
-    ZeroBasedNarrowOop = 1,
-    HeapBasedNarrowOop = 2
-  };
-  static char*    preferred_heap_base(size_t heap_size, NARROW_OOP_MODE mode);
-  static char*    preferred_metaspace_base(size_t heap_size, NARROW_OOP_MODE mode);
   static void     set_narrow_oop_base(address base) {
     assert(UseCompressedOops, "no compressed oops?");
     _narrow_oop._base    = base;
@@ -282,6 +272,13 @@ class Universe: AllStatic {
   }
   static bool     reserve_metaspace_helper(bool with_base = false);
   static ReservedHeapSpace reserve_heap_metaspace(size_t heap_size, size_t alignment, bool& contiguous);
+
+  static size_t  class_metaspace_size() {
+    return _class_metaspace_size;
+  }
+  static void    set_class_metaspace_size(size_t metaspace_size) {
+    _class_metaspace_size = metaspace_size;
+  }
 
   // Debugging
   static int _verify_count;                           // number of verifies done
@@ -376,6 +373,21 @@ class Universe: AllStatic {
   static CollectedHeap* heap() { return _collectedHeap; }
 
   // For UseCompressedOops
+  // Narrow Oop encoding mode:
+  // 0 - Use 32-bits oops without encoding when
+  //     NarrowOopHeapBaseMin + heap_size < 4Gb
+  // 1 - Use zero based compressed oops with encoding when
+  //     NarrowOopHeapBaseMin + heap_size < 32Gb
+  // 2 - Use compressed oops with heap base + encoding.
+  enum NARROW_OOP_MODE {
+    UnscaledNarrowOop  = 0,
+    ZeroBasedNarrowOop = 1,
+    HeapBasedNarrowOop = 2
+  };
+  static NARROW_OOP_MODE narrow_oop_mode();
+  static const char* narrow_oop_mode_to_string(NARROW_OOP_MODE mode);
+  static char*    preferred_heap_base(size_t heap_size, NARROW_OOP_MODE mode);
+  static char*    preferred_metaspace_base(size_t heap_size, NARROW_OOP_MODE mode);
   static address  narrow_oop_base()                       { return  _narrow_oop._base; }
   static bool  is_narrow_oop_base(void* addr)             { return (narrow_oop_base() == (address)addr); }
   static int      narrow_oop_shift()                      { return  _narrow_oop._shift; }
@@ -441,12 +453,12 @@ class Universe: AllStatic {
 
   // Debugging
   static bool verify_in_progress() { return _verify_in_progress; }
-  static void verify(bool silent, VerifyOption option);
-  static void verify(bool silent) {
-    verify(silent, VerifyOption_Default /* option */);
+  static void verify(VerifyOption option, const char* prefix, bool silent = VerifySilently);
+  static void verify(const char* prefix, bool silent = VerifySilently) {
+    verify(VerifyOption_Default, prefix, silent);
   }
-  static void verify() {
-    verify(false /* silent */);
+  static void verify(bool silent = VerifySilently) {
+    verify("", silent);
   }
 
   static int  verify_count()       { return _verify_count; }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1998, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1998, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -33,9 +33,10 @@
 #include "prims/jvmtiRedefineClassesTrace.hpp"
 #include "prims/methodHandles.hpp"
 #include "runtime/handles.inline.hpp"
-#ifndef SERIALGC
+#include "utilities/macros.hpp"
+#if INCLUDE_ALL_GCS
 # include "gc_implementation/parallelScavenge/psPromotionManager.hpp"
-#endif
+#endif // INCLUDE_ALL_GCS
 
 
 // Implememtation of ConstantPoolCacheEntry
@@ -43,6 +44,8 @@
 void ConstantPoolCacheEntry::initialize_entry(int index) {
   assert(0 < index && index < 0x10000, "sanity check");
   _indices = index;
+  _f1 = NULL;
+  _f2 = _flags = 0;
   assert(constant_pool_index() == index, "");
 }
 
@@ -263,7 +266,8 @@ void ConstantPoolCacheEntry::set_method_handle_common(constantPoolHandle cpool,
   // the lock, so that when the losing writer returns, he can use the linked
   // cache entry.
 
-  MonitorLockerEx ml(cpool->lock());
+  oop cplock = cpool->lock();
+  ObjectLocker ol(cplock, Thread::current(), cplock != NULL);
   if (!is_f1_null()) {
     return;
   }
@@ -401,8 +405,9 @@ oop ConstantPoolCacheEntry::method_type_if_resolved(constantPoolHandle cpool) {
 }
 
 
+#if INCLUDE_JVMTI
 // RedefineClasses() API support:
-// If this constantPoolCacheEntry refers to old_method then update it
+// If this ConstantPoolCacheEntry refers to old_method then update it
 // to refer to new_method.
 bool ConstantPoolCacheEntry::adjust_method_entry(Method* old_method,
        Method* new_method, bool * trace_name_printed) {
@@ -460,16 +465,24 @@ bool ConstantPoolCacheEntry::adjust_method_entry(Method* old_method,
   return false;
 }
 
-#ifndef PRODUCT
-bool ConstantPoolCacheEntry::check_no_old_entries() {
+// a constant pool cache entry should never contain old or obsolete methods
+bool ConstantPoolCacheEntry::check_no_old_or_obsolete_entries() {
   if (is_vfinal()) {
+    // virtual and final so _f2 contains method ptr instead of vtable index
     Metadata* f2 = (Metadata*)_f2;
-    return (f2->is_valid() && f2->is_method() && !((Method*)f2)->is_old());
-  } else {
-    return (_f1 == NULL || (_f1->is_valid() && _f1->is_method() && !((Method*)_f1)->is_old()));
+    // Return false if _f2 refers to an old or an obsolete method.
+    // _f2 == NULL || !_f2->is_method() are just as unexpected here.
+    return (f2 != NULL NOT_PRODUCT(&& f2->is_valid()) && f2->is_method() &&
+            !((Method*)f2)->is_old() && !((Method*)f2)->is_obsolete());
+  } else if (_f1 == NULL ||
+             (NOT_PRODUCT(_f1->is_valid() &&) !_f1->is_method())) {
+    // _f1 == NULL || !_f1->is_method() are OK here
+    return true;
   }
+  // return false if _f1 refers to an old or an obsolete method
+  return (NOT_PRODUCT(_f1->is_valid() &&) _f1->is_method() &&
+          !((Method*)_f1)->is_old() && !((Method*)_f1)->is_obsolete());
 }
-#endif
 
 bool ConstantPoolCacheEntry::is_interesting_method_entry(Klass* k) {
   if (!is_method_entry()) {
@@ -502,13 +515,15 @@ bool ConstantPoolCacheEntry::is_interesting_method_entry(Klass* k) {
   // the method is in the interesting class so the entry is interesting
   return true;
 }
+#endif // INCLUDE_JVMTI
 
 void ConstantPoolCacheEntry::print(outputStream* st, int index) const {
   // print separator
   if (index == 0) st->print_cr("                 -------------");
   // print entry
   st->print("%3d  ("PTR_FORMAT")  ", index, (intptr_t)this);
-    st->print_cr("[%02x|%02x|%5d]", bytecode_2(), bytecode_1(), constant_pool_index());
+  st->print_cr("[%02x|%02x|%5d]", bytecode_2(), bytecode_1(),
+               constant_pool_index());
   st->print_cr("                 [   "PTR_FORMAT"]", (intptr_t)_f1);
   st->print_cr("                 [   "PTR_FORMAT"]", (intptr_t)_f2);
   st->print_cr("                 [   "PTR_FORMAT"]", (intptr_t)_flags);
@@ -521,13 +536,18 @@ void ConstantPoolCacheEntry::verify(outputStream* st) const {
 
 // Implementation of ConstantPoolCache
 
-ConstantPoolCache* ConstantPoolCache::allocate(ClassLoaderData* loader_data, int length, TRAPS) {
+ConstantPoolCache* ConstantPoolCache::allocate(ClassLoaderData* loader_data,
+                                     int length,
+                                     const intStack& index_map,
+                                     const intStack& invokedynamic_map, TRAPS) {
   int size = ConstantPoolCache::size(length);
 
-  return new (loader_data, size, false, THREAD) ConstantPoolCache(length);
+  return new (loader_data, size, false, MetaspaceObj::ConstantPoolCacheType, THREAD)
+    ConstantPoolCache(length, index_map, invokedynamic_map);
 }
 
-void ConstantPoolCache::initialize(intArray& inverse_index_map, intArray& invokedynamic_references_map) {
+void ConstantPoolCache::initialize(const intArray& inverse_index_map,
+                                   const intArray& invokedynamic_references_map) {
   assert(inverse_index_map.length() == length(), "inverse index map must have same length as cache");
   for (int i = 0; i < length(); i++) {
     ConstantPoolCacheEntry* e = entry_at(i);
@@ -552,8 +572,9 @@ void ConstantPoolCache::initialize(intArray& inverse_index_map, intArray& invoke
   }
 }
 
+#if INCLUDE_JVMTI
 // RedefineClasses() API support:
-// If any entry of this constantPoolCache points to any of
+// If any entry of this ConstantPoolCache points to any of
 // old_methods, replace it with the corresponding new_method.
 void ConstantPoolCache::adjust_method_entries(Method** old_methods, Method** new_methods,
                                                      int methods_length, bool * trace_name_printed) {
@@ -572,7 +593,7 @@ void ConstantPoolCache::adjust_method_entries(Method** old_methods, Method** new
       continue;
     }
 
-    // The constantPoolCache contains entries for several different
+    // The ConstantPoolCache contains entries for several different
     // things, but we only care about methods. In fact, we only care
     // about methods in the same class as the one that contains the
     // old_methods. At this point, we have an interesting entry.
@@ -591,17 +612,25 @@ void ConstantPoolCache::adjust_method_entries(Method** old_methods, Method** new
   }
 }
 
-#ifndef PRODUCT
-bool ConstantPoolCache::check_no_old_entries() {
+// the constant pool cache should never contain old or obsolete methods
+bool ConstantPoolCache::check_no_old_or_obsolete_entries() {
   for (int i = 1; i < length(); i++) {
     if (entry_at(i)->is_interesting_method_entry(NULL) &&
-       !entry_at(i)->check_no_old_entries()) {
+        !entry_at(i)->check_no_old_or_obsolete_entries()) {
       return false;
     }
   }
   return true;
 }
-#endif // PRODUCT
+
+void ConstantPoolCache::dump_cache() {
+  for (int i = 1; i < length(); i++) {
+    if (entry_at(i)->is_interesting_method_entry(NULL)) {
+      entry_at(i)->print(tty, i);
+    }
+  }
+}
+#endif // INCLUDE_JVMTI
 
 
 // Printing

@@ -63,11 +63,10 @@ static void defineRegNames(FILE *fp, RegisterForm *registers) {
     RegDef *reg_def = NULL;
     RegDef *next = NULL;
     registers->reset_RegDefs();
-    for( reg_def = registers->iter_RegDefs(); reg_def != NULL; reg_def = next ) {
+    for (reg_def = registers->iter_RegDefs(); reg_def != NULL; reg_def = next) {
       next = registers->iter_RegDefs();
       const char *comma = (next != NULL) ? "," : " // no trailing comma";
-      fprintf(fp,"  \"%s\"%s\n",
-                 reg_def->_regname, comma );
+      fprintf(fp,"  \"%s\"%s\n", reg_def->_regname, comma);
     }
 
     // Finish defining enumeration
@@ -79,10 +78,10 @@ static void defineRegNames(FILE *fp, RegisterForm *registers) {
     reg_def = NULL;
     next = NULL;
     registers->reset_RegDefs();
-    for( reg_def = registers->iter_RegDefs(); reg_def != NULL; reg_def = next ) {
+    for (reg_def = registers->iter_RegDefs(); reg_def != NULL; reg_def = next) {
       next = registers->iter_RegDefs();
       const char *comma = (next != NULL) ? "," : " // no trailing comma";
-      fprintf(fp,"\t%s%s\n", reg_def->_concrete, comma );
+      fprintf(fp,"\t%s%s\n", reg_def->_concrete, comma);
     }
     // Finish defining array
     fprintf(fp,"\t};\n");
@@ -104,19 +103,17 @@ static void defineRegEncodes(FILE *fp, RegisterForm *registers) {
     RegDef *reg_def = NULL;
     RegDef *next    = NULL;
     registers->reset_RegDefs();
-    for( reg_def = registers->iter_RegDefs(); reg_def != NULL; reg_def = next ) {
+    for (reg_def = registers->iter_RegDefs(); reg_def != NULL; reg_def = next) {
       next = registers->iter_RegDefs();
       const char* register_encode = reg_def->register_encode();
       const char *comma = (next != NULL) ? "," : " // no trailing comma";
       int encval;
       if (!ADLParser::is_int_token(register_encode, encval)) {
-        fprintf(fp,"  %s%s  // %s\n",
-                register_encode, comma, reg_def->_regname );
+        fprintf(fp,"  %s%s  // %s\n", register_encode, comma, reg_def->_regname);
       } else {
         // Output known constants in hex char format (backward compatibility).
         assert(encval < 256, "Exceeded supported width for register encoding");
-        fprintf(fp,"  (unsigned char)'\\x%X'%s  // %s\n",
-                encval,          comma, reg_def->_regname );
+        fprintf(fp,"  (unsigned char)'\\x%X'%s  // %s\n", encval, comma, reg_def->_regname);
       }
     }
     // Finish defining enumeration
@@ -133,9 +130,10 @@ static void defineRegClassEnum(FILE *fp, RegisterForm *registers) {
     fprintf(fp,"// Enumeration of register class names\n");
     fprintf(fp, "enum machRegisterClass {\n");
     registers->_rclasses.reset();
-    for( const char *class_name = NULL;
-         (class_name = registers->_rclasses.iter()) != NULL; ) {
-      fprintf(fp,"  %s,\n", toUpper( class_name ));
+    for (const char *class_name = NULL; (class_name = registers->_rclasses.iter()) != NULL;) {
+      const char * class_name_to_upper = toUpper(class_name);
+      fprintf(fp,"  %s,\n", class_name_to_upper);
+      delete[] class_name_to_upper;
     }
     // Finish defining enumeration
     fprintf(fp, "  _last_Mach_Reg_Class\n");
@@ -148,7 +146,7 @@ static void defineRegClassEnum(FILE *fp, RegisterForm *registers) {
 void ArchDesc::declare_register_masks(FILE *fp_hpp) {
   const char  *rc_name;
 
-  if( _register ) {
+  if (_register) {
     // Build enumeration of user-defined register classes.
     defineRegClassEnum(fp_hpp, _register);
 
@@ -156,24 +154,27 @@ void ArchDesc::declare_register_masks(FILE *fp_hpp) {
     fprintf(fp_hpp,"\n");
     fprintf(fp_hpp,"// Register masks, one for each register class.\n");
     _register->_rclasses.reset();
-    for( rc_name = NULL;
-         (rc_name = _register->_rclasses.iter()) != NULL; ) {
-      const char *prefix    = "";
-      RegClass   *reg_class = _register->getRegClass(rc_name);
-      assert( reg_class, "Using an undefined register class");
+    for (rc_name = NULL; (rc_name = _register->_rclasses.iter()) != NULL;) {
+      const char *prefix = "";
+      RegClass *reg_class = _register->getRegClass(rc_name);
+      assert(reg_class, "Using an undefined register class");
+
+      const char* rc_name_to_upper = toUpper(rc_name);
 
       if (reg_class->_user_defined == NULL) {
-        fprintf(fp_hpp, "extern const RegMask _%s%s_mask;\n", prefix, toUpper( rc_name ) );
-        fprintf(fp_hpp, "inline const RegMask &%s%s_mask() { return _%s%s_mask; }\n", prefix, toUpper( rc_name ), prefix, toUpper( rc_name ));
+        fprintf(fp_hpp, "extern const RegMask _%s%s_mask;\n", prefix,  rc_name_to_upper);
+        fprintf(fp_hpp, "inline const RegMask &%s%s_mask() { return _%s%s_mask; }\n", prefix, rc_name_to_upper, prefix, rc_name_to_upper);
       } else {
-        fprintf(fp_hpp, "inline const RegMask &%s%s_mask() { %s }\n", prefix, toUpper( rc_name ), reg_class->_user_defined);
+        fprintf(fp_hpp, "inline const RegMask &%s%s_mask() { %s }\n", prefix, rc_name_to_upper, reg_class->_user_defined);
       }
 
-      if( reg_class->_stack_or_reg ) {
+      if (reg_class->_stack_or_reg) {
         assert(reg_class->_user_defined == NULL, "no user defined reg class here");
-        fprintf(fp_hpp, "extern const RegMask _%sSTACK_OR_%s_mask;\n", prefix, toUpper( rc_name ) );
-        fprintf(fp_hpp, "inline const RegMask &%sSTACK_OR_%s_mask() { return _%sSTACK_OR_%s_mask; }\n", prefix, toUpper( rc_name ), prefix, toUpper( rc_name ) );
+        fprintf(fp_hpp, "extern const RegMask _%sSTACK_OR_%s_mask;\n", prefix, rc_name_to_upper);
+        fprintf(fp_hpp, "inline const RegMask &%sSTACK_OR_%s_mask() { return _%sSTACK_OR_%s_mask; }\n", prefix, rc_name_to_upper, prefix, rc_name_to_upper);
       }
+      delete[] rc_name_to_upper;
+
     }
   }
 }
@@ -183,34 +184,41 @@ void ArchDesc::declare_register_masks(FILE *fp_hpp) {
 void ArchDesc::build_register_masks(FILE *fp_cpp) {
   const char  *rc_name;
 
-  if( _register ) {
+  if (_register) {
     // Generate a list of register masks, one for each class.
     fprintf(fp_cpp,"\n");
     fprintf(fp_cpp,"// Register masks, one for each register class.\n");
     _register->_rclasses.reset();
-    for( rc_name = NULL;
-         (rc_name = _register->_rclasses.iter()) != NULL; ) {
-      const char *prefix    = "";
-      RegClass   *reg_class = _register->getRegClass(rc_name);
-      assert( reg_class, "Using an undefined register class");
+    for (rc_name = NULL; (rc_name = _register->_rclasses.iter()) != NULL;) {
+      const char *prefix = "";
+      RegClass *reg_class = _register->getRegClass(rc_name);
+      assert(reg_class, "Using an undefined register class");
 
-      if (reg_class->_user_defined != NULL) continue;
+      if (reg_class->_user_defined != NULL) {
+        continue;
+      }
 
       int len = RegisterForm::RegMask_Size();
-      fprintf(fp_cpp, "const RegMask _%s%s_mask(", prefix, toUpper( rc_name ) );
-      { int i;
-        for( i = 0; i < len-1; i++ )
-          fprintf(fp_cpp," 0x%x,",reg_class->regs_in_word(i,false));
-        fprintf(fp_cpp," 0x%x );\n",reg_class->regs_in_word(i,false));
+      const char* rc_name_to_upper = toUpper(rc_name);
+      fprintf(fp_cpp, "const RegMask _%s%s_mask(", prefix, rc_name_to_upper);
+
+      {
+        int i;
+        for(i = 0; i < len - 1; i++) {
+          fprintf(fp_cpp," 0x%x,", reg_class->regs_in_word(i, false));
+        }
+        fprintf(fp_cpp," 0x%x );\n", reg_class->regs_in_word(i, false));
       }
 
-      if( reg_class->_stack_or_reg ) {
+      if (reg_class->_stack_or_reg) {
         int i;
-        fprintf(fp_cpp, "const RegMask _%sSTACK_OR_%s_mask(", prefix, toUpper( rc_name ) );
-        for( i = 0; i < len-1; i++ )
-          fprintf(fp_cpp," 0x%x,",reg_class->regs_in_word(i,true));
-        fprintf(fp_cpp," 0x%x );\n",reg_class->regs_in_word(i,true));
+        fprintf(fp_cpp, "const RegMask _%sSTACK_OR_%s_mask(", prefix, rc_name_to_upper);
+        for(i = 0; i < len - 1; i++) {
+          fprintf(fp_cpp," 0x%x,",reg_class->regs_in_word(i, true));
+        }
+        fprintf(fp_cpp," 0x%x );\n",reg_class->regs_in_word(i, true));
       }
+      delete[] rc_name_to_upper;
     }
   }
 }
@@ -455,8 +463,9 @@ static int pipeline_res_mask_initializer(
   uint resources_used_exclusively = 0;
 
   for (pipeclass->_resUsage.reset();
-       (piperesource = (const PipeClassResourceForm *)pipeclass->_resUsage.iter()) != NULL; )
+       (piperesource = (const PipeClassResourceForm*)pipeclass->_resUsage.iter()) != NULL; ) {
     element_count++;
+  }
 
   // Pre-compute the string length
   int templen;
@@ -474,8 +483,8 @@ static int pipeline_res_mask_initializer(
   for (i = rescount; i > 0; i /= 10)
     maskdigit++;
 
-  static const char * pipeline_use_cycle_mask = "Pipeline_Use_Cycle_Mask";
-  static const char * pipeline_use_element    = "Pipeline_Use_Element";
+  static const char* pipeline_use_cycle_mask = "Pipeline_Use_Cycle_Mask";
+  static const char* pipeline_use_element    = "Pipeline_Use_Element";
 
   templen = 1 +
     (int)(strlen(pipeline_use_cycle_mask) + (int)strlen(pipeline_use_element) +
@@ -488,11 +497,12 @@ static int pipeline_res_mask_initializer(
   templen = 0;
 
   for (pipeclass->_resUsage.reset();
-       (piperesource = (const PipeClassResourceForm *)pipeclass->_resUsage.iter()) != NULL; ) {
+       (piperesource = (const PipeClassResourceForm*)pipeclass->_resUsage.iter()) != NULL; ) {
     int used_mask = pipeline->_resdict[piperesource->_resource]->is_resource()->mask();
 
-    if (!used_mask)
+    if (!used_mask) {
       fprintf(stderr, "*** used_mask is 0 ***\n");
+    }
 
     resources_used |= used_mask;
 
@@ -501,8 +511,9 @@ static int pipeline_res_mask_initializer(
     for (lb =  0; (used_mask & (1 << lb)) == 0; lb++);
     for (ub = 31; (used_mask & (1 << ub)) == 0; ub--);
 
-    if (lb == ub)
+    if (lb == ub) {
       resources_used_exclusively |= used_mask;
+    }
 
     int formatlen =
       sprintf(&resource_mask[templen], "  %s(0x%0*x, %*d, %*d, %s %s(",
@@ -518,7 +529,7 @@ static int pipeline_res_mask_initializer(
 
     int cycles = piperesource->_cycles;
     uint stage          = pipeline->_stages.index(piperesource->_stage);
-    if (NameList::Not_in_list == stage) {
+    if ((uint)NameList::Not_in_list == stage) {
       fprintf(stderr,
               "pipeline_res_mask_initializer: "
               "semantic error: "
@@ -526,8 +537,8 @@ static int pipeline_res_mask_initializer(
               piperesource->_stage);
       exit(1);
     }
-    uint upper_limit    = stage+cycles-1;
-    uint lower_limit    = stage-1;
+    uint upper_limit    = stage + cycles - 1;
+    uint lower_limit    = stage - 1;
     uint upper_idx      = upper_limit >> 5;
     uint lower_idx      = lower_limit >> 5;
     uint upper_position = upper_limit & 0x1f;
@@ -535,7 +546,7 @@ static int pipeline_res_mask_initializer(
 
     uint mask = (((uint)1) << upper_position) - 1;
 
-    while ( upper_idx > lower_idx ) {
+    while (upper_idx > lower_idx) {
       res_mask[upper_idx--] |= mask;
       mask = (uint)-1;
     }
@@ -557,8 +568,9 @@ static int pipeline_res_mask_initializer(
   }
 
   resource_mask[templen] = 0;
-  if (last_comma)
+  if (last_comma) {
     last_comma[0] = ' ';
+  }
 
   // See if the same string is in the table
   int ndx = pipeline_res_mask.index(resource_mask);
@@ -572,7 +584,7 @@ static int pipeline_res_mask_initializer(
       fprintf(fp_cpp, "static const Pipeline_Use_Element pipeline_res_mask_%03d[%d] = {\n%s};\n\n",
         ndx+1, element_count, resource_mask);
 
-    char * args = new char [9 + 2*masklen + maskdigit];
+    char* args = new char [9 + 2*masklen + maskdigit];
 
     sprintf(args, "0x%0*x, 0x%0*x, %*d",
       masklen, resources_used,
@@ -581,8 +593,9 @@ static int pipeline_res_mask_initializer(
 
     pipeline_res_args.addName(args);
   }
-  else
+  else {
     delete [] resource_mask;
+  }
 
   delete [] res_mask;
 //delete [] res_masks;
@@ -1779,7 +1792,7 @@ void ArchDesc::defineExpand(FILE *fp, InstructForm *node) {
       // Skip first unique operands.
       for( i = 1; i < cur_num_opnds; i++ ) {
         comp = node->_components.iter();
-        if( (int)i != node->unique_opnds_idx(i) ) {
+        if (i != node->unique_opnds_idx(i)) {
           break;
         }
         new_num_opnds++;
@@ -1787,7 +1800,7 @@ void ArchDesc::defineExpand(FILE *fp, InstructForm *node) {
       // Replace not unique operands with next unique operands.
       for( ; i < cur_num_opnds; i++ ) {
         comp = node->_components.iter();
-        int j = node->unique_opnds_idx(i);
+        uint j = node->unique_opnds_idx(i);
         // unique_opnds_idx(i) is unique if unique_opnds_idx(j) is not unique.
         if( j != node->unique_opnds_idx(j) ) {
           fprintf(fp,"  set_opnd_array(%d, opnd_array(%d)->clone(C)); // %s\n",
@@ -2676,7 +2689,9 @@ static void defineIn_RegMask(FILE *fp, FormDict &globals, OperandForm &oper) {
       if (strcmp(first_reg_class, "stack_slots") == 0) {
         fprintf(fp,"  return &(Compile::current()->FIRST_STACK_mask());\n");
       } else {
-        fprintf(fp,"  return &%s_mask();\n", toUpper(first_reg_class));
+        const char* first_reg_class_to_upper = toUpper(first_reg_class);
+        fprintf(fp,"  return &%s_mask();\n", first_reg_class_to_upper);
+        delete[] first_reg_class_to_upper;
       }
     } else {
       // Build a switch statement to return the desired mask.
@@ -2688,7 +2703,9 @@ static void defineIn_RegMask(FILE *fp, FormDict &globals, OperandForm &oper) {
         if( !strcmp(reg_class, "stack_slots") ) {
           fprintf(fp, "  case %d: return &(Compile::current()->FIRST_STACK_mask());\n", index);
         } else {
-          fprintf(fp, "  case %d: return &%s_mask();\n", index, toUpper(reg_class));
+          const char* reg_class_to_upper = toUpper(reg_class);
+          fprintf(fp, "  case %d: return &%s_mask();\n", index, reg_class_to_upper);
+          delete[] reg_class_to_upper;
         }
       }
       fprintf(fp,"  }\n");

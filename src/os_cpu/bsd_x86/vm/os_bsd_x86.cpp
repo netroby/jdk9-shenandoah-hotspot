@@ -372,7 +372,7 @@ frame os::current_frame() {
                 CAST_FROM_FN_PTR(address, os::current_frame));
   if (os::is_first_C_frame(&myframe)) {
     // stack is not walkable
-    return frame(NULL, NULL, NULL);
+    return frame();
   } else {
     return os::get_sender_for_C_frame(&myframe);
   }
@@ -516,7 +516,7 @@ JVM_handle_bsd_signal(int sig,
         // here if the underlying file has been truncated.
         // Do not crash the VM in such a case.
         CodeBlob* cb = CodeCache::find_blob_unsafe(pc);
-        nmethod* nm = cb->is_nmethod() ? (nmethod*)cb : NULL;
+        nmethod* nm = (cb != NULL && cb->is_nmethod()) ? (nmethod*)cb : NULL;
         if (nm != NULL && nm->has_unsafe_access()) {
           stub = StubRoutines::handler_for_unsafe_access();
         }

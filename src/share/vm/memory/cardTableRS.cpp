@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2001, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2001, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -31,10 +31,11 @@
 #include "oops/oop.inline.hpp"
 #include "runtime/java.hpp"
 #include "runtime/os.hpp"
-#ifndef SERIALGC
+#include "utilities/macros.hpp"
+#if INCLUDE_ALL_GCS
 #include "gc_implementation/g1/concurrentMark.hpp"
 #include "gc_implementation/g1/g1SATBCardTableModRefBS.hpp"
-#endif
+#endif // INCLUDE_ALL_GCS
 
 CardTableRS::CardTableRS(MemRegion whole_heap,
                          int max_covered_regions) :
@@ -42,7 +43,7 @@ CardTableRS::CardTableRS(MemRegion whole_heap,
   _cur_youngergen_card_val(youngergenP1_card),
   _regions_to_iterate(max_covered_regions - 1)
 {
-#ifndef SERIALGC
+#if INCLUDE_ALL_GCS
   if (UseG1GC) {
       _ct_bs = new G1SATBCardTableLoggingModRefBS(whole_heap,
                                                   max_covered_regions);
@@ -53,14 +54,25 @@ CardTableRS::CardTableRS(MemRegion whole_heap,
   _ct_bs = new CardTableModRefBSForCTRS(whole_heap, max_covered_regions);
 #endif
   set_bs(_ct_bs);
-  _last_cur_val_in_gen = new jbyte[GenCollectedHeap::max_gens + 1];
+  _last_cur_val_in_gen = NEW_C_HEAP_ARRAY3(jbyte, GenCollectedHeap::max_gens + 1,
+                         mtGC, 0, AllocFailStrategy::RETURN_NULL);
   if (_last_cur_val_in_gen == NULL) {
-    vm_exit_during_initialization("Could not last_cur_val_in_gen array.");
+    vm_exit_during_initialization("Could not create last_cur_val_in_gen array.");
   }
   for (int i = 0; i < GenCollectedHeap::max_gens + 1; i++) {
     _last_cur_val_in_gen[i] = clean_card_val();
   }
   _ct_bs->set_CTRS(this);
+}
+
+CardTableRS::~CardTableRS() {
+  if (_ct_bs) {
+    delete _ct_bs;
+    _ct_bs = NULL;
+  }
+  if (_last_cur_val_in_gen) {
+    FREE_C_HEAP_ARRAY(jbyte, _last_cur_val_in_gen, mtInternal);
+  }
 }
 
 void CardTableRS::resize_covered_region(MemRegion new_region) {
@@ -352,7 +364,7 @@ protected:
     assert(jp >= _begin && jp < _end,
            err_msg("Error: jp " PTR_FORMAT " should be within "
                    "[_begin, _end) = [" PTR_FORMAT "," PTR_FORMAT ")",
-                   _begin, _end));
+                   jp, _begin, _end));
     oop obj = oopDesc::load_decode_heap_oop(p);
     guarantee(obj == NULL || (HeapWord*)obj >= _boundary,
               err_msg("pointer " PTR_FORMAT " at " PTR_FORMAT " on "

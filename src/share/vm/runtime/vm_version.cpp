@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1998, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1998, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -111,9 +111,6 @@ void Abstract_VM_Version::initialize() {
 #endif
 
 #ifndef VMTYPE
-  #ifdef KERNEL
-    #define VMTYPE "Kernel"
-  #else // KERNEL
   #ifdef TIERED
     #define VMTYPE "Server"
   #else // TIERED
@@ -128,7 +125,6 @@ void Abstract_VM_Version::initialize() {
                     COMPILER2_PRESENT("Server")
   #endif // ZERO
   #endif // TIERED
-  #endif // KERNEL
 #endif
 
 #ifndef HOTSPOT_VM_DISTRO
@@ -215,6 +211,10 @@ const char* Abstract_VM_Version::internal_vm_info_string() {
         #define HOTSPOT_BUILD_COMPILER "MS VC++ 8.0 (VS2005)"
       #elif _MSC_VER == 1500
         #define HOTSPOT_BUILD_COMPILER "MS VC++ 9.0 (VS2008)"
+      #elif _MSC_VER == 1600
+        #define HOTSPOT_BUILD_COMPILER "MS VC++ 10.0 (VS2010)"
+      #elif _MSC_VER == 1700
+        #define HOTSPOT_BUILD_COMPILER "MS VC++ 11.0 (VS2012)"
       #else
         #define HOTSPOT_BUILD_COMPILER "unknown MS VC++:" XSTR(_MSC_VER)
       #endif

@@ -32,6 +32,7 @@
 #include "memory/resourceArea.hpp"
 #include "runtime/threadLocalStorage.hpp"
 #include "utilities/hashtable.hpp"
+#include "utilities/macros.hpp"
 
 class AdapterHandlerEntry;
 class AdapterHandlerTable;
@@ -168,11 +169,11 @@ class SharedRuntime: AllStatic {
   static address raw_exception_handler_for_return_address(JavaThread* thread, address return_address);
   static address exception_handler_for_return_address(JavaThread* thread, address return_address);
 
-#ifndef SERIALGC
+#if INCLUDE_ALL_GCS
   // G1 write barriers
   static void g1_wb_pre(oopDesc* orig, JavaThread *thread);
   static void g1_wb_post(void* card_addr, JavaThread* thread);
-#endif // !SERIALGC
+#endif // INCLUDE_ALL_GCS
 
   // exception handling and implicit exceptions
   static address compute_compiled_exc_handler(nmethod* nm, address ret_pc, Handle& exception,
@@ -409,7 +410,7 @@ class SharedRuntime: AllStatic {
 
   // Convert a sig into a calling convention register layout
   // and find interesting things about it.
-  static VMRegPair* find_callee_arguments(Symbol* sig, bool has_receiver, int *arg_size);
+  static VMRegPair* find_callee_arguments(Symbol* sig, bool has_receiver, bool has_appendix, int *arg_size);
   static VMReg     name_for_receiver();
 
   // "Top of Stack" slots that may be unused by the calling convention but must

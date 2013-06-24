@@ -211,10 +211,39 @@ bool ciInstanceKlass::is_java_lang_Object() const {
 
 // ------------------------------------------------------------------
 // ciInstanceKlass::uses_default_loader
-bool ciInstanceKlass::uses_default_loader() {
+bool ciInstanceKlass::uses_default_loader() const {
   // Note:  We do not need to resolve the handle or enter the VM
   // in order to test null-ness.
   return _loader == NULL;
+}
+
+// ------------------------------------------------------------------
+
+/**
+ * Return basic type of boxed value for box klass or T_OBJECT if not.
+ */
+BasicType ciInstanceKlass::box_klass_type() const {
+  if (uses_default_loader() && is_loaded()) {
+    return SystemDictionary::box_klass_type(get_Klass());
+  } else {
+    return T_OBJECT;
+  }
+}
+
+/**
+ * Is this boxing klass?
+ */
+bool ciInstanceKlass::is_box_klass() const {
+  return is_java_primitive(box_klass_type());
+}
+
+/**
+ *  Is this boxed value offset?
+ */
+bool ciInstanceKlass::is_boxed_value_offset(int offset) const {
+  BasicType bt = box_klass_type();
+  return is_java_primitive(bt) &&
+         (offset == java_lang_boxing_object::value_offset_in_bytes(bt));
 }
 
 // ------------------------------------------------------------------
@@ -580,6 +609,7 @@ class StaticFinalFieldPrinter : public FieldClosure {
   }
   void do_field(fieldDescriptor* fd) {
     if (fd->is_final() && !fd->has_initial_value()) {
+      ResourceMark rm;
       oop mirror = fd->field_holder()->java_mirror();
       _out->print("staticfield %s %s %s ", _holder, fd->name()->as_quoted_ascii(), fd->signature()->as_quoted_ascii());
       switch (fd->field_type()) {
@@ -643,6 +673,8 @@ class StaticFinalFieldPrinter : public FieldClosure {
 
 void ciInstanceKlass::dump_replay_data(outputStream* out) {
   ASSERT_IN_VM;
+  ResourceMark rm;
+
   InstanceKlass* ik = get_instanceKlass();
   ConstantPool*  cp = ik->constants();
 

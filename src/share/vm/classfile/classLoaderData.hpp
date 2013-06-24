@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2012, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -32,6 +32,10 @@
 #include "runtime/mutex.hpp"
 #include "utilities/growableArray.hpp"
 
+#if INCLUDE_TRACE
+# include "trace/traceTime.hpp"
+#endif
+
 //
 // A class loader represents a linkset. Conceptually, a linkset identifies
 // the complete transitive closure of resolved links that a dynamic linker can
@@ -49,6 +53,7 @@ class ClassLoaderData;
 class JNIMethodBlock;
 class JNIHandleBlock;
 class Metadebug;
+
 // GC root for walking class loader data created
 
 class ClassLoaderDataGraph : public AllStatic {
@@ -62,7 +67,8 @@ class ClassLoaderDataGraph : public AllStatic {
   // CMS support.
   static ClassLoaderData* _saved_head;
 
-  static ClassLoaderData* add(ClassLoaderData** loader_data_addr, Handle class_loader, TRAPS);
+  static ClassLoaderData* add(Handle class_loader, bool anonymous, TRAPS);
+  static void post_class_unload_events(void);
  public:
   static ClassLoaderData* find_or_create(Handle class_loader, TRAPS);
   static void purge();
@@ -71,6 +77,8 @@ class ClassLoaderDataGraph : public AllStatic {
   static void always_strong_oops_do(OopClosure* blk, KlassClosure* klass_closure, bool must_claim);
   static void keep_alive_oops_do(OopClosure* blk, KlassClosure* klass_closure, bool must_claim);
   static void classes_do(KlassClosure* klass_closure);
+  static void classes_do(void f(Klass* const));
+  static void classes_unloading_do(void f(Klass* const));
   static bool do_unloading(BoolObjectClosure* is_alive);
 
   // CMS support.
@@ -86,6 +94,12 @@ class ClassLoaderDataGraph : public AllStatic {
   static bool contains(address x);
   static bool contains_loader_data(ClassLoaderData* loader_data);
 #endif
+
+#if INCLUDE_TRACE
+ private:
+  static TracingTime _class_unload_time;
+  static void class_unload_event(Klass* const k);
+#endif
 };
 
 // ClassLoaderData class
@@ -93,6 +107,21 @@ class ClassLoaderDataGraph : public AllStatic {
 class ClassLoaderData : public CHeapObj<mtClass> {
   friend class VMStructs;
  private:
+  class Dependencies VALUE_OBJ_CLASS_SPEC {
+    objArrayOop _list_head;
+    void locked_add(objArrayHandle last,
+                    objArrayHandle new_dependency,
+                    Thread* THREAD);
+   public:
+    Dependencies() : _list_head(NULL) {}
+    Dependencies(TRAPS) : _list_head(NULL) {
+      init(CHECK);
+    }
+    void add(Handle dependency, TRAPS);
+    void init(TRAPS);
+    void oops_do(OopClosure* f);
+  };
+
   friend class ClassLoaderDataGraph;
   friend class ClassLoaderDataGraphMetaspaceIterator;
   friend class MetaDataFactory;
@@ -100,10 +129,11 @@ class ClassLoaderData : public CHeapObj<mtClass> {
 
   static ClassLoaderData * _the_null_class_loader_data;
 
-  oop _class_loader;       // oop used to uniquely identify a class loader
-                           // class loader or a canonical class path
-  oop _dependencies;       // oop to hold dependencies from this class loader
-                           // data to others.
+  oop _class_loader;          // oop used to uniquely identify a class loader
+                              // class loader or a canonical class path
+  Dependencies _dependencies; // holds dependencies from this class loader
+                              // data to others.
+
   Metaspace * _metaspace;  // Meta-space where meta-data defined by the
                            // classes in the class loader are allocated.
   Mutex* _metaspace_lock;  // Locks the metaspace for allocations and setup.
@@ -134,13 +164,10 @@ class ClassLoaderData : public CHeapObj<mtClass> {
   static Metaspace* _ro_metaspace;
   static Metaspace* _rw_metaspace;
 
-  void add_dependency(Handle dependency, TRAPS);
-  void locked_add_dependency(objArrayHandle last, objArrayHandle new_dependency);
-
   void set_next(ClassLoaderData* next) { _next = next; }
   ClassLoaderData* next() const        { return _next; }
 
-  ClassLoaderData(Handle h_class_loader, bool is_anonymous);
+  ClassLoaderData(Handle h_class_loader, bool is_anonymous, Dependencies dependencies);
   ~ClassLoaderData();
 
   void set_metaspace(Metaspace* m) { _metaspace = m; }
@@ -158,7 +185,7 @@ class ClassLoaderData : public CHeapObj<mtClass> {
   void unload();
   bool keep_alive() const       { return _keep_alive; }
   bool is_alive(BoolObjectClosure* is_alive_closure) const;
-
+  void classes_do(void f(Klass*));
   void classes_do(void f(InstanceKlass*));
 
   // Deallocate free list during class unloading.
@@ -180,7 +207,9 @@ class ClassLoaderData : public CHeapObj<mtClass> {
   static void init_null_class_loader_data() {
     assert(_the_null_class_loader_data == NULL, "cannot initialize twice");
     assert(ClassLoaderDataGraph::_head == NULL, "cannot initialize twice");
-    _the_null_class_loader_data = new ClassLoaderData((oop)NULL, false);
+
+    // We explicitly initialize the Dependencies object at a later phase in the initialization
+    _the_null_class_loader_data = new ClassLoaderData((oop)NULL, false, Dependencies());
     ClassLoaderDataGraph::_head = _the_null_class_loader_data;
     assert(_the_null_class_loader_data->is_the_null_class_loader_data(), "Must be");
     if (DumpSharedSpaces) {
@@ -191,6 +220,7 @@ class ClassLoaderData : public CHeapObj<mtClass> {
   bool is_the_null_class_loader_data() const {
     return this == _the_null_class_loader_data;
   }
+  bool is_ext_class_loader_data() const;
 
   // The Metaspace is created lazily so may be NULL.  This
   // method will allocate a Metaspace if needed.
@@ -220,7 +250,7 @@ class ClassLoaderData : public CHeapObj<mtClass> {
   void set_jmethod_ids(JNIMethodBlock* new_block)  { _jmethod_ids = new_block; }
 
   void print_value() { print_value_on(tty); }
-  void print_value_on(outputStream* out) const PRODUCT_RETURN;
+  void print_value_on(outputStream* out) const;
   void dump(outputStream * const out) PRODUCT_RETURN;
   void verify();
   const char* loader_name();
@@ -234,6 +264,7 @@ class ClassLoaderData : public CHeapObj<mtClass> {
   void add_to_deallocate_list(Metadata* m);
 
   static ClassLoaderData* class_loader_data(oop loader);
+  static ClassLoaderData* class_loader_data_or_null(oop loader);
   static ClassLoaderData* anonymous_class_loader_data(oop loader, TRAPS);
   static void print_loader(ClassLoaderData *loader_data, outputStream *out);
 

@@ -56,6 +56,11 @@
 #include "services/classLoadingService.hpp"
 #include "services/threadService.hpp"
 
+#if INCLUDE_TRACE
+ #include "trace/tracing.hpp"
+ #include "trace/traceMacros.hpp"
+#endif
+
 
 Dictionary*            SystemDictionary::_dictionary          = NULL;
 PlaceholderTable*      SystemDictionary::_placeholders        = NULL;
@@ -146,6 +151,17 @@ bool SystemDictionary::is_parallelDefine(Handle class_loader) {
    }
    return false;
 }
+
+/**
+ * Returns true if the passed class loader is the extension class loader.
+ */
+bool SystemDictionary::is_ext_class_loader(Handle class_loader) {
+  if (class_loader.is_null()) {
+    return false;
+  }
+  return (class_loader->klass()->name() == vmSymbols::sun_misc_Launcher_ExtClassLoader());
+}
+
 // ----------------------------------------------------------------------------
 // Resolving of classes
 
@@ -575,9 +591,14 @@ instanceKlassHandle SystemDictionary::handle_parallel_super_load(
 }
 
 
-Klass* SystemDictionary::resolve_instance_class_or_null(Symbol* name, Handle class_loader, Handle protection_domain, TRAPS) {
+Klass* SystemDictionary::resolve_instance_class_or_null(Symbol* name,
+                                                        Handle class_loader,
+                                                        Handle protection_domain,
+                                                        TRAPS) {
   assert(name != NULL && !FieldType::is_array(name) &&
          !FieldType::is_obj(name), "invalid class name");
+
+  TracingTime class_load_start_time = Tracing::time();
 
   // UseNewReflection
   // Fix for 4474172; see evaluation for more details
@@ -793,8 +814,9 @@ Klass* SystemDictionary::resolve_instance_class_or_null(Symbol* name, Handle cla
             // during compilations.
             MutexLocker mu(Compile_lock, THREAD);
             update_dictionary(d_index, d_hash, p_index, p_hash,
-                            k, class_loader, THREAD);
+                              k, class_loader, THREAD);
           }
+
           if (JvmtiExport::should_post_class_load()) {
             Thread *thread = THREAD;
             assert(thread->is_Java_thread(), "thread->is_Java_thread()");
@@ -804,19 +826,62 @@ Klass* SystemDictionary::resolve_instance_class_or_null(Symbol* name, Handle cla
       }
     } // load_instance_class loop
 
+    if (HAS_PENDING_EXCEPTION) {
+      // An exception, such as OOM could have happened at various places inside
+      // load_instance_class. We might have partially initialized a shared class
+      // and need to clean it up.
+      if (class_loader.is_null()) {
+        // In some cases k may be null. Let's find the shared class again.
+        instanceKlassHandle ik(THREAD, find_shared_class(name));
+        if (ik.not_null()) {
+          if (ik->class_loader_data() == NULL) {
+            // We didn't go as far as Klass::restore_unshareable_info(),
+            // so nothing to clean up.
+          } else {
+            Klass *kk;
+            {
+              MutexLocker mu(SystemDictionary_lock, THREAD);
+              kk = find_class(d_index, d_hash, name, ik->class_loader_data());
+            }
+            if (kk != NULL) {
+              // No clean up is needed if the shared class has been entered
+              // into system dictionary, as load_shared_class() won't be called
+              // again.
+            } else {
+              // This must be done outside of the SystemDictionary_lock to
+              // avoid deadlock.
+              //
+              // Note that Klass::restore_unshareable_info (called via
+              // load_instance_class above) is also called outside
+              // of SystemDictionary_lock. Other threads are blocked from
+              // loading this class because they are waiting on the
+              // SystemDictionary_lock until this thread removes
+              // the placeholder below.
+              //
+              // This need to be re-thought when parallel-capable non-boot
+              // classloaders are supported by CDS (today they're not).
+              clean_up_shared_class(ik, class_loader, THREAD);
+            }
+          }
+        }
+      }
+    }
+
     if (load_instance_added == true) {
       // clean up placeholder entries for LOAD_INSTANCE success or error
       // This brackets the SystemDictionary updates for both defining
       // and initiating loaders
       MutexLocker mu(SystemDictionary_lock, THREAD);
-        placeholders()->find_and_remove(p_index, p_hash, name, loader_data, PlaceholderTable::LOAD_INSTANCE, THREAD);
-        SystemDictionary_lock->notify_all();
+      placeholders()->find_and_remove(p_index, p_hash, name, loader_data, PlaceholderTable::LOAD_INSTANCE, THREAD);
+      SystemDictionary_lock->notify_all();
     }
   }
 
   if (HAS_PENDING_EXCEPTION || k.is_null()) {
     return NULL;
   }
+
+  post_class_load_event(class_load_start_time, k, class_loader);
 
 #ifdef ASSERT
   {
@@ -866,16 +931,22 @@ Klass* SystemDictionary::resolve_instance_class_or_null(Symbol* name, Handle cla
 // the new entry.
 
 Klass* SystemDictionary::find(Symbol* class_name,
-                                Handle class_loader,
-                                Handle protection_domain,
-                                TRAPS) {
+                              Handle class_loader,
+                              Handle protection_domain,
+                              TRAPS) {
 
   // UseNewReflection
   // The result of this call should be consistent with the result
   // of the call to resolve_instance_class_or_null().
   // See evaluation 6790209 and 4474172 for more details.
   class_loader = Handle(THREAD, java_lang_ClassLoader::non_reflection_class_loader(class_loader()));
-  ClassLoaderData* loader_data = register_loader(class_loader, CHECK_NULL);
+  ClassLoaderData* loader_data = ClassLoaderData::class_loader_data_or_null(class_loader());
+
+  if (loader_data == NULL) {
+    // If the ClassLoaderData has not been setup,
+    // then the class loader has no entries in the dictionary.
+    return NULL;
+  }
 
   unsigned int d_hash = dictionary()->compute_hash(class_name, loader_data);
   int d_index = dictionary()->hash_to_index(d_hash);
@@ -935,6 +1006,8 @@ Klass* SystemDictionary::parse_stream(Symbol* class_name,
                                       TRAPS) {
   TempNewSymbol parsed_name = NULL;
 
+  TracingTime class_load_start_time = Tracing::time();
+
   ClassLoaderData* loader_data;
   if (host_klass.not_null()) {
     // Create a new CLD for anonymous class, that uses the same class loader
@@ -990,6 +1063,8 @@ Klass* SystemDictionary::parse_stream(Symbol* class_name,
         assert(THREAD->is_Java_thread(), "thread->is_Java_thread()");
         JvmtiExport::post_class_load((JavaThread *) THREAD, k());
     }
+
+    post_class_load_event(class_load_start_time, k, class_loader);
   }
   assert(host_klass.not_null() || cp_patches == NULL,
          "cp_patches only found with host_klass");
@@ -1134,11 +1209,6 @@ instanceKlassHandle SystemDictionary::load_shared_class(
   return load_shared_class(ik, class_loader, THREAD);
 }
 
-// Note well!  Changes to this method may affect oop access order
-// in the shared archive.  Please take care to not make changes that
-// adversely affect cold start time by changing the oop access order
-// that is specified in dump.cpp MarkAndMoveOrderedReadOnly and
-// MarkAndMoveOrderedReadWrite closures.
 instanceKlassHandle SystemDictionary::load_shared_class(
                  instanceKlassHandle ik, Handle class_loader, TRAPS) {
   assert(class_loader.is_null(), "non-null classloader for shared class?");
@@ -1199,66 +1269,19 @@ instanceKlassHandle SystemDictionary::load_shared_class(
   return ik;
 }
 
-#ifdef KERNEL
-// Some classes on the bootstrap class path haven't been installed on the
-// system yet.  Call the DownloadManager method to make them appear in the
-// bootstrap class path and try again to load the named class.
-// Note that with delegation class loaders all classes in another loader will
-// first try to call this so it'd better be fast!!
-static instanceKlassHandle download_and_retry_class_load(
-                                                    Symbol* class_name,
-                                                    TRAPS) {
-
-  Klass* dlm = SystemDictionary::DownloadManager_klass();
-  instanceKlassHandle nk;
-
-  // If download manager class isn't loaded just return.
-  if (dlm == NULL) return nk;
-
-  { HandleMark hm(THREAD);
-    ResourceMark rm(THREAD);
-    Handle s = java_lang_String::create_from_symbol(class_name, CHECK_(nk));
-    Handle class_string = java_lang_String::externalize_classname(s, CHECK_(nk));
-
-    // return value
-    JavaValue result(T_OBJECT);
-
-    // Call the DownloadManager.  We assume that it has a lock because
-    // multiple classes could be not found and downloaded at the same time.
-    // class sun.misc.DownloadManager;
-    // public static String getBootClassPathEntryForClass(String className);
-    JavaCalls::call_static(&result,
-                       KlassHandle(THREAD, dlm),
-                       vmSymbols::getBootClassPathEntryForClass_name(),
-                       vmSymbols::string_string_signature(),
-                       class_string,
-                       CHECK_(nk));
-
-    // Get result.string and add to bootclasspath
-    assert(result.get_type() == T_OBJECT, "just checking");
-    oop obj = (oop) result.get_jobject();
-    if (obj == NULL) { return nk; }
-
-    Handle h_obj(THREAD, obj);
-    char* new_class_name = java_lang_String::as_platform_dependent_str(h_obj,
-                                                                  CHECK_(nk));
-
-    // lock the loader
-    // we use this lock because JVMTI does.
-    Handle loader_lock(THREAD, SystemDictionary::system_loader_lock());
-
-    ObjectLocker ol(loader_lock, THREAD);
-    // add the file to the bootclasspath
-    ClassLoader::update_class_path_entry_list(new_class_name, true);
-  } // end HandleMark
-
-  if (TraceClassLoading) {
-    ClassLoader::print_bootclasspath();
+void SystemDictionary::clean_up_shared_class(instanceKlassHandle ik, Handle class_loader, TRAPS) {
+  // Updating methods must be done under a lock so multiple
+  // threads don't update these in parallel
+  // Shared classes are all currently loaded by the bootstrap
+  // classloader, so this will never cause a deadlock on
+  // a custom class loader lock.
+  {
+    Handle lockObject = compute_loader_lock_object(class_loader, THREAD);
+    check_loader_lock_contention(lockObject, THREAD);
+    ObjectLocker ol(lockObject, THREAD, true);
+    ik->remove_unshareable_info();
   }
-  return ClassLoader::load_classfile(class_name, CHECK_(nk));
 }
-#endif // KERNEL
-
 
 instanceKlassHandle SystemDictionary::load_instance_class(Symbol* class_name, Handle class_loader, TRAPS) {
   instanceKlassHandle nh = instanceKlassHandle(); // null Handle
@@ -1277,15 +1300,6 @@ instanceKlassHandle SystemDictionary::load_instance_class(Symbol* class_name, Ha
       PerfTraceTime vmtimer(ClassLoader::perf_sys_classload_time());
       k = ClassLoader::load_classfile(class_name, CHECK_(nh));
     }
-
-#ifdef KERNEL
-    // If the VM class loader has failed to load the class, call the
-    // DownloadManager class to make it magically appear on the classpath
-    // and try again.  This is only configured with the Kernel VM.
-    if (k.is_null()) {
-      k = download_and_retry_class_load(class_name, CHECK_(nh));
-    }
-#endif // KERNEL
 
     // find_or_define_instance_class may return a different InstanceKlass
     if (!k.is_null()) {
@@ -1438,6 +1452,7 @@ void SystemDictionary::define_instance_class(instanceKlassHandle k, TRAPS) {
       JvmtiExport::post_class_load((JavaThread *) THREAD, k());
 
   }
+
 }
 
 // Support parallel classloading
@@ -1595,9 +1610,10 @@ Symbol* SystemDictionary::find_placeholder(Symbol* class_name,
 // Used for assertions and verification only
 Klass* SystemDictionary::find_class(Symbol* class_name, ClassLoaderData* loader_data) {
   #ifndef ASSERT
-  guarantee(VerifyBeforeGC   ||
-            VerifyDuringGC   ||
-            VerifyBeforeExit ||
+  guarantee(VerifyBeforeGC      ||
+            VerifyDuringGC      ||
+            VerifyBeforeExit    ||
+            VerifyDuringStartup ||
             VerifyAfterGC, "too expensive");
   #endif
   assert_locked_or_safepoint(SystemDictionary_lock);
@@ -1680,6 +1696,7 @@ int SystemDictionary::calculate_systemdictionary_size(int classcount) {
   }
   return newsize;
 }
+
 // Assumes classes in the SystemDictionary are only unloaded at a safepoint
 // Note: anonymous classes are not in the SD.
 bool SystemDictionary::do_unloading(BoolObjectClosure* is_alive) {
@@ -1749,13 +1766,6 @@ void SystemDictionary::classes_do(void f(Klass*, ClassLoaderData*)) {
   dictionary()->classes_do(f);
 }
 
-//   All classes, and their class loaders
-//   (added for helpers that use HandleMarks and ResourceMarks)
-// Don't iterate over placeholders
-void SystemDictionary::classes_do(void f(Klass*, ClassLoaderData*, TRAPS), TRAPS) {
-  dictionary()->classes_do(f, CHECK);
-}
-
 void SystemDictionary::placeholders_do(void f(Symbol*)) {
   placeholders()->entries_do(f);
 }
@@ -1822,13 +1832,7 @@ bool SystemDictionary::initialize_wk_klass(WKID id, int init_opt, TRAPS) {
   Symbol* symbol = vmSymbols::symbol_at((vmSymbols::SID)sid);
   Klass**    klassp = &_well_known_klasses[id];
   bool must_load = (init_opt < SystemDictionary::Opt);
-  bool try_load  = true;
-  if (init_opt == SystemDictionary::Opt_Kernel) {
-#ifndef KERNEL
-    try_load = false;
-#endif //KERNEL
-  }
-  if ((*klassp) == NULL && try_load) {
+  if ((*klassp) == NULL) {
     if (must_load) {
       (*klassp) = resolve_or_fail(symbol, true, CHECK_0); // load required class
     } else {
@@ -1917,12 +1921,6 @@ void SystemDictionary::initialize_preloaded_classes(TRAPS) {
   _box_klasses[T_LONG]    = WK_KLASS(Long_klass);
   //_box_klasses[T_OBJECT]  = WK_KLASS(object_klass);
   //_box_klasses[T_ARRAY]   = WK_KLASS(object_klass);
-
-#ifdef KERNEL
-  if (DownloadManager_klass() == NULL) {
-    warning("Cannot find sun/jkernel/DownloadManager");
-  }
-#endif // KERNEL
 
   { // Compute whether we should use loadClass or loadClassInternal when loading classes.
     Method* method = InstanceKlass::cast(ClassLoader_klass())->find_method(vmSymbols::loadClassInternal_name(), vmSymbols::string_class_signature());
@@ -2044,12 +2042,6 @@ void SystemDictionary::update_dictionary(int d_index, unsigned int d_hash,
       k->set_prototype_header(markOopDesc::biased_locking_prototype());
     }
   }
-
-  // Assign a classid if one has not already been assigned.  The
-  // counter does not need to be atomically incremented since this
-  // is only done while holding the SystemDictionary_lock.
-  // All loaded classes get a unique ID.
-  TRACE_INIT_ID(k);
 
   // Make a new system dictionary entry.
   Klass* sd_check = find_class(d_index, d_hash, name, loader_data);
@@ -2226,10 +2218,9 @@ Symbol* SystemDictionary::find_resolution_error(constantPoolHandle pool, int whi
 // Make sure all class components (including arrays) in the given
 // signature will be resolved to the same class in both loaders.
 // Returns the name of the type that failed a loader constraint check, or
-// NULL if no constraint failed. The returned C string needs cleaning up
-// with a ResourceMark in the caller.  No exception except OOME is thrown.
+// NULL if no constraint failed.  No exception except OOME is thrown.
 // Arrays are not added to the loader constraint table, their elements are.
-char* SystemDictionary::check_signature_loaders(Symbol* signature,
+Symbol* SystemDictionary::check_signature_loaders(Symbol* signature,
                                                Handle loader1, Handle loader2,
                                                bool is_method, TRAPS)  {
   // Nothing to do if loaders are the same.
@@ -2237,14 +2228,12 @@ char* SystemDictionary::check_signature_loaders(Symbol* signature,
     return NULL;
   }
 
-  ResourceMark rm(THREAD);
   SignatureStream sig_strm(signature, is_method);
   while (!sig_strm.is_done()) {
     if (sig_strm.is_object()) {
-      Symbol* s = sig_strm.as_symbol(CHECK_NULL);
-      Symbol*  sig  = s;
+      Symbol* sig = sig_strm.as_symbol(CHECK_NULL);
       if (!add_loader_constraint(sig, loader1, loader2, THREAD)) {
-        return sig->as_C_string();
+        return sig;
       }
     }
     sig_strm.next();
@@ -2634,6 +2623,27 @@ void SystemDictionary::verify_obj_klass_present(Symbol* class_name,
   }
   guarantee(probe != NULL || name != NULL,
             "Loaded klasses should be in SystemDictionary");
+}
+
+// utility function for class load event
+void SystemDictionary::post_class_load_event(TracingTime start_time,
+                                             instanceKlassHandle k,
+                                             Handle initiating_loader) {
+#if INCLUDE_TRACE
+  EventClassLoad event(UNTIMED);
+  if (event.should_commit()) {
+    event.set_endtime(Tracing::time());
+    event.set_starttime(start_time);
+    event.set_loadedClass(k());
+    oop defining_class_loader = k->class_loader();
+    event.set_definingClassLoader(defining_class_loader !=  NULL ?
+                                    defining_class_loader->klass() : (Klass*)NULL);
+    oop class_loader = initiating_loader.is_null() ? (oop)NULL : initiating_loader();
+    event.set_initiatingClassLoader(class_loader != NULL ?
+                                      class_loader->klass() : (Klass*)NULL);
+    event.commit();
+  }
+#endif /* INCLUDE_TRACE */
 }
 
 #ifndef PRODUCT

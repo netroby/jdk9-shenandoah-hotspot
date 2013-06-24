@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -44,6 +44,7 @@
 #include "runtime/timer.hpp"
 #include "runtime/vframeArray.hpp"
 #include "utilities/debug.hpp"
+#include "utilities/macros.hpp"
 
 #define __ _masm->
 
@@ -343,13 +344,13 @@ address TemplateInterpreterGenerator::generate_safept_entry_for(TosState state, 
 // rcx: invocation counter
 //
 void InterpreterGenerator::generate_counter_incr(Label* overflow, Label* profile_method, Label* profile_method_continue) {
-  const Address invocation_counter(rbx, in_bytes(Method::invocation_counter_offset()) +
-                                        in_bytes(InvocationCounter::counter_offset()));
-  // Note: In tiered we increment either counters in Method* or in MDO depending if we're profiling or not.
+  Label done;
+  // Note: In tiered we increment either counters in MethodCounters* or in MDO
+  // depending if we're profiling or not.
   if (TieredCompilation) {
     int increment = InvocationCounter::count_increment;
     int mask = ((1 << Tier0InvokeNotifyFreqLog)  - 1) << InvocationCounter::count_shift;
-    Label no_mdo, done;
+    Label no_mdo;
     if (ProfileInterpreter) {
       // Are we profiling?
       __ movptr(rax, Address(rbx, Method::method_data_offset()));
@@ -359,26 +360,41 @@ void InterpreterGenerator::generate_counter_incr(Label* overflow, Label* profile
       const Address mdo_invocation_counter(rax, in_bytes(MethodData::invocation_counter_offset()) +
                                                 in_bytes(InvocationCounter::counter_offset()));
       __ increment_mask_and_jump(mdo_invocation_counter, increment, mask, rcx, false, Assembler::zero, overflow);
-      __ jmpb(done);
+      __ jmp(done);
     }
     __ bind(no_mdo);
-    // Increment counter in Method* (we don't need to load it, it's in rcx).
-    __ increment_mask_and_jump(invocation_counter, increment, mask, rcx, true, Assembler::zero, overflow);
+    // Increment counter in MethodCounters
+    const Address invocation_counter(rax,
+                  MethodCounters::invocation_counter_offset() +
+                  InvocationCounter::counter_offset());
+
+    __ get_method_counters(rbx, rax, done);
+    __ increment_mask_and_jump(invocation_counter, increment, mask,
+                               rcx, false, Assembler::zero, overflow);
     __ bind(done);
   } else {
-    const Address backedge_counter  (rbx, Method::backedge_counter_offset() +
-                                          InvocationCounter::counter_offset());
+    const Address backedge_counter  (rax,
+                  MethodCounters::backedge_counter_offset() +
+                  InvocationCounter::counter_offset());
+    const Address invocation_counter(rax,
+                  MethodCounters::invocation_counter_offset() +
+                  InvocationCounter::counter_offset());
 
-    if (ProfileInterpreter) { // %%% Merge this into MethodData*
-      __ incrementl(Address(rbx,Method::interpreter_invocation_counter_offset()));
+    __ get_method_counters(rbx, rax, done);
+
+    if (ProfileInterpreter) {
+      __ incrementl(Address(rax,
+              MethodCounters::interpreter_invocation_counter_offset()));
     }
-    // Update standard invocation counters
-    __ movl(rax, backedge_counter);               // load backedge counter
 
+    // Update standard invocation counters
+    __ movl(rcx, invocation_counter);
     __ incrementl(rcx, InvocationCounter::count_increment);
+    __ movl(invocation_counter, rcx);             // save invocation count
+
+    __ movl(rax, backedge_counter);               // load backedge counter
     __ andl(rax, InvocationCounter::count_mask_value);  // mask out the status bits
 
-    __ movl(invocation_counter, rcx);             // save invocation count
     __ addl(rcx, rax);                            // add both counters
 
     // profile_method is non-null only for interpreted method so
@@ -398,6 +414,7 @@ void InterpreterGenerator::generate_counter_incr(Label* overflow, Label* profile
     __ cmp32(rcx,
              ExternalAddress((address)&InvocationCounter::InterpreterInvocationLimit));
     __ jcc(Assembler::aboveEqual, *overflow);
+    __ bind(done);
   }
 }
 
@@ -761,7 +778,7 @@ address InterpreterGenerator::generate_accessor_entry(void) {
 
 // Method entry for java.lang.ref.Reference.get.
 address InterpreterGenerator::generate_Reference_get_entry(void) {
-#ifndef SERIALGC
+#if INCLUDE_ALL_GCS
   // Code: _aload_0, _getfield, _areturn
   // parameter size = 1
   //
@@ -844,7 +861,7 @@ address InterpreterGenerator::generate_Reference_get_entry(void) {
 
     return entry;
   }
-#endif // SERIALGC
+#endif // INCLUDE_ALL_GCS
 
   // If G1 is not enabled then attempt to go through the accessor entry point
   // Reference.get is an accessor
@@ -867,7 +884,6 @@ address InterpreterGenerator::generate_native_entry(bool synchronized) {
   address entry_point = __ pc();
 
   const Address constMethod       (rbx, Method::const_offset());
-  const Address invocation_counter(rbx, Method::invocation_counter_offset() + InvocationCounter::counter_offset());
   const Address access_flags      (rbx, Method::access_flags_offset());
   const Address size_of_parameters(rcx, ConstMethod::size_of_parameters_offset());
 
@@ -896,9 +912,7 @@ address InterpreterGenerator::generate_native_entry(bool synchronized) {
   // NULL oop temp (mirror or jni oop result)
   __ push((int32_t)NULL_WORD);
 
-  if (inc_counter) __ movl(rcx, invocation_counter);  // (pre-)fetch invocation count
   // initialize fixed part of activation frame
-
   generate_fixed_frame(true);
 
   // make sure method is native & not abstract
@@ -1079,22 +1093,8 @@ address InterpreterGenerator::generate_native_entry(bool synchronized) {
 
   // result potentially in rdx:rax or ST0
 
-  // Either restore the MXCSR register after returning from the JNI Call
-  // or verify that it wasn't changed.
-  if (VM_Version::supports_sse()) {
-    if (RestoreMXCSROnJNICalls) {
-      __ ldmxcsr(ExternalAddress(StubRoutines::addr_mxcsr_std()));
-    }
-    else if (CheckJNICalls ) {
-      __ call(RuntimeAddress(StubRoutines::x86::verify_mxcsr_entry()));
-    }
-  }
-
-  // Either restore the x87 floating pointer control word after returning
-  // from the JNI call or verify that it wasn't changed.
-  if (CheckJNICalls) {
-    __ call(RuntimeAddress(StubRoutines::x86::verify_fpu_cntrl_wrd_entry()));
-  }
+  // Verify or restore cpu control state after JNI call
+  __ restore_cpu_control_state_after_jni();
 
   // save potential result in ST(0) & rdx:rax
   // (if result handler is the T_FLOAT or T_DOUBLE handler, result must be in ST0 -
@@ -1299,7 +1299,6 @@ address InterpreterGenerator::generate_normal_entry(bool synchronized) {
   address entry_point = __ pc();
 
   const Address constMethod       (rbx, Method::const_offset());
-  const Address invocation_counter(rbx, Method::invocation_counter_offset() + InvocationCounter::counter_offset());
   const Address access_flags      (rbx, Method::access_flags_offset());
   const Address size_of_parameters(rdx, ConstMethod::size_of_parameters_offset());
   const Address size_of_locals    (rdx, ConstMethod::size_of_locals_offset());
@@ -1339,7 +1338,6 @@ address InterpreterGenerator::generate_normal_entry(bool synchronized) {
     __ bind(exit);
   }
 
-  if (inc_counter) __ movl(rcx, invocation_counter);  // (pre-)fetch invocation count
   // initialize fixed part of activation frame
   generate_fixed_frame(false);
 
@@ -1567,8 +1565,7 @@ int AbstractInterpreter::size_top_interpreter_activation(Method* method) {
   // be sure to change this if you add/subtract anything to/from the overhead area
   const int overhead_size = -frame::interpreter_frame_initial_sp_offset;
 
-  const int extra_stack = Method::extra_stack_entries();
-  const int method_stack = (method->max_locals() + method->max_stack() + extra_stack) *
+  const int method_stack = (method->max_locals() + method->max_stack()) *
                            Interpreter::stackElementWords;
   return overhead_size + method_stack + stub_code;
 }
@@ -1584,7 +1581,8 @@ int AbstractInterpreter::layout_activation(Method* method,
                                            int callee_locals,
                                            frame* caller,
                                            frame* interpreter_frame,
-                                           bool is_top_frame) {
+                                           bool is_top_frame,
+                                           bool is_bottom_frame) {
   // Note: This calculation must exactly parallel the frame setup
   // in AbstractInterpreterGenerator::generate_method_entry.
   // If interpreter_frame!=NULL, set up the method, locals, and monitors.

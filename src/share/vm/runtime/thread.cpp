@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -77,11 +77,13 @@
 #include "services/management.hpp"
 #include "services/memTracker.hpp"
 #include "services/threadService.hpp"
-#include "trace/traceEventTypes.hpp"
+#include "trace/tracing.hpp"
+#include "trace/traceMacros.hpp"
 #include "utilities/defaultStream.hpp"
 #include "utilities/dtrace.hpp"
 #include "utilities/events.hpp"
 #include "utilities/preserveException.hpp"
+#include "utilities/macros.hpp"
 #ifdef TARGET_OS_FAMILY_linux
 # include "os_linux.inline.hpp"
 #endif
@@ -94,11 +96,11 @@
 #ifdef TARGET_OS_FAMILY_bsd
 # include "os_bsd.inline.hpp"
 #endif
-#ifndef SERIALGC
+#if INCLUDE_ALL_GCS
 #include "gc_implementation/concurrentMarkSweep/concurrentMarkSweepThread.hpp"
 #include "gc_implementation/g1/concurrentMarkThread.inline.hpp"
 #include "gc_implementation/parallelScavenge/pcTasks.hpp"
-#endif
+#endif // INCLUDE_ALL_GCS
 #ifdef COMPILER1
 #include "c1/c1_Compiler.hpp"
 #endif
@@ -237,7 +239,6 @@ Thread::Thread() {
   CHECK_UNHANDLED_OOPS_ONLY(_gc_locked_out_count = 0;)
   _jvmti_env_iteration_count = 0;
   set_allocated_bytes(0);
-  set_trace_buffer(NULL);
   _vm_operation_started_count = 0;
   _vm_operation_completed_count = 0;
   _current_pending_monitor = NULL;
@@ -1482,17 +1483,17 @@ void JavaThread::initialize() {
   pd_initialize();
 }
 
-#ifndef SERIALGC
+#if INCLUDE_ALL_GCS
 SATBMarkQueueSet JavaThread::_satb_mark_queue_set;
 DirtyCardQueueSet JavaThread::_dirty_card_queue_set;
-#endif // !SERIALGC
+#endif // INCLUDE_ALL_GCS
 
 JavaThread::JavaThread(bool is_attaching_via_jni) :
   Thread()
-#ifndef SERIALGC
+#if INCLUDE_ALL_GCS
   , _satb_mark_queue(&_satb_mark_queue_set),
   _dirty_card_queue(&_dirty_card_queue_set)
-#endif // !SERIALGC
+#endif // INCLUDE_ALL_GCS
 {
   initialize();
   if (is_attaching_via_jni) {
@@ -1500,7 +1501,7 @@ JavaThread::JavaThread(bool is_attaching_via_jni) :
   } else {
     _jni_attach_state = _not_attaching_via_jni;
   }
-  assert(_deferred_card_mark.is_empty(), "Default MemRegion ctor");
+  assert(deferred_card_mark().is_empty(), "Default MemRegion ctor");
   _safepoint_visible = false;
 }
 
@@ -1547,10 +1548,10 @@ static void compiler_thread_entry(JavaThread* thread, TRAPS);
 
 JavaThread::JavaThread(ThreadFunction entry_point, size_t stack_sz) :
   Thread()
-#ifndef SERIALGC
+#if INCLUDE_ALL_GCS
   , _satb_mark_queue(&_satb_mark_queue_set),
   _dirty_card_queue(&_dirty_card_queue_set)
-#endif // !SERIALGC
+#endif // INCLUDE_ALL_GCS
 {
   if (TraceThreadEvents) {
     tty->print_cr("creating thread %p", this);
@@ -1658,9 +1659,11 @@ void JavaThread::run() {
     JvmtiExport::post_thread_start(this);
   }
 
-  EVENT_BEGIN(TraceEventThreadStart, event);
-  EVENT_COMMIT(event,
-     EVENT_SET(event, javalangthread, java_lang_Thread::thread_id(this->threadObj())));
+  EventThreadStart event;
+  if (event.should_commit()) {
+     event.set_javalangthread(java_lang_Thread::thread_id(this->threadObj()));
+     event.commit();
+  }
 
   // We call another function to do the rest so we are sure that the stack addresses used
   // from there will be lower than the stack base just computed
@@ -1790,9 +1793,11 @@ void JavaThread::exit(bool destroy_vm, ExitType exit_type) {
 
     // Called before the java thread exit since we want to read info
     // from java_lang_Thread object
-    EVENT_BEGIN(TraceEventThreadEnd, event);
-    EVENT_COMMIT(event,
-        EVENT_SET(event, javalangthread, java_lang_Thread::thread_id(this->threadObj())));
+    EventThreadEnd event;
+    if (event.should_commit()) {
+        event.set_javalangthread(java_lang_Thread::thread_id(this->threadObj()));
+        event.commit();
+    }
 
     // Call after last event on thread
     EVENT_THREAD_EXIT(this);
@@ -1896,19 +1901,26 @@ void JavaThread::exit(bool destroy_vm, ExitType exit_type) {
     JvmtiExport::cleanup_thread(this);
   }
 
-#ifndef SERIALGC
-  // We must flush G1-related buffers before removing a thread from
+  // We must flush any deferred card marks before removing a thread from
   // the list of active threads.
+  Universe::heap()->flush_deferred_store_barrier(this);
+  assert(deferred_card_mark().is_empty(), "Should have been flushed");
+
+#if INCLUDE_ALL_GCS
+  // We must flush the G1-related buffers before removing a thread
+  // from the list of active threads. We must do this after any deferred
+  // card marks have been flushed (above) so that any entries that are
+  // added to the thread's dirty card queue as a result are not lost.
   if (UseG1GC) {
     flush_barrier_queues();
   }
-#endif
+#endif // INCLUDE_ALL_GCS
 
   // Remove from list of active threads list, and notify VM thread if we are the last non-daemon thread
   Threads::remove(this);
 }
 
-#ifndef SERIALGC
+#if INCLUDE_ALL_GCS
 // Flush G1-related queues.
 void JavaThread::flush_barrier_queues() {
   satb_mark_queue().flush();
@@ -1936,7 +1948,7 @@ void JavaThread::initialize_queues() {
   // active field set to true.
   assert(dirty_queue.is_active(), "dirty card queue should be active");
 }
-#endif // !SERIALGC
+#endif // INCLUDE_ALL_GCS
 
 void JavaThread::cleanup_failed_attach_current_thread() {
   if (get_thread_profiler() != NULL) {
@@ -1964,11 +1976,11 @@ void JavaThread::cleanup_failed_attach_current_thread() {
     tlab().make_parsable(true);  // retire TLAB, if any
   }
 
-#ifndef SERIALGC
+#if INCLUDE_ALL_GCS
   if (UseG1GC) {
     flush_barrier_queues();
   }
-#endif
+#endif // INCLUDE_ALL_GCS
 
   Threads::remove(this);
   delete this;
@@ -3415,12 +3427,6 @@ jint Threads::create_vm(JavaVMInitArgs* args, bool* canTryAgain) {
   // real raw monitor. VM is setup enough here for raw monitor enter.
   JvmtiExport::transition_pending_onload_raw_monitors();
 
-  if (VerifyBeforeGC &&
-      Universe::heap()->total_collections() >= VerifyGCStartAt) {
-    Universe::heap()->prepare_for_verify();
-    Universe::verify();   // make sure we're starting with a clean slate
-  }
-
   // Fully start NMT
   MemTracker::start();
 
@@ -3444,6 +3450,12 @@ jint Threads::create_vm(JavaVMInitArgs* args, bool* canTryAgain) {
   }
 
   assert (Universe::is_fully_initialized(), "not initialized");
+  if (VerifyDuringStartup) {
+    // Make sure we're starting with a clean slate.
+    VM_Verify verify_op;
+    VMThread::execute(&verify_op);
+  }
+
   EXCEPTION_MARK;
 
   // At this point, the Universe is initialized, but we have not executed
@@ -3600,7 +3612,7 @@ jint Threads::create_vm(JavaVMInitArgs* args, bool* canTryAgain) {
     vm_exit_during_initialization(Handle(THREAD, PENDING_EXCEPTION));
   }
 
-#ifndef SERIALGC
+#if INCLUDE_ALL_GCS
   // Support for ConcurrentMarkSweep. This should be cleaned up
   // and better encapsulated. The ugly nested if test would go away
   // once things are properly refactored. XXX YSR
@@ -3614,7 +3626,7 @@ jint Threads::create_vm(JavaVMInitArgs* args, bool* canTryAgain) {
       vm_exit_during_initialization(Handle(THREAD, PENDING_EXCEPTION));
     }
   }
-#endif // SERIALGC
+#endif // INCLUDE_ALL_GCS
 
   // Always call even when there are not JVMTI environments yet, since environments
   // may be attached late and JVMTI must track phases of VM execution
@@ -3640,8 +3652,8 @@ jint Threads::create_vm(JavaVMInitArgs* args, bool* canTryAgain) {
   // Notify JVMTI agents that VM initialization is complete - nop if no agents.
   JvmtiExport::post_vm_initialized();
 
-  if (!TRACE_START()) {
-    vm_exit_during_initialization(Handle(THREAD, PENDING_EXCEPTION));
+  if (TRACE_START() != JNI_OK) {
+    vm_exit_during_initialization("Failed to start tracing backend.");
   }
 
   if (CleanChunkPoolAsync) {
@@ -3739,28 +3751,6 @@ static OnLoadEntry_t lookup_on_load(AgentLibrary* agent, const char *on_load_sym
                              name)) {
         library = os::dll_load(buffer, ebuf, sizeof ebuf);
       }
-#ifdef KERNEL
-      // Download instrument dll
-      if (library == NULL && strcmp(name, "instrument") == 0) {
-        char *props = Arguments::get_kernel_properties();
-        char *home  = Arguments::get_java_home();
-        const char *fmt   = "%s/bin/java %s -Dkernel.background.download=false"
-                      " sun.jkernel.DownloadManager -download client_jvm";
-        size_t length = strlen(props) + strlen(home) + strlen(fmt) + 1;
-        char *cmd = NEW_C_HEAP_ARRAY(char, length, mtThread);
-        jio_snprintf(cmd, length, fmt, home, props);
-        int status = os::fork_and_exec(cmd);
-        FreeHeap(props);
-        if (status == -1) {
-          warning(cmd);
-          vm_exit_during_initialization("fork_and_exec failed: %s",
-                                         strerror(errno));
-        }
-        FREE_C_HEAP_ARRAY(char, cmd, mtThread);
-        // when this comes back the instrument.dll should be where it belongs.
-        library = os::dll_load(buffer, ebuf, sizeof ebuf);
-      }
-#endif // KERNEL
       if (library == NULL) { // Try the local directory
         char ns[1] = {0};
         if (os::dll_build_name(buffer, sizeof(buffer), ns, name)) {
@@ -4075,6 +4065,7 @@ jboolean Threads::is_supported_jni_version(jint version) {
   if (version == JNI_VERSION_1_2) return JNI_TRUE;
   if (version == JNI_VERSION_1_4) return JNI_TRUE;
   if (version == JNI_VERSION_1_6) return JNI_TRUE;
+  if (version == JNI_VERSION_1_8) return JNI_TRUE;
   return JNI_FALSE;
 }
 
@@ -4209,7 +4200,7 @@ void Threads::possibly_parallel_oops_do(OopClosure* f, CLDToOopClosure* cld_f, C
   }
 }
 
-#ifndef SERIALGC
+#if INCLUDE_ALL_GCS
 // Used by ParallelScavenge
 void Threads::create_thread_roots_tasks(GCTaskQueue* q) {
   ALL_JAVA_THREADS(p) {
@@ -4225,7 +4216,7 @@ void Threads::create_thread_roots_marking_tasks(GCTaskQueue* q) {
   }
   q->enqueue(new ThreadRootsMarkingTask(VMThread::vm_thread()));
 }
-#endif // SERIALGC
+#endif // INCLUDE_ALL_GCS
 
 void Threads::nmethods_do(CodeBlobClosure* cf) {
   ALL_JAVA_THREADS(p) {
@@ -4299,7 +4290,9 @@ JavaThread *Threads::owning_thread_from_monitor_owner(address owner, bool doLock
       if (owner == (address)p) return p;
     }
   }
-  assert(UseHeavyMonitors == false, "Did not find owning Java thread with UseHeavyMonitors enabled");
+  // Cannot assert on lack of success here since this function may be
+  // used by code that is trying to report useful problem information
+  // like deadlock detection.
   if (UseHeavyMonitors) return NULL;
 
   //
@@ -4317,7 +4310,7 @@ JavaThread *Threads::owning_thread_from_monitor_owner(address owner, bool doLock
       }
     }
   }
-  assert(the_owner != NULL, "Did not find owning Java thread for lock word address");
+  // cannot assert on lack of success here; see above comment
   return the_owner;
 }
 
@@ -4333,13 +4326,13 @@ void Threads::print_on(outputStream* st, bool print_stacks, bool internal_format
                );
   st->cr();
 
-#ifndef SERIALGC
+#if INCLUDE_ALL_GCS
   // Dump concurrent locks
   ConcurrentLocksDump concurrent_locks;
   if (print_concurrent_locks) {
     concurrent_locks.dump_at_safepoint();
   }
-#endif // SERIALGC
+#endif // INCLUDE_ALL_GCS
 
   ALL_JAVA_THREADS(p) {
     ResourceMark rm;
@@ -4352,11 +4345,11 @@ void Threads::print_on(outputStream* st, bool print_stacks, bool internal_format
       }
     }
     st->cr();
-#ifndef SERIALGC
+#if INCLUDE_ALL_GCS
     if (print_concurrent_locks) {
       concurrent_locks.print_locks_on(p, st);
     }
-#endif // SERIALGC
+#endif // INCLUDE_ALL_GCS
   }
 
   VMThread::vm_thread()->print_on(st);

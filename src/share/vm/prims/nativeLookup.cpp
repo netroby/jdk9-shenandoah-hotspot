@@ -40,6 +40,7 @@
 #include "runtime/javaCalls.hpp"
 #include "runtime/sharedRuntime.hpp"
 #include "runtime/signature.hpp"
+#include "utilities/macros.hpp"
 #ifdef TARGET_OS_FAMILY_linux
 # include "os_linux.inline.hpp"
 #endif
@@ -382,10 +383,7 @@ address NativeLookup::lookup_base(methodHandle method, bool& in_base_library, TR
 
 address NativeLookup::lookup(methodHandle method, bool& in_base_library, TRAPS) {
   if (!method->has_native_function()) {
-    address entry =
-        method->intrinsic_id() == vmIntrinsics::_invokeGeneric ?
-            SharedRuntime::native_method_throw_unsupported_operation_exception_entry() :
-            lookup_base(method, in_base_library, CHECK_NULL);
+    address entry = lookup_base(method, in_base_library, CHECK_NULL);
     method->set_native_function(entry,
       Method::native_bind_event_is_interesting);
     // -verbose:jni printing

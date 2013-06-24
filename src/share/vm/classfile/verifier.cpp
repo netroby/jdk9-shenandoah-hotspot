@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1998, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1998, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -61,7 +61,9 @@
 # include "bytes_ppc.hpp"
 #endif
 
-#define NOFAILOVER_MAJOR_VERSION 51
+#define NOFAILOVER_MAJOR_VERSION                       51
+#define NONZERO_PADDING_BYTES_IN_SWITCH_MAJOR_VERSION  51
+#define STATIC_METHOD_IN_INTERFACE_MAJOR_VERSION       52
 
 // Access to external entry for VerifyClassCodes - old byte code verifier
 
@@ -126,8 +128,7 @@ bool Verifier::verify(instanceKlassHandle klass, Verifier::Mode mode, bool shoul
     if (TraceClassInitialization) {
       tty->print_cr("Start class verification for: %s", klassName);
     }
-    if (UseSplitVerifier &&
-        klass->major_version() >= STACKMAP_ATTRIBUTE_MAJOR_VERSION) {
+    if (klass->major_version() >= STACKMAP_ATTRIBUTE_MAJOR_VERSION) {
       ClassVerifier split_verifier(klass, THREAD);
       split_verifier.verify_class(THREAD);
       exception_name = split_verifier.result();
@@ -361,7 +362,7 @@ void TypeOrigin::print_on(outputStream* str) const {
 }
 #endif
 
-void ErrorContext::details(outputStream* ss, Method* method) const {
+void ErrorContext::details(outputStream* ss, const Method* method) const {
   if (is_valid()) {
     ss->print_cr("");
     ss->print_cr("Exception Details:");
@@ -434,7 +435,7 @@ void ErrorContext::reason_details(outputStream* ss) const {
   ss->print_cr("");
 }
 
-void ErrorContext::location_details(outputStream* ss, Method* method) const {
+void ErrorContext::location_details(outputStream* ss, const Method* method) const {
   if (_bci != -1 && method != NULL) {
     streamIndentor si(ss);
     const char* bytecode_name = "<invalid>";
@@ -469,7 +470,7 @@ void ErrorContext::frame_details(outputStream* ss) const {
   }
 }
 
-void ErrorContext::bytecode_details(outputStream* ss, Method* method) const {
+void ErrorContext::bytecode_details(outputStream* ss, const Method* method) const {
   if (method != NULL) {
     streamIndentor si(ss);
     ss->indent().print_cr("Bytecode:");
@@ -478,7 +479,7 @@ void ErrorContext::bytecode_details(outputStream* ss, Method* method) const {
   }
 }
 
-void ErrorContext::handler_details(outputStream* ss, Method* method) const {
+void ErrorContext::handler_details(outputStream* ss, const Method* method) const {
   if (method != NULL) {
     streamIndentor si(ss);
     ExceptionTable table(method);
@@ -493,7 +494,7 @@ void ErrorContext::handler_details(outputStream* ss, Method* method) const {
   }
 }
 
-void ErrorContext::stackmap_details(outputStream* ss, Method* method) const {
+void ErrorContext::stackmap_details(outputStream* ss, const Method* method) const {
   if (method != NULL && method->has_stackmap_table()) {
     streamIndentor si(ss);
     ss->indent().print_cr("Stackmap Table:");
@@ -2026,16 +2027,19 @@ void ClassVerifier::verify_switch(
   address bcp = bcs->bcp();
   address aligned_bcp = (address) round_to((intptr_t)(bcp + 1), jintSize);
 
-  // 4639449 & 4647081: padding bytes must be 0
-  u2 padding_offset = 1;
-  while ((bcp + padding_offset) < aligned_bcp) {
-    if(*(bcp + padding_offset) != 0) {
-      verify_error(ErrorContext::bad_code(bci),
-                   "Nonzero padding byte in lookswitch or tableswitch");
-      return;
+  if (_klass->major_version() < NONZERO_PADDING_BYTES_IN_SWITCH_MAJOR_VERSION) {
+    // 4639449 & 4647081: padding bytes must be 0
+    u2 padding_offset = 1;
+    while ((bcp + padding_offset) < aligned_bcp) {
+      if(*(bcp + padding_offset) != 0) {
+        verify_error(ErrorContext::bad_code(bci),
+                     "Nonzero padding byte in lookswitch or tableswitch");
+        return;
+      }
+      padding_offset++;
     }
-    padding_offset++;
   }
+
   int default_offset = (int) Bytes::get_Java_u4(aligned_bcp);
   int keys, delta;
   current_frame->pop_stack(
@@ -2316,6 +2320,11 @@ void ClassVerifier::verify_invoke_instructions(
     case Bytecodes::_invokespecial:
       types = (1 << JVM_CONSTANT_InterfaceMethodref) |
               (1 << JVM_CONSTANT_Methodref);
+      break;
+    case Bytecodes::_invokestatic:
+      types = (_klass->major_version() < STATIC_METHOD_IN_INTERFACE_MAJOR_VERSION) ?
+        (1 << JVM_CONSTANT_Methodref) :
+        ((1 << JVM_CONSTANT_InterfaceMethodref) | (1 << JVM_CONSTANT_Methodref));
       break;
     default:
       types = 1 << JVM_CONSTANT_Methodref;

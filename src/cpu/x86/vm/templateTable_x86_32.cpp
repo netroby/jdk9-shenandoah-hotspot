@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -35,6 +35,7 @@
 #include "runtime/sharedRuntime.hpp"
 #include "runtime/stubRoutines.hpp"
 #include "runtime/synchronizer.hpp"
+#include "utilities/macros.hpp"
 
 #ifndef CC_INTERP
 #define __ _masm->
@@ -125,7 +126,7 @@ static void do_oop_store(InterpreterMacroAssembler* _masm,
                          bool precise) {
   assert(val == noreg || val == rax, "parameter is just for looks");
   switch (barrier) {
-#ifndef SERIALGC
+#if INCLUDE_ALL_GCS
     case BarrierSet::G1SATBCT:
     case BarrierSet::G1SATBCTLogging:
       {
@@ -164,7 +165,7 @@ static void do_oop_store(InterpreterMacroAssembler* _masm,
 
       }
       break;
-#endif // SERIALGC
+#endif // INCLUDE_ALL_GCS
     case BarrierSet::CardTableModRef:
     case BarrierSet::CardTableExtension:
       {
@@ -1545,9 +1546,10 @@ void TemplateTable::branch(bool is_jsr, bool is_wide) {
   __ get_method(rcx);           // ECX holds method
   __ profile_taken_branch(rax,rbx); // EAX holds updated MDP, EBX holds bumped taken count
 
-  const ByteSize be_offset = Method::backedge_counter_offset() + InvocationCounter::counter_offset();
-  const ByteSize inv_offset = Method::invocation_counter_offset() + InvocationCounter::counter_offset();
-  const int method_offset = frame::interpreter_frame_method_offset * wordSize;
+  const ByteSize be_offset = MethodCounters::backedge_counter_offset() +
+                             InvocationCounter::counter_offset();
+  const ByteSize inv_offset = MethodCounters::invocation_counter_offset() +
+                              InvocationCounter::counter_offset();
 
   // Load up EDX with the branch displacement
   __ movl(rdx, at_bcp(1));
@@ -1595,6 +1597,22 @@ void TemplateTable::branch(bool is_jsr, bool is_wide) {
     __ testl(rdx, rdx);             // check if forward or backward branch
     __ jcc(Assembler::positive, dispatch); // count only if backward branch
 
+    // check if MethodCounters exists
+    Label has_counters;
+    __ movptr(rax, Address(rcx, Method::method_counters_offset()));
+    __ testptr(rax, rax);
+    __ jcc(Assembler::notZero, has_counters);
+    __ push(rdx);
+    __ push(rcx);
+    __ call_VM(noreg, CAST_FROM_FN_PTR(address, InterpreterRuntime::build_method_counters),
+               rcx);
+    __ pop(rcx);
+    __ pop(rdx);
+    __ movptr(rax, Address(rcx, Method::method_counters_offset()));
+    __ testptr(rax, rax);
+    __ jcc(Assembler::zero, dispatch);
+    __ bind(has_counters);
+
     if (TieredCompilation) {
       Label no_mdo;
       int increment = InvocationCounter::count_increment;
@@ -1612,16 +1630,19 @@ void TemplateTable::branch(bool is_jsr, bool is_wide) {
         __ jmp(dispatch);
       }
       __ bind(no_mdo);
-      // Increment backedge counter in Method*
+      // Increment backedge counter in MethodCounters*
+      __ movptr(rcx, Address(rcx, Method::method_counters_offset()));
       __ increment_mask_and_jump(Address(rcx, be_offset), increment, mask,
                                  rax, false, Assembler::zero, &backedge_counter_overflow);
     } else {
       // increment counter
+      __ movptr(rcx, Address(rcx, Method::method_counters_offset()));
       __ movl(rax, Address(rcx, be_offset));        // load backedge counter
       __ incrementl(rax, InvocationCounter::count_increment); // increment counter
       __ movl(Address(rcx, be_offset), rax);        // store counter
 
       __ movl(rax, Address(rcx, inv_offset));    // load invocation counter
+
       __ andl(rax, InvocationCounter::count_mask_value);     // and the status bits
       __ addl(rax, Address(rcx, be_offset));        // add both counters
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -228,28 +228,16 @@ void report_fatal(const char* file, int line, const char* message)
   report_vm_error(file, line, "fatal error", message);
 }
 
-// Used by report_vm_out_of_memory to detect recursion.
-static jint _exiting_out_of_mem = 0;
-
 void report_vm_out_of_memory(const char* file, int line, size_t size,
-                             const char* message) {
+                             VMErrorType vm_err_type, const char* message) {
   if (Debugging) return;
 
-  // We try to gather additional information for the first out of memory
-  // error only; gathering additional data might cause an allocation and a
-  // recursive out_of_memory condition.
+  Thread* thread = ThreadLocalStorage::get_thread_slow();
+  VMError(thread, file, line, size, vm_err_type, message).report_and_die();
 
-  const jint exiting = 1;
-  // If we succeed in changing the value, we're the first one in.
-  bool first_time_here = Atomic::xchg(exiting, &_exiting_out_of_mem) != exiting;
-
-  if (first_time_here) {
-    Thread* thread = ThreadLocalStorage::get_thread_slow();
-    VMError(thread, file, line, size, message).report_and_die();
-  }
-
-  // Dump core and abort
-  vm_abort(true);
+  // The UseOSErrorReporting option in report_and_die() may allow a return
+  // to here. If so then we'll have to figure out how to handle it.
+  guarantee(false, "report_and_die() should not return here");
 }
 
 void report_should_not_call(const char* file, int line) {
@@ -258,10 +246,6 @@ void report_should_not_call(const char* file, int line) {
 
 void report_should_not_reach_here(const char* file, int line) {
   report_vm_error(file, line, "ShouldNotReachHere()");
-}
-
-void report_should_not_reach_here2(const char* file, int line, const char* message) {
-  report_vm_error(file, line, "ShouldNotReachHere()", message);
 }
 
 void report_unimplemented(const char* file, int line) {
@@ -360,7 +344,7 @@ void test_error_handler(size_t test_num)
                            msg, eol, msg, eol, msg, eol, msg, eol, msg, eol,
                            msg, eol, msg, eol, msg, eol, msg, eol, msg, eol,
                            msg, eol, msg, eol, msg, eol, msg, eol, msg));
-    case  8: vm_exit_out_of_memory(num, "ChunkPool::allocate");
+    case  8: vm_exit_out_of_memory(num, OOM_MALLOC_ERROR, "ChunkPool::allocate");
     case  9: ShouldNotCallThis();
     case 10: ShouldNotReachHere();
     case 11: Unimplemented();
@@ -624,18 +608,6 @@ extern "C" nmethod* findnm(intptr_t addr) {
   return  CodeCache::find_nmethod((address)addr);
 }
 
-static address same_page(address x, address y) {
-  intptr_t page_bits = -os::vm_page_size();
-  if ((intptr_t(x) & page_bits) == (intptr_t(y) & page_bits)) {
-    return x;
-  } else if (x > y) {
-    return (address)(intptr_t(y) | ~page_bits) + 1;
-  } else {
-    return (address)(intptr_t(y) & page_bits);
-  }
-}
-
-
 // Another interface that isn't ambiguous in dbx.
 // Can we someday rename the other find to hsfind?
 extern "C" void hsfind(intptr_t x) {
@@ -692,153 +664,5 @@ void help() {
   tty->print_cr("  debug()       - to set things up for compiler debugging");
   tty->print_cr("  ndebug()      - undo debug");
 }
-
-#if 0
-
-// BobV's command parser for debugging on windows when nothing else works.
-
-enum CommandID {
-  CMDID_HELP,
-  CMDID_QUIT,
-  CMDID_HSFIND,
-  CMDID_PSS,
-  CMDID_PS,
-  CMDID_PSF,
-  CMDID_FINDM,
-  CMDID_FINDNM,
-  CMDID_PP,
-  CMDID_BPT,
-  CMDID_EXIT,
-  CMDID_VERIFY,
-  CMDID_THREADS,
-  CMDID_ILLEGAL = 99
-};
-
-struct CommandParser {
-   char *name;
-   CommandID code;
-   char *description;
-};
-
-struct CommandParser CommandList[] = {
-  (char *)"help", CMDID_HELP, "  Dump this list",
-  (char *)"quit", CMDID_QUIT, "  Return from this routine",
-  (char *)"hsfind", CMDID_HSFIND, "Perform an hsfind on an address",
-  (char *)"ps", CMDID_PS, "    Print Current Thread Stack Trace",
-  (char *)"pss", CMDID_PSS, "   Print All Thread Stack Trace",
-  (char *)"psf", CMDID_PSF, "   Print All Stack Frames",
-  (char *)"findm", CMDID_FINDM, " Find a Method* from a PC",
-  (char *)"findnm", CMDID_FINDNM, "Find an nmethod from a PC",
-  (char *)"pp", CMDID_PP, "    Find out something about a pointer",
-  (char *)"break", CMDID_BPT, " Execute a breakpoint",
-  (char *)"exitvm", CMDID_EXIT, "Exit the VM",
-  (char *)"verify", CMDID_VERIFY, "Perform a Heap Verify",
-  (char *)"thread", CMDID_THREADS, "Dump Info on all Threads",
-  (char *)0, CMDID_ILLEGAL
-};
-
-
-// get_debug_command()
-//
-// Read a command from standard input.
-// This is useful when you have a debugger
-// which doesn't support calling into functions.
-//
-void get_debug_command()
-{
-  ssize_t count;
-  int i,j;
-  bool gotcommand;
-  intptr_t addr;
-  char buffer[256];
-  nmethod *nm;
-  Method* m;
-
-  tty->print_cr("You have entered the diagnostic command interpreter");
-  tty->print("The supported commands are:\n");
-  for ( i=0; ; i++ ) {
-    if ( CommandList[i].code == CMDID_ILLEGAL )
-      break;
-    tty->print_cr("  %s \n", CommandList[i].name );
-  }
-
-  while ( 1 ) {
-    gotcommand = false;
-    tty->print("Please enter a command: ");
-    count = scanf("%s", buffer) ;
-    if ( count >=0 ) {
-      for ( i=0; ; i++ ) {
-        if ( CommandList[i].code == CMDID_ILLEGAL ) {
-          if (!gotcommand) tty->print("Invalid command, please try again\n");
-          break;
-        }
-        if ( strcmp(buffer, CommandList[i].name) == 0 ) {
-          gotcommand = true;
-          switch ( CommandList[i].code ) {
-              case CMDID_PS:
-                ps();
-                break;
-              case CMDID_PSS:
-                pss();
-                break;
-              case CMDID_PSF:
-                psf();
-                break;
-              case CMDID_FINDM:
-                tty->print("Please enter the hex addr to pass to findm: ");
-                scanf("%I64X", &addr);
-                m = (Method*)findm(addr);
-                tty->print("findm(0x%I64X) returned 0x%I64X\n", addr, m);
-                break;
-              case CMDID_FINDNM:
-                tty->print("Please enter the hex addr to pass to findnm: ");
-                scanf("%I64X", &addr);
-                nm = (nmethod*)findnm(addr);
-                tty->print("findnm(0x%I64X) returned 0x%I64X\n", addr, nm);
-                break;
-              case CMDID_PP:
-                tty->print("Please enter the hex addr to pass to pp: ");
-                scanf("%I64X", &addr);
-                pp((void*)addr);
-                break;
-              case CMDID_EXIT:
-                exit(0);
-              case CMDID_HELP:
-                tty->print("Here are the supported commands: ");
-                for ( j=0; ; j++ ) {
-                  if ( CommandList[j].code == CMDID_ILLEGAL )
-                    break;
-                  tty->print_cr("  %s --  %s\n", CommandList[j].name,
-                                                 CommandList[j].description );
-                }
-                break;
-              case CMDID_QUIT:
-                return;
-                break;
-              case CMDID_BPT:
-                BREAKPOINT;
-                break;
-              case CMDID_VERIFY:
-                verify();;
-                break;
-              case CMDID_THREADS:
-                threads();;
-                break;
-              case CMDID_HSFIND:
-                tty->print("Please enter the hex addr to pass to hsfind: ");
-                scanf("%I64X", &addr);
-                tty->print("Calling hsfind(0x%I64X)\n", addr);
-                hsfind(addr);
-                break;
-              default:
-              case CMDID_ILLEGAL:
-                break;
-          }
-        }
-      }
-    }
-  }
-}
-#endif
 
 #endif // !PRODUCT

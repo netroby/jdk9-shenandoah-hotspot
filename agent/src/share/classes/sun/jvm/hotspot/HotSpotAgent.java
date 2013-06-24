@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2000, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -24,20 +24,29 @@
 
 package sun.jvm.hotspot;
 
-import java.io.PrintStream;
-import java.net.*;
-import java.rmi.*;
-import sun.jvm.hotspot.debugger.*;
-import sun.jvm.hotspot.debugger.bsd.*;
-import sun.jvm.hotspot.debugger.proc.*;
-import sun.jvm.hotspot.debugger.remote.*;
-import sun.jvm.hotspot.debugger.windbg.*;
-import sun.jvm.hotspot.debugger.linux.*;
-import sun.jvm.hotspot.memory.*;
-import sun.jvm.hotspot.oops.*;
-import sun.jvm.hotspot.runtime.*;
-import sun.jvm.hotspot.types.*;
-import sun.jvm.hotspot.utilities.*;
+import java.rmi.RemoteException;
+
+import sun.jvm.hotspot.debugger.Debugger;
+import sun.jvm.hotspot.debugger.DebuggerException;
+import sun.jvm.hotspot.debugger.JVMDebugger;
+import sun.jvm.hotspot.debugger.MachineDescription;
+import sun.jvm.hotspot.debugger.MachineDescriptionAMD64;
+import sun.jvm.hotspot.debugger.MachineDescriptionIA64;
+import sun.jvm.hotspot.debugger.MachineDescriptionIntelX86;
+import sun.jvm.hotspot.debugger.MachineDescriptionSPARC32Bit;
+import sun.jvm.hotspot.debugger.MachineDescriptionSPARC64Bit;
+import sun.jvm.hotspot.debugger.NoSuchSymbolException;
+import sun.jvm.hotspot.debugger.bsd.BsdDebuggerLocal;
+import sun.jvm.hotspot.debugger.linux.LinuxDebuggerLocal;
+import sun.jvm.hotspot.debugger.proc.ProcDebuggerLocal;
+import sun.jvm.hotspot.debugger.remote.RemoteDebugger;
+import sun.jvm.hotspot.debugger.remote.RemoteDebuggerClient;
+import sun.jvm.hotspot.debugger.remote.RemoteDebuggerServer;
+import sun.jvm.hotspot.debugger.windbg.WindbgDebuggerLocal;
+import sun.jvm.hotspot.runtime.VM;
+import sun.jvm.hotspot.types.TypeDataBase;
+import sun.jvm.hotspot.utilities.PlatformInfo;
+import sun.jvm.hotspot.utilities.UnsupportedPlatformException;
 
 /** <P> This class wraps much of the basic functionality and is the
  * highest-level factory for VM data structures. It makes it simple
@@ -311,6 +320,8 @@ public class HotSpotAgent {
                 setupDebuggerLinux();
             } else if (os.equals("bsd")) {
                 setupDebuggerBsd();
+            } else if (os.equals("darwin")) {
+                setupDebuggerDarwin();
             } else {
                 // Add support for more operating systems here
                 throw new DebuggerException("Operating system " + os + " not yet supported");
@@ -367,6 +378,10 @@ public class HotSpotAgent {
                 new LinuxVtblAccess(debugger, jvmLibNames),
                 debugger, jvmLibNames);
             } else if (os.equals("bsd")) {
+                db = new HotSpotTypeDataBase(machDesc,
+                new BsdVtblAccess(debugger, jvmLibNames),
+                debugger, jvmLibNames);
+            } else if (os.equals("darwin")) {
                 db = new HotSpotTypeDataBase(machDesc,
                 new BsdVtblAccess(debugger, jvmLibNames),
                 debugger, jvmLibNames);
@@ -459,6 +474,8 @@ public class HotSpotAgent {
             setupJVMLibNamesLinux();
         } else if (os.equals("bsd")) {
             setupJVMLibNamesBsd();
+        } else if (os.equals("darwin")) {
+            setupJVMLibNamesDarwin();
         } else {
             throw new RuntimeException("Unknown OS type");
         }
@@ -467,7 +484,7 @@ public class HotSpotAgent {
     }
 
     private void setupJVMLibNamesSolaris() {
-        jvmLibNames = new String[] { "libjvm.so", "libjvm_g.so", "gamma_g" };
+        jvmLibNames = new String[] { "libjvm.so" };
     }
 
     //
@@ -499,7 +516,7 @@ public class HotSpotAgent {
     }
 
     private void setupJVMLibNamesWin32() {
-        jvmLibNames = new String[] { "jvm.dll", "jvm_g.dll" };
+        jvmLibNames = new String[] { "jvm.dll" };
     }
 
     //
@@ -539,7 +556,7 @@ public class HotSpotAgent {
     }
 
     private void setupJVMLibNamesLinux() {
-        jvmLibNames = new String[] { "libjvm.so", "libjvm_g.so" };
+        jvmLibNames = new String[] { "libjvm.so" };
     }
 
     //
@@ -564,7 +581,30 @@ public class HotSpotAgent {
     }
 
     private void setupJVMLibNamesBsd() {
-        jvmLibNames = new String[] { "libjvm.so", "libjvm_g.so" };
+        jvmLibNames = new String[] { "libjvm.so" };
+    }
+
+    //
+    // Darwin
+    //
+
+    private void setupDebuggerDarwin() {
+        setupJVMLibNamesDarwin();
+
+        if (cpu.equals("amd64") || cpu.equals("x86_64")) {
+            machDesc = new MachineDescriptionAMD64();
+        } else {
+            throw new DebuggerException("Darwin only supported on x86_64. Current arch: " + cpu);
+        }
+
+        BsdDebuggerLocal dbg = new BsdDebuggerLocal(machDesc, !isServer);
+        debugger = dbg;
+
+        attachDebugger();
+    }
+
+    private void setupJVMLibNamesDarwin() {
+        jvmLibNames = new String[] { "libjvm.dylib" };
     }
 
     /** Convenience routine which should be called by per-platform

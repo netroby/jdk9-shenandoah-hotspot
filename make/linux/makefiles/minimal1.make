@@ -19,7 +19,7 @@
 # Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
 # or visit www.oracle.com if you need additional information or have any
 # questions.
-#  
+#
 #
 
 TYPE=MINIMAL1
@@ -30,8 +30,9 @@ INCLUDE_VM_STRUCTS ?= false
 INCLUDE_JNI_CHECK ?= false
 INCLUDE_SERVICES ?= false
 INCLUDE_MANAGEMENT ?= false
-INCLUDE_ALTERNATE_GCS ?= false
+INCLUDE_ALL_GCS ?= false
 INCLUDE_NMT ?= false
+INCLUDE_TRACE ?= false
 INCLUDE_CDS ?= false
 
 CXXFLAGS += -DMINIMAL_JVM -DCOMPILER1 -DVMTYPE=\"Minimal\"

@@ -93,6 +93,10 @@ address os::current_stack_pointer() {
   register void *esp;
   __asm__("mov %%"SPELL_REG_SP", %0":"=r"(esp));
   return (address) ((char*)esp + sizeof(long)*2);
+#elif defined(__clang__)
+  intptr_t* esp;
+  __asm__ __volatile__ ("mov %%"SPELL_REG_SP", %0":"=r"(esp):);
+  return (address) esp;
 #else
   register void *esp __asm__ (SPELL_REG_SP);
   return (address) esp;
@@ -175,6 +179,9 @@ intptr_t* _get_previous_fp() {
 #ifdef SPARC_WORKS
   register intptr_t **ebp;
   __asm__("mov %%"SPELL_REG_FP", %0":"=r"(ebp));
+#elif defined(__clang__)
+  intptr_t **ebp;
+  __asm__ __volatile__ ("mov %%"SPELL_REG_FP", %0":"=r"(ebp):);
 #else
   register intptr_t **ebp __asm__ (SPELL_REG_FP);
 #endif
@@ -189,7 +196,7 @@ frame os::current_frame() {
                 CAST_FROM_FN_PTR(address, os::current_frame));
   if (os::is_first_C_frame(&myframe)) {
     // stack is not walkable
-    return frame(NULL, NULL, NULL);
+    return frame();
   } else {
     return os::get_sender_for_C_frame(&myframe);
   }
@@ -305,6 +312,11 @@ JVM_handle_linux_signal(int sig,
           // to handle_unexpected_exception way down below.
           thread->disable_stack_red_zone();
           tty->print_raw_cr("An irrecoverable stack overflow has occurred.");
+
+          // This is a likely cause, but hard to verify. Let's just print
+          // it as a hint.
+          tty->print_raw_cr("Please check if any of your loaded .so files has "
+                            "enabled executable stack (see man page execstack(8))");
         } else {
           // Accessing stack address below sp may cause SEGV if current
           // thread has MAP_GROWSDOWN stack. This should only happen when
@@ -335,7 +347,7 @@ JVM_handle_linux_signal(int sig,
         // here if the underlying file has been truncated.
         // Do not crash the VM in such a case.
         CodeBlob* cb = CodeCache::find_blob_unsafe(pc);
-        nmethod* nm = cb->is_nmethod() ? (nmethod*)cb : NULL;
+        nmethod* nm = (cb != NULL && cb->is_nmethod()) ? (nmethod*)cb : NULL;
         if (nm != NULL && nm->has_unsafe_access()) {
           stub = StubRoutines::handler_for_unsafe_access();
         }
@@ -705,7 +717,7 @@ static void current_stack_region(address * bottom, size_t * size) {
      // JVM needs to know exact stack location, abort if it fails
      if (rslt != 0) {
        if (rslt == ENOMEM) {
-         vm_exit_out_of_memory(0, "pthread_getattr_np");
+         vm_exit_out_of_memory(0, OOM_MMAP_ERROR, "pthread_getattr_np");
        } else {
          fatal(err_msg("pthread_getattr_np failed with errno = %d", rslt));
        }

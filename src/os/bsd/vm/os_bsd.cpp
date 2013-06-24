@@ -57,6 +57,7 @@
 #include "runtime/threadCritical.hpp"
 #include "runtime/timer.hpp"
 #include "services/attachListener.hpp"
+#include "services/memTracker.hpp"
 #include "services/runtimeService.hpp"
 #include "utilities/decoder.hpp"
 #include "utilities/defaultStream.hpp"
@@ -151,7 +152,6 @@ sigset_t SR_sigset;
 // utility functions
 
 static int SR_initialize();
-static int SR_finalize();
 
 julong os::available_memory() {
   return Bsd::available_memory();
@@ -164,20 +164,6 @@ julong os::Bsd::available_memory() {
 
 julong os::physical_memory() {
   return Bsd::physical_memory();
-}
-
-julong os::allocatable_physical_memory(julong size) {
-#ifdef _LP64
-  return size;
-#else
-  julong result = MIN2(size, (julong)3800*M);
-   if (!is_allocatable(result)) {
-     // See comments under solaris for alignment considerations
-     julong reasonable_size = (julong)2*G - 2 * os::vm_page_size();
-     result =  MIN2(size, reasonable_size);
-   }
-   return result;
-#endif // _LP64
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -640,8 +626,6 @@ void os::Bsd::hotspot_sigmask(Thread* thread) {
 //////////////////////////////////////////////////////////////////////////////
 // create new thread
 
-static address highest_vm_reserved_address();
-
 // check if it's safe to start a new thread
 static bool _thread_safety_check(Thread* thread) {
   return true;
@@ -655,6 +639,18 @@ static bool _thread_safety_check(Thread* thread) {
 typedef void (*objc_registerThreadWithCollector_t)();
 extern "C" objc_registerThreadWithCollector_t objc_registerThreadWithCollectorFunction;
 objc_registerThreadWithCollector_t objc_registerThreadWithCollectorFunction = NULL;
+#endif
+
+#ifdef __APPLE__
+static uint64_t locate_unique_thread_id() {
+  // Additional thread_id used to correlate threads in SA
+  thread_identifier_info_data_t     m_ident_info;
+  mach_msg_type_number_t            count = THREAD_IDENTIFIER_INFO_COUNT;
+
+  thread_info(::mach_thread_self(), THREAD_IDENTIFIER_INFO,
+              (thread_info_t) &m_ident_info, &count);
+  return m_ident_info.thread_id;
+}
 #endif
 
 // Thread start routine for all newly created threads
@@ -685,6 +681,7 @@ static void *java_start(Thread *thread) {
 #ifdef __APPLE__
   // thread_id is mach thread on macos
   osthread->set_thread_id(::mach_thread_self());
+  osthread->set_unique_thread_id(locate_unique_thread_id());
 #else
   // thread_id is pthread_id on BSD
   osthread->set_thread_id(::pthread_self());
@@ -847,6 +844,7 @@ bool os::create_attached_thread(JavaThread* thread) {
   // Store pthread info into the OSThread
 #ifdef __APPLE__
   osthread->set_thread_id(::mach_thread_self());
+  osthread->set_unique_thread_id(locate_unique_thread_id());
 #else
   osthread->set_thread_id(::pthread_self());
 #endif
@@ -935,10 +933,10 @@ jlong os::elapsed_frequency() {
   return (1000 * 1000);
 }
 
-// XXX: For now, code this as if BSD does not support vtime.
-bool os::supports_vtime() { return false; }
+bool os::supports_vtime() { return true; }
 bool os::enable_vtime()   { return false; }
 bool os::vtime_enabled()  { return false; }
+
 double os::elapsedVTime() {
   // better than nothing, but not much
   return elapsedTime();
@@ -1199,6 +1197,9 @@ bool os::dll_build_name(char* buffer, size_t buflen,
   } else if (strchr(pname, *os::path_separator()) != NULL) {
     int n;
     char** pelements = split_path(pname, &n);
+    if (pelements == NULL) {
+      return false;
+    }
     for (int i = 0 ; i < n ; i++) {
       // Really shouldn't be NULL, but check can't hurt
       if (pelements[i] == NULL || strlen(pelements[i]) == 0) {
@@ -1225,10 +1226,6 @@ bool os::dll_build_name(char* buffer, size_t buflen,
     retval = true;
   }
   return retval;
-}
-
-const char* os::get_current_directory(char *buf, int buflen) {
-  return getcwd(buf, buflen);
 }
 
 // check if addr is inside libjvm.so
@@ -1855,16 +1852,117 @@ static volatile jint pending_signals[NSIG+1] = { 0 };
 
 // Bsd(POSIX) specific hand shaking semaphore.
 #ifdef __APPLE__
-static semaphore_t sig_sem;
+typedef semaphore_t os_semaphore_t;
 #define SEM_INIT(sem, value)    semaphore_create(mach_task_self(), &sem, SYNC_POLICY_FIFO, value)
-#define SEM_WAIT(sem)           semaphore_wait(sem);
-#define SEM_POST(sem)           semaphore_signal(sem);
+#define SEM_WAIT(sem)           semaphore_wait(sem)
+#define SEM_POST(sem)           semaphore_signal(sem)
+#define SEM_DESTROY(sem)        semaphore_destroy(mach_task_self(), sem)
 #else
-static sem_t sig_sem;
+typedef sem_t os_semaphore_t;
 #define SEM_INIT(sem, value)    sem_init(&sem, 0, value)
-#define SEM_WAIT(sem)           sem_wait(&sem);
-#define SEM_POST(sem)           sem_post(&sem);
+#define SEM_WAIT(sem)           sem_wait(&sem)
+#define SEM_POST(sem)           sem_post(&sem)
+#define SEM_DESTROY(sem)        sem_destroy(&sem)
 #endif
+
+class Semaphore : public StackObj {
+  public:
+    Semaphore();
+    ~Semaphore();
+    void signal();
+    void wait();
+    bool trywait();
+    bool timedwait(unsigned int sec, int nsec);
+  private:
+    jlong currenttime() const;
+    semaphore_t _semaphore;
+};
+
+Semaphore::Semaphore() : _semaphore(0) {
+  SEM_INIT(_semaphore, 0);
+}
+
+Semaphore::~Semaphore() {
+  SEM_DESTROY(_semaphore);
+}
+
+void Semaphore::signal() {
+  SEM_POST(_semaphore);
+}
+
+void Semaphore::wait() {
+  SEM_WAIT(_semaphore);
+}
+
+jlong Semaphore::currenttime() const {
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    return (tv.tv_sec * NANOSECS_PER_SEC) + (tv.tv_usec * 1000);
+}
+
+#ifdef __APPLE__
+bool Semaphore::trywait() {
+  return timedwait(0, 0);
+}
+
+bool Semaphore::timedwait(unsigned int sec, int nsec) {
+  kern_return_t kr = KERN_ABORTED;
+  mach_timespec_t waitspec;
+  waitspec.tv_sec = sec;
+  waitspec.tv_nsec = nsec;
+
+  jlong starttime = currenttime();
+
+  kr = semaphore_timedwait(_semaphore, waitspec);
+  while (kr == KERN_ABORTED) {
+    jlong totalwait = (sec * NANOSECS_PER_SEC) + nsec;
+
+    jlong current = currenttime();
+    jlong passedtime = current - starttime;
+
+    if (passedtime >= totalwait) {
+      waitspec.tv_sec = 0;
+      waitspec.tv_nsec = 0;
+    } else {
+      jlong waittime = totalwait - (current - starttime);
+      waitspec.tv_sec = waittime / NANOSECS_PER_SEC;
+      waitspec.tv_nsec = waittime % NANOSECS_PER_SEC;
+    }
+
+    kr = semaphore_timedwait(_semaphore, waitspec);
+  }
+
+  return kr == KERN_SUCCESS;
+}
+
+#else
+
+bool Semaphore::trywait() {
+  return sem_trywait(&_semaphore) == 0;
+}
+
+bool Semaphore::timedwait(unsigned int sec, int nsec) {
+  struct timespec ts;
+  jlong endtime = unpackTime(&ts, false, (sec * NANOSECS_PER_SEC) + nsec);
+
+  while (1) {
+    int result = sem_timedwait(&_semaphore, &ts);
+    if (result == 0) {
+      return true;
+    } else if (errno == EINTR) {
+      continue;
+    } else if (errno == ETIMEDOUT) {
+      return false;
+    } else {
+      return false;
+    }
+  }
+}
+
+#endif // __APPLE__
+
+static os_semaphore_t sig_sem;
+static Semaphore sr_semaphore;
 
 void os::signal_init_pd() {
   // Initialize signal structures
@@ -2077,9 +2175,10 @@ static char* anon_mmap(char* requested_addr, size_t bytes, bool fixed) {
     flags |= MAP_FIXED;
   }
 
-  // Map uncommitted pages PROT_READ and PROT_WRITE, change access
-  // to PROT_EXEC if executable when we commit the page.
-  addr = (char*)::mmap(requested_addr, bytes, PROT_READ|PROT_WRITE,
+  // Map reserved/uncommitted pages PROT_NONE so we fail early if we
+  // touch an uncommitted page. Otherwise, the read/write might
+  // succeed if we have enough swap space to back the physical page.
+  addr = (char*)::mmap(requested_addr, bytes, PROT_NONE,
                        flags, -1, 0);
 
   if (addr != MAP_FAILED) {
@@ -2110,10 +2209,6 @@ char* os::pd_reserve_memory(size_t bytes, char* requested_addr,
 
 bool os::pd_release_memory(char* addr, size_t size) {
   return anon_munmap(addr, size);
-}
-
-static address highest_vm_reserved_address() {
-  return _highest_vm_reserved_address;
 }
 
 static bool bsd_mprotect(char* addr, size_t size, int prot) {
@@ -2157,43 +2252,6 @@ bool os::unguard_memory(char* addr, size_t size) {
 
 bool os::Bsd::hugetlbfs_sanity_check(bool warn, size_t page_size) {
   return false;
-}
-
-/*
-* Set the coredump_filter bits to include largepages in core dump (bit 6)
-*
-* From the coredump_filter documentation:
-*
-* - (bit 0) anonymous private memory
-* - (bit 1) anonymous shared memory
-* - (bit 2) file-backed private memory
-* - (bit 3) file-backed shared memory
-* - (bit 4) ELF header pages in file-backed private memory areas (it is
-*           effective only if the bit 2 is cleared)
-* - (bit 5) hugetlb private memory
-* - (bit 6) hugetlb shared memory
-*/
-static void set_coredump_filter(void) {
-  FILE *f;
-  long cdm;
-
-  if ((f = fopen("/proc/self/coredump_filter", "r+")) == NULL) {
-    return;
-  }
-
-  if (fscanf(f, "%lx", &cdm) != 1) {
-    fclose(f);
-    return;
-  }
-
-  rewind(f);
-
-  if ((cdm & LARGEPAGES_BIT) == 0) {
-    cdm |= LARGEPAGES_BIT;
-    fprintf(f, "%#lx", cdm);
-  }
-
-  fclose(f);
 }
 
 // Large page support
@@ -2261,13 +2319,25 @@ char* os::reserve_memory_special(size_t bytes, char* req_addr, bool exec) {
      return NULL;
   }
 
+  // The memory is committed
+  address pc = CALLER_PC;
+  MemTracker::record_virtual_memory_reserve((address)addr, bytes, pc);
+  MemTracker::record_virtual_memory_commit((address)addr, bytes, pc);
+
   return addr;
 }
 
 bool os::release_memory_special(char* base, size_t bytes) {
   // detaching the SHM segment will also delete it, see reserve_memory_special()
   int rslt = shmdt(base);
-  return rslt == 0;
+  if (rslt == 0) {
+    MemTracker::record_virtual_memory_uncommit((address)base, bytes);
+    MemTracker::record_virtual_memory_release((address)base, bytes);
+    return true;
+  } else {
+    return false;
+  }
+
 }
 
 size_t os::large_page_size() {
@@ -2647,9 +2717,6 @@ void os::hint_no_preempt() {}
 static void resume_clear_context(OSThread *osthread) {
   osthread->set_ucontext(NULL);
   osthread->set_siginfo(NULL);
-
-  // notify the suspend action is completed, we have now resumed
-  osthread->sr.clear_suspended();
 }
 
 static void suspend_save_context(OSThread *osthread, siginfo_t* siginfo, ucontext_t* context) {
@@ -2669,7 +2736,7 @@ static void suspend_save_context(OSThread *osthread, siginfo_t* siginfo, ucontex
 // its signal handlers run and prevents sigwait()'s use with the
 // mutex granting granting signal.
 //
-// Currently only ever called on the VMThread
+// Currently only ever called on the VMThread or JavaThread
 //
 static void SR_handler(int sig, siginfo_t* siginfo, ucontext_t* context) {
   // Save and restore errno to avoid confusing native code with EINTR
@@ -2678,38 +2745,48 @@ static void SR_handler(int sig, siginfo_t* siginfo, ucontext_t* context) {
 
   Thread* thread = Thread::current();
   OSThread* osthread = thread->osthread();
-  assert(thread->is_VM_thread(), "Must be VMThread");
-  // read current suspend action
-  int action = osthread->sr.suspend_action();
-  if (action == SR_SUSPEND) {
+  assert(thread->is_VM_thread() || thread->is_Java_thread(), "Must be VMThread or JavaThread");
+
+  os::SuspendResume::State current = osthread->sr.state();
+  if (current == os::SuspendResume::SR_SUSPEND_REQUEST) {
     suspend_save_context(osthread, siginfo, context);
 
-    // Notify the suspend action is about to be completed. do_suspend()
-    // waits until SR_SUSPENDED is set and then returns. We will wait
-    // here for a resume signal and that completes the suspend-other
-    // action. do_suspend/do_resume is always called as a pair from
-    // the same thread - so there are no races
+    // attempt to switch the state, we assume we had a SUSPEND_REQUEST
+    os::SuspendResume::State state = osthread->sr.suspended();
+    if (state == os::SuspendResume::SR_SUSPENDED) {
+      sigset_t suspend_set;  // signals for sigsuspend()
 
-    // notify the caller
-    osthread->sr.set_suspended();
+      // get current set of blocked signals and unblock resume signal
+      pthread_sigmask(SIG_BLOCK, NULL, &suspend_set);
+      sigdelset(&suspend_set, SR_signum);
 
-    sigset_t suspend_set;  // signals for sigsuspend()
+      sr_semaphore.signal();
+      // wait here until we are resumed
+      while (1) {
+        sigsuspend(&suspend_set);
 
-    // get current set of blocked signals and unblock resume signal
-    pthread_sigmask(SIG_BLOCK, NULL, &suspend_set);
-    sigdelset(&suspend_set, SR_signum);
+        os::SuspendResume::State result = osthread->sr.running();
+        if (result == os::SuspendResume::SR_RUNNING) {
+          sr_semaphore.signal();
+          break;
+        } else if (result != os::SuspendResume::SR_SUSPENDED) {
+          ShouldNotReachHere();
+        }
+      }
 
-    // wait here until we are resumed
-    do {
-      sigsuspend(&suspend_set);
-      // ignore all returns until we get a resume signal
-    } while (osthread->sr.suspend_action() != SR_CONTINUE);
+    } else if (state == os::SuspendResume::SR_RUNNING) {
+      // request was cancelled, continue
+    } else {
+      ShouldNotReachHere();
+    }
 
     resume_clear_context(osthread);
-
+  } else if (current == os::SuspendResume::SR_RUNNING) {
+    // request was cancelled, continue
+  } else if (current == os::SuspendResume::SR_WAKEUP_REQUEST) {
+    // ignore
   } else {
-    assert(action == SR_CONTINUE, "unexpected sr action");
-    // nothing special to do - just leave the handler
+    // ignore
   }
 
   errno = old_errno;
@@ -2753,46 +2830,82 @@ static int SR_initialize() {
   return 0;
 }
 
-static int SR_finalize() {
-  return 0;
+static int sr_notify(OSThread* osthread) {
+  int status = pthread_kill(osthread->pthread_id(), SR_signum);
+  assert_status(status == 0, status, "pthread_kill");
+  return status;
 }
 
+// "Randomly" selected value for how long we want to spin
+// before bailing out on suspending a thread, also how often
+// we send a signal to a thread we want to resume
+static const int RANDOMLY_LARGE_INTEGER = 1000000;
+static const int RANDOMLY_LARGE_INTEGER2 = 100;
 
 // returns true on success and false on error - really an error is fatal
 // but this seems the normal response to library errors
 static bool do_suspend(OSThread* osthread) {
-  // mark as suspended and send signal
-  osthread->sr.set_suspend_action(SR_SUSPEND);
-  int status = pthread_kill(osthread->pthread_id(), SR_signum);
-  assert_status(status == 0, status, "pthread_kill");
+  assert(osthread->sr.is_running(), "thread should be running");
+  assert(!sr_semaphore.trywait(), "semaphore has invalid state");
 
-  // check status and wait until notified of suspension
-  if (status == 0) {
-    for (int i = 0; !osthread->sr.is_suspended(); i++) {
-      os::yield_all(i);
-    }
-    osthread->sr.set_suspend_action(SR_NONE);
-    return true;
-  }
-  else {
-    osthread->sr.set_suspend_action(SR_NONE);
+  // mark as suspended and send signal
+  if (osthread->sr.request_suspend() != os::SuspendResume::SR_SUSPEND_REQUEST) {
+    // failed to switch, state wasn't running?
+    ShouldNotReachHere();
     return false;
   }
+
+  if (sr_notify(osthread) != 0) {
+    ShouldNotReachHere();
+  }
+
+  // managed to send the signal and switch to SUSPEND_REQUEST, now wait for SUSPENDED
+  while (true) {
+    if (sr_semaphore.timedwait(0, 2 * NANOSECS_PER_MILLISEC)) {
+      break;
+    } else {
+      // timeout
+      os::SuspendResume::State cancelled = osthread->sr.cancel_suspend();
+      if (cancelled == os::SuspendResume::SR_RUNNING) {
+        return false;
+      } else if (cancelled == os::SuspendResume::SR_SUSPENDED) {
+        // make sure that we consume the signal on the semaphore as well
+        sr_semaphore.wait();
+        break;
+      } else {
+        ShouldNotReachHere();
+        return false;
+      }
+    }
+  }
+
+  guarantee(osthread->sr.is_suspended(), "Must be suspended");
+  return true;
 }
 
 static void do_resume(OSThread* osthread) {
   assert(osthread->sr.is_suspended(), "thread should be suspended");
-  osthread->sr.set_suspend_action(SR_CONTINUE);
+  assert(!sr_semaphore.trywait(), "invalid semaphore state");
 
-  int status = pthread_kill(osthread->pthread_id(), SR_signum);
-  assert_status(status == 0, status, "pthread_kill");
-  // check status and wait unit notified of resumption
-  if (status == 0) {
-    for (int i = 0; osthread->sr.is_suspended(); i++) {
-      os::yield_all(i);
+  if (osthread->sr.request_wakeup() != os::SuspendResume::SR_WAKEUP_REQUEST) {
+    // failed to switch to WAKEUP_REQUEST
+    ShouldNotReachHere();
+    return;
+  }
+
+  while (true) {
+    if (sr_notify(osthread) == 0) {
+      if (sr_semaphore.timedwait(0, 2 * NANOSECS_PER_MILLISEC)) {
+        if (osthread->sr.is_running()) {
+          return;
+        }
+      }
+    } else {
+      ShouldNotReachHere();
     }
   }
-  osthread->sr.set_suspend_action(SR_NONE);
+
+  guarantee(osthread->sr.is_running(), "Must be running!");
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -2873,7 +2986,9 @@ JVM_handle_bsd_signal(int signo, siginfo_t* siginfo,
 
 void signalHandler(int sig, siginfo_t* info, void* uc) {
   assert(info != NULL && uc != NULL, "it must be old kernel");
+  int orig_errno = errno;  // Preserve errno value over signal handler.
   JVM_handle_bsd_signal(sig, info, uc, true);
+  errno = orig_errno;
 }
 
 
@@ -3020,6 +3135,19 @@ void os::Bsd::set_signal_handler(int sig, bool set_installed) {
     sigAct.sa_sigaction = signalHandler;
     sigAct.sa_flags = SA_SIGINFO|SA_RESTART;
   }
+#if __APPLE__
+  // Needed for main thread as XNU (Mac OS X kernel) will only deliver SIGSEGV
+  // (which starts as SIGBUS) on main thread with faulting address inside "stack+guard pages"
+  // if the signal handler declares it will handle it on alternate stack.
+  // Notice we only declare we will handle it on alt stack, but we are not
+  // actually going to use real alt stack - this is just a workaround.
+  // Please see ux_exception.c, method catch_mach_exception_raise for details
+  // link http://www.opensource.apple.com/source/xnu/xnu-2050.18.24/bsd/uxkern/ux_exception.c
+  if (sig == SIGSEGV) {
+    sigAct.sa_flags |= SA_ONSTACK;
+  }
+#endif
+
   // Save flags, which are set by ours
   assert(sig > 0 && sig < MAXSIGNUM, "vm signal out of expected range");
   sigflags[sig] = sigAct.sa_flags;
@@ -3528,7 +3656,40 @@ bool os::bind_to_processor(uint processor_id) {
   return false;
 }
 
+void os::SuspendedThreadTask::internal_do_task() {
+  if (do_suspend(_thread->osthread())) {
+    SuspendedThreadTaskContext context(_thread, _thread->osthread()->ucontext());
+    do_task(context);
+    do_resume(_thread->osthread());
+  }
+}
+
 ///
+class PcFetcher : public os::SuspendedThreadTask {
+public:
+  PcFetcher(Thread* thread) : os::SuspendedThreadTask(thread) {}
+  ExtendedPC result();
+protected:
+  void do_task(const os::SuspendedThreadTaskContext& context);
+private:
+  ExtendedPC _epc;
+};
+
+ExtendedPC PcFetcher::result() {
+  guarantee(is_done(), "task is not done yet.");
+  return _epc;
+}
+
+void PcFetcher::do_task(const os::SuspendedThreadTaskContext& context) {
+  Thread* thread = context.thread();
+  OSThread* osthread = thread->osthread();
+  if (osthread->ucontext() != NULL) {
+    _epc = os::Bsd::ucontext_get_pc((ucontext_t *) context.ucontext());
+  } else {
+    // NULL context is unexpected, double-check this is the VMThread
+    guarantee(thread->is_VM_thread(), "can only be called for VMThread");
+  }
+}
 
 // Suspends the target using the signal mechanism and then grabs the PC before
 // resuming the target. Used by the flat-profiler only
@@ -3537,22 +3698,9 @@ ExtendedPC os::get_thread_pc(Thread* thread) {
   assert(Thread::current()->is_Watcher_thread(), "Must be watcher");
   assert(thread->is_VM_thread(), "Can only be called for VMThread");
 
-  ExtendedPC epc;
-
-  OSThread* osthread = thread->osthread();
-  if (do_suspend(osthread)) {
-    if (osthread->ucontext() != NULL) {
-      epc = os::Bsd::ucontext_get_pc(osthread->ucontext());
-    } else {
-      // NULL context is unexpected, double-check this is the VMThread
-      guarantee(thread->is_VM_thread(), "can only be called for VMThread");
-    }
-    do_resume(osthread);
-  }
-  // failure means pthread_kill failed for some reason - arguably this is
-  // a fatal problem, but such problems are ignored elsewhere
-
-  return epc;
+  PcFetcher fetcher(thread);
+  fetcher.run();
+  return fetcher.result();
 }
 
 int os::Bsd::safe_cond_timedwait(pthread_cond_t *_cond, pthread_mutex_t *_mutex, const struct timespec *_abstime)
@@ -3562,16 +3710,6 @@ int os::Bsd::safe_cond_timedwait(pthread_cond_t *_cond, pthread_mutex_t *_mutex,
 
 ////////////////////////////////////////////////////////////////////////////////
 // debug support
-
-static address same_page(address x, address y) {
-  int page_bits = -os::vm_page_size();
-  if ((intptr_t(x) & page_bits) == (intptr_t(y) & page_bits))
-    return x;
-  else if (x > y)
-    return (address)(intptr_t(y) | ~page_bits) + 1;
-  else
-    return (address)(intptr_t(y) & page_bits);
-}
 
 bool os::find(address addr, outputStream* st) {
   Dl_info dlinfo;
@@ -3596,8 +3734,8 @@ bool os::find(address addr, outputStream* st) {
 
     if (Verbose) {
       // decode some bytes around the PC
-      address begin = same_page(addr-40, addr);
-      address end   = same_page(addr+40, addr);
+      address begin = clamp_address_in_page(addr-40, addr, os::vm_page_size());
+      address end   = clamp_address_in_page(addr+40, addr, os::vm_page_size());
       address       lowest = (address) dlinfo.dli_sname;
       if (!lowest)  lowest = (address) dlinfo.dli_fbase;
       if (begin < lowest)  begin = lowest;
@@ -3887,15 +4025,27 @@ bool os::pd_unmap_memory(char* addr, size_t bytes) {
 jlong os::current_thread_cpu_time() {
 #ifdef __APPLE__
   return os::thread_cpu_time(Thread::current(), true /* user + sys */);
+#else
+  Unimplemented();
+  return 0;
 #endif
 }
 
 jlong os::thread_cpu_time(Thread* thread) {
+#ifdef __APPLE__
+  return os::thread_cpu_time(thread, true /* user + sys */);
+#else
+  Unimplemented();
+  return 0;
+#endif
 }
 
 jlong os::current_thread_cpu_time(bool user_sys_cpu_time) {
 #ifdef __APPLE__
   return os::thread_cpu_time(Thread::current(), user_sys_cpu_time);
+#else
+  Unimplemented();
+  return 0;
 #endif
 }
 
@@ -3919,6 +4069,9 @@ jlong os::thread_cpu_time(Thread *thread, bool user_sys_cpu_time) {
   } else {
     return ((jlong)tinfo.user_time.seconds * 1000000000) + ((jlong)tinfo.user_time.microseconds * (jlong)1000);
   }
+#else
+  Unimplemented();
+  return 0;
 #endif
 }
 
@@ -4532,3 +4685,4 @@ int os::get_core_path(char* buffer, size_t bufferSize) {
 
   return n;
 }
+

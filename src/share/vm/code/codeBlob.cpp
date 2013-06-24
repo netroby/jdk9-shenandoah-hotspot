@@ -186,7 +186,7 @@ void CodeBlob::flush() {
     FREE_C_HEAP_ARRAY(unsigned char, _oop_maps, mtCode);
     _oop_maps = NULL;
   }
-  _comments.free();
+  _strings.free();
 }
 
 
@@ -348,14 +348,14 @@ RuntimeStub* RuntimeStub::new_runtime_stub(const char* stub_name,
 
 
 void* RuntimeStub::operator new(size_t s, unsigned size) {
-  void* p = CodeCache::allocate(size);
+  void* p = CodeCache::allocate(size, true);
   if (!p) fatal("Initial size of CodeCache is too small");
   return p;
 }
 
 // operator new shared by all singletons:
 void* SingletonBlob::operator new(size_t s, unsigned size) {
-  void* p = CodeCache::allocate(size);
+  void* p = CodeCache::allocate(size, true);
   if (!p) fatal("Initial size of CodeCache is too small");
   return p;
 }

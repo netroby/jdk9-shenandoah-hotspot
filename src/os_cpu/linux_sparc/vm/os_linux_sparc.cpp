@@ -178,7 +178,7 @@ static void current_stack_region(address* bottom, size_t* size) {
     // JVM needs to know exact stack location, abort if it fails
     if (rslt != 0) {
       if (rslt == ENOMEM) {
-        vm_exit_out_of_memory(0, "pthread_getattr_np");
+        vm_exit_out_of_memory(0, OOM_MMAP_ERROR, "pthread_getattr_np");
       } else {
         fatal(err_msg("pthread_getattr_np failed with errno = %d", rslt));
       }
@@ -410,6 +410,11 @@ inline static bool checkOverflow(sigcontext* uc,
       // to handle_unexpected_exception way down below.
       thread->disable_stack_red_zone();
       tty->print_raw_cr("An irrecoverable stack overflow has occurred.");
+
+      // This is a likely cause, but hard to verify. Let's just print
+      // it as a hint.
+      tty->print_raw_cr("Please check if any of your loaded .so files has "
+                        "enabled executable stack (see man page execstack(8))");
     } else {
       // Accessing stack address below sp may cause SEGV if current
       // thread has MAP_GROWSDOWN stack. This should only happen when

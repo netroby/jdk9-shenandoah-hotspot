@@ -486,7 +486,6 @@ void nmethod::init_defaults() {
 #endif // def HAVE_DTRACE_H
 }
 
-
 nmethod* nmethod::new_native_nmethod(methodHandle method,
   int compile_id,
   CodeBuffer *code_buffer,
@@ -505,14 +504,15 @@ nmethod* nmethod::new_native_nmethod(methodHandle method,
     CodeOffsets offsets;
     offsets.set_value(CodeOffsets::Verified_Entry, vep_offset);
     offsets.set_value(CodeOffsets::Frame_Complete, frame_complete);
-    nm = new (native_nmethod_size)
-      nmethod(method(), native_nmethod_size, compile_id, &offsets,
-              code_buffer, frame_size,
-              basic_lock_owner_sp_offset, basic_lock_sp_offset,
-              oop_maps);
+    nm = new (native_nmethod_size) nmethod(method(), native_nmethod_size,
+                                            compile_id, &offsets,
+                                            code_buffer, frame_size,
+                                            basic_lock_owner_sp_offset,
+                                            basic_lock_sp_offset, oop_maps);
     NOT_PRODUCT(if (nm != NULL)  nmethod_stats.note_native_nmethod(nm));
-    if (PrintAssembly && nm != NULL)
+    if (PrintAssembly && nm != NULL) {
       Disassembler::decode(nm);
+    }
   }
   // verify nmethod
   debug_only(if (nm) nm->verify();) // might block
@@ -542,11 +542,13 @@ nmethod* nmethod::new_dtrace_nmethod(methodHandle method,
     offsets.set_value(CodeOffsets::Dtrace_trap, trap_offset);
     offsets.set_value(CodeOffsets::Frame_Complete, frame_complete);
 
-    nm = new (nmethod_size) nmethod(method(), nmethod_size, &offsets, code_buffer, frame_size);
+    nm = new (nmethod_size) nmethod(method(), nmethod_size,
+                                    &offsets, code_buffer, frame_size);
 
     NOT_PRODUCT(if (nm != NULL)  nmethod_stats.note_nmethod(nm));
-    if (PrintAssembly && nm != NULL)
+    if (PrintAssembly && nm != NULL) {
       Disassembler::decode(nm);
+    }
   }
   // verify nmethod
   debug_only(if (nm) nm->verify();) // might block
@@ -587,14 +589,16 @@ nmethod* nmethod::new_nmethod(methodHandle method,
       + round_to(handler_table->size_in_bytes(), oopSize)
       + round_to(nul_chk_table->size_in_bytes(), oopSize)
       + round_to(debug_info->data_size()       , oopSize);
+
     nm = new (nmethod_size)
-      nmethod(method(), nmethod_size, compile_id, entry_bci, offsets,
-              orig_pc_offset, debug_info, dependencies, code_buffer, frame_size,
-              oop_maps,
-              handler_table,
-              nul_chk_table,
-              compiler,
-              comp_level);
+    nmethod(method(), nmethod_size, compile_id, entry_bci, offsets,
+            orig_pc_offset, debug_info, dependencies, code_buffer, frame_size,
+            oop_maps,
+            handler_table,
+            nul_chk_table,
+            compiler,
+            comp_level);
+
     if (nm != NULL) {
       // To make dependency checking during class loading fast, record
       // the nmethod dependencies in the classes it is dependent on.
@@ -606,15 +610,18 @@ nmethod* nmethod::new_nmethod(methodHandle method,
       // classes the slow way is too slow.
       for (Dependencies::DepStream deps(nm); deps.next(); ) {
         Klass* klass = deps.context_type();
-        if (klass == NULL)  continue;  // ignore things like evol_method
+        if (klass == NULL) {
+          continue;  // ignore things like evol_method
+        }
 
         // record this nmethod as dependent on this klass
         InstanceKlass::cast(klass)->add_dependent_nmethod(nm);
       }
     }
     NOT_PRODUCT(if (nm != NULL)  nmethod_stats.note_nmethod(nm));
-    if (PrintAssembly && nm != NULL)
+    if (PrintAssembly && nm != NULL) {
       Disassembler::decode(nm);
+    }
   }
 
   // verify nmethod
@@ -792,12 +799,10 @@ nmethod::nmethod(
 }
 #endif // def HAVE_DTRACE_H
 
-void* nmethod::operator new(size_t size, int nmethod_size) {
-  // Always leave some room in the CodeCache for I2C/C2I adapters
-  if (CodeCache::largest_free_block() < CodeCacheMinimumFreeSpace) return NULL;
+void* nmethod::operator new(size_t size, int nmethod_size) throw () {
+  // Not critical, may return null if there is too little continuous memory
   return CodeCache::allocate(nmethod_size);
 }
-
 
 nmethod::nmethod(
   Method* method,
@@ -1789,6 +1794,19 @@ void nmethod::metadata_do(void f(Metadata*)) {
           Metadata* md = r->metadata_value();
           f(md);
         }
+      } else if (iter.type() == relocInfo::virtual_call_type) {
+        // Check compiledIC holders associated with this nmethod
+        CompiledIC *ic = CompiledIC_at(iter.reloc());
+        if (ic->is_icholder_call()) {
+          CompiledICHolder* cichk = ic->cached_icholder();
+          f(cichk->holder_method());
+          f(cichk->holder_klass());
+        } else {
+          Metadata* ic_oop = ic->cached_metadata();
+          if (ic_oop != NULL) {
+            f(ic_oop);
+          }
+        }
       }
     }
   }
@@ -1799,6 +1817,7 @@ void nmethod::metadata_do(void f(Metadata*)) {
     Metadata* md = *p;
     f(md);
   }
+
   // Call function Method*, not embedded in these other places.
   if (_method != NULL) f(_method);
 }
@@ -1957,11 +1976,10 @@ void nmethod::preserve_callee_argument_oops(frame fr, const RegisterMap *reg_map
   if (!method()->is_native()) {
     SimpleScopeDesc ssd(this, fr.pc());
     Bytecode_invoke call(ssd.method(), ssd.bci());
-    // compiled invokedynamic call sites have an implicit receiver at
-    // resolution time, so make sure it gets GC'ed.
-    bool has_receiver = !call.is_invokestatic();
+    bool has_receiver = call.has_receiver();
+    bool has_appendix = call.has_appendix();
     Symbol* signature = call.signature();
-    fr.oops_compiled_arguments_do(signature, has_receiver, reg_map, f);
+    fr.oops_compiled_arguments_do(signature, has_receiver, has_appendix, reg_map, f);
   }
 #endif // !SHARK
 }

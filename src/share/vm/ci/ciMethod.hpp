@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1999, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1999, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -166,8 +166,9 @@ class ciMethod : public ciMetadata {
   // Code size for inlining decisions.
   int code_size_for_inlining();
 
-  bool force_inline() { return get_Method()->force_inline(); }
-  bool dont_inline()  { return get_Method()->dont_inline();  }
+  bool caller_sensitive() { return get_Method()->caller_sensitive(); }
+  bool force_inline()     { return get_Method()->force_inline();     }
+  bool dont_inline()      { return get_Method()->dont_inline();      }
 
   int comp_level();
   int highest_osr_comp_level();
@@ -195,7 +196,6 @@ class ciMethod : public ciMetadata {
   // Analysis and profiling.
   //
   // Usage note: liveness_at_bci and init_vars should be wrapped in ResourceMarks.
-  bool          uses_monitors() const            { return _uses_monitors; } // this one should go away, it has a misleading name
   bool          has_monitor_bytecodes() const    { return _uses_monitors; }
   bool          has_balanced_monitors();
 
@@ -252,7 +252,7 @@ class ciMethod : public ciMetadata {
   bool has_option(const char *option);
   bool can_be_compiled();
   bool can_be_osr_compiled(int entry_bci);
-  void set_not_compilable();
+  void set_not_compilable(const char* reason = NULL);
   bool has_compiled_code();
   void log_nmethod_identity(xmlStream* log);
   bool is_not_reached(int bci);
@@ -261,8 +261,12 @@ class ciMethod : public ciMetadata {
   bool is_klass_loaded(int refinfo_index, bool must_be_resolved) const;
   bool check_call(int refinfo_index, bool is_static) const;
   bool ensure_method_data();  // make sure it exists in the VM also
+  address ensure_method_counters();
   int instructions_size();
   int scale_count(int count, float prof_factor = 1.);  // make MDO count commensurate with IIC
+
+  // Stack walking support
+  bool is_ignored_by_security_stack_walk() const;
 
   // JSR 292 support
   bool is_method_handle_intrinsic()  const;
@@ -294,6 +298,8 @@ class ciMethod : public ciMetadata {
   bool is_initializer () const;
   bool can_be_statically_bound() const           { return _can_be_statically_bound; }
   void dump_replay_data(outputStream* st);
+  bool is_boxing_method() const;
+  bool is_unboxing_method() const;
 
   // Print the bytecodes of this method.
   void print_codes_on(outputStream* st);

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1999, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1999, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -49,6 +49,11 @@
   // (e.g. pthread_kill).
   pthread_t _pthread_id;
 
+  // This is the "thread_id" from struct thread_identifier_info. According to a
+  // comment in thread_info.h, this is a "system-wide unique 64-bit thread id".
+  // The value is used by SA to correlate threads.
+  uint64_t _unique_thread_id;
+
   sigset_t _caller_sigmask; // Caller's signal mask
 
  public:
@@ -77,6 +82,10 @@
     _pthread_id = tid;
   }
 
+  void set_unique_thread_id(uint64_t id) {
+    _unique_thread_id = id;
+  }
+
   // ***************************************************************
   // suspension support.
   // ***************************************************************
@@ -85,7 +94,7 @@ public:
   // flags that support signal based suspend/resume on Bsd are in a
   // separate class to avoid confusion with many flags in OSThread that
   // are used by VM level suspend/resume.
-  os::Bsd::SuspendResume sr;
+  os::SuspendResume sr;
 
   // _ucontext and _siginfo are used by SR_handler() to save thread context,
   // and they will later be used to walk the stack or reposition thread PC.

@@ -24,8 +24,8 @@
 
 // Precompiled headers are turned off for Sun Studion,
 // or if the user passes USE_PRECOMPILED_HEADER=0 to the makefiles.
-#ifndef DONT_USE_PRECOMPILED_HEADER
 
+#ifndef DONT_USE_PRECOMPILED_HEADER
 # include "asm/assembler.hpp"
 # include "asm/assembler.inline.hpp"
 # include "asm/codeBuffer.hpp"
@@ -285,7 +285,7 @@
 # include "c1/c1_ValueType.hpp"
 # include "c1/c1_globals.hpp"
 #endif // COMPILER1
-#ifndef SERIALGC
+#if INCLUDE_ALL_GCS
 # include "gc_implementation/concurrentMarkSweep/cmsOopClosures.hpp"
 # include "gc_implementation/concurrentMarkSweep/compactibleFreeListSpace.hpp"
 # include "gc_implementation/concurrentMarkSweep/concurrentMarkSweepGeneration.hpp"
@@ -314,6 +314,6 @@
 # include "gc_implementation/shared/gcAdaptivePolicyCounters.hpp"
 # include "gc_implementation/shared/gcPolicyCounters.hpp"
 # include "gc_implementation/shared/parGCAllocBuffer.hpp"
-#endif // SERIALGC
+#endif // INCLUDE_ALL_GCS
 
 #endif // !DONT_USE_PRECOMPILED_HEADER

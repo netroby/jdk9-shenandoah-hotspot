@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1998, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1998, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -48,7 +48,6 @@ void Rewriter::compute_index_maps() {
         add_cp_cache_entry(i);
         break;
       case JVM_CONSTANT_String:
-      case JVM_CONSTANT_Object:
       case JVM_CONSTANT_MethodHandle      : // fall through
       case JVM_CONSTANT_MethodType        : // fall through
         add_resolved_references_entry(i);
@@ -85,15 +84,13 @@ void Rewriter::make_constant_pool_cache(TRAPS) {
   const int length = _cp_cache_map.length();
   ClassLoaderData* loader_data = _pool->pool_holder()->class_loader_data();
   ConstantPoolCache* cache =
-      ConstantPoolCache::allocate(loader_data, length, CHECK);
+      ConstantPoolCache::allocate(loader_data, length, _cp_cache_map,
+                                  _invokedynamic_references_map, CHECK);
 
   // initialize object cache in constant pool
   _pool->initialize_resolved_references(loader_data, _resolved_references_map,
                                         _resolved_reference_limit,
                                         CHECK);
-
-  No_Safepoint_Verifier nsv;
-  cache->initialize(_cp_cache_map, _invokedynamic_references_map);
   _pool->set_cache(cache);
   cache->set_constant_pool(_pool());
 }
@@ -238,7 +235,7 @@ void Rewriter::maybe_rewrite_ldc(address bcp, int offset, bool is_wide,
     address p = bcp + offset;
     int cp_index = is_wide ? Bytes::get_Java_u2(p) : (u1)(*p);
     constantTag tag = _pool->tag_at(cp_index).value();
-    if (tag.is_method_handle() || tag.is_method_type() || tag.is_string() || tag.is_object()) {
+    if (tag.is_method_handle() || tag.is_method_type() || tag.is_string()) {
       int ref_index = cp_entry_to_resolved_references(cp_index);
       if (is_wide) {
         (*bcp) = Bytecodes::_fast_aldc_w;

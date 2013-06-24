@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1999, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1999, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -70,6 +70,7 @@ class Linux {
   static pthread_t _main_thread;
   static Mutex* _createThread_lock;
   static int _page_size;
+  static const int _vm_default_page_size;
 
   static julong available_memory();
   static julong physical_memory() { return _physical_memory; }
@@ -94,6 +95,10 @@ class Linux {
   static void print_libversion_info(outputStream* st);
 
  public:
+  static bool _stack_is_executable;
+  static void *dlopen_helper(const char *name, char *ebuf, int ebuflen);
+  static void *dll_load_in_vmthread(const char *name, char *ebuf, int ebuflen);
+
   static void init_thread_fpu_state();
   static int  get_fpu_control_word();
   static void set_fpu_control_word(int fpu_control);
@@ -111,6 +116,8 @@ class Linux {
 
   static int page_size(void)                                        { return _page_size; }
   static void set_page_size(int val)                                { _page_size = val; }
+
+  static int vm_default_page_size(void)                             { return _vm_default_page_size; }
 
   static address   ucontext_get_pc(ucontext_t* uc);
   static intptr_t* ucontext_get_sp(ucontext_t* uc);
@@ -202,47 +209,6 @@ class Linux {
 
   // LinuxThreads work-around for 6292965
   static int safe_cond_timedwait(pthread_cond_t *_cond, pthread_mutex_t *_mutex, const struct timespec *_abstime);
-
-
-  // Linux suspend/resume support - this helper is a shadow of its former
-  // self now that low-level suspension is barely used, and old workarounds
-  // for LinuxThreads are no longer needed.
-  class SuspendResume {
-  private:
-    volatile int _suspend_action;
-    // values for suspend_action:
-    #define SR_NONE               (0x00)
-    #define SR_SUSPEND            (0x01)  // suspend request
-    #define SR_CONTINUE           (0x02)  // resume request
-
-    volatile jint _state;
-    // values for _state: + SR_NONE
-    #define SR_SUSPENDED          (0x20)
-  public:
-    SuspendResume() { _suspend_action = SR_NONE; _state = SR_NONE; }
-
-    int suspend_action() const     { return _suspend_action; }
-    void set_suspend_action(int x) { _suspend_action = x;    }
-
-    // atomic updates for _state
-    void set_suspended()           {
-      jint temp, temp2;
-      do {
-        temp = _state;
-        temp2 = Atomic::cmpxchg(temp | SR_SUSPENDED, &_state, temp);
-      } while (temp2 != temp);
-    }
-    void clear_suspended()        {
-      jint temp, temp2;
-      do {
-        temp = _state;
-        temp2 = Atomic::cmpxchg(temp & ~SR_SUSPENDED, &_state, temp);
-      } while (temp2 != temp);
-    }
-    bool is_suspended()            { return _state & SR_SUSPENDED;       }
-
-    #undef SR_SUSPENDED
-  };
 
 private:
   typedef int (*sched_getcpu_func_t)(void);
@@ -338,6 +304,6 @@ class PlatformParker : public CHeapObj<mtInternal> {
       status = pthread_mutex_init (_mutex, NULL);
       assert_status(status == 0, status, "mutex_init");
     }
-} ;
+};
 
 #endif // OS_LINUX_VM_OS_LINUX_HPP

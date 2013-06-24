@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -79,6 +79,8 @@ julong os::alloc_bytes = 0;         // # of bytes allocated
 julong os::num_frees = 0;           // # of calls to free
 julong os::free_bytes = 0;          // # of bytes freed
 #endif
+
+static juint cur_malloc_words = 0;  // current size for MallocMaxTestWords
 
 void os_init_globals() {
   // Called from init_globals().
@@ -263,8 +265,7 @@ static void signal_thread_entry(JavaThread* thread, TRAPS) {
         VMThread::execute(&op1);
         Universe::print_heap_at_SIGBREAK();
         if (PrintClassHistogram) {
-          VM_GC_HeapInspection op1(gclog_or_tty, true /* force full GC before heap inspection */,
-                                   true /* need_prologue */);
+          VM_GC_HeapInspection op1(gclog_or_tty, true /* force full GC before heap inspection */);
           VMThread::execute(&op1);
         }
         if (JvmtiExport::should_post_data_dump()) {
@@ -570,6 +571,26 @@ void verify_block(void* memblock) {
 }
 #endif
 
+//
+// This function supports testing of the malloc out of memory
+// condition without really running the system out of memory.
+//
+static u_char* testMalloc(size_t alloc_size) {
+  assert(MallocMaxTestWords > 0, "sanity check");
+
+  if ((cur_malloc_words + (alloc_size / BytesPerWord)) > MallocMaxTestWords) {
+    return NULL;
+  }
+
+  u_char* ptr = (u_char*)::malloc(alloc_size);
+
+  if (ptr != NULL) {
+    Atomic::add(((jint) (alloc_size / BytesPerWord)),
+                (volatile jint *) &cur_malloc_words);
+  }
+  return ptr;
+}
+
 void* os::malloc(size_t size, MEMFLAGS memflags, address caller) {
   NOT_PRODUCT(inc_stat_counter(&num_mallocs, 1));
   NOT_PRODUCT(inc_stat_counter(&alloc_bytes, size));
@@ -579,11 +600,22 @@ void* os::malloc(size_t size, MEMFLAGS memflags, address caller) {
     // if NULL is returned the calling functions assume out of memory.
     size = 1;
   }
-  if (size > size + space_before + space_after) { // Check for rollover.
+
+  const size_t alloc_size = size + space_before + space_after;
+
+  if (size > alloc_size) { // Check for rollover.
     return NULL;
   }
+
   NOT_PRODUCT(if (MallocVerifyInterval > 0) check_heap());
-  u_char* ptr = (u_char*)::malloc(size + space_before + space_after);
+
+  u_char* ptr;
+
+  if (MallocMaxTestWords > 0) {
+    ptr = testMalloc(alloc_size);
+  } else {
+    ptr = (u_char*)::malloc(alloc_size);
+  }
 
 #ifdef ASSERT
   if (ptr == NULL) return NULL;
@@ -985,15 +1017,28 @@ void os::print_location(outputStream* st, intptr_t x, bool verbose) {
 // if C stack is walkable beyond current frame. The check for fp() is not
 // necessary on Sparc, but it's harmless.
 bool os::is_first_C_frame(frame* fr) {
-#ifdef IA64
-  // In order to walk native frames on Itanium, we need to access the unwind
-  // table, which is inside ELF. We don't want to parse ELF after fatal error,
-  // so return true for IA64. If we need to support C stack walking on IA64,
-  // this function needs to be moved to CPU specific files, as fp() on IA64
-  // is register stack, which grows towards higher memory address.
+#if defined(IA64) && !defined(_WIN32)
+  // On IA64 we have to check if the callers bsp is still valid
+  // (i.e. within the register stack bounds).
+  // Notice: this only works for threads created by the VM and only if
+  // we walk the current stack!!! If we want to be able to walk
+  // arbitrary other threads, we'll have to somehow store the thread
+  // object in the frame.
+  Thread *thread = Thread::current();
+  if ((address)fr->fp() <=
+      thread->register_stack_base() HPUX_ONLY(+ 0x0) LINUX_ONLY(+ 0x50)) {
+    // This check is a little hacky, because on Linux the first C
+    // frame's ('start_thread') register stack frame starts at
+    // "register_stack_base + 0x48" while on HPUX, the first C frame's
+    // ('__pthread_bound_body') register stack frame seems to really
+    // start at "register_stack_base".
+    return true;
+  } else {
+    return false;
+  }
+#elif defined(IA64) && defined(_WIN32)
   return true;
-#endif
-
+#else
   // Load up sp, fp, sender sp and sender fp, check for reasonable values.
   // Check usp first, because if that's bad the other accessors may fault
   // on some architectures.  Ditto ufp second, etc.
@@ -1023,6 +1068,7 @@ bool os::is_first_C_frame(frame* fr) {
   if (old_fp - ufp > 64 * K) return true;
 
   return false;
+#endif
 }
 
 #ifdef ASSERT
@@ -1397,10 +1443,15 @@ int os::get_line_chars(int fd, char* buf, const size_t bsize){
   return (int) i;
 }
 
+void os::SuspendedThreadTask::run() {
+  assert(Threads_lock->owned_by_self() || (_thread == VMThread::vm_thread()), "must have threads lock to call this");
+  internal_do_task();
+  _done = true;
+}
+
 bool os::create_stack_guard_pages(char* addr, size_t bytes) {
   return os::pd_create_stack_guard_pages(addr, bytes);
 }
-
 
 char* os::reserve_memory(size_t bytes, char* addr, size_t alignment_hint) {
   char* result = pd_reserve_memory(bytes, addr, alignment_hint);
@@ -1410,6 +1461,18 @@ char* os::reserve_memory(size_t bytes, char* addr, size_t alignment_hint) {
 
   return result;
 }
+
+char* os::reserve_memory(size_t bytes, char* addr, size_t alignment_hint,
+   MEMFLAGS flags) {
+  char* result = pd_reserve_memory(bytes, addr, alignment_hint);
+  if (result != NULL) {
+    MemTracker::record_virtual_memory_reserve((address)result, bytes, CALLER_PC);
+    MemTracker::record_virtual_memory_type((address)result, flags);
+  }
+
+  return result;
+}
+
 char* os::attempt_reserve_memory_at(size_t bytes, char* addr) {
   char* result = pd_attempt_reserve_memory_at(bytes, addr);
   if (result != NULL) {
@@ -1492,3 +1555,19 @@ void os::realign_memory(char *addr, size_t bytes, size_t alignment_hint) {
   pd_realign_memory(addr, bytes, alignment_hint);
 }
 
+#ifndef TARGET_OS_FAMILY_windows
+/* try to switch state from state "from" to state "to"
+ * returns the state set after the method is complete
+ */
+os::SuspendResume::State os::SuspendResume::switch_state(os::SuspendResume::State from,
+                                                         os::SuspendResume::State to)
+{
+  os::SuspendResume::State result =
+    (os::SuspendResume::State) Atomic::cmpxchg((jint) to, (jint *) &_state, (jint) from);
+  if (result == from) {
+    // success
+    return to;
+  }
+  return result;
+}
+#endif

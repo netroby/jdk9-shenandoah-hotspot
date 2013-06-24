@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -34,6 +34,7 @@
 #include "interpreter/rewriter.hpp"
 #include "jvmtifiles/jvmti.h"
 #include "memory/genOopClosures.inline.hpp"
+#include "memory/heapInspection.hpp"
 #include "memory/metadataFactory.hpp"
 #include "memory/oopFactory.hpp"
 #include "oops/fieldStreams.hpp"
@@ -53,9 +54,11 @@
 #include "runtime/javaCalls.hpp"
 #include "runtime/mutexLocker.hpp"
 #include "runtime/thread.inline.hpp"
+#include "services/classLoadingService.hpp"
 #include "services/threadService.hpp"
 #include "utilities/dtrace.hpp"
-#ifndef SERIALGC
+#include "utilities/macros.hpp"
+#if INCLUDE_ALL_GCS
 #include "gc_implementation/concurrentMarkSweep/cmsOopClosures.inline.hpp"
 #include "gc_implementation/g1/g1CollectedHeap.inline.hpp"
 #include "gc_implementation/g1/g1OopClosures.inline.hpp"
@@ -66,7 +69,7 @@
 #include "gc_implementation/parallelScavenge/psPromotionManager.inline.hpp"
 #include "gc_implementation/parallelScavenge/psScavenge.inline.hpp"
 #include "oops/oop.pcgc.inline.hpp"
-#endif
+#endif // INCLUDE_ALL_GCS
 #ifdef COMPILER1
 #include "c1/c1_Compiler.hpp"
 #endif
@@ -163,21 +166,21 @@ HS_DTRACE_PROBE_DECL5(hotspot, class__initialization__end,
 
 volatile int InstanceKlass::_total_instanceKlass_count = 0;
 
-Klass* InstanceKlass::allocate_instance_klass(ClassLoaderData* loader_data,
-                                                int vtable_len,
-                                                int itable_len,
-                                                int static_field_size,
-                                                int nonstatic_oop_map_size,
-                                                ReferenceType rt,
-                                                AccessFlags access_flags,
-                                                Symbol* name,
+InstanceKlass* InstanceKlass::allocate_instance_klass(
+                                              ClassLoaderData* loader_data,
+                                              int vtable_len,
+                                              int itable_len,
+                                              int static_field_size,
+                                              int nonstatic_oop_map_size,
+                                              ReferenceType rt,
+                                              AccessFlags access_flags,
+                                              Symbol* name,
                                               Klass* super_klass,
-                                                KlassHandle host_klass,
-                                                TRAPS) {
+                                              bool is_anonymous,
+                                              TRAPS) {
 
   int size = InstanceKlass::size(vtable_len, itable_len, nonstatic_oop_map_size,
-                                 access_flags.is_interface(),
-                                 !host_klass.is_null());
+                                 access_flags.is_interface(), is_anonymous);
 
   // Allocation
   InstanceKlass* ik;
@@ -185,30 +188,55 @@ Klass* InstanceKlass::allocate_instance_klass(ClassLoaderData* loader_data,
     if (name == vmSymbols::java_lang_Class()) {
       ik = new (loader_data, size, THREAD) InstanceMirrorKlass(
         vtable_len, itable_len, static_field_size, nonstatic_oop_map_size, rt,
-        access_flags, !host_klass.is_null());
+        access_flags, is_anonymous);
     } else if (name == vmSymbols::java_lang_ClassLoader() ||
           (SystemDictionary::ClassLoader_klass_loaded() &&
           super_klass != NULL &&
           super_klass->is_subtype_of(SystemDictionary::ClassLoader_klass()))) {
       ik = new (loader_data, size, THREAD) InstanceClassLoaderKlass(
         vtable_len, itable_len, static_field_size, nonstatic_oop_map_size, rt,
-        access_flags, !host_klass.is_null());
+        access_flags, is_anonymous);
     } else {
       // normal class
       ik = new (loader_data, size, THREAD) InstanceKlass(
         vtable_len, itable_len, static_field_size, nonstatic_oop_map_size, rt,
-        access_flags, !host_klass.is_null());
+        access_flags, is_anonymous);
     }
   } else {
     // reference klass
     ik = new (loader_data, size, THREAD) InstanceRefKlass(
         vtable_len, itable_len, static_field_size, nonstatic_oop_map_size, rt,
-        access_flags, !host_klass.is_null());
+        access_flags, is_anonymous);
   }
+
+  // Check for pending exception before adding to the loader data and incrementing
+  // class count.  Can get OOM here.
+  if (HAS_PENDING_EXCEPTION) {
+    return NULL;
+  }
+
+  // Add all classes to our internal class loader list here,
+  // including classes in the bootstrap (NULL) class loader.
+  loader_data->add_class(ik);
 
   Atomic::inc(&_total_instanceKlass_count);
   return ik;
 }
+
+
+// copy method ordering from resource area to Metaspace
+void InstanceKlass::copy_method_ordering(intArray* m, TRAPS) {
+  if (m != NULL) {
+    // allocate a new array and copy contents (memcpy?)
+    _method_ordering = MetadataFactory::new_array<int>(class_loader_data(), m->length(), CHECK);
+    for (int i = 0; i < m->length(); i++) {
+      _method_ordering->at_put(i, m->at(i));
+    }
+  } else {
+    _method_ordering = Universe::the_empty_int_array();
+  }
+}
+
 
 InstanceKlass::InstanceKlass(int vtable_len,
                              int itable_len,
@@ -219,72 +247,113 @@ InstanceKlass::InstanceKlass(int vtable_len,
                              bool is_anonymous) {
   No_Safepoint_Verifier no_safepoint; // until k becomes parsable
 
-  int size = InstanceKlass::size(vtable_len, itable_len, nonstatic_oop_map_size,
-                                 access_flags.is_interface(), is_anonymous);
+  int iksize = InstanceKlass::size(vtable_len, itable_len, nonstatic_oop_map_size,
+                                   access_flags.is_interface(), is_anonymous);
 
-  // The sizes of these these three variables are used for determining the
-  // size of the instanceKlassOop. It is critical that these are set to the right
-  // sizes before the first GC, i.e., when we allocate the mirror.
-  this->set_vtable_length(vtable_len);
-  this->set_itable_length(itable_len);
-  this->set_static_field_size(static_field_size);
-  this->set_nonstatic_oop_map_size(nonstatic_oop_map_size);
-  this->set_access_flags(access_flags);
-  this->set_is_anonymous(is_anonymous);
-  assert(this->size() == size, "wrong size for object");
+  set_vtable_length(vtable_len);
+  set_itable_length(itable_len);
+  set_static_field_size(static_field_size);
+  set_nonstatic_oop_map_size(nonstatic_oop_map_size);
+  set_access_flags(access_flags);
+  _misc_flags = 0;  // initialize to zero
+  set_is_anonymous(is_anonymous);
+  assert(size() == iksize, "wrong size for object");
 
-  this->set_array_klasses(NULL);
-  this->set_methods(NULL);
-  this->set_method_ordering(NULL);
-  this->set_local_interfaces(NULL);
-  this->set_transitive_interfaces(NULL);
-  this->init_implementor();
-  this->set_fields(NULL, 0);
-  this->set_constants(NULL);
-  this->set_class_loader_data(NULL);
-  this->set_protection_domain(NULL);
-  this->set_signers(NULL);
-  this->set_source_file_name(NULL);
-  this->set_source_debug_extension(NULL, 0);
-  this->set_array_name(NULL);
-  this->set_inner_classes(NULL);
-  this->set_static_oop_field_count(0);
-  this->set_nonstatic_field_size(0);
-  this->set_is_marked_dependent(false);
-  this->set_init_state(InstanceKlass::allocated);
-  this->set_init_thread(NULL);
-  this->set_init_lock(NULL);
-  this->set_reference_type(rt);
-  this->set_oop_map_cache(NULL);
-  this->set_jni_ids(NULL);
-  this->set_osr_nmethods_head(NULL);
-  this->set_breakpoints(NULL);
-  this->init_previous_versions();
-  this->set_generic_signature(NULL);
-  this->release_set_methods_jmethod_ids(NULL);
-  this->release_set_methods_cached_itable_indices(NULL);
-  this->set_annotations(NULL);
-  this->set_jvmti_cached_class_field_map(NULL);
-  this->set_initial_method_idnum(0);
+  set_array_klasses(NULL);
+  set_methods(NULL);
+  set_method_ordering(NULL);
+  set_local_interfaces(NULL);
+  set_transitive_interfaces(NULL);
+  init_implementor();
+  set_fields(NULL, 0);
+  set_constants(NULL);
+  set_class_loader_data(NULL);
+  set_source_file_name(NULL);
+  set_source_debug_extension(NULL, 0);
+  set_array_name(NULL);
+  set_inner_classes(NULL);
+  set_static_oop_field_count(0);
+  set_nonstatic_field_size(0);
+  set_is_marked_dependent(false);
+  set_init_state(InstanceKlass::allocated);
+  set_init_thread(NULL);
+  set_reference_type(rt);
+  set_oop_map_cache(NULL);
+  set_jni_ids(NULL);
+  set_osr_nmethods_head(NULL);
+  set_breakpoints(NULL);
+  init_previous_versions();
+  set_generic_signature(NULL);
+  release_set_methods_jmethod_ids(NULL);
+  release_set_methods_cached_itable_indices(NULL);
+  set_annotations(NULL);
+  set_jvmti_cached_class_field_map(NULL);
+  set_initial_method_idnum(0);
+  _dependencies = NULL;
+  set_jvmti_cached_class_field_map(NULL);
+  set_cached_class_file(NULL, 0);
+  set_initial_method_idnum(0);
+  set_minor_version(0);
+  set_major_version(0);
+  NOT_PRODUCT(_verify_count = 0;)
 
   // initialize the non-header words to zero
   intptr_t* p = (intptr_t*)this;
-  for (int index = InstanceKlass::header_size(); index < size; index++) {
+  for (int index = InstanceKlass::header_size(); index < iksize; index++) {
     p[index] = NULL_WORD;
   }
 
   // Set temporary value until parseClassFile updates it with the real instance
   // size.
-  this->set_layout_helper(Klass::instance_layout_helper(0, true));
+  set_layout_helper(Klass::instance_layout_helper(0, true));
 }
 
+
+void InstanceKlass::deallocate_methods(ClassLoaderData* loader_data,
+                                       Array<Method*>* methods) {
+  if (methods != NULL && methods != Universe::the_empty_method_array()) {
+    for (int i = 0; i < methods->length(); i++) {
+      Method* method = methods->at(i);
+      if (method == NULL) continue;  // maybe null if error processing
+      // Only want to delete methods that are not executing for RedefineClasses.
+      // The previous version will point to them so they're not totally dangling
+      assert (!method->on_stack(), "shouldn't be called with methods on stack");
+      MetadataFactory::free_metadata(loader_data, method);
+    }
+    MetadataFactory::free_array<Method*>(loader_data, methods);
+  }
+}
+
+void InstanceKlass::deallocate_interfaces(ClassLoaderData* loader_data,
+                                          Klass* super_klass,
+                                          Array<Klass*>* local_interfaces,
+                                          Array<Klass*>* transitive_interfaces) {
+  // Only deallocate transitive interfaces if not empty, same as super class
+  // or same as local interfaces.  See code in parseClassFile.
+  Array<Klass*>* ti = transitive_interfaces;
+  if (ti != Universe::the_empty_klass_array() && ti != local_interfaces) {
+    // check that the interfaces don't come from super class
+    Array<Klass*>* sti = (super_klass == NULL) ? NULL :
+                    InstanceKlass::cast(super_klass)->transitive_interfaces();
+    if (ti != sti) {
+      MetadataFactory::free_array<Klass*>(loader_data, ti);
+    }
+  }
+
+  // local interfaces can be empty
+  if (local_interfaces != Universe::the_empty_klass_array()) {
+    MetadataFactory::free_array<Klass*>(loader_data, local_interfaces);
+  }
+}
 
 // This function deallocates the metadata and C heap pointers that the
 // InstanceKlass points to.
 void InstanceKlass::deallocate_contents(ClassLoaderData* loader_data) {
 
   // Orphan the mirror first, CMS thinks it's still live.
-  java_lang_Class::set_klass(java_mirror(), NULL);
+  if (java_mirror() != NULL) {
+    java_lang_Class::set_klass(java_mirror(), NULL);
+  }
 
   // Need to take this class off the class loader data list.
   loader_data->remove_class(this);
@@ -299,17 +368,7 @@ void InstanceKlass::deallocate_contents(ClassLoaderData* loader_data) {
   // reference counting symbol names.
   release_C_heap_structures();
 
-  Array<Method*>* ms = methods();
-  if (ms != Universe::the_empty_method_array()) {
-    for (int i = 0; i <= methods()->length() -1 ; i++) {
-      Method* method = methods()->at(i);
-      // Only want to delete methods that are not executing for RedefineClasses.
-      // The previous version will point to them so they're not totally dangling
-      assert (!method->on_stack(), "shouldn't be called with methods on stack");
-      MetadataFactory::free_metadata(loader_data, method);
-    }
-    MetadataFactory::free_array<Method*>(loader_data, methods());
-  }
+  deallocate_methods(loader_data, methods());
   set_methods(NULL);
 
   if (method_ordering() != Universe::the_empty_int_array()) {
@@ -326,24 +385,8 @@ void InstanceKlass::deallocate_contents(ClassLoaderData* loader_data) {
   }
   set_secondary_supers(NULL);
 
-  // Only deallocate transitive interfaces if not empty, same as super class
-  // or same as local interfaces.   See code in parseClassFile.
-  Array<Klass*>* ti = transitive_interfaces();
-  if (ti != Universe::the_empty_klass_array() && ti != local_interfaces()) {
-    // check that the interfaces don't come from super class
-    Array<Klass*>* sti = (super() == NULL) ? NULL :
-       InstanceKlass::cast(super())->transitive_interfaces();
-    if (ti != sti) {
-      MetadataFactory::free_array<Klass*>(loader_data, ti);
-    }
-  }
+  deallocate_interfaces(loader_data, super(), local_interfaces(), transitive_interfaces());
   set_transitive_interfaces(NULL);
-
-  // local interfaces can be empty
-  Array<Klass*>* li = local_interfaces();
-  if (li != Universe::the_empty_klass_array()) {
-    MetadataFactory::free_array<Klass*>(loader_data, li);
-  }
   set_local_interfaces(NULL);
 
   MetadataFactory::free_array<jushort>(loader_data, fields());
@@ -351,44 +394,21 @@ void InstanceKlass::deallocate_contents(ClassLoaderData* loader_data) {
 
   // If a method from a redefined class is using this constant pool, don't
   // delete it, yet.  The new class's previous version will point to this.
-  assert (!constants()->on_stack(), "shouldn't be called if anything is onstack");
-  MetadataFactory::free_metadata(loader_data, constants());
-  set_constants(NULL);
+  if (constants() != NULL) {
+    assert (!constants()->on_stack(), "shouldn't be called if anything is onstack");
+    MetadataFactory::free_metadata(loader_data, constants());
+    set_constants(NULL);
+  }
 
   if (inner_classes() != Universe::the_empty_short_array()) {
     MetadataFactory::free_array<jushort>(loader_data, inner_classes());
   }
   set_inner_classes(NULL);
 
-  // Null out Java heap objects, although these won't be walked to keep
-  // alive once this InstanceKlass is deallocated.
-  set_protection_domain(NULL);
-  set_signers(NULL);
-  set_init_lock(NULL);
-
   // We should deallocate the Annotations instance
   MetadataFactory::free_metadata(loader_data, annotations());
   set_annotations(NULL);
 }
-
-volatile oop InstanceKlass::init_lock() const {
-  volatile oop lock = _init_lock;  // read once
-  assert((oop)lock != NULL || !is_not_initialized(), // initialized or in_error state
-         "only fully initialized state can have a null lock");
-  return lock;
-}
-
-// Set the initialization lock to null so the object can be GC'ed.  Any racing
-// threads to get this lock will see a null lock and will not lock.
-// That's okay because they all check for initialized state after getting
-// the lock and return.
-void InstanceKlass::fence_and_clear_init_lock() {
-  // make sure previous stores are all done, notably the init_state.
-  OrderAccess::storestore();
-  klass_oop_store(&_init_lock, NULL);
-  assert(!is_not_initialized(), "class must be initialized now");
-}
-
 
 bool InstanceKlass::should_be_initialized() const {
   return !is_initialized();
@@ -422,11 +442,29 @@ void InstanceKlass::eager_initialize(Thread *thread) {
   }
 }
 
+// JVMTI spec thinks there are signers and protection domain in the
+// instanceKlass.  These accessors pretend these fields are there.
+// The hprof specification also thinks these fields are in InstanceKlass.
+oop InstanceKlass::protection_domain() const {
+  // return the protection_domain from the mirror
+  return java_lang_Class::protection_domain(java_mirror());
+}
+
+// To remove these from requires an incompatible change and CCC request.
+objArrayOop InstanceKlass::signers() const {
+  // return the signers from the mirror
+  return java_lang_Class::signers(java_mirror());
+}
+
+volatile oop InstanceKlass::init_lock() const {
+  // return the init lock from the mirror
+  return java_lang_Class::init_lock(java_mirror());
+}
 
 void InstanceKlass::eager_initialize_impl(instanceKlassHandle this_oop) {
   EXCEPTION_MARK;
   volatile oop init_lock = this_oop->init_lock();
-  ObjectLocker ol(init_lock, THREAD, init_lock != NULL);
+  ObjectLocker ol(init_lock, THREAD);
 
   // abort if someone beat us to the initialization
   if (!this_oop->is_not_initialized()) return;  // note: not equivalent to is_initialized()
@@ -445,7 +483,6 @@ void InstanceKlass::eager_initialize_impl(instanceKlassHandle this_oop) {
   } else {
     // linking successfull, mark class as initialized
     this_oop->set_init_state (fully_initialized);
-    this_oop->fence_and_clear_init_lock();
     // trace
     if (TraceClassInitialization) {
       ResourceMark rm(THREAD);
@@ -572,7 +609,7 @@ bool InstanceKlass::link_class_impl(
   // verification & rewriting
   {
     volatile oop init_lock = this_oop->init_lock();
-    ObjectLocker ol(init_lock, THREAD, init_lock != NULL);
+    ObjectLocker ol(init_lock, THREAD);
     // rewritten will have been set if loader constraint error found
     // on an earlier link attempt
     // don't verify or rewrite if already rewritten
@@ -695,7 +732,7 @@ void InstanceKlass::initialize_impl(instanceKlassHandle this_oop, TRAPS) {
   // Step 1
   {
     volatile oop init_lock = this_oop->init_lock();
-    ObjectLocker ol(init_lock, THREAD, init_lock != NULL);
+    ObjectLocker ol(init_lock, THREAD);
 
     Thread *self = THREAD; // it's passed the current thread
 
@@ -843,9 +880,8 @@ void InstanceKlass::set_initialization_state_and_notify(ClassState state, TRAPS)
 
 void InstanceKlass::set_initialization_state_and_notify_impl(instanceKlassHandle this_oop, ClassState state, TRAPS) {
   volatile oop init_lock = this_oop->init_lock();
-  ObjectLocker ol(init_lock, THREAD, init_lock != NULL);
+  ObjectLocker ol(init_lock, THREAD);
   this_oop->set_init_state(state);
-  this_oop->fence_and_clear_init_lock();
   ol.notify_all(CHECK);
 }
 
@@ -1856,16 +1892,6 @@ bool InstanceKlass::is_dependent_nmethod(nmethod* nm) {
 
 // Garbage collection
 
-void InstanceKlass::oops_do(OopClosure* cl) {
-  Klass::oops_do(cl);
-
-  cl->do_oop(adr_protection_domain());
-  cl->do_oop(adr_signers());
-  cl->do_oop(adr_init_lock());
-
-  // Don't walk the arrays since they are walked from the ClassLoaderData objects.
-}
-
 #ifdef ASSERT
 template <class T> void assert_is_in(T *p) {
   T heap_oop = oopDesc::load_heap_oop(p);
@@ -2042,7 +2068,7 @@ void InstanceKlass::oop_follow_contents(oop obj) {
     assert_is_in_closed_subset)
 }
 
-#ifndef SERIALGC
+#if INCLUDE_ALL_GCS
 void InstanceKlass::oop_follow_contents(ParCompactionManager* cm,
                                         oop obj) {
   assert(obj != NULL, "can't follow the content of NULL object");
@@ -2054,7 +2080,7 @@ void InstanceKlass::oop_follow_contents(ParCompactionManager* cm,
     PSParallelCompact::mark_and_push(cm, p), \
     assert_is_in)
 }
-#endif // SERIALGC
+#endif // INCLUDE_ALL_GCS
 
 // closure's do_metadata() method dictates whether the given closure should be
 // applied to the klass ptr in the object header.
@@ -2082,7 +2108,7 @@ int InstanceKlass::oop_oop_iterate##nv_suffix(oop obj, OopClosureType* closure) 
   return size_helper();                                                 \
 }
 
-#ifndef SERIALGC
+#if INCLUDE_ALL_GCS
 #define InstanceKlass_OOP_OOP_ITERATE_BACKWARDS_DEFN(OopClosureType, nv_suffix) \
                                                                                 \
 int InstanceKlass::oop_oop_iterate_backwards##nv_suffix(oop obj,                \
@@ -2100,7 +2126,7 @@ int InstanceKlass::oop_oop_iterate_backwards##nv_suffix(oop obj,                
     assert_is_in_closed_subset)                                                 \
    return size_helper();                                                        \
 }
-#endif // !SERIALGC
+#endif // INCLUDE_ALL_GCS
 
 #define InstanceKlass_OOP_OOP_ITERATE_DEFN_m(OopClosureType, nv_suffix) \
                                                                         \
@@ -2124,10 +2150,10 @@ ALL_OOP_OOP_ITERATE_CLOSURES_1(InstanceKlass_OOP_OOP_ITERATE_DEFN)
 ALL_OOP_OOP_ITERATE_CLOSURES_2(InstanceKlass_OOP_OOP_ITERATE_DEFN)
 ALL_OOP_OOP_ITERATE_CLOSURES_1(InstanceKlass_OOP_OOP_ITERATE_DEFN_m)
 ALL_OOP_OOP_ITERATE_CLOSURES_2(InstanceKlass_OOP_OOP_ITERATE_DEFN_m)
-#ifndef SERIALGC
+#if INCLUDE_ALL_GCS
 ALL_OOP_OOP_ITERATE_CLOSURES_1(InstanceKlass_OOP_OOP_ITERATE_BACKWARDS_DEFN)
 ALL_OOP_OOP_ITERATE_CLOSURES_2(InstanceKlass_OOP_OOP_ITERATE_BACKWARDS_DEFN)
-#endif // !SERIALGC
+#endif // INCLUDE_ALL_GCS
 
 int InstanceKlass::oop_adjust_pointers(oop obj) {
   int size = size_helper();
@@ -2139,7 +2165,7 @@ int InstanceKlass::oop_adjust_pointers(oop obj) {
   return size;
 }
 
-#ifndef SERIALGC
+#if INCLUDE_ALL_GCS
 void InstanceKlass::oop_push_contents(PSPromotionManager* pm, oop obj) {
   InstanceKlass_OOP_MAP_REVERSE_ITERATE( \
     obj, \
@@ -2159,7 +2185,7 @@ int InstanceKlass::oop_update_pointers(ParCompactionManager* cm, oop obj) {
   return size;
 }
 
-#endif // SERIALGC
+#endif // INCLUDE_ALL_GCS
 
 void InstanceKlass::clean_implementors_list(BoolObjectClosure* is_alive) {
   assert(is_loader_alive(is_alive), "this klass should be live");
@@ -2169,7 +2195,11 @@ void InstanceKlass::clean_implementors_list(BoolObjectClosure* is_alive) {
       if (impl != NULL) {
         if (!impl->is_loader_alive(is_alive)) {
           // remove this guy
-          *adr_implementor() = NULL;
+          Klass** klass = adr_implementor();
+          assert(klass != NULL, "null klass");
+          if (klass != NULL) {
+            *klass = NULL;
+          }
         }
       }
     }
@@ -2177,8 +2207,6 @@ void InstanceKlass::clean_implementors_list(BoolObjectClosure* is_alive) {
 }
 
 void InstanceKlass::clean_method_data(BoolObjectClosure* is_alive) {
-#ifdef COMPILER2
-  // Currently only used by C2.
   for (int m = 0; m < methods()->length(); m++) {
     MethodData* mdo = methods()->at(m)->method_data();
     if (mdo != NULL) {
@@ -2189,15 +2217,6 @@ void InstanceKlass::clean_method_data(BoolObjectClosure* is_alive) {
       }
     }
   }
-#else
-#ifdef ASSERT
-  // Verify that we haven't started to use MDOs for C1.
-  for (int m = 0; m < methods()->length(); m++) {
-    MethodData* mdo = methods()->at(m)->method_data();
-    assert(mdo == NULL, "Didn't expect C1 to use MDOs");
-  }
-#endif // ASSERT
-#endif // !COMPILER2
 }
 
 
@@ -2220,9 +2239,6 @@ void InstanceKlass::remove_unshareable_info() {
     Method* m = methods()->at(i);
     m->remove_unshareable_info();
   }
-
-  // Need to reinstate when reading back the class.
-  set_init_lock(NULL);
 
   // do array classes also.
   array_klasses_do(remove_unshareable_in_class);
@@ -2255,13 +2271,6 @@ void InstanceKlass::restore_unshareable_info(TRAPS) {
     ik->itable()->initialize_itable(false, CHECK);
   }
 
-  // Allocate a simple java object for a lock.
-  // This needs to be a java object because during class initialization
-  // it can be held across a java call.
-  typeArrayOop r = oopFactory::new_typeArray(T_INT, 0, CHECK);
-  Handle h(THREAD, (oop)r);
-  ik->set_init_lock(h());
-
   // restore constant pool resolved references
   ik->constants()->restore_unshareable_info(CHECK);
 
@@ -2272,7 +2281,29 @@ static void clear_all_breakpoints(Method* m) {
   m->clear_all_breakpoints();
 }
 
+
+void InstanceKlass::notify_unload_class(InstanceKlass* ik) {
+  // notify the debugger
+  if (JvmtiExport::should_post_class_unload()) {
+    JvmtiExport::post_class_unload(ik);
+  }
+
+  // notify ClassLoadingService of class unload
+  ClassLoadingService::notify_class_unloaded(ik);
+}
+
+void InstanceKlass::release_C_heap_structures(InstanceKlass* ik) {
+  // Clean up C heap
+  ik->release_C_heap_structures();
+  ik->constants()->release_C_heap_structures();
+}
+
 void InstanceKlass::release_C_heap_structures() {
+
+  // Can't release the constant pool here because the constant pool can be
+  // deallocated separately from the InstanceKlass for default methods and
+  // redefine classes.
+
   // Deallocate oop map cache
   if (_oop_map_cache != NULL) {
     delete _oop_map_cache;
@@ -2287,6 +2318,17 @@ void InstanceKlass::release_C_heap_structures() {
   if (jmeths != (jmethodID*)NULL) {
     release_set_methods_jmethod_ids(NULL);
     FreeHeap(jmeths);
+  }
+
+  // Deallocate MemberNameTable
+  {
+    Mutex* lock_or_null = SafepointSynchronize::is_at_safepoint() ? NULL : MemberNameTable_lock;
+    MutexLockerEx ml(lock_or_null, Mutex::_no_safepoint_check_flag);
+    MemberNameTable* mnt = member_names();
+    if (mnt != NULL) {
+      delete mnt;
+      set_member_names(NULL);
+    }
   }
 
   int* indices = methods_cached_itable_indices_acquire();
@@ -2676,7 +2718,7 @@ void InstanceKlass::remove_osr_nmethod(nmethod* n) {
   OsrList_lock->unlock();
 }
 
-nmethod* InstanceKlass::lookup_osr_nmethod(Method* const m, int bci, int comp_level, bool match_level) const {
+nmethod* InstanceKlass::lookup_osr_nmethod(const Method* m, int bci, int comp_level, bool match_level) const {
   // This is a short non-blocking critical region, so the no safepoint check is ok.
   OsrList_lock->lock_without_safepoint_check();
   nmethod* osr = osr_nmethods_head();
@@ -2715,6 +2757,30 @@ nmethod* InstanceKlass::lookup_osr_nmethod(Method* const m, int bci, int comp_le
     return best;
   }
   return NULL;
+}
+
+void InstanceKlass::add_member_name(int index, Handle mem_name) {
+  jweak mem_name_wref = JNIHandles::make_weak_global(mem_name);
+  MutexLocker ml(MemberNameTable_lock);
+  assert(0 <= index && index < idnum_allocated_count(), "index is out of bounds");
+  DEBUG_ONLY(No_Safepoint_Verifier nsv);
+
+  if (_member_names == NULL) {
+    _member_names = new (ResourceObj::C_HEAP, mtClass) MemberNameTable(idnum_allocated_count());
+  }
+  _member_names->add_member_name(index, mem_name_wref);
+}
+
+oop InstanceKlass::get_member_name(int index) {
+  MutexLocker ml(MemberNameTable_lock);
+  assert(0 <= index && index < idnum_allocated_count(), "index is out of bounds");
+  DEBUG_ONLY(No_Safepoint_Verifier nsv);
+
+  if (_member_names == NULL) {
+    return NULL;
+  }
+  oop mem_name =_member_names->get_member_name(index);
+  return mem_name;
 }
 
 // -----------------------------------------------------------------------------------------------------
@@ -2777,10 +2843,7 @@ void InstanceKlass::print_on(outputStream* st) const {
     class_loader_data()->print_value_on(st);
     st->cr();
   }
-  st->print(BULLET"protection domain: "); ((InstanceKlass*)this)->protection_domain()->print_value_on(st); st->cr();
   st->print(BULLET"host class:        "); host_klass()->print_value_on_maybe_null(st); st->cr();
-  st->print(BULLET"signers:           "); signers()->print_value_on(st);               st->cr();
-  st->print(BULLET"init_lock:         "); ((oop)init_lock())->print_value_on(st);             st->cr();
   if (source_file_name() != NULL) {
     st->print(BULLET"source file:       ");
     source_file_name()->print_value_on(st);
@@ -2791,7 +2854,10 @@ void InstanceKlass::print_on(outputStream* st) const {
     st->print("%s", source_debug_extension());
     st->cr();
   }
-  st->print(BULLET"annotations:       "); annotations()->print_value_on(st); st->cr();
+  st->print(BULLET"class annotations:       "); class_annotations()->print_value_on(st); st->cr();
+  st->print(BULLET"class type annotations:  "); class_type_annotations()->print_value_on(st); st->cr();
+  st->print(BULLET"field annotations:       "); fields_annotations()->print_value_on(st); st->cr();
+  st->print(BULLET"field type annotations:  "); fields_type_annotations()->print_value_on(st); st->cr();
   {
     ResourceMark rm;
     // PreviousVersionInfo objects returned via PreviousVersionWalker
@@ -2960,6 +3026,51 @@ const char* InstanceKlass::internal_name() const {
   return external_name();
 }
 
+#if INCLUDE_SERVICES
+// Size Statistics
+void InstanceKlass::collect_statistics(KlassSizeStats *sz) const {
+  Klass::collect_statistics(sz);
+
+  sz->_inst_size  = HeapWordSize * size_helper();
+  sz->_vtab_bytes = HeapWordSize * align_object_offset(vtable_length());
+  sz->_itab_bytes = HeapWordSize * align_object_offset(itable_length());
+  sz->_nonstatic_oopmap_bytes = HeapWordSize *
+        ((is_interface() || is_anonymous()) ?
+         align_object_offset(nonstatic_oop_map_size()) :
+         nonstatic_oop_map_size());
+
+  int n = 0;
+  n += (sz->_methods_array_bytes         = sz->count_array(methods()));
+  n += (sz->_method_ordering_bytes       = sz->count_array(method_ordering()));
+  n += (sz->_local_interfaces_bytes      = sz->count_array(local_interfaces()));
+  n += (sz->_transitive_interfaces_bytes = sz->count_array(transitive_interfaces()));
+  n += (sz->_fields_bytes                = sz->count_array(fields()));
+  n += (sz->_inner_classes_bytes         = sz->count_array(inner_classes()));
+  sz->_ro_bytes += n;
+
+  const ConstantPool* cp = constants();
+  if (cp) {
+    cp->collect_statistics(sz);
+  }
+
+  const Annotations* anno = annotations();
+  if (anno) {
+    anno->collect_statistics(sz);
+  }
+
+  const Array<Method*>* methods_array = methods();
+  if (methods()) {
+    for (int i = 0; i < methods_array->length(); i++) {
+      Method* method = methods_array->at(i);
+      if (method) {
+        sz->_method_count ++;
+        method->collect_statistics(sz);
+      }
+    }
+  }
+}
+#endif // INCLUDE_SERVICES
+
 // Verification
 
 class VerifyFieldClosure: public OopClosure {
@@ -3068,7 +3179,7 @@ void InstanceKlass::verify_on(outputStream* st) {
     Array<int>* method_ordering = this->method_ordering();
     int length = method_ordering->length();
     if (JvmtiExport::can_maintain_original_method_order() ||
-        (UseSharedSpaces && length != 0)) {
+        ((UseSharedSpaces || DumpSharedSpaces) && length != 0)) {
       guarantee(length == methods()->length(), "invalid method ordering length");
       jlong sum = 0;
       for (int j = 0; j < length; j++) {
@@ -3098,15 +3209,10 @@ void InstanceKlass::verify_on(outputStream* st) {
     guarantee(constants()->is_metadata(), "should be in metaspace");
     guarantee(constants()->is_constantPool(), "should be constant pool");
   }
-  if (protection_domain() != NULL) {
-    guarantee(protection_domain()->is_oop(), "should be oop");
-  }
-  if (host_klass() != NULL) {
-    guarantee(host_klass()->is_metadata(), "should be in metaspace");
-    guarantee(host_klass()->is_klass(), "should be klass");
-  }
-  if (signers() != NULL) {
-    guarantee(signers()->is_objArray(), "should be obj array");
+  const Klass* host = host_klass();
+  if (host != NULL) {
+    guarantee(host->is_metadata(), "should be in metaspace");
+    guarantee(host->is_klass(), "should be klass");
   }
 }
 

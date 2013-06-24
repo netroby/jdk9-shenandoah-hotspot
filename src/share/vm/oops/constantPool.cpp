@@ -25,20 +25,22 @@
 #include "precompiled.hpp"
 #include "classfile/classLoaderData.hpp"
 #include "classfile/javaClasses.hpp"
+#include "classfile/metadataOnStackMark.hpp"
 #include "classfile/symbolTable.hpp"
 #include "classfile/systemDictionary.hpp"
 #include "classfile/vmSymbols.hpp"
 #include "interpreter/linkResolver.hpp"
+#include "memory/heapInspection.hpp"
 #include "memory/metadataFactory.hpp"
 #include "memory/oopFactory.hpp"
 #include "oops/constantPool.hpp"
 #include "oops/instanceKlass.hpp"
 #include "oops/objArrayKlass.hpp"
-#include "prims/jvmtiRedefineClasses.hpp"
 #include "runtime/fieldType.hpp"
 #include "runtime/init.hpp"
 #include "runtime/javaCalls.hpp"
 #include "runtime/signature.hpp"
+#include "runtime/synchronizer.hpp"
 #include "runtime/vframe.hpp"
 
 ConstantPool* ConstantPool::allocate(ClassLoaderData* loader_data, int length, TRAPS) {
@@ -53,7 +55,7 @@ ConstantPool* ConstantPool::allocate(ClassLoaderData* loader_data, int length, T
   // the resolved_references array, which is recreated at startup time.
   // But that could be moved to InstanceKlass (although a pain to access from
   // assembly code).  Maybe it could be moved to the cpCache which is RW.
-  return new (loader_data, size, false, THREAD) ConstantPool(tags);
+  return new (loader_data, size, false, MetaspaceObj::ConstantPoolType, THREAD) ConstantPool(tags);
 }
 
 ConstantPool::ConstantPool(Array<u1>* tags) {
@@ -65,11 +67,9 @@ ConstantPool::ConstantPool(Array<u1>* tags) {
   set_operands(NULL);
   set_pool_holder(NULL);
   set_flags(0);
+
   // only set to non-zero if constant pool is merged by RedefineClasses
   set_version(0);
-  set_lock(new Monitor(Monitor::nonleaf + 2, "A constant pool lock"));
-  // all fields are initialized; needed for GC
-  set_on_stack(false);
 
   // initialize tag array
   int length = tags->length();
@@ -95,21 +95,6 @@ void ConstantPool::deallocate_contents(ClassLoaderData* loader_data) {
 void ConstantPool::release_C_heap_structures() {
   // walk constant pool and decrement symbol reference counts
   unreference_symbols();
-
-  delete _lock;
-  set_lock(NULL);
-}
-
-void ConstantPool::set_flag_at(FlagBit fb) {
-  const int MAX_STATE_CHANGES = 2;
-  for (int i = MAX_STATE_CHANGES + 10; i > 0; i--) {
-    int oflags = _flags;
-    int nflags = oflags | (1 << (int)fb);
-    if (Atomic::cmpxchg(nflags, &_flags, oflags) == oflags)
-      return;
-  }
-  assert(false, "failed to cmpxchg flags");
-  _flags |= (1 << (int)fb);     // better than nothing
 }
 
 objArrayOop ConstantPool::resolved_references() const {
@@ -166,9 +151,6 @@ void ConstantPool::restore_unshareable_info(TRAPS) {
       ClassLoaderData* loader_data = pool_holder()->class_loader_data();
       set_resolved_references(loader_data->add_handle(refs_handle));
     }
-
-    // Also need to recreate the mutex.  Make sure this matches the constructor
-    set_lock(new Monitor(Monitor::nonleaf + 2, "A constant pool lock"));
   }
 }
 
@@ -179,7 +161,23 @@ void ConstantPool::remove_unshareable_info() {
   set_resolved_reference_length(
     resolved_references() != NULL ? resolved_references()->length() : 0);
   set_resolved_references(NULL);
-  set_lock(NULL);
+}
+
+oop ConstantPool::lock() {
+  if (_pool_holder) {
+    // We re-use the _pool_holder's init_lock to reduce footprint.
+    // Notes on deadlocks:
+    // [1] This lock is a Java oop, so it can be recursively locked by
+    //     the same thread without self-deadlocks.
+    // [2] Deadlock will happen if there is circular dependency between
+    //     the <clinit> of two Java classes. However, in this case,
+    //     the deadlock would have happened long before we reach
+    //     ConstantPool::lock(), so reusing init_lock does not
+    //     increase the possibility of deadlock.
+    return _pool_holder->init_lock();
+  } else {
+    return NULL;
+  }
 }
 
 int ConstantPool::cp_to_object_index(int cp_index) {
@@ -220,7 +218,9 @@ Klass* ConstantPool::klass_at_impl(constantPoolHandle this_oop, int which, TRAPS
 
   Symbol* name = NULL;
   Handle       loader;
-  {  MonitorLockerEx ml(this_oop->lock());
+  {
+    oop cplock = this_oop->lock();
+    ObjectLocker ol(cplock , THREAD, cplock != NULL);
 
     if (this_oop->tag_at(which).is_unresolved_klass()) {
       if (this_oop->tag_at(which).is_unresolved_klass_in_error()) {
@@ -267,7 +267,8 @@ Klass* ConstantPool::klass_at_impl(constantPoolHandle this_oop, int which, TRAPS
 
       bool throw_orig_error = false;
       {
-        MonitorLockerEx ml(this_oop->lock());
+        oop cplock = this_oop->lock();
+        ObjectLocker ol(cplock, THREAD, cplock != NULL);
 
         // some other thread has beaten us and has resolved the class.
         if (this_oop->tag_at(which).is_klass()) {
@@ -335,7 +336,8 @@ Klass* ConstantPool::klass_at_impl(constantPoolHandle this_oop, int which, TRAPS
       }
       return k();
     } else {
-      MonitorLockerEx ml(this_oop->lock());
+      oop cplock = this_oop->lock();
+      ObjectLocker ol(cplock, THREAD, cplock != NULL);
       // Only updated constant pool - if it is resolved.
       do_resolve = this_oop->tag_at(which).is_unresolved_klass();
       if (do_resolve) {
@@ -631,7 +633,8 @@ void ConstantPool::save_and_throw_exception(constantPoolHandle this_oop, int whi
                                      int tag, TRAPS) {
   ResourceMark rm;
   Symbol* error = PENDING_EXCEPTION->klass()->name();
-  MonitorLockerEx ml(this_oop->lock());  // lock cpool to change tag.
+  oop cplock = this_oop->lock();
+  ObjectLocker ol(cplock, THREAD, cplock != NULL);  // lock cpool to change tag.
 
   int error_tag = (tag == JVM_CONSTANT_MethodHandle) ?
            JVM_CONSTANT_MethodHandleInError : JVM_CONSTANT_MethodTypeInError;
@@ -705,10 +708,6 @@ oop ConstantPool::resolve_constant_at_impl(constantPoolHandle this_oop, int inde
       break;
     }
     result_oop = string_at_impl(this_oop, index, cache_index, CHECK_NULL);
-    break;
-
-  case JVM_CONSTANT_Object:
-    result_oop = this_oop->object_at(index);
     break;
 
   case JVM_CONSTANT_MethodHandleInError:
@@ -796,7 +795,8 @@ oop ConstantPool::resolve_constant_at_impl(constantPoolHandle this_oop, int inde
   if (cache_index >= 0) {
     // Cache the oop here also.
     Handle result_handle(THREAD, result_oop);
-    MonitorLockerEx ml(this_oop->lock());  // don't know if we really need this
+    oop cplock = this_oop->lock();
+    ObjectLocker ol(cplock, THREAD, cplock != NULL);  // don't know if we really need this
     oop result = this_oop->resolved_references()->obj_at(cache_index);
     // Benign race condition:  resolved_references may already be filled in while we were trying to lock.
     // The important thing here is that all threads pick up the same result.
@@ -1059,24 +1059,14 @@ bool ConstantPool::compare_entry_to(int index1, constantPoolHandle cp2,
 
   case JVM_CONSTANT_InvokeDynamic:
   {
-    int k1 = invoke_dynamic_bootstrap_method_ref_index_at(index1);
-    int k2 = cp2->invoke_dynamic_bootstrap_method_ref_index_at(index2);
-    bool match = compare_entry_to(k1, cp2, k2, CHECK_false);
-    if (!match)  return false;
-    k1 = invoke_dynamic_name_and_type_ref_index_at(index1);
-    k2 = cp2->invoke_dynamic_name_and_type_ref_index_at(index2);
-    match = compare_entry_to(k1, cp2, k2, CHECK_false);
-    if (!match)  return false;
-    int argc = invoke_dynamic_argument_count_at(index1);
-    if (argc == cp2->invoke_dynamic_argument_count_at(index2)) {
-      for (int j = 0; j < argc; j++) {
-        k1 = invoke_dynamic_argument_index_at(index1, j);
-        k2 = cp2->invoke_dynamic_argument_index_at(index2, j);
-        match = compare_entry_to(k1, cp2, k2, CHECK_false);
-        if (!match)  return false;
-      }
-      return true;           // got through loop; all elements equal
-    }
+    int k1 = invoke_dynamic_name_and_type_ref_index_at(index1);
+    int k2 = cp2->invoke_dynamic_name_and_type_ref_index_at(index2);
+    int i1 = invoke_dynamic_bootstrap_specifier_index(index1);
+    int i2 = cp2->invoke_dynamic_bootstrap_specifier_index(index2);
+    // separate statements and variables because CHECK_false is used
+    bool match_entry = compare_entry_to(k1, cp2, k2, CHECK_false);
+    bool match_operand = compare_operand_to(i1, cp2, i2, CHECK_false);
+    return (match_entry && match_operand);
   } break;
 
   case JVM_CONSTANT_String:
@@ -1111,32 +1101,83 @@ bool ConstantPool::compare_entry_to(int index1, constantPoolHandle cp2,
 } // end compare_entry_to()
 
 
-// Copy this constant pool's entries at start_i to end_i (inclusive)
-// to the constant pool to_cp's entries starting at to_i. A total of
-// (end_i - start_i) + 1 entries are copied.
-void ConstantPool::copy_cp_to_impl(constantPoolHandle from_cp, int start_i, int end_i,
-       constantPoolHandle to_cp, int to_i, TRAPS) {
+// Resize the operands array with delta_len and delta_size.
+// Used in RedefineClasses for CP merge.
+void ConstantPool::resize_operands(int delta_len, int delta_size, TRAPS) {
+  int old_len  = operand_array_length(operands());
+  int new_len  = old_len + delta_len;
+  int min_len  = (delta_len > 0) ? old_len : new_len;
 
-  int dest_i = to_i;  // leave original alone for debug purposes
+  int old_size = operands()->length();
+  int new_size = old_size + delta_size;
+  int min_size = (delta_size > 0) ? old_size : new_size;
 
-  for (int src_i = start_i; src_i <= end_i; /* see loop bottom */ ) {
-    copy_entry_to(from_cp, src_i, to_cp, dest_i, CHECK);
+  ClassLoaderData* loader_data = pool_holder()->class_loader_data();
+  Array<u2>* new_ops = MetadataFactory::new_array<u2>(loader_data, new_size, CHECK);
 
-    switch (from_cp->tag_at(src_i).value()) {
-    case JVM_CONSTANT_Double:
-    case JVM_CONSTANT_Long:
-      // double and long take two constant pool entries
-      src_i += 2;
-      dest_i += 2;
-      break;
-
-    default:
-      // all others take one constant pool entry
-      src_i++;
-      dest_i++;
-      break;
-    }
+  // Set index in the resized array for existing elements only
+  for (int idx = 0; idx < min_len; idx++) {
+    int offset = operand_offset_at(idx);                       // offset in original array
+    operand_offset_at_put(new_ops, idx, offset + 2*delta_len); // offset in resized array
   }
+  // Copy the bootstrap specifiers only
+  Copy::conjoint_memory_atomic(operands()->adr_at(2*old_len),
+                               new_ops->adr_at(2*new_len),
+                               (min_size - 2*min_len) * sizeof(u2));
+  // Explicitly deallocate old operands array.
+  // Note, it is not needed for 7u backport.
+  if ( operands() != NULL) { // the safety check
+    MetadataFactory::free_array<u2>(loader_data, operands());
+  }
+  set_operands(new_ops);
+} // end resize_operands()
+
+
+// Extend the operands array with the length and size of the ext_cp operands.
+// Used in RedefineClasses for CP merge.
+void ConstantPool::extend_operands(constantPoolHandle ext_cp, TRAPS) {
+  int delta_len = operand_array_length(ext_cp->operands());
+  if (delta_len == 0) {
+    return; // nothing to do
+  }
+  int delta_size = ext_cp->operands()->length();
+
+  assert(delta_len  > 0 && delta_size > 0, "extended operands array must be bigger");
+
+  if (operand_array_length(operands()) == 0) {
+    ClassLoaderData* loader_data = pool_holder()->class_loader_data();
+    Array<u2>* new_ops = MetadataFactory::new_array<u2>(loader_data, delta_size, CHECK);
+    // The first element index defines the offset of second part
+    operand_offset_at_put(new_ops, 0, 2*delta_len); // offset in new array
+    set_operands(new_ops);
+  } else {
+    resize_operands(delta_len, delta_size, CHECK);
+  }
+
+} // end extend_operands()
+
+
+// Shrink the operands array to a smaller array with new_len length.
+// Used in RedefineClasses for CP merge.
+void ConstantPool::shrink_operands(int new_len, TRAPS) {
+  int old_len = operand_array_length(operands());
+  if (new_len == old_len) {
+    return; // nothing to do
+  }
+  assert(new_len < old_len, "shrunken operands array must be smaller");
+
+  int free_base  = operand_next_offset_at(new_len - 1);
+  int delta_len  = new_len - old_len;
+  int delta_size = 2*delta_len + free_base - operands()->length();
+
+  resize_operands(delta_len, delta_size, CHECK);
+
+} // end shrink_operands()
+
+
+void ConstantPool::copy_operands(constantPoolHandle from_cp,
+                                 constantPoolHandle to_cp,
+                                 TRAPS) {
 
   int from_oplen = operand_array_length(from_cp->operands());
   int old_oplen  = operand_array_length(to_cp->operands());
@@ -1164,7 +1205,7 @@ void ConstantPool::copy_cp_to_impl(constantPoolHandle from_cp, int start_i, int 
                                    (len = old_off) * sizeof(u2));
       fillp += len;
       // first part of src
-      Copy::conjoint_memory_atomic(to_cp->operands()->adr_at(0),
+      Copy::conjoint_memory_atomic(from_cp->operands()->adr_at(0),
                                    new_operands->adr_at(fillp),
                                    (len = from_off) * sizeof(u2));
       fillp += len;
@@ -1174,7 +1215,7 @@ void ConstantPool::copy_cp_to_impl(constantPoolHandle from_cp, int start_i, int 
                                    (len = old_len - old_off) * sizeof(u2));
       fillp += len;
       // second part of src
-      Copy::conjoint_memory_atomic(to_cp->operands()->adr_at(from_off),
+      Copy::conjoint_memory_atomic(from_cp->operands()->adr_at(from_off),
                                    new_operands->adr_at(fillp),
                                    (len = from_len - from_off) * sizeof(u2));
       fillp += len;
@@ -1192,8 +1233,39 @@ void ConstantPool::copy_cp_to_impl(constantPoolHandle from_cp, int start_i, int 
       to_cp->set_operands(new_operands);
     }
   }
+} // end copy_operands()
 
-} // end copy_cp_to()
+
+// Copy this constant pool's entries at start_i to end_i (inclusive)
+// to the constant pool to_cp's entries starting at to_i. A total of
+// (end_i - start_i) + 1 entries are copied.
+void ConstantPool::copy_cp_to_impl(constantPoolHandle from_cp, int start_i, int end_i,
+       constantPoolHandle to_cp, int to_i, TRAPS) {
+
+
+  int dest_i = to_i;  // leave original alone for debug purposes
+
+  for (int src_i = start_i; src_i <= end_i; /* see loop bottom */ ) {
+    copy_entry_to(from_cp, src_i, to_cp, dest_i, CHECK);
+
+    switch (from_cp->tag_at(src_i).value()) {
+    case JVM_CONSTANT_Double:
+    case JVM_CONSTANT_Long:
+      // double and long take two constant pool entries
+      src_i += 2;
+      dest_i += 2;
+      break;
+
+    default:
+      // all others take one constant pool entry
+      src_i++;
+      dest_i++;
+      break;
+    }
+  }
+  copy_operands(from_cp, to_cp, CHECK);
+
+} // end copy_cp_to_impl()
 
 
 // Copy this constant pool's entry at from_i to the constant pool
@@ -1365,6 +1437,46 @@ int ConstantPool::find_matching_entry(int pattern_i,
 } // end find_matching_entry()
 
 
+// Compare this constant pool's bootstrap specifier at idx1 to the constant pool
+// cp2's bootstrap specifier at idx2.
+bool ConstantPool::compare_operand_to(int idx1, constantPoolHandle cp2, int idx2, TRAPS) {
+  int k1 = operand_bootstrap_method_ref_index_at(idx1);
+  int k2 = cp2->operand_bootstrap_method_ref_index_at(idx2);
+  bool match = compare_entry_to(k1, cp2, k2, CHECK_false);
+
+  if (!match) {
+    return false;
+  }
+  int argc = operand_argument_count_at(idx1);
+  if (argc == cp2->operand_argument_count_at(idx2)) {
+    for (int j = 0; j < argc; j++) {
+      k1 = operand_argument_index_at(idx1, j);
+      k2 = cp2->operand_argument_index_at(idx2, j);
+      match = compare_entry_to(k1, cp2, k2, CHECK_false);
+      if (!match) {
+        return false;
+      }
+    }
+    return true;           // got through loop; all elements equal
+  }
+  return false;
+} // end compare_operand_to()
+
+// Search constant pool search_cp for a bootstrap specifier that matches
+// this constant pool's bootstrap specifier at pattern_i index.
+// Return the index of a matching bootstrap specifier or (-1) if there is no match.
+int ConstantPool::find_matching_operand(int pattern_i,
+                    constantPoolHandle search_cp, int search_len, TRAPS) {
+  for (int i = 0; i < search_len; i++) {
+    bool found = compare_operand_to(pattern_i, search_cp, i, CHECK_(-1));
+    if (found) {
+      return i;
+    }
+  }
+  return -1;  // bootstrap specifier not found; return unused index (-1)
+} // end find_matching_operand()
+
+
 #ifndef PRODUCT
 
 const char* ConstantPool::printable_name_at(int which) {
@@ -1386,12 +1498,13 @@ const char* ConstantPool::printable_name_at(int which) {
 
 // JVMTI GetConstantPool support
 
-// For temporary use until code is stable.
-#define DBG(code)
+// For debugging of constant pool
+const bool debug_cpool = false;
 
-static const char* WARN_MSG = "Must not be such entry!";
+#define DBG(code) do { if (debug_cpool) { (code); } } while(0)
 
 static void print_cpool_bytes(jint cnt, u1 *bytes) {
+  const char* WARN_MSG = "Must not be such entry!";
   jint size = 0;
   u2   idx1, idx2;
 
@@ -1677,8 +1790,7 @@ int ConstantPool::copy_cpool_bytes(int cpool_size,
         idx1 = tbl->symbol_to_value(sym);
         assert(idx1 != 0, "Have not found a hashtable entry");
         Bytes::put_Java_u2((address) (bytes+1), idx1);
-        DBG(char *str = sym->as_utf8());
-        DBG(printf("JVM_CONSTANT_String: idx=#%03hd, %s", idx1, str));
+        DBG(printf("JVM_CONSTANT_String: idx=#%03hd, %s", idx1, sym->as_utf8()));
         break;
       }
       case JVM_CONSTANT_Fieldref:
@@ -1753,9 +1865,15 @@ int ConstantPool::copy_cpool_bytes(int cpool_size,
   return (int)(bytes - start_bytes);
 } /* end copy_cpool_bytes */
 
+#undef DBG
+
 
 void ConstantPool::set_on_stack(const bool value) {
-  _on_stack = value;
+  if (value) {
+    _flags |= _on_stack;
+  } else {
+    _flags &= ~_on_stack;
+  }
   if (value) MetadataOnStackMark::record(this);
 }
 
@@ -1824,9 +1942,8 @@ void ConstantPool::print_on(outputStream* st) const {
   st->print_cr(internal_name());
   if (flags() != 0) {
     st->print(" - flags: 0x%x", flags());
-    if (has_pseudo_string()) st->print(" has_pseudo_string");
-    if (has_invokedynamic()) st->print(" has_invokedynamic");
     if (has_preresolution()) st->print(" has_preresolution");
+    if (on_stack()) st->print(" on_stack");
     st->cr();
   }
   if (pool_holder() != NULL) {
@@ -1857,6 +1974,7 @@ void ConstantPool::print_entry_on(const int index, outputStream* st) {
   switch (tag_at(index).value()) {
     case JVM_CONSTANT_Class :
       { Klass* k = klass_at(index, CATCH);
+        guarantee(k != NULL, "need klass");
         k->print_value_on(st);
         st->print(" {0x%lx}", (address)k);
       }
@@ -1868,13 +1986,14 @@ void ConstantPool::print_entry_on(const int index, outputStream* st) {
       st->print(" name_and_type_index=%d", uncached_name_and_type_ref_index_at(index));
       break;
     case JVM_CONSTANT_String :
-      unresolved_string_at(index)->print_value_on(st);
+      if (is_pseudo_string_at(index)) {
+        oop anObj = pseudo_string_at(index);
+        anObj->print_value_on(st);
+        st->print(" {0x%lx}", (address)anObj);
+      } else {
+        unresolved_string_at(index)->print_value_on(st);
+      }
       break;
-    case JVM_CONSTANT_Object : {
-      oop anObj = object_at(index);
-      anObj->print_value_on(st);
-      st->print(" {0x%lx}", (address)anObj);
-      } break;
     case JVM_CONSTANT_Integer :
       st->print("%d", int_at(index));
       break;
@@ -1938,8 +2057,6 @@ void ConstantPool::print_entry_on(const int index, outputStream* st) {
 void ConstantPool::print_value_on(outputStream* st) const {
   assert(is_constantPool(), "must be constantPool");
   st->print("constant pool [%d]", length());
-  if (has_pseudo_string()) st->print("/pseudo_string");
-  if (has_invokedynamic()) st->print("/invokedynamic");
   if (has_preresolution()) st->print("/preresolution");
   if (operands() != NULL)  st->print("/operands[%d]", operands()->length());
   print_address_on(st);
@@ -1954,6 +2071,20 @@ void ConstantPool::print_value_on(outputStream* st) const {
   }
 }
 
+#if INCLUDE_SERVICES
+// Size Statistics
+void ConstantPool::collect_statistics(KlassSizeStats *sz) const {
+  sz->_cp_all_bytes += (sz->_cp_bytes          = sz->count(this));
+  sz->_cp_all_bytes += (sz->_cp_tags_bytes     = sz->count_array(tags()));
+  sz->_cp_all_bytes += (sz->_cp_cache_bytes    = sz->count(cache()));
+  sz->_cp_all_bytes += (sz->_cp_operands_bytes = sz->count_array(operands()));
+  sz->_cp_all_bytes += (sz->_cp_refmap_bytes   = sz->count_array(reference_map()));
+
+  sz->_ro_bytes += sz->_cp_operands_bytes + sz->_cp_tags_bytes +
+                   sz->_cp_refmap_bytes;
+  sz->_rw_bytes += sz->_cp_bytes + sz->_cp_cache_bytes;
+}
+#endif // INCLUDE_SERVICES
 
 // Verification
 

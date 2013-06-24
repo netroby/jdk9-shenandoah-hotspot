@@ -34,17 +34,18 @@ CompileLog* CompileLog::_first = NULL;
 
 // ------------------------------------------------------------------
 // CompileLog::CompileLog
-CompileLog::CompileLog(const char* file, FILE* fp, intx thread_id)
+CompileLog::CompileLog(const char* file_name, FILE* fp, intx thread_id)
   : _context(_context_buffer, sizeof(_context_buffer))
 {
-  initialize(new(ResourceObj::C_HEAP, mtCompiler) fileStream(fp));
-  _file = file;
+  initialize(new(ResourceObj::C_HEAP, mtCompiler) fileStream(fp, true));
   _file_end = 0;
   _thread_id = thread_id;
 
   _identities_limit = 0;
   _identities_capacity = 400;
   _identities = NEW_C_HEAP_ARRAY(char, _identities_capacity, mtCompiler);
+  _file = NEW_C_HEAP_ARRAY(char, strlen(file_name)+1, mtCompiler);
+   strcpy((char*)_file, file_name);
 
   // link into the global list
   { MutexLocker locker(CompileTaskAlloc_lock);
@@ -57,30 +58,9 @@ CompileLog::~CompileLog() {
   delete _out;
   _out = NULL;
   FREE_C_HEAP_ARRAY(char, _identities, mtCompiler);
+  FREE_C_HEAP_ARRAY(char, _file, mtCompiler);
 }
 
-
-// Advance kind up to a null or space, return this tail.
-// Make sure kind is null-terminated, not space-terminated.
-// Use the buffer if necessary.
-static const char* split_attrs(const char* &kind, char* buffer) {
-  const char* attrs = strchr(kind, ' ');
-  // Tease apart the first word from the rest:
-  if (attrs == NULL) {
-    return "";  // no attrs, no split
-  } else if (kind == buffer) {
-    ((char*) attrs)[-1] = 0;
-    return attrs;
-  } else {
-    // park it in the buffer, so we can put a null on the end
-    assert(!(kind >= buffer && kind < buffer+100), "not obviously in buffer");
-    int klen = attrs - kind;
-    strncpy(buffer, kind, klen);
-    buffer[klen] = 0;
-    kind = buffer;  // return by reference
-    return attrs;
-  }
-}
 
 // see_tag, pop_tag:  Override the default do-nothing methods on xmlStream.
 // These methods provide a hook for managing the the extra context markup.
@@ -210,7 +190,8 @@ void CompileLog::finish_log_on_error(outputStream* file, char* buf, int buflen) 
   if (called_exit)  return;
   called_exit = true;
 
-  for (CompileLog* log = _first; log != NULL; log = log->_next) {
+  CompileLog* log = _first;
+  while (log != NULL) {
     log->flush();
     const char* partial_file = log->file();
     int partial_fd = open(partial_file, O_RDONLY);
@@ -289,7 +270,11 @@ void CompileLog::finish_log_on_error(outputStream* file, char* buf, int buflen) 
       close(partial_fd);
       unlink(partial_file);
     }
+    CompileLog* next_log = log->_next;
+    delete log;
+    log = next_log;
   }
+  _first = NULL;
 }
 
 // ------------------------------------------------------------------

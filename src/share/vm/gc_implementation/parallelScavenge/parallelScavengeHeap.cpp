@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2001, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2001, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -35,6 +35,8 @@
 #include "gc_implementation/parallelScavenge/psPromotionManager.hpp"
 #include "gc_implementation/parallelScavenge/psScavenge.hpp"
 #include "gc_implementation/parallelScavenge/vmPSOperations.hpp"
+#include "gc_implementation/shared/gcHeapSummary.hpp"
+#include "gc_implementation/shared/gcWhen.hpp"
 #include "memory/gcLocker.inline.hpp"
 #include "oops/oop.inline.hpp"
 #include "runtime/handles.inline.hpp"
@@ -326,6 +328,7 @@ HeapWord* ParallelScavengeHeap::mem_allocate(
 
   uint loop_count = 0;
   uint gc_count = 0;
+  int gclocker_stalled_count = 0;
 
   while (result == NULL) {
     // We don't want to have multiple collections for a single filled generation.
@@ -354,6 +357,10 @@ HeapWord* ParallelScavengeHeap::mem_allocate(
         return result;
       }
 
+      if (gclocker_stalled_count > GCLockerRetryAllocationCount) {
+        return NULL;
+      }
+
       // Failed to allocate without a gc.
       if (GC_locker::is_active_and_needs_gc()) {
         // If this thread is not in a jni critical section, we stall
@@ -366,6 +373,7 @@ HeapWord* ParallelScavengeHeap::mem_allocate(
         if (!jthr->in_critical()) {
           MutexUnlocker mul(Heap_lock);
           GC_locker::stall_until_clear();
+          gclocker_stalled_count += 1;
           continue;
         } else {
           if (CheckJNICalls) {
@@ -409,7 +417,7 @@ HeapWord* ParallelScavengeHeap::mem_allocate(
         // heap remains parsable.
         const bool limit_exceeded = size_policy()->gc_overhead_limit_exceeded();
         const bool softrefs_clear = collector_policy()->all_soft_refs_clear();
-        assert(!limit_exceeded || softrefs_clear, "Should have been cleared");
+
         if (limit_exceeded && softrefs_clear) {
           *gc_overhead_limit_was_exceeded = true;
           size_policy()->set_gc_overhead_limit_exceeded(false);
@@ -636,10 +644,42 @@ void ParallelScavengeHeap::prepare_for_verify() {
   ensure_parsability(false);  // no need to retire TLABs for verification
 }
 
+PSHeapSummary ParallelScavengeHeap::create_ps_heap_summary() {
+  PSOldGen* old = old_gen();
+  HeapWord* old_committed_end = (HeapWord*)old->virtual_space()->committed_high_addr();
+  VirtualSpaceSummary old_summary(old->reserved().start(), old_committed_end, old->reserved().end());
+  SpaceSummary old_space(old->reserved().start(), old_committed_end, old->used_in_bytes());
+
+  PSYoungGen* young = young_gen();
+  VirtualSpaceSummary young_summary(young->reserved().start(),
+    (HeapWord*)young->virtual_space()->committed_high_addr(), young->reserved().end());
+
+  MutableSpace* eden = young_gen()->eden_space();
+  SpaceSummary eden_space(eden->bottom(), eden->end(), eden->used_in_bytes());
+
+  MutableSpace* from = young_gen()->from_space();
+  SpaceSummary from_space(from->bottom(), from->end(), from->used_in_bytes());
+
+  MutableSpace* to = young_gen()->to_space();
+  SpaceSummary to_space(to->bottom(), to->end(), to->used_in_bytes());
+
+  VirtualSpaceSummary heap_summary = create_heap_space_summary();
+  return PSHeapSummary(heap_summary, used(), old_summary, old_space, young_summary, eden_space, from_space, to_space);
+}
+
 void ParallelScavengeHeap::print_on(outputStream* st) const {
   young_gen()->print_on(st);
   old_gen()->print_on(st);
   MetaspaceAux::print_on(st);
+}
+
+void ParallelScavengeHeap::print_on_error(outputStream* st) const {
+  this->CollectedHeap::print_on_error(st);
+
+  if (UseParallelOldGC) {
+    st->cr();
+    PSParallelCompact::print_on_error(st);
+  }
 }
 
 void ParallelScavengeHeap::gc_threads_do(ThreadClosure* tc) const {
@@ -656,7 +696,7 @@ void ParallelScavengeHeap::print_tracing_info() const {
     tty->print_cr("[Accumulated GC generation 0 time %3.7f secs]", time);
   }
   if (TraceGen1Time) {
-    double time = PSMarkSweep::accumulated_time()->seconds();
+    double time = UseParallelOldGC ? PSParallelCompact::accumulated_time()->seconds() : PSMarkSweep::accumulated_time()->seconds();
     tty->print_cr("[Accumulated GC generation 1 time %3.7f secs]", time);
   }
 }
@@ -689,6 +729,12 @@ void ParallelScavengeHeap::print_heap_change(size_t prev_used) {
                         "("  SIZE_FORMAT "K)",
                         prev_used / K, used() / K, capacity() / K);
   }
+}
+
+void ParallelScavengeHeap::trace_heap(GCWhen::Type when, GCTracer* gc_tracer) {
+  const PSHeapSummary& heap_summary = create_ps_heap_summary();
+  const MetaspaceSummary& metaspace_summary = create_metaspace_summary();
+  gc_tracer->report_gc_heap_summary(when, heap_summary, metaspace_summary);
 }
 
 ParallelScavengeHeap* ParallelScavengeHeap::heap() {

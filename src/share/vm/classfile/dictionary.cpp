@@ -27,7 +27,6 @@
 #include "classfile/systemDictionary.hpp"
 #include "oops/oop.inline.hpp"
 #include "prims/jvmtiRedefineClassesTrace.hpp"
-#include "services/classLoadingService.hpp"
 #include "utilities/hashtable.inline.hpp"
 
 
@@ -156,19 +155,7 @@ bool Dictionary::do_unloading() {
           if (k_def_class_loader_data == loader_data) {
             // This is the defining entry, so the referred class is about
             // to be unloaded.
-            // Notify the debugger and clean up the class.
             class_was_unloaded = true;
-            // notify the debugger
-            if (JvmtiExport::should_post_class_unload()) {
-              JvmtiExport::post_class_unload(ik);
-            }
-
-            // notify ClassLoadingService of class unload
-            ClassLoadingService::notify_class_unloaded(ik);
-
-            // Clean up C heap
-            ik->release_C_heap_structures();
-            ik->constants()->release_C_heap_structures();
           }
           // Also remove this system dictionary entry.
           purge_entry = true;
@@ -266,22 +253,6 @@ void Dictionary::classes_do(void f(Klass*, TRAPS), TRAPS) {
   }
 }
 
-
-//   All classes, and their class loaders
-//   (added for helpers that use HandleMarks and ResourceMarks)
-// Don't iterate over placeholders
-void Dictionary::classes_do(void f(Klass*, ClassLoaderData*, TRAPS), TRAPS) {
-  for (int index = 0; index < table_size(); index++) {
-    for (DictionaryEntry* probe = bucket(index);
-                          probe != NULL;
-                          probe = probe->next()) {
-      Klass* k = probe->klass();
-      f(k, probe->loader_data(), CHECK);
-    }
-  }
-}
-
-
 //   All classes, and their class loaders
 // Don't iterate over placeholders
 void Dictionary::classes_do(void f(Klass*, ClassLoaderData*)) {
@@ -347,6 +318,7 @@ void Dictionary::add_klass(Symbol* class_name, ClassLoaderData* loader_data,
   assert_locked_or_safepoint(SystemDictionary_lock);
   assert(obj() != NULL, "adding NULL obj");
   assert(obj()->name() == class_name, "sanity check on name");
+  assert(loader_data != NULL, "Must be non-NULL");
 
   unsigned int hash = compute_hash(class_name, loader_data);
   int index = hash_to_index(hash);

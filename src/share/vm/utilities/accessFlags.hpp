@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -194,6 +194,9 @@ class AccessFlags VALUE_OBJ_CLASS_SPEC {
   void set_is_obsolete()               { atomic_set_bits(JVM_ACC_IS_OBSOLETE);             }
   void set_is_prefixed_native()        { atomic_set_bits(JVM_ACC_IS_PREFIXED_NATIVE);      }
 
+  void clear_not_c1_compilable()       { atomic_clear_bits(JVM_ACC_NOT_C1_COMPILABLE);       }
+  void clear_not_c2_compilable()       { atomic_clear_bits(JVM_ACC_NOT_C2_COMPILABLE);       }
+  void clear_not_c2_osr_compilable()   { atomic_clear_bits(JVM_ACC_NOT_C2_OSR_COMPILABLE);   }
   // Klass* flags
   void set_has_vanilla_constructor()   { atomic_set_bits(JVM_ACC_HAS_VANILLA_CONSTRUCTOR); }
   void set_has_finalizer()             { atomic_set_bits(JVM_ACC_HAS_FINALIZER);           }
@@ -239,7 +242,11 @@ class AccessFlags VALUE_OBJ_CLASS_SPEC {
   inline friend AccessFlags accessFlags_from(jint flags);
 
   // Printing/debugging
+#if INCLUDE_JVMTI
+  void print_on(outputStream* st) const;
+#else
   void print_on(outputStream* st) const PRODUCT_RETURN;
+#endif
 };
 
 inline AccessFlags accessFlags_from(jint flags) {

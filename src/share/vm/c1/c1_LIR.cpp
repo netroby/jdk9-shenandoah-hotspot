@@ -633,6 +633,7 @@ void LIR_OpVisitState::visit(LIR_Op* op) {
     case lir_ushr:
     case lir_xadd:
     case lir_xchg:
+    case lir_assert:
     {
       assert(op->as_Op2() != NULL, "must be");
       LIR_Op2* op2 = (LIR_Op2*)op;
@@ -814,7 +815,7 @@ void LIR_OpVisitState::visit(LIR_Op* op) {
 
       // only visit register parameters
       int n = opJavaCall->_arguments->length();
-      for (int i = 0; i < n; i++) {
+      for (int i = opJavaCall->_receiver->is_valid() ? 1 : 0; i < n; i++) {
         if (!opJavaCall->_arguments->at(i)->is_pointer()) {
           do_input(*opJavaCall->_arguments->adr_at(i));
         }
@@ -1112,6 +1113,11 @@ void LIR_OpLock::emit_code(LIR_Assembler* masm) {
   }
 }
 
+#ifdef ASSERT
+void LIR_OpAssert::emit_code(LIR_Assembler* masm) {
+  masm->emit_assert(this);
+}
+#endif
 
 void LIR_OpDelay::emit_code(LIR_Assembler* masm) {
   masm->emit_delay(this);
@@ -1771,6 +1777,10 @@ const char * LIR_Op::name() const {
      case lir_cas_int:               s = "cas_int";      break;
      // LIR_OpProfileCall
      case lir_profile_call:          s = "profile_call";  break;
+     // LIR_OpAssert
+#ifdef ASSERT
+     case lir_assert:                s = "assert";        break;
+#endif
      case lir_none:                  ShouldNotReachHere();break;
     default:                         s = "illegal_op";    break;
   }
@@ -2016,6 +2026,15 @@ void LIR_OpLock::print_instr(outputStream* out) const {
   }
   out->print("[lbl:0x%x]", stub()->entry());
 }
+
+#ifdef ASSERT
+void LIR_OpAssert::print_instr(outputStream* out) const {
+  print_condition(out, condition()); out->print(" ");
+  in_opr1()->print(out);             out->print(" ");
+  in_opr2()->print(out);             out->print(", \"");
+  out->print(msg());                 out->print("\"");
+}
+#endif
 
 
 void LIR_OpDelay::print_instr(outputStream* out) const {

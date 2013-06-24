@@ -28,6 +28,7 @@
 #include "classfile/classLoaderData.hpp"
 #include "memory/specialized_oop_closures.hpp"
 #include "oops/arrayKlass.hpp"
+#include "utilities/macros.hpp"
 
 // ObjArrayKlass is the klass for objArrays
 
@@ -74,7 +75,7 @@ class ObjArrayKlass : public ArrayKlass {
   void  copy_array(arrayOop s, int src_pos, arrayOop d, int dst_pos, int length, TRAPS);
 
   // Compute protection domain
-  oop protection_domain() { return bottom_klass()->protection_domain(); }
+  oop protection_domain() const { return bottom_klass()->protection_domain(); }
 
  private:
   // Either oop or narrowOop depending on UseCompressedOops.
@@ -111,11 +112,11 @@ class ObjArrayKlass : public ArrayKlass {
 
   // Parallel Scavenge and Parallel Old
   PARALLEL_GC_DECLS
-#ifndef SERIALGC
+#if INCLUDE_ALL_GCS
   inline void oop_follow_contents(ParCompactionManager* cm, oop obj, int index);
   template <class T> inline void
     objarray_follow_contents(ParCompactionManager* cm, oop obj, int index);
-#endif // !SERIALGC
+#endif // INCLUDE_ALL_GCS
 
   // Iterators
   int oop_oop_iterate(oop obj, ExtendedOopClosure* blk) {

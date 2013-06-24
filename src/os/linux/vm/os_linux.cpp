@@ -44,6 +44,7 @@
 #include "runtime/extendedPC.hpp"
 #include "runtime/globals.hpp"
 #include "runtime/interfaceSupport.hpp"
+#include "runtime/init.hpp"
 #include "runtime/java.hpp"
 #include "runtime/javaCalls.hpp"
 #include "runtime/mutexLocker.hpp"
@@ -57,10 +58,12 @@
 #include "runtime/threadCritical.hpp"
 #include "runtime/timer.hpp"
 #include "services/attachListener.hpp"
+#include "services/memTracker.hpp"
 #include "services/runtimeService.hpp"
 #include "utilities/decoder.hpp"
 #include "utilities/defaultStream.hpp"
 #include "utilities/events.hpp"
+#include "utilities/elfFile.hpp"
 #include "utilities/growableArray.hpp"
 #include "utilities/vmError.hpp"
 
@@ -98,6 +101,12 @@
 # include <inttypes.h>
 # include <sys/ioctl.h>
 
+// if RUSAGE_THREAD for getrusage() has not been defined, do it here. The code calling
+// getrusage() is prepared to handle the associated failure.
+#ifndef RUSAGE_THREAD
+#define RUSAGE_THREAD   (1)               /* only the calling thread */
+#endif
+
 #define MAX_PATH    (2 * K)
 
 // for timer info max values which include all bits
@@ -116,6 +125,7 @@ int (*os::Linux::_pthread_getcpuclockid)(pthread_t, clockid_t *) = NULL;
 Mutex* os::Linux::_createThread_lock = NULL;
 pthread_t os::Linux::_main_thread;
 int os::Linux::_page_size = -1;
+const int os::Linux::_vm_default_page_size = (8 * K);
 bool os::Linux::_is_floating_stack = false;
 bool os::Linux::_is_NPTL = false;
 bool os::Linux::_supports_fast_thread_cpu_time = false;
@@ -140,6 +150,9 @@ sigset_t SR_sigset;
 
 /* Used to protect dlsym() calls */
 static pthread_mutex_t dl_mutex;
+
+// Declarations
+static void unpackTime(timespec* absTime, bool isAbsolute, jlong time);
 
 #ifdef JAVASE_EMBEDDED
 class MemNotifyThread: public Thread {
@@ -173,7 +186,6 @@ class MemNotifyThread: public Thread {
 // utility functions
 
 static int SR_initialize();
-static int SR_finalize();
 
 julong os::available_memory() {
   return Linux::available_memory();
@@ -189,20 +201,6 @@ julong os::Linux::available_memory() {
 
 julong os::physical_memory() {
   return Linux::physical_memory();
-}
-
-julong os::allocatable_physical_memory(julong size) {
-#ifdef _LP64
-  return size;
-#else
-  julong result = MIN2(size, (julong)3800*M);
-   if (!is_allocatable(result)) {
-     // See comments under solaris for alignment considerations
-     julong reasonable_size = (julong)2*G - 2 * os::vm_page_size();
-     result =  MIN2(size, reasonable_size);
-   }
-   return result;
-#endif // _LP64
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -1155,13 +1153,9 @@ void os::Linux::capture_initial_stack(size_t max_size) {
   //   for initial thread if its stack size exceeds 6M. Cap it at 2M,
   //   in case other parts in glibc still assumes 2M max stack size.
   // FIXME: alt signal stack is gone, maybe we can relax this constraint?
-#ifndef IA64
-  if (stack_size > 2 * K * K) stack_size = 2 * K * K;
-#else
   // Problem still exists RH7.2 (IA64 anyway) but 2MB is a little small
-  if (stack_size > 4 * K * K) stack_size = 4 * K * K;
-#endif
-
+  if (stack_size > 2 * K * K IA64_ONLY(*2))
+      stack_size = 2 * K * K IA64_ONLY(*2);
   // Try to figure out where the stack base (top) is. This is harder.
   //
   // When an application is started, glibc saves the initial stack pointer in
@@ -1351,15 +1345,19 @@ jlong os::elapsed_frequency() {
   return (1000 * 1000);
 }
 
-// For now, we say that linux does not support vtime.  I have no idea
-// whether it can actually be made to (DLD, 9/13/05).
-
-bool os::supports_vtime() { return false; }
+bool os::supports_vtime() { return true; }
 bool os::enable_vtime()   { return false; }
 bool os::vtime_enabled()  { return false; }
+
 double os::elapsedVTime() {
-  // better than nothing, but not much
-  return elapsedTime();
+  struct rusage usage;
+  int retval = getrusage(RUSAGE_THREAD, &usage);
+  if (retval == 0) {
+    return (double) (usage.ru_utime.tv_sec + usage.ru_stime.tv_sec) + (double) (usage.ru_utime.tv_usec + usage.ru_stime.tv_usec) / (1000 * 1000);
+  } else {
+    // better than nothing, but not much
+    return elapsedTime();
+  }
 }
 
 jlong os::javaTimeMillis() {
@@ -1648,6 +1646,9 @@ bool os::dll_build_name(char* buffer, size_t buflen,
   } else if (strchr(pname, *os::path_separator()) != NULL) {
     int n;
     char** pelements = split_path(pname, &n);
+    if (pelements == NULL) {
+      return false;
+    }
     for (int i = 0 ; i < n ; i++) {
       // Really shouldn't be NULL, but check can't hurt
       if (pelements[i] == NULL || strlen(pelements[i]) == 0) {
@@ -1673,10 +1674,6 @@ bool os::dll_build_name(char* buffer, size_t buflen,
     retval = true;
   }
   return retval;
-}
-
-const char* os::get_current_directory(char *buf, int buflen) {
-  return getcwd(buf, buflen);
 }
 
 // check if addr is inside libjvm.so
@@ -1800,20 +1797,101 @@ bool os::dll_address_to_library_name(address addr, char* buf,
   // in case of error it checks if .dll/.so was built for the
   // same architecture as Hotspot is running on
 
+
+// Remember the stack's state. The Linux dynamic linker will change
+// the stack to 'executable' at most once, so we must safepoint only once.
+bool os::Linux::_stack_is_executable = false;
+
+// VM operation that loads a library.  This is necessary if stack protection
+// of the Java stacks can be lost during loading the library.  If we
+// do not stop the Java threads, they can stack overflow before the stacks
+// are protected again.
+class VM_LinuxDllLoad: public VM_Operation {
+ private:
+  const char *_filename;
+  char *_ebuf;
+  int _ebuflen;
+  void *_lib;
+ public:
+  VM_LinuxDllLoad(const char *fn, char *ebuf, int ebuflen) :
+    _filename(fn), _ebuf(ebuf), _ebuflen(ebuflen), _lib(NULL) {}
+  VMOp_Type type() const { return VMOp_LinuxDllLoad; }
+  void doit() {
+    _lib = os::Linux::dll_load_in_vmthread(_filename, _ebuf, _ebuflen);
+    os::Linux::_stack_is_executable = true;
+  }
+  void* loaded_library() { return _lib; }
+};
+
 void * os::dll_load(const char *filename, char *ebuf, int ebuflen)
 {
-  void * result= ::dlopen(filename, RTLD_LAZY);
+  void * result = NULL;
+  bool load_attempted = false;
+
+  // Check whether the library to load might change execution rights
+  // of the stack. If they are changed, the protection of the stack
+  // guard pages will be lost. We need a safepoint to fix this.
+  //
+  // See Linux man page execstack(8) for more info.
+  if (os::uses_stack_guard_pages() && !os::Linux::_stack_is_executable) {
+    ElfFile ef(filename);
+    if (!ef.specifies_noexecstack()) {
+      if (!is_init_completed()) {
+        os::Linux::_stack_is_executable = true;
+        // This is OK - No Java threads have been created yet, and hence no
+        // stack guard pages to fix.
+        //
+        // This should happen only when you are building JDK7 using a very
+        // old version of JDK6 (e.g., with JPRT) and running test_gamma.
+        //
+        // Dynamic loader will make all stacks executable after
+        // this function returns, and will not do that again.
+        assert(Threads::first() == NULL, "no Java threads should exist yet.");
+      } else {
+        warning("You have loaded library %s which might have disabled stack guard. "
+                "The VM will try to fix the stack guard now.\n"
+                "It's highly recommended that you fix the library with "
+                "'execstack -c <libfile>', or link it with '-z noexecstack'.",
+                filename);
+
+        assert(Thread::current()->is_Java_thread(), "must be Java thread");
+        JavaThread *jt = JavaThread::current();
+        if (jt->thread_state() != _thread_in_native) {
+          // This happens when a compiler thread tries to load a hsdis-<arch>.so file
+          // that requires ExecStack. Cannot enter safe point. Let's give up.
+          warning("Unable to fix stack guard. Giving up.");
+        } else {
+          if (!LoadExecStackDllInVMThread) {
+            // This is for the case where the DLL has an static
+            // constructor function that executes JNI code. We cannot
+            // load such DLLs in the VMThread.
+            result = os::Linux::dlopen_helper(filename, ebuf, ebuflen);
+          }
+
+          ThreadInVMfromNative tiv(jt);
+          debug_only(VMNativeEntryWrapper vew;)
+
+          VM_LinuxDllLoad op(filename, ebuf, ebuflen);
+          VMThread::execute(&op);
+          if (LoadExecStackDllInVMThread) {
+            result = op.loaded_library();
+          }
+          load_attempted = true;
+        }
+      }
+    }
+  }
+
+  if (!load_attempted) {
+    result = os::Linux::dlopen_helper(filename, ebuf, ebuflen);
+  }
+
   if (result != NULL) {
     // Successful loading
     return result;
   }
 
   Elf32_Ehdr elf_head;
-
-  // Read system error message into ebuf
-  // It may or may not be overwritten below
-  ::strncpy(ebuf, ::dlerror(), ebuflen-1);
-  ebuf[ebuflen-1]='\0';
   int diag_msg_max_length=ebuflen-strlen(ebuf);
   char* diag_msg_buf=ebuf+strlen(ebuf);
 
@@ -1954,6 +2032,47 @@ void * os::dll_load(const char *filename, char *ebuf, int ebuflen)
   }
 
   return NULL;
+}
+
+void * os::Linux::dlopen_helper(const char *filename, char *ebuf, int ebuflen) {
+  void * result = ::dlopen(filename, RTLD_LAZY);
+  if (result == NULL) {
+    ::strncpy(ebuf, ::dlerror(), ebuflen - 1);
+    ebuf[ebuflen-1] = '\0';
+  }
+  return result;
+}
+
+void * os::Linux::dll_load_in_vmthread(const char *filename, char *ebuf, int ebuflen) {
+  void * result = NULL;
+  if (LoadExecStackDllInVMThread) {
+    result = dlopen_helper(filename, ebuf, ebuflen);
+  }
+
+  // Since 7019808, libjvm.so is linked with -noexecstack. If the VM loads a
+  // library that requires an executable stack, or which does not have this
+  // stack attribute set, dlopen changes the stack attribute to executable. The
+  // read protection of the guard pages gets lost.
+  //
+  // Need to check _stack_is_executable again as multiple VM_LinuxDllLoad
+  // may have been queued at the same time.
+
+  if (!_stack_is_executable) {
+    JavaThread *jt = Threads::first();
+
+    while (jt) {
+      if (!jt->stack_guard_zone_unused() &&        // Stack not yet fully initialized
+          jt->stack_yellow_zone_enabled()) {       // No pending stack overflow exceptions
+        if (!os::guard_memory((char *) jt->stack_red_zone_base() - jt->stack_red_zone_size(),
+                              jt->stack_yellow_zone_size() + jt->stack_red_zone_size())) {
+          warning("Attempt to reguard stack yellow zone failed.");
+        }
+      }
+      jt = jt->next();
+    }
+  }
+
+  return result;
 }
 
 /*
@@ -2291,6 +2410,57 @@ void* os::user_handler() {
   return CAST_FROM_FN_PTR(void*, UserHandler);
 }
 
+class Semaphore : public StackObj {
+  public:
+    Semaphore();
+    ~Semaphore();
+    void signal();
+    void wait();
+    bool trywait();
+    bool timedwait(unsigned int sec, int nsec);
+  private:
+    sem_t _semaphore;
+};
+
+
+Semaphore::Semaphore() {
+  sem_init(&_semaphore, 0, 0);
+}
+
+Semaphore::~Semaphore() {
+  sem_destroy(&_semaphore);
+}
+
+void Semaphore::signal() {
+  sem_post(&_semaphore);
+}
+
+void Semaphore::wait() {
+  sem_wait(&_semaphore);
+}
+
+bool Semaphore::trywait() {
+  return sem_trywait(&_semaphore) == 0;
+}
+
+bool Semaphore::timedwait(unsigned int sec, int nsec) {
+  struct timespec ts;
+  unpackTime(&ts, false, (sec * NANOSECS_PER_SEC) + nsec);
+
+  while (1) {
+    int result = sem_timedwait(&_semaphore, &ts);
+    if (result == 0) {
+      return true;
+    } else if (errno == EINTR) {
+      continue;
+    } else if (errno == ETIMEDOUT) {
+      return false;
+    } else {
+      return false;
+    }
+  }
+}
+
 extern "C" {
   typedef void (*sa_handler_t)(int);
   typedef void (*sa_sigaction_t)(int, siginfo_t *, void *);
@@ -2330,6 +2500,7 @@ static volatile jint pending_signals[NSIG+1] = { 0 };
 
 // Linux(POSIX) specific hand shaking semaphore.
 static sem_t sig_sem;
+static Semaphore sr_semaphore;
 
 void os::signal_init_pd() {
   // Initialize signal structures
@@ -2797,9 +2968,10 @@ static char* anon_mmap(char* requested_addr, size_t bytes, bool fixed) {
     flags |= MAP_FIXED;
   }
 
-  // Map uncommitted pages PROT_READ and PROT_WRITE, change access
-  // to PROT_EXEC if executable when we commit the page.
-  addr = (char*)::mmap(requested_addr, bytes, PROT_READ|PROT_WRITE,
+  // Map reserved/uncommitted pages PROT_NONE so we fail early if we
+  // touch an uncommitted page. Otherwise, the read/write might
+  // succeed if we have enough swap space to back the physical page.
+  addr = (char*)::mmap(requested_addr, bytes, PROT_NONE,
                        flags, -1, 0);
 
   if (addr != MAP_FAILED) {
@@ -3098,13 +3270,24 @@ char* os::reserve_memory_special(size_t bytes, char* req_addr, bool exec) {
     numa_make_global(addr, bytes);
   }
 
+  // The memory is committed
+  address pc = CALLER_PC;
+  MemTracker::record_virtual_memory_reserve((address)addr, bytes, pc);
+  MemTracker::record_virtual_memory_commit((address)addr, bytes, pc);
+
   return addr;
 }
 
 bool os::release_memory_special(char* base, size_t bytes) {
   // detaching the SHM segment will also delete it, see reserve_memory_special()
   int rslt = shmdt(base);
-  return rslt == 0;
+  if (rslt == 0) {
+    MemTracker::record_virtual_memory_uncommit((address)base, bytes);
+    MemTracker::record_virtual_memory_release((address)base, bytes);
+    return true;
+  } else {
+   return false;
+  }
 }
 
 size_t os::large_page_size() {
@@ -3431,9 +3614,6 @@ void os::hint_no_preempt() {}
 static void resume_clear_context(OSThread *osthread) {
   osthread->set_ucontext(NULL);
   osthread->set_siginfo(NULL);
-
-  // notify the suspend action is completed, we have now resumed
-  osthread->sr.clear_suspended();
 }
 
 static void suspend_save_context(OSThread *osthread, siginfo_t* siginfo, ucontext_t* context) {
@@ -3453,7 +3633,7 @@ static void suspend_save_context(OSThread *osthread, siginfo_t* siginfo, ucontex
 // its signal handlers run and prevents sigwait()'s use with the
 // mutex granting granting signal.
 //
-// Currently only ever called on the VMThread
+// Currently only ever called on the VMThread and JavaThreads (PC sampling)
 //
 static void SR_handler(int sig, siginfo_t* siginfo, ucontext_t* context) {
   // Save and restore errno to avoid confusing native code with EINTR
@@ -3462,38 +3642,46 @@ static void SR_handler(int sig, siginfo_t* siginfo, ucontext_t* context) {
 
   Thread* thread = Thread::current();
   OSThread* osthread = thread->osthread();
-  assert(thread->is_VM_thread(), "Must be VMThread");
-  // read current suspend action
-  int action = osthread->sr.suspend_action();
-  if (action == SR_SUSPEND) {
+  assert(thread->is_VM_thread() || thread->is_Java_thread(), "Must be VMThread or JavaThread");
+
+  os::SuspendResume::State current = osthread->sr.state();
+  if (current == os::SuspendResume::SR_SUSPEND_REQUEST) {
     suspend_save_context(osthread, siginfo, context);
 
-    // Notify the suspend action is about to be completed. do_suspend()
-    // waits until SR_SUSPENDED is set and then returns. We will wait
-    // here for a resume signal and that completes the suspend-other
-    // action. do_suspend/do_resume is always called as a pair from
-    // the same thread - so there are no races
+    // attempt to switch the state, we assume we had a SUSPEND_REQUEST
+    os::SuspendResume::State state = osthread->sr.suspended();
+    if (state == os::SuspendResume::SR_SUSPENDED) {
+      sigset_t suspend_set;  // signals for sigsuspend()
 
-    // notify the caller
-    osthread->sr.set_suspended();
+      // get current set of blocked signals and unblock resume signal
+      pthread_sigmask(SIG_BLOCK, NULL, &suspend_set);
+      sigdelset(&suspend_set, SR_signum);
 
-    sigset_t suspend_set;  // signals for sigsuspend()
+      sr_semaphore.signal();
+      // wait here until we are resumed
+      while (1) {
+        sigsuspend(&suspend_set);
 
-    // get current set of blocked signals and unblock resume signal
-    pthread_sigmask(SIG_BLOCK, NULL, &suspend_set);
-    sigdelset(&suspend_set, SR_signum);
+        os::SuspendResume::State result = osthread->sr.running();
+        if (result == os::SuspendResume::SR_RUNNING) {
+          sr_semaphore.signal();
+          break;
+        }
+      }
 
-    // wait here until we are resumed
-    do {
-      sigsuspend(&suspend_set);
-      // ignore all returns until we get a resume signal
-    } while (osthread->sr.suspend_action() != SR_CONTINUE);
+    } else if (state == os::SuspendResume::SR_RUNNING) {
+      // request was cancelled, continue
+    } else {
+      ShouldNotReachHere();
+    }
 
     resume_clear_context(osthread);
-
+  } else if (current == os::SuspendResume::SR_RUNNING) {
+    // request was cancelled, continue
+  } else if (current == os::SuspendResume::SR_WAKEUP_REQUEST) {
+    // ignore
   } else {
-    assert(action == SR_CONTINUE, "unexpected sr action");
-    // nothing special to do - just leave the handler
+    // ignore
   }
 
   errno = old_errno;
@@ -3537,46 +3725,82 @@ static int SR_initialize() {
   return 0;
 }
 
-static int SR_finalize() {
-  return 0;
+static int sr_notify(OSThread* osthread) {
+  int status = pthread_kill(osthread->pthread_id(), SR_signum);
+  assert_status(status == 0, status, "pthread_kill");
+  return status;
 }
 
+// "Randomly" selected value for how long we want to spin
+// before bailing out on suspending a thread, also how often
+// we send a signal to a thread we want to resume
+static const int RANDOMLY_LARGE_INTEGER = 1000000;
+static const int RANDOMLY_LARGE_INTEGER2 = 100;
 
 // returns true on success and false on error - really an error is fatal
 // but this seems the normal response to library errors
 static bool do_suspend(OSThread* osthread) {
-  // mark as suspended and send signal
-  osthread->sr.set_suspend_action(SR_SUSPEND);
-  int status = pthread_kill(osthread->pthread_id(), SR_signum);
-  assert_status(status == 0, status, "pthread_kill");
+  assert(osthread->sr.is_running(), "thread should be running");
+  assert(!sr_semaphore.trywait(), "semaphore has invalid state");
 
-  // check status and wait until notified of suspension
-  if (status == 0) {
-    for (int i = 0; !osthread->sr.is_suspended(); i++) {
-      os::yield_all(i);
-    }
-    osthread->sr.set_suspend_action(SR_NONE);
-    return true;
-  }
-  else {
-    osthread->sr.set_suspend_action(SR_NONE);
+  // mark as suspended and send signal
+  if (osthread->sr.request_suspend() != os::SuspendResume::SR_SUSPEND_REQUEST) {
+    // failed to switch, state wasn't running?
+    ShouldNotReachHere();
     return false;
   }
+
+  if (sr_notify(osthread) != 0) {
+    ShouldNotReachHere();
+  }
+
+  // managed to send the signal and switch to SUSPEND_REQUEST, now wait for SUSPENDED
+  while (true) {
+    if (sr_semaphore.timedwait(0, 2 * NANOSECS_PER_MILLISEC)) {
+      break;
+    } else {
+      // timeout
+      os::SuspendResume::State cancelled = osthread->sr.cancel_suspend();
+      if (cancelled == os::SuspendResume::SR_RUNNING) {
+        return false;
+      } else if (cancelled == os::SuspendResume::SR_SUSPENDED) {
+        // make sure that we consume the signal on the semaphore as well
+        sr_semaphore.wait();
+        break;
+      } else {
+        ShouldNotReachHere();
+        return false;
+      }
+    }
+  }
+
+  guarantee(osthread->sr.is_suspended(), "Must be suspended");
+  return true;
 }
 
 static void do_resume(OSThread* osthread) {
   assert(osthread->sr.is_suspended(), "thread should be suspended");
-  osthread->sr.set_suspend_action(SR_CONTINUE);
+  assert(!sr_semaphore.trywait(), "invalid semaphore state");
 
-  int status = pthread_kill(osthread->pthread_id(), SR_signum);
-  assert_status(status == 0, status, "pthread_kill");
-  // check status and wait unit notified of resumption
-  if (status == 0) {
-    for (int i = 0; osthread->sr.is_suspended(); i++) {
-      os::yield_all(i);
+  if (osthread->sr.request_wakeup() != os::SuspendResume::SR_WAKEUP_REQUEST) {
+    // failed to switch to WAKEUP_REQUEST
+    ShouldNotReachHere();
+    return;
+  }
+
+  while (true) {
+    if (sr_notify(osthread) == 0) {
+      if (sr_semaphore.timedwait(0, 2 * NANOSECS_PER_MILLISEC)) {
+        if (osthread->sr.is_running()) {
+          return;
+        }
+      }
+    } else {
+      ShouldNotReachHere();
     }
   }
-  osthread->sr.set_suspend_action(SR_NONE);
+
+  guarantee(osthread->sr.is_running(), "Must be running!");
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -3657,7 +3881,9 @@ JVM_handle_linux_signal(int signo, siginfo_t* siginfo,
 
 void signalHandler(int sig, siginfo_t* info, void* uc) {
   assert(info != NULL && uc != NULL, "it must be old kernel");
+  int orig_errno = errno;  // Preserve errno value over signal handler.
   JVM_handle_linux_signal(sig, info, uc, true);
+  errno = orig_errno;
 }
 
 
@@ -4131,6 +4357,15 @@ void os::init(void) {
   Linux::clock_init();
   initial_time_count = os::elapsed_counter();
   pthread_mutex_init(&dl_mutex, NULL);
+
+  // If the pagesize of the VM is greater than 8K determine the appropriate
+  // number of initial guard pages.  The user can change this with the
+  // command line arguments, if needed.
+  if (vm_page_size() > (int)Linux::vm_default_page_size()) {
+    StackYellowPages = 1;
+    StackRedPages = 1;
+    StackShadowPages = round_to((StackShadowPages*Linux::vm_default_page_size()), vm_page_size()) / vm_page_size();
+  }
 }
 
 // To install functions for atexit system call
@@ -4184,8 +4419,8 @@ jint os::init_2(void)
   // Add in 2*BytesPerWord times page size to account for VM stack during
   // class initialization depending on 32 or 64 bit VM.
   os::Linux::min_stack_allowed = MAX2(os::Linux::min_stack_allowed,
-            (size_t)(StackYellowPages+StackRedPages+StackShadowPages+
-                    2*BytesPerWord COMPILER2_PRESENT(+1)) * Linux::page_size());
+            (size_t)(StackYellowPages+StackRedPages+StackShadowPages) * Linux::page_size() +
+                    (2*BytesPerWord COMPILER2_PRESENT(+1)) * Linux::vm_default_page_size());
 
   size_t threadStackSizeInBytes = ThreadStackSize * K;
   if (threadStackSizeInBytes != 0 &&
@@ -4337,6 +4572,40 @@ bool os::bind_to_processor(uint processor_id) {
 
 ///
 
+void os::SuspendedThreadTask::internal_do_task() {
+  if (do_suspend(_thread->osthread())) {
+    SuspendedThreadTaskContext context(_thread, _thread->osthread()->ucontext());
+    do_task(context);
+    do_resume(_thread->osthread());
+  }
+}
+
+class PcFetcher : public os::SuspendedThreadTask {
+public:
+  PcFetcher(Thread* thread) : os::SuspendedThreadTask(thread) {}
+  ExtendedPC result();
+protected:
+  void do_task(const os::SuspendedThreadTaskContext& context);
+private:
+  ExtendedPC _epc;
+};
+
+ExtendedPC PcFetcher::result() {
+  guarantee(is_done(), "task is not done yet.");
+  return _epc;
+}
+
+void PcFetcher::do_task(const os::SuspendedThreadTaskContext& context) {
+  Thread* thread = context.thread();
+  OSThread* osthread = thread->osthread();
+  if (osthread->ucontext() != NULL) {
+    _epc = os::Linux::ucontext_get_pc((ucontext_t *) context.ucontext());
+  } else {
+    // NULL context is unexpected, double-check this is the VMThread
+    guarantee(thread->is_VM_thread(), "can only be called for VMThread");
+  }
+}
+
 // Suspends the target using the signal mechanism and then grabs the PC before
 // resuming the target. Used by the flat-profiler only
 ExtendedPC os::get_thread_pc(Thread* thread) {
@@ -4344,22 +4613,9 @@ ExtendedPC os::get_thread_pc(Thread* thread) {
   assert(Thread::current()->is_Watcher_thread(), "Must be watcher");
   assert(thread->is_VM_thread(), "Can only be called for VMThread");
 
-  ExtendedPC epc;
-
-  OSThread* osthread = thread->osthread();
-  if (do_suspend(osthread)) {
-    if (osthread->ucontext() != NULL) {
-      epc = os::Linux::ucontext_get_pc(osthread->ucontext());
-    } else {
-      // NULL context is unexpected, double-check this is the VMThread
-      guarantee(thread->is_VM_thread(), "can only be called for VMThread");
-    }
-    do_resume(osthread);
-  }
-  // failure means pthread_kill failed for some reason - arguably this is
-  // a fatal problem, but such problems are ignored elsewhere
-
-  return epc;
+  PcFetcher fetcher(thread);
+  fetcher.run();
+  return fetcher.result();
 }
 
 int os::Linux::safe_cond_timedwait(pthread_cond_t *_cond, pthread_mutex_t *_mutex, const struct timespec *_abstime)
@@ -4367,32 +4623,18 @@ int os::Linux::safe_cond_timedwait(pthread_cond_t *_cond, pthread_mutex_t *_mute
    if (is_NPTL()) {
       return pthread_cond_timedwait(_cond, _mutex, _abstime);
    } else {
-#ifndef IA64
       // 6292965: LinuxThreads pthread_cond_timedwait() resets FPU control
       // word back to default 64bit precision if condvar is signaled. Java
       // wants 53bit precision.  Save and restore current value.
       int fpu = get_fpu_control_word();
-#endif // IA64
       int status = pthread_cond_timedwait(_cond, _mutex, _abstime);
-#ifndef IA64
       set_fpu_control_word(fpu);
-#endif // IA64
       return status;
    }
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 // debug support
-
-static address same_page(address x, address y) {
-  int page_bits = -os::vm_page_size();
-  if ((intptr_t(x) & page_bits) == (intptr_t(y) & page_bits))
-    return x;
-  else if (x > y)
-    return (address)(intptr_t(y) | ~page_bits) + 1;
-  else
-    return (address)(intptr_t(y) & page_bits);
-}
 
 bool os::find(address addr, outputStream* st) {
   Dl_info dlinfo;
@@ -4417,8 +4659,8 @@ bool os::find(address addr, outputStream* st) {
 
     if (Verbose) {
       // decode some bytes around the PC
-      address begin = same_page(addr-40, addr);
-      address end   = same_page(addr+40, addr);
+      address begin = clamp_address_in_page(addr-40, addr, os::vm_page_size());
+      address end   = clamp_address_in_page(addr+40, addr, os::vm_page_size());
       address       lowest = (address) dlinfo.dli_sname;
       if (!lowest)  lowest = (address) dlinfo.dli_fbase;
       if (begin < lowest)  begin = lowest;
@@ -4749,49 +4991,26 @@ jlong os::thread_cpu_time(Thread *thread, bool user_sys_cpu_time) {
 //
 
 static jlong slow_thread_cpu_time(Thread *thread, bool user_sys_cpu_time) {
-  static bool proc_pid_cpu_avail = true;
   static bool proc_task_unchecked = true;
   static const char *proc_stat_path = "/proc/%d/stat";
   pid_t  tid = thread->osthread()->thread_id();
-  int i;
   char *s;
   char stat[2048];
   int statlen;
   char proc_name[64];
   int count;
   long sys_time, user_time;
-  char string[64];
   char cdummy;
   int idummy;
   long ldummy;
   FILE *fp;
 
-  // We first try accessing /proc/<pid>/cpu since this is faster to
-  // process.  If this file is not present (linux kernels 2.5 and above)
-  // then we open /proc/<pid>/stat.
-  if ( proc_pid_cpu_avail ) {
-    sprintf(proc_name, "/proc/%d/cpu", tid);
-    fp =  fopen(proc_name, "r");
-    if ( fp != NULL ) {
-      count = fscanf( fp, "%s %lu %lu\n", string, &user_time, &sys_time);
-      fclose(fp);
-      if ( count != 3 ) return -1;
-
-      if (user_sys_cpu_time) {
-        return ((jlong)sys_time + (jlong)user_time) * (1000000000 / clock_tics_per_sec);
-      } else {
-        return (jlong)user_time * (1000000000 / clock_tics_per_sec);
-      }
-    }
-    else proc_pid_cpu_avail = false;
-  }
-
   // The /proc/<tid>/stat aggregates per-process usage on
   // new Linux kernels 2.6+ where NPTL is supported.
   // The /proc/self/task/<tid>/stat still has the per-thread usage.
   // See bug 6328462.
-  // There can be no directory /proc/self/task on kernels 2.4 with NPTL
-  // and possibly in some other cases, so we check its availability.
+  // There possibly can be cases where there is no directory
+  // /proc/self/task, so we check its availability.
   if (proc_task_unchecked && os::Linux::is_NPTL()) {
     // This is executed only once
     proc_task_unchecked = false;
@@ -4816,7 +5035,6 @@ static jlong slow_thread_cpu_time(Thread *thread, bool user_sys_cpu_time) {
   // We don't really need to know the command string, just find the last
   // occurrence of ")" and then start parsing from there. See bug 4726580.
   s = strrchr(stat, ')');
-  i = 0;
   if (s == NULL ) return -1;
 
   // Skip blank chars
@@ -5519,4 +5737,5 @@ void MemNotifyThread::start() {
     new MemNotifyThread(fd);
   }
 }
+
 #endif // JAVASE_EMBEDDED

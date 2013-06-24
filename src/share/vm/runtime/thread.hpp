@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -41,18 +41,20 @@
 #include "runtime/stubRoutines.hpp"
 #include "runtime/threadLocalStorage.hpp"
 #include "runtime/unhandledOops.hpp"
+#include "utilities/macros.hpp"
 
 #if INCLUDE_NMT
 #include "services/memRecorder.hpp"
 #endif // INCLUDE_NMT
 
-#include "trace/tracing.hpp"
+#include "trace/traceBackend.hpp"
+#include "trace/traceMacros.hpp"
 #include "utilities/exceptions.hpp"
 #include "utilities/top.hpp"
-#ifndef SERIALGC
+#if INCLUDE_ALL_GCS
 #include "gc_implementation/g1/dirtyCardQueue.hpp"
 #include "gc_implementation/g1/satbQueue.hpp"
-#endif
+#endif // INCLUDE_ALL_GCS
 #ifdef ZERO
 #ifdef TARGET_ARCH_zero
 # include "stack_zero.hpp"
@@ -257,7 +259,7 @@ class Thread: public ThreadShadow {
   jlong _allocated_bytes;                       // Cumulative number of bytes allocated on
                                                 // the Java heap
 
-  TRACE_BUFFER _trace_buffer;                   // Thread-local buffer for tracing
+  TRACE_DATA _trace_data;                       // Thread-local data for tracing
 
   int   _vm_operation_started_count;            // VM_Operation support
   int   _vm_operation_completed_count;          // VM_Operation support
@@ -448,8 +450,7 @@ class Thread: public ThreadShadow {
     return allocated_bytes;
   }
 
-  TRACE_BUFFER trace_buffer()              { return _trace_buffer; }
-  void set_trace_buffer(TRACE_BUFFER buf)  { _trace_buffer = buf; }
+  TRACE_DATA* trace_data()              { return &_trace_data; }
 
   // VM operation support
   int vm_operation_ticket()                      { return ++_vm_operation_started_count; }
@@ -637,9 +638,6 @@ public:
   jint _hashStateZ ;
   void * _schedctl ;
 
-  intptr_t _ScratchA, _ScratchB ;              // Scratch locations for fast-path sync code
-  static ByteSize ScratchA_offset()            { return byte_offset_of(Thread, _ScratchA ); }
-  static ByteSize ScratchB_offset()            { return byte_offset_of(Thread, _ScratchB ); }
 
   volatile jint rng [4] ;                      // RNG for spin loop
 
@@ -929,7 +927,7 @@ class JavaThread: public Thread {
   }   _jmp_ring[ jump_ring_buffer_size ];
 #endif /* PRODUCT */
 
-#ifndef SERIALGC
+#if INCLUDE_ALL_GCS
   // Support for G1 barriers
 
   ObjPtrQueue _satb_mark_queue;          // Thread-local log for SATB barrier.
@@ -941,7 +939,7 @@ class JavaThread: public Thread {
   static DirtyCardQueueSet _dirty_card_queue_set;
 
   void flush_barrier_queues();
-#endif // !SERIALGC
+#endif // INCLUDE_ALL_GCS
 
   friend class VMThread;
   friend class ThreadWaitTransition;
@@ -1055,11 +1053,11 @@ class JavaThread: public Thread {
 #if INCLUDE_NMT
   // native memory tracking
   inline MemRecorder* get_recorder() const          { return (MemRecorder*)_recorder; }
-  inline void         set_recorder(MemRecorder* rc) { _recorder = (volatile MemRecorder*)rc; }
+  inline void         set_recorder(MemRecorder* rc) { _recorder = rc; }
 
  private:
   // per-thread memory recorder
-  volatile MemRecorder* _recorder;
+  MemRecorder* volatile _recorder;
 #endif // INCLUDE_NMT
 
   // Suspend/resume support for JavaThread
@@ -1288,6 +1286,7 @@ class JavaThread: public Thread {
   void enable_stack_red_zone();
   void disable_stack_red_zone();
 
+  inline bool stack_guard_zone_unused();
   inline bool stack_yellow_zone_disabled();
   inline bool stack_yellow_zone_enabled();
 
@@ -1345,10 +1344,10 @@ class JavaThread: public Thread {
     return byte_offset_of(JavaThread, _should_post_on_exceptions_flag);
   }
 
-#ifndef SERIALGC
+#if INCLUDE_ALL_GCS
   static ByteSize satb_mark_queue_offset()       { return byte_offset_of(JavaThread, _satb_mark_queue); }
   static ByteSize dirty_card_queue_offset()      { return byte_offset_of(JavaThread, _dirty_card_queue); }
-#endif // !SERIALGC
+#endif // INCLUDE_ALL_GCS
 
   // Returns the jni environment for this thread
   JNIEnv* jni_environment()                      { return &_jni_environment; }
@@ -1637,7 +1636,7 @@ public:
     _stack_size_at_create = value;
   }
 
-#ifndef SERIALGC
+#if INCLUDE_ALL_GCS
   // SATB marking queue support
   ObjPtrQueue& satb_mark_queue() { return _satb_mark_queue; }
   static SATBMarkQueueSet& satb_mark_queue_set() {
@@ -1649,7 +1648,7 @@ public:
   static DirtyCardQueueSet& dirty_card_queue_set() {
     return _dirty_card_queue_set;
   }
-#endif // !SERIALGC
+#endif // INCLUDE_ALL_GCS
 
   // This method initializes the SATB and dirty card queues before a
   // JavaThread is added to the Java thread list. Right now, we don't
@@ -1668,11 +1667,11 @@ public:
   // might happen between the JavaThread constructor being called and the
   // thread being added to the Java thread list (an example of this is
   // when the structure for the DestroyJavaVM thread is created).
-#ifndef SERIALGC
+#if INCLUDE_ALL_GCS
   void initialize_queues();
-#else // !SERIALGC
+#else  // INCLUDE_ALL_GCS
   void initialize_queues() { }
-#endif // !SERIALGC
+#endif // INCLUDE_ALL_GCS
 
   // Machine dependent stuff
 #ifdef TARGET_OS_ARCH_linux_x86
@@ -1756,6 +1755,10 @@ inline JavaThread* JavaThread::current() {
 inline CompilerThread* JavaThread::as_CompilerThread() {
   assert(is_Compiler_thread(), "just checking");
   return (CompilerThread*)this;
+}
+
+inline bool JavaThread::stack_guard_zone_unused() {
+  return _stack_guard_state == stack_guard_unused;
 }
 
 inline bool JavaThread::stack_yellow_zone_disabled() {

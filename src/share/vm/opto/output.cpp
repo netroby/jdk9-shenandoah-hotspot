@@ -24,6 +24,7 @@
 
 #include "precompiled.hpp"
 #include "asm/assembler.inline.hpp"
+#include "code/compiledIC.hpp"
 #include "code/debugInfo.hpp"
 #include "code/debugInfoRec.hpp"
 #include "compiler/compileBroker.hpp"
@@ -41,8 +42,6 @@
 #include "runtime/handles.inline.hpp"
 #include "utilities/xmlstream.hpp"
 
-extern uint size_java_to_interp();
-extern uint reloc_java_to_interp();
 extern uint size_exception_handler();
 extern uint size_deopt_handler();
 
@@ -389,15 +388,15 @@ void Compile::shorten_branches(uint* blk_starts, int& code_size, int& reloc_size
         MachNode *mach = nj->as_Mach();
         blk_size += (mach->alignment_required() - 1) * relocInfo::addr_unit(); // assume worst case padding
         reloc_size += mach->reloc();
-        if( mach->is_MachCall() ) {
+        if (mach->is_MachCall()) {
           MachCallNode *mcall = mach->as_MachCall();
           // This destination address is NOT PC-relative
 
           mcall->method_set((intptr_t)mcall->entry_point());
 
-          if( mcall->is_MachCallJava() && mcall->as_MachCallJava()->_method ) {
-            stub_size  += size_java_to_interp();
-            reloc_size += reloc_java_to_interp();
+          if (mcall->is_MachCallJava() && mcall->as_MachCallJava()->_method) {
+            stub_size  += CompiledStaticCall::to_interp_stub_size();
+            reloc_size += CompiledStaticCall::reloc_to_interp_stub();
           }
         } else if (mach->is_MachSafePoint()) {
           // If call/safepoint are adjacent, account for possible
@@ -449,6 +448,17 @@ void Compile::shorten_branches(uint* blk_starts, int& code_size, int& reloc_size
       int max_loop_pad = nb->code_alignment()-relocInfo::addr_unit();
       if (max_loop_pad > 0) {
         assert(is_power_of_2(max_loop_pad+relocInfo::addr_unit()), "");
+        // Adjust last_call_adr and/or last_avoid_back_to_back_adr.
+        // If either is the last instruction in this block, bump by
+        // max_loop_pad in lock-step with blk_size, so sizing
+        // calculations in subsequent blocks still can conservatively
+        // detect that it may the last instruction in this block.
+        if (last_call_adr == blk_starts[i]+blk_size) {
+          last_call_adr += max_loop_pad;
+        }
+        if (last_avoid_back_to_back_adr == blk_starts[i]+blk_size) {
+          last_avoid_back_to_back_adr += max_loop_pad;
+        }
         blk_size += max_loop_pad;
       }
     }
@@ -919,7 +929,7 @@ void Compile::Process_OopMap_Node(MachNode *mach, int current_offset) {
           scval = new_loc_value( _regalloc, obj_reg, Location::oop );
         }
       } else {
-        const TypePtr *tp = obj_node->bottom_type()->make_ptr();
+        const TypePtr *tp = obj_node->get_ptr_type();
         scval = new ConstantOopWriteValue(tp->is_oopptr()->const_oop()->constant_encoding());
       }
 
@@ -1033,21 +1043,6 @@ void NonSafepointEmitter::emit_non_safepoint() {
   debug_info->end_non_safepoint(pc_offset);
 }
 
-
-
-// helper for fill_buffer bailout logic
-static void turn_off_compiler(Compile* C) {
-  if (CodeCache::largest_free_block() >= CodeCacheMinimumFreeSpace*10) {
-    // Do not turn off compilation if a single giant method has
-    // blown the code cache size.
-    C->record_failure("excessive request to CodeCache");
-  } else {
-    // Let CompilerBroker disable further compilations.
-    C->record_failure("CodeCache is full");
-  }
-}
-
-
 //------------------------------init_buffer------------------------------------
 CodeBuffer* Compile::init_buffer(uint* blk_starts) {
 
@@ -1147,7 +1142,7 @@ CodeBuffer* Compile::init_buffer(uint* blk_starts) {
 
   // Have we run out of code space?
   if ((cb->blob() == NULL) || (!CompileBroker::should_compile_new_jobs())) {
-    turn_off_compiler(this);
+    C->record_failure("CodeCache is full");
     return NULL;
   }
   // Configure the code buffer.
@@ -1193,8 +1188,6 @@ void Compile::fill_buffer(CodeBuffer* cb, uint* blk_starts) {
   int last_call_offset = -1;
   int last_avoid_back_to_back_offset = -1;
 #ifdef ASSERT
-  int block_alignment_padding = 0;
-
   uint* jmp_target = NEW_RESOURCE_ARRAY(uint,nblocks);
   uint* jmp_offset = NEW_RESOURCE_ARRAY(uint,nblocks);
   uint* jmp_size   = NEW_RESOURCE_ARRAY(uint,nblocks);
@@ -1228,8 +1221,6 @@ void Compile::fill_buffer(CodeBuffer* cb, uint* blk_starts) {
   Node *delay_slot = NULL;
 
   for (uint i=0; i < nblocks; i++) {
-    guarantee(blk_starts[i] >= (uint)cb->insts_size(),"should not increase size");
-
     Block *b = _cfg->_blocks[i];
 
     Node *head = b->head();
@@ -1250,14 +1241,6 @@ void Compile::fill_buffer(CodeBuffer* cb, uint* blk_starts) {
     jmp_offset[i] = 0;
     jmp_size[i]   = 0;
     jmp_rule[i]   = 0;
-
-    // Maximum alignment padding for loop block was used
-    // during first round of branches shortening, as result
-    // padding for nodes (sfpt after call) was not added.
-    // Take this into account for block's size change check
-    // and allow increase block's size by the difference
-    // of maximum and actual alignment paddings.
-    int orig_blk_size = blk_starts[i+1] - blk_starts[i] + block_alignment_padding;
 #endif
     int blk_offset = current_offset;
 
@@ -1477,7 +1460,7 @@ void Compile::fill_buffer(CodeBuffer* cb, uint* blk_starts) {
       // Verify that there is sufficient space remaining
       cb->insts()->maybe_expand_to_ensure_remaining(MAX_inst_size);
       if ((cb->blob() == NULL) || (!CompileBroker::should_compile_new_jobs())) {
-        turn_off_compiler(this);
+        C->record_failure("CodeCache is full");
         return;
       }
 
@@ -1557,8 +1540,6 @@ void Compile::fill_buffer(CodeBuffer* cb, uint* blk_starts) {
       }
 
     } // End for all instructions in block
-    assert((uint)blk_offset <= blk_starts[i], "shouldn't increase distance");
-    blk_starts[i] = blk_offset;
 
     // If the next block is the top of a loop, pad this block out to align
     // the loop top a little. Helps prevent pipe stalls at loop back branches.
@@ -1572,16 +1553,13 @@ void Compile::fill_buffer(CodeBuffer* cb, uint* blk_starts) {
         nop->emit(*cb, _regalloc);
         current_offset = cb->insts_size();
       }
-#ifdef ASSERT
-      int max_loop_pad = nb->code_alignment()-relocInfo::addr_unit();
-      block_alignment_padding = (max_loop_pad - padding);
-      assert(block_alignment_padding >= 0, "sanity");
-#endif
     }
     // Verify that the distance for generated before forward
     // short branches is still valid.
-    assert(orig_blk_size >= (current_offset - blk_offset), "shouldn't increase block size");
+    guarantee((int)(blk_starts[i+1] - blk_starts[i]) >= (current_offset - blk_offset), "shouldn't increase block size");
 
+    // Save new block start offset
+    blk_starts[i] = blk_offset;
   } // End of for all blocks
   blk_starts[nblocks] = current_offset;
 
@@ -1639,7 +1617,7 @@ void Compile::fill_buffer(CodeBuffer* cb, uint* blk_starts) {
 
   // One last check for failed CodeBuffer::expand:
   if ((cb->blob() == NULL) || (!CompileBroker::should_compile_new_jobs())) {
-    turn_off_compiler(this);
+    C->record_failure("CodeCache is full");
     return;
   }
 
@@ -2518,6 +2496,7 @@ void Scheduling::DoScheduling() {
     // Schedule the remaining instructions in the block
     while ( _available.size() > 0 ) {
       Node *n = ChooseNodeToBundle();
+      guarantee(n != NULL, "no nodes available");
       AddNodeToBundle(n,bb);
     }
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -286,12 +286,12 @@ class CounterSetting {
 };
 
 
-class IntFlagSetting {
-  intx val;
-  intx* flag;
+class UIntFlagSetting {
+  uintx val;
+  uintx* flag;
  public:
-  IntFlagSetting(intx& fl, intx newValue) { flag = &fl; val = fl; fl = newValue; }
-  ~IntFlagSetting()                       { *flag = val; }
+  UIntFlagSetting(uintx& fl, uintx newValue) { flag = &fl; val = fl; fl = newValue; }
+  ~UIntFlagSetting()                         { *flag = val; }
 };
 
 
@@ -457,6 +457,9 @@ class CommandLineFlags {
   lp64_product(intx, ObjectAlignmentInBytes, 8,                             \
           "Default object alignment in bytes, 8 is minimum")                \
                                                                             \
+  product(bool, AssumeMP, false,                                            \
+          "Instruct the VM to assume multiple processors are available")    \
+                                                                            \
   /* UseMembar is theoretically a temp flag used for memory barrier         \
    * removal testing.  It was supposed to be removed before FCS but has     \
    * been re-added (see 6401008) */                                         \
@@ -510,12 +513,12 @@ class CommandLineFlags {
   product(bool, ForceNUMA, false,                                           \
           "Force NUMA optimizations on single-node/UMA systems")            \
                                                                             \
-  product(intx, NUMAChunkResizeWeight, 20,                                  \
-          "Percentage (0-100) used to weight the current sample when "      \
+  product(uintx, NUMAChunkResizeWeight, 20,                                 \
+          "Percentage (0-100) used to weigh the current sample when "      \
           "computing exponentially decaying average for "                   \
           "AdaptiveNUMAChunkSizing")                                        \
                                                                             \
-  product(intx, NUMASpaceResizeRate, 1*G,                                   \
+  product(uintx, NUMASpaceResizeRate, 1*G,                                  \
           "Do not reallocate more that this amount per collection")         \
                                                                             \
   product(bool, UseAdaptiveNUMAChunkSizing, true,                           \
@@ -524,7 +527,7 @@ class CommandLineFlags {
   product(bool, NUMAStats, false,                                           \
           "Print NUMA stats in detailed heap information")                  \
                                                                             \
-  product(intx, NUMAPageScanRate, 256,                                      \
+  product(uintx, NUMAPageScanRate, 256,                                     \
           "Maximum number of pages to include in the page scan procedure")  \
                                                                             \
   product_pd(bool, NeedsDeoptSuspend,                                       \
@@ -679,9 +682,6 @@ class CommandLineFlags {
   product(bool, UseCompilerSafepoints, true,                                \
           "Stop at safepoints in compiled code")                            \
                                                                             \
-  product(bool, UseSplitVerifier, true,                                     \
-          "use split verifier with StackMapTable attributes")               \
-                                                                            \
   product(bool, FailOverToOldVerifier, true,                                \
           "fail over to old verifier when split verifier fails")            \
                                                                             \
@@ -715,7 +715,7 @@ class CommandLineFlags {
   diagnostic(bool, LogEvents, true,                                         \
              "Enable the various ring buffer event logs")                   \
                                                                             \
-  diagnostic(intx, LogEventsBufferEntries, 10,                              \
+  diagnostic(uintx, LogEventsBufferEntries, 10,                             \
              "Enable the various ring buffer event logs")                   \
                                                                             \
   product(bool, BytecodeVerificationRemote, true,                           \
@@ -868,6 +868,11 @@ class CommandLineFlags {
                                                                             \
   diagnostic(bool, PrintNMTStatistics, false,                               \
           "Print native memory tracking summary data if it is on")          \
+                                                                            \
+  diagnostic(bool, AutoShutdownNMT, true,                                   \
+          "Automatically shutdown native memory tracking under stress "     \
+          "situation. When set to false, native memory tracking tries to "  \
+          "stay alive at the expense of JVM performance")                   \
                                                                             \
   diagnostic(bool, LogCompilation, false,                                   \
           "Log compilation activity in detail to hotspot.log or LogFile")   \
@@ -1154,9 +1159,6 @@ class CommandLineFlags {
   product(bool, CompactFields, true,                                        \
           "Allocate nonstatic fields in gaps between previous fields")      \
                                                                             \
-  notproduct(bool, PrintCompactFieldsSavings, false,                        \
-          "Print how many words were saved with CompactFields")             \
-                                                                            \
   notproduct(bool, PrintFieldLayout, false,                                 \
           "Print field layout for each class")                              \
                                                                             \
@@ -1408,6 +1410,10 @@ class CommandLineFlags {
           "How much the GC can expand the eden by while the GC locker  "    \
           "is active (as a percentage)")                                    \
                                                                             \
+  diagnostic(intx, GCLockerRetryAllocationCount, 2,                         \
+          "Number of times to retry allocations when"                       \
+          " blocked by the GC locker")                                      \
+                                                                            \
   develop(bool, UseCMSAdaptiveFreeLists, true,                              \
           "Use Adaptive Free Lists in the CMS generation")                  \
                                                                             \
@@ -1429,16 +1435,17 @@ class CommandLineFlags {
   product(bool, ParallelGCVerbose, false,                                   \
           "Verbose output for parallel GC.")                                \
                                                                             \
-  product(intx, ParallelGCBufferWastePct, 10,                               \
-          "wasted fraction of parallel allocation buffer.")                 \
+  product(uintx, ParallelGCBufferWastePct, 10,                              \
+          "Wasted fraction of parallel allocation buffer.")                 \
                                                                             \
   diagnostic(bool, ParallelGCRetainPLAB, false,                             \
              "Retain parallel allocation buffers across scavenges; "        \
              " -- disabled because this currently conflicts with "          \
              " parallel card scanning under certain conditions ")           \
                                                                             \
-  product(intx, TargetPLABWastePct, 10,                                     \
-          "target wasted space in last buffer as pct of overall allocation")\
+  product(uintx, TargetPLABWastePct, 10,                                    \
+          "Target wasted space in last buffer as percent of overall "       \
+          "allocation")                                                     \
                                                                             \
   product(uintx, PLABWeight, 75,                                            \
           "Percentage (0-100) used to weight the current sample when"       \
@@ -1516,7 +1523,7 @@ class CommandLineFlags {
   product(bool, AlwaysPreTouch, false,                                      \
           "It forces all freshly committed pages to be pre-touched.")       \
                                                                             \
-  product_pd(intx, CMSYoungGenPerWorker,                                    \
+  product_pd(uintx, CMSYoungGenPerWorker,                                   \
           "The maximum size of young gen chosen by default per GC worker "  \
           "thread available")                                               \
                                                                             \
@@ -1757,6 +1764,10 @@ class CommandLineFlags {
   manageable(intx, CMSWaitDuration, 2000,                                   \
           "Time in milliseconds that CMS thread waits for young GC")        \
                                                                             \
+  develop(uintx, CMSCheckInterval, 1000,                                    \
+          "Interval in milliseconds that CMS thread checks if it "          \
+          "should start a collection cycle")                                \
+                                                                            \
   product(bool, CMSYield, true,                                             \
           "Yield between steps of concurrent mark & sweep")                 \
                                                                             \
@@ -1808,7 +1819,7 @@ class CommandLineFlags {
   product(bool, ParallelRefProcBalancingEnabled, true,                      \
           "Enable balancing of reference processing queues")                \
                                                                             \
-  product(intx, CMSTriggerRatio, 80,                                        \
+  product(uintx, CMSTriggerRatio, 80,                                       \
           "Percentage of MinHeapFreeRatio in CMS generation that is "       \
           "allocated before a CMS collection cycle commences")              \
                                                                             \
@@ -1822,7 +1833,7 @@ class CommandLineFlags {
                                                                             \
   product(uintx, InitiatingHeapOccupancyPercent, 45,                        \
           "Percentage of the (entire) heap occupancy to start a "           \
-          "concurrent GC cycle. It us used by GCs that trigger a "          \
+          "concurrent GC cycle. It is used by GCs that trigger a "          \
           "concurrent GC cycle based on the occupancy of the entire heap, " \
           "not just one of the generations (e.g., G1). A value of 0 "       \
           "denotes 'do constant GC cycles'.")                               \
@@ -1830,7 +1841,7 @@ class CommandLineFlags {
   product(bool, UseCMSInitiatingOccupancyOnly, false,                       \
           "Only use occupancy as a crierion for starting a CMS collection") \
                                                                             \
-  product(intx, CMSIsTooFullPercentage, 98,                                 \
+  product(uintx, CMSIsTooFullPercentage, 98,                                \
           "An absolute ceiling above which CMS will always consider the "   \
           "unloading of classes when class unloading is enabled")           \
                                                                             \
@@ -1869,7 +1880,7 @@ class CommandLineFlags {
   develop(uintx, PromotionFailureALotInterval, 5,                           \
           "Total collections between promotion failures alot")              \
                                                                             \
-  experimental(intx, WorkStealingSleepMillis, 1,                            \
+  experimental(uintx, WorkStealingSleepMillis, 1,                           \
           "Sleep time when sleep is used for yields")                       \
                                                                             \
   experimental(uintx, WorkStealingYieldsBeforeSleep, 5000,                  \
@@ -1960,6 +1971,10 @@ class CommandLineFlags {
   product(uintx, InitialRAMFraction, 64,                                    \
           "Fraction (1/n) of real memory used for initial heap size")       \
                                                                             \
+  develop(uintx, MaxVirtMemFraction, 2,                                     \
+          "Maximum fraction (1/n) of virtual memory used for ergonomically" \
+          "determining maximum heap size")                                  \
+                                                                            \
   product(bool, UseAutoGCSelectPolicy, false,                               \
           "Use automatic collection selection policy")                      \
                                                                             \
@@ -2009,7 +2024,7 @@ class CommandLineFlags {
           "Number of collections before the adaptive sizing is started")    \
                                                                             \
   product(uintx, AdaptiveSizePolicyOutputInterval, 0,                       \
-          "Collecton interval for printing information; zero => never")     \
+          "Collection interval for printing information; zero means never") \
                                                                             \
   product(bool, UseAdaptiveSizePolicyFootprintGoal, true,                   \
           "Use adaptive minimum footprint as a goal")                       \
@@ -2111,6 +2126,13 @@ class CommandLineFlags {
                                                                             \
   product(intx, PrefetchFieldsAhead, -1,                                    \
           "How many fields ahead to prefetch in oop scan (<= 0 means off)") \
+                                                                            \
+  diagnostic(bool, VerifySilently, false,                                   \
+          "Don't print print the verification progress")                    \
+                                                                            \
+  diagnostic(bool, VerifyDuringStartup, false,                              \
+          "Verify memory system before executing any Java code "            \
+          "during VM initialization")                                       \
                                                                             \
   diagnostic(bool, VerifyBeforeExit, trueInDebug,                           \
           "Verify system before exiting")                                   \
@@ -2294,6 +2316,10 @@ class CommandLineFlags {
   product(bool, PrintJNIGCStalls, false,                                    \
           "Print diagnostic message when GC is stalled"                     \
           "by JNI critical section")                                        \
+                                                                            \
+  experimental(double, ObjectCountCutOffPercent, 0.5,                       \
+          "The percentage of the used heap that the instances of a class "  \
+          "must occupy for the class to generate a trace event.")           \
                                                                             \
   /* GC log rotation setting */                                             \
                                                                             \
@@ -2517,7 +2543,7 @@ class CommandLineFlags {
           "disable locking assertions (for speed)")                         \
                                                                             \
   product(bool, RangeCheckElimination, true,                                \
-          "Split loop iterations to eliminate range checks")                \
+          "Eliminate range checks")                                         \
                                                                             \
   develop_pd(bool, UncommonNullCast,                                        \
           "track occurrences of null in casts; adjust compiler tactics")    \
@@ -2907,6 +2933,10 @@ class CommandLineFlags {
           "if non-zero, start verifying C heap after Nth call to "          \
           "malloc/realloc/free")                                            \
                                                                             \
+  diagnostic(uintx, MallocMaxTestWords,     0,                              \
+          "if non-zero, max # of Words that malloc/realloc can allocate "   \
+          "(for testing only)")                                             \
+                                                                            \
   product(intx, TypeProfileWidth,     2,                                    \
           "number of receiver types to record in call/cast profile")        \
                                                                             \
@@ -2946,7 +2976,7 @@ class CommandLineFlags {
                                                                             \
   /* gc parameters */                                                       \
   product(uintx, InitialHeapSize, 0,                                        \
-          "Initial heap size (in bytes); zero means OldSize + NewSize")     \
+          "Initial heap size (in bytes); zero means use ergonomics")        \
                                                                             \
   product(uintx, MaxHeapSize, ScaleForWordSize(96*M),                       \
           "Maximum heap size (in bytes)")                                   \
@@ -2983,10 +3013,10 @@ class CommandLineFlags {
   product(uintx, TLABWasteIncrement,    4,                                  \
           "Increment allowed waste at slow allocation")                     \
                                                                             \
-  product(intx, SurvivorRatio, 8,                                           \
+  product(uintx, SurvivorRatio, 8,                                          \
           "Ratio of eden/survivor space size")                              \
                                                                             \
-  product(intx, NewRatio, 2,                                                \
+  product(uintx, NewRatio, 2,                                               \
           "Ratio of new/old generation sizes")                              \
                                                                             \
   product_pd(uintx, NewSizeThreadIncrease,                                  \
@@ -3016,12 +3046,18 @@ class CommandLineFlags {
           "Min change in heap space due to GC (in bytes)")                  \
                                                                             \
   product(uintx, MinMetaspaceExpansion, ScaleForWordSize(256*K),            \
-          "Min expansion of permanent heap (in bytes)")                     \
+          "Min expansion of Metaspace (in bytes)")                          \
+                                                                            \
+  product(uintx, MinMetaspaceFreeRatio,    40,                              \
+          "Min percentage of Metaspace free after GC to avoid expansion")   \
+                                                                            \
+  product(uintx, MaxMetaspaceFreeRatio,    70,                              \
+          "Max percentage of Metaspace free after GC to avoid shrinking")   \
                                                                             \
   product(uintx, MaxMetaspaceExpansion, ScaleForWordSize(4*M),              \
-          "Max expansion of permanent heap without full GC (in bytes)")     \
+          "Max expansion of Metaspace without full GC (in bytes)")          \
                                                                             \
-  product(intx, QueuedAllocationWarningCount, 0,                            \
+  product(uintx, QueuedAllocationWarningCount, 0,                           \
           "Number of times an allocation that queues behind a GC "          \
           "will retry before printing a warning")                           \
                                                                             \
@@ -3037,7 +3073,7 @@ class CommandLineFlags {
   product(uintx, InitialTenuringThreshold,    7,                            \
           "Initial value for tenuring threshold")                           \
                                                                             \
-  product(intx, TargetSurvivorRatio,    50,                                 \
+  product(uintx, TargetSurvivorRatio,    50,                                \
           "Desired percentage of survivor space used after scavenge")       \
                                                                             \
   product(uintx, MarkSweepDeadRatio,     5,                                 \
@@ -3049,7 +3085,7 @@ class CommandLineFlags {
           "either completely full or completely empty.  Par compact also"   \
           "has a smaller default value; see arguments.cpp.")                \
                                                                             \
-  product(intx, MarkSweepAlwaysCompactCount,     4,                         \
+  product(uintx, MarkSweepAlwaysCompactCount,     4,                        \
           "How often should we fully compact the heap (ignoring the dead "  \
           "space parameters)")                                              \
                                                                             \
@@ -3154,6 +3190,9 @@ class CommandLineFlags {
   product(uintx,  CodeCacheFlushingMinimumFreeSpace, 1500*K,                \
           "When less than X space left, start code cache cleaning")         \
                                                                             \
+  product(uintx, CodeCacheFlushingFraction, 2,                              \
+          "Fraction of the code cache that is flushed when full")           \
+                                                                            \
   /* interpreter debugging */                                               \
   develop(intx, BinarySwitchThreshold, 5,                                   \
           "Minimal number of lookupswitch entries for rewriting to binary " \
@@ -3198,8 +3237,9 @@ class CommandLineFlags {
   develop(bool, ReplayCompiles, false,                                      \
           "Enable replay of compilations from ReplayDataFile")              \
                                                                             \
-  develop(ccstr, ReplayDataFile, "replay.txt",                              \
-          "file containing compilation replay information")                 \
+  product(ccstr, ReplayDataFile, NULL,                                      \
+          "File containing compilation replay information"                  \
+          "[default: ./replay_pid%p.log] (%p replaced with pid)")           \
                                                                             \
   develop(intx, ReplaySuppressInitializers, 2,                              \
           "Controls handling of class initialization during replay"         \
@@ -3212,8 +3252,8 @@ class CommandLineFlags {
   develop(bool, ReplayIgnoreInitErrors, false,                              \
           "Ignore exceptions thrown during initialization for replay")      \
                                                                             \
-  develop(bool, DumpReplayDataOnError, true,                                \
-          "record replay data for crashing compiler threads")               \
+  product(bool, DumpReplayDataOnError, true,                                \
+          "Record replay data for crashing compiler threads")               \
                                                                             \
   product(bool, CICompilerCountPerCPU, false,                               \
           "1 compiler thread for log(N CPUs)")                              \
@@ -3222,7 +3262,9 @@ class CommandLineFlags {
           "Fire OutOfMemoryErrors throughout CI for testing the compiler "  \
           "(non-negative value throws OOM after this many CI accesses "     \
           "in each compile)")                                               \
-                                                                            \
+  notproduct(intx, CICrashAt, -1,                                           \
+          "id of compilation to trigger assert in compiler thread for "     \
+          "the purpose of testing, e.g. generation of replay data")         \
   notproduct(bool, CIObjectFactoryVerify, false,                            \
           "enable potentially expensive verification in ciObjectFactory")   \
                                                                             \
@@ -3404,6 +3446,10 @@ class CommandLineFlags {
           "Start profiling in interpreter if the counters exceed tier 3"    \
           "thresholds by the specified percentage")                         \
                                                                             \
+  product(uintx, IncreaseFirstTierCompileThresholdAt, 50,                   \
+          "Increase the compile threshold for C1 compilation if the code"   \
+          "cache is filled by the specified percentage.")                   \
+                                                                            \
   product(intx, TieredRateUpdateMinTime, 1,                                 \
           "Minimum rate sampling interval (in milliseconds)")               \
                                                                             \
@@ -3565,8 +3611,9 @@ class CommandLineFlags {
   product(uintx, SharedMiscCodeSize,    120*K,                              \
           "Size of the shared miscellaneous code area (in bytes)")          \
                                                                             \
-  product(uintx, SharedDummyBlockSize, 0,                                   \
-          "Size of dummy block used to shift heap addresses (in bytes)")    \
+  product(uintx, SharedBaseAddress, LP64_ONLY(32*G)                         \
+          NOT_LP64(LINUX_ONLY(2*G) NOT_LINUX(0)),                           \
+          "Address to allocate shared memory region for class data")        \
                                                                             \
   diagnostic(bool, EnableInvokeDynamic, true,                               \
           "support JSR 292 (method handles, invokedynamic, "                \
@@ -3640,7 +3687,24 @@ class CommandLineFlags {
           "Enable internal testing APIs")                                   \
                                                                             \
   product(bool, PrintGCCause, true,                                         \
-          "Include GC cause in GC logging")
+          "Include GC cause in GC logging")                                 \
+                                                                            \
+  product(bool , AllowNonVirtualCalls, false,                               \
+          "Obey the ACC_SUPER flag and allow invokenonvirtual calls")       \
+                                                                            \
+  diagnostic(ccstr, SharedArchiveFile, NULL,                                \
+          "Override the default location of the CDS archive file")          \
+                                                                            \
+  experimental(uintx, ArrayAllocatorMallocLimit,                            \
+          SOLARIS_ONLY(64*K) NOT_SOLARIS(max_uintx),                        \
+          "Allocation less than this value will be allocated "              \
+          "using malloc. Larger allocations will use mmap.")                \
+                                                                            \
+  product(bool, EnableTracing, false,                                       \
+          "Enable event-based tracing")                                     \
+  product(bool, UseLockedTracing, false,                                    \
+          "Use locked-tracing when doing event-based tracing")
+
 
 /*
  *  Macros for factoring of globals

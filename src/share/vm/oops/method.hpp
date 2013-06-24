@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -31,6 +31,7 @@
 #include "interpreter/invocationCounter.hpp"
 #include "oops/annotations.hpp"
 #include "oops/constantPool.hpp"
+#include "oops/methodCounters.hpp"
 #include "oops/instanceKlass.hpp"
 #include "oops/oop.hpp"
 #include "oops/typeArrayOop.hpp"
@@ -66,7 +67,7 @@
 // | ConstMethod*                   (oop)                 |
 // |------------------------------------------------------|
 // | methodData                     (oop)                 |
-// | interp_invocation_count                              |
+// | methodCounters                                       |
 // |------------------------------------------------------|
 // | access_flags                                         |
 // | vtable_index                                         |
@@ -74,16 +75,6 @@
 // | result_index (C++ interpreter only)                  |
 // |------------------------------------------------------|
 // | method_size             |   intrinsic_id|   flags    |
-// |------------------------------------------------------|
-// | throwout_count          |   num_breakpoints          |
-// |------------------------------------------------------|
-// | invocation_counter                                   |
-// | backedge_counter                                     |
-// |------------------------------------------------------|
-// |           prev_time (tiered only, 64 bit wide)       |
-// |                                                      |
-// |------------------------------------------------------|
-// |                  rate (tiered)                       |
 // |------------------------------------------------------|
 // | code                           (pointer)             |
 // | i2i                            (pointer)             |
@@ -100,14 +91,17 @@ class CheckedExceptionElement;
 class LocalVariableTableElement;
 class AdapterHandlerEntry;
 class MethodData;
+class MethodCounters;
 class ConstMethod;
+class InlineTableSizes;
+class KlassSizeStats;
 
 class Method : public Metadata {
  friend class VMStructs;
  private:
   ConstMethod*      _constMethod;                // Method read-only data.
   MethodData*       _method_data;
-  int               _interpreter_invocation_count; // Count of times invoked (reused as prev_event_count in tiered)
+  MethodCounters*   _method_counters;
   AccessFlags       _access_flags;               // Access flags
   int               _vtable_index;               // vtable index of this method (see VtableIndexFlag)
                                                  // note: can have vtables with >2**16 elements (because of inheritance)
@@ -116,20 +110,12 @@ class Method : public Metadata {
 #endif
   u2                _method_size;                // size of this object
   u1                _intrinsic_id;               // vmSymbols::intrinsic_id (0 == _none)
-  u1                _jfr_towrite  : 1,           // Flags
-                    _force_inline : 1,
-                    _hidden       : 1,
-                    _dont_inline  : 1,
-                                  : 4;
-  u2                _interpreter_throwout_count; // Count of times method was exited via exception while interpreting
-  u2                _number_of_breakpoints;      // fullspeed debugging support
-  InvocationCounter _invocation_counter;         // Incremented before each activation of the method - used to trigger frequency-based optimizations
-  InvocationCounter _backedge_counter;           // Incremented before each backedge taken - used to trigger frequencey-based optimizations
-
-#ifdef TIERED
-  jlong             _prev_time;                   // Previous time the rate was acquired
-  float             _rate;                        // Events (invocation and backedge counter increments) per millisecond
-#endif
+  u1                _jfr_towrite      : 1,       // Flags
+                    _caller_sensitive : 1,
+                    _force_inline     : 1,
+                    _hidden           : 1,
+                    _dont_inline      : 1,
+                                      : 3;
 
 #ifndef PRODUCT
   int               _compiled_invocation_count;  // Number of nmethod invocations so far (for perf. debugging)
@@ -156,12 +142,7 @@ class Method : public Metadata {
   static Method* allocate(ClassLoaderData* loader_data,
                           int byte_code_size,
                           AccessFlags access_flags,
-                          int compressed_line_number_size,
-                          int localvariable_table_length,
-                          int exception_table_length,
-                          int checked_exceptions_length,
-                          int method_parameters_length,
-                          u2 generic_signature_index,
+                          InlineTableSizes* sizes,
                           ConstMethod::MethodType method_type,
                           TRAPS);
 
@@ -206,33 +187,17 @@ class Method : public Metadata {
 
   // annotations support
   AnnotationArray* annotations() const           {
-    InstanceKlass* ik = method_holder();
-    if (ik->annotations() == NULL) {
-      return NULL;
-    }
-    return ik->annotations()->get_method_annotations_of(method_idnum());
+    return constMethod()->method_annotations();
   }
   AnnotationArray* parameter_annotations() const {
-    InstanceKlass* ik = method_holder();
-    if (ik->annotations() == NULL) {
-      return NULL;
-    }
-    return ik->annotations()->get_method_parameter_annotations_of(method_idnum());
+    return constMethod()->parameter_annotations();
   }
   AnnotationArray* annotation_default() const    {
-    InstanceKlass* ik = method_holder();
-    if (ik->annotations() == NULL) {
-      return NULL;
-    }
-    return ik->annotations()->get_method_default_annotations_of(method_idnum());
+    return constMethod()->default_annotations();
   }
-  AnnotationArray* type_annotations() const {
-  InstanceKlass* ik = method_holder();
-  Annotations* type_annos = ik->type_annotations();
-  if (type_annos == NULL)
-    return NULL;
-  return type_annos->get_method_annotations_of(method_idnum());
-}
+  AnnotationArray* type_annotations() const      {
+    return constMethod()->type_annotations();
+  }
 
 #ifdef CC_INTERP
   void set_result_index(BasicType type);
@@ -265,11 +230,31 @@ class Method : public Metadata {
   void clear_all_breakpoints();
   // Tracking number of breakpoints, for fullspeed debugging.
   // Only mutated by VM thread.
-  u2   number_of_breakpoints() const             { return _number_of_breakpoints; }
-  void incr_number_of_breakpoints()              { ++_number_of_breakpoints; }
-  void decr_number_of_breakpoints()              { --_number_of_breakpoints; }
+  u2   number_of_breakpoints()             const {
+    if (method_counters() == NULL) {
+      return 0;
+    } else {
+      return method_counters()->number_of_breakpoints();
+    }
+  }
+  void incr_number_of_breakpoints(TRAPS)         {
+    MethodCounters* mcs = get_method_counters(CHECK);
+    if (mcs != NULL) {
+      mcs->incr_number_of_breakpoints();
+    }
+  }
+  void decr_number_of_breakpoints(TRAPS)         {
+    MethodCounters* mcs = get_method_counters(CHECK);
+    if (mcs != NULL) {
+      mcs->decr_number_of_breakpoints();
+    }
+  }
   // Initialization only
-  void clear_number_of_breakpoints()             { _number_of_breakpoints = 0; }
+  void clear_number_of_breakpoints()             {
+    if (method_counters() != NULL) {
+      method_counters()->clear_number_of_breakpoints();
+    }
+  }
 
   // index into InstanceKlass methods() array
   // note: also used by jfr
@@ -306,14 +291,20 @@ class Method : public Metadata {
   void set_highest_osr_comp_level(int level);
 
   // Count of times method was exited via exception while interpreting
-  void interpreter_throwout_increment() {
-    if (_interpreter_throwout_count < 65534) {
-      _interpreter_throwout_count++;
+  void interpreter_throwout_increment(TRAPS) {
+    MethodCounters* mcs = get_method_counters(CHECK);
+    if (mcs != NULL) {
+      mcs->interpreter_throwout_increment();
     }
   }
 
-  int  interpreter_throwout_count() const        { return _interpreter_throwout_count; }
-  void set_interpreter_throwout_count(int count) { _interpreter_throwout_count = count; }
+  int  interpreter_throwout_count() const        {
+    if (method_counters() == NULL) {
+      return 0;
+    } else {
+      return method_counters()->interpreter_throwout_count();
+    }
+  }
 
   // size of parameters
   int  size_of_parameters() const                { return constMethod()->size_of_parameters(); }
@@ -357,23 +348,54 @@ class Method : public Metadata {
   MethodData* method_data() const              {
     return _method_data;
   }
+
   void set_method_data(MethodData* data)       {
     _method_data = data;
   }
 
-  // invocation counter
-  InvocationCounter* invocation_counter() { return &_invocation_counter; }
-  InvocationCounter* backedge_counter()   { return &_backedge_counter; }
+  MethodCounters* method_counters() const {
+    return _method_counters;
+  }
+
+
+  void set_method_counters(MethodCounters* counters) {
+    _method_counters = counters;
+  }
 
 #ifdef TIERED
   // We are reusing interpreter_invocation_count as a holder for the previous event count!
   // We can do that since interpreter_invocation_count is not used in tiered.
-  int prev_event_count() const                   { return _interpreter_invocation_count;  }
-  void set_prev_event_count(int count)           { _interpreter_invocation_count = count; }
-  jlong prev_time() const                        { return _prev_time; }
-  void set_prev_time(jlong time)                 { _prev_time = time; }
-  float rate() const                             { return _rate; }
-  void set_rate(float rate)                      { _rate = rate; }
+  int prev_event_count() const                   {
+    if (method_counters() == NULL) {
+      return 0;
+    } else {
+      return method_counters()->interpreter_invocation_count();
+    }
+  }
+  void set_prev_event_count(int count, TRAPS)    {
+    MethodCounters* mcs = get_method_counters(CHECK);
+    if (mcs != NULL) {
+      mcs->set_interpreter_invocation_count(count);
+    }
+  }
+  jlong prev_time() const                        {
+    return method_counters() == NULL ? 0 : method_counters()->prev_time();
+  }
+  void set_prev_time(jlong time, TRAPS)          {
+    MethodCounters* mcs = get_method_counters(CHECK);
+    if (mcs != NULL) {
+      mcs->set_prev_time(time);
+    }
+  }
+  float rate() const                             {
+    return method_counters() == NULL ? 0 : method_counters()->rate();
+  }
+  void set_rate(float rate, TRAPS) {
+    MethodCounters* mcs = get_method_counters(CHECK);
+    if (mcs != NULL) {
+      mcs->set_rate(rate);
+    }
+  }
 #endif
 
   int invocation_count();
@@ -384,14 +406,17 @@ class Method : public Metadata {
 
   static void build_interpreter_method_data(methodHandle method, TRAPS);
 
+  static MethodCounters* build_method_counters(Method* m, TRAPS);
+
   int interpreter_invocation_count() {
     if (TieredCompilation) return invocation_count();
-    else return _interpreter_invocation_count;
+    else return (method_counters() == NULL) ? 0 :
+                 method_counters()->interpreter_invocation_count();
   }
-  void set_interpreter_invocation_count(int count) { _interpreter_invocation_count = count; }
-  int increment_interpreter_invocation_count() {
+  int increment_interpreter_invocation_count(TRAPS) {
     if (TieredCompilation) ShouldNotReachHere();
-    return ++_interpreter_invocation_count;
+    MethodCounters* mcs = get_method_counters(CHECK_0);
+    return (mcs == NULL) ? 0 : mcs->increment_interpreter_invocation_count();
   }
 
 #ifndef PRODUCT
@@ -438,13 +463,6 @@ class Method : public Metadata {
   address interpreter_entry() const              { return _i2i_entry; }
   // Only used when first initialize so we can set _i2i_entry and _from_interpreted_entry
   void set_interpreter_entry(address entry)      { _i2i_entry = entry;  _from_interpreted_entry = entry; }
-  int  interpreter_kind(void) {
-     return constMethod()->interpreter_kind();
-  }
-  void set_interpreter_kind();
-  void set_interpreter_kind(int kind) {
-    constMethod()->set_interpreter_kind(kind);
-  }
 
   // native function (used for native methods only)
   enum {
@@ -482,6 +500,8 @@ class Method : public Metadata {
   void print_codes_on(int from, int to, outputStream* st) const    PRODUCT_RETURN;
 
   // method parameters
+  bool has_method_parameters() const
+                         { return constMethod()->has_method_parameters(); }
   int method_parameters_length() const
                          { return constMethod()->method_parameters_length(); }
   MethodParametersElement* method_parameters_start() const
@@ -593,6 +613,9 @@ class Method : public Metadata {
   static int header_size()                       { return sizeof(Method)/HeapWordSize; }
   static int size(bool is_native);
   int size() const                               { return method_size(); }
+#if INCLUDE_SERVICES
+  void collect_statistics(KlassSizeStats *sz) const;
+#endif
 
   // interpreter support
   static ByteSize const_offset()                 { return byte_offset_of(Method, _constMethod       ); }
@@ -602,12 +625,12 @@ class Method : public Metadata {
 #endif /* CC_INTERP */
   static ByteSize from_compiled_offset()         { return byte_offset_of(Method, _from_compiled_entry); }
   static ByteSize code_offset()                  { return byte_offset_of(Method, _code); }
-  static ByteSize invocation_counter_offset()    { return byte_offset_of(Method, _invocation_counter); }
-  static ByteSize backedge_counter_offset()      { return byte_offset_of(Method, _backedge_counter); }
   static ByteSize method_data_offset()           {
     return byte_offset_of(Method, _method_data);
   }
-  static ByteSize interpreter_invocation_counter_offset() { return byte_offset_of(Method, _interpreter_invocation_count); }
+  static ByteSize method_counters_offset()       {
+    return byte_offset_of(Method, _method_counters);
+  }
 #ifndef PRODUCT
   static ByteSize compiled_invocation_counter_offset() { return byte_offset_of(Method, _compiled_invocation_count); }
 #endif // not PRODUCT
@@ -618,8 +641,6 @@ class Method : public Metadata {
 
   // for code generation
   static int method_data_offset_in_bytes()       { return offset_of(Method, _method_data); }
-  static int interpreter_invocation_counter_offset_in_bytes()
-                                                 { return offset_of(Method, _interpreter_invocation_count); }
   static int intrinsic_id_offset_in_bytes()      { return offset_of(Method, _intrinsic_id); }
   static int intrinsic_id_size_in_bytes()        { return sizeof(u1); }
 
@@ -639,6 +660,9 @@ class Method : public Metadata {
   // Reflection support
   bool is_overridden_in(Klass* k) const;
 
+  // Stack walking support
+  bool is_ignored_by_security_stack_walk() const;
+
   // JSR 292 support
   bool is_method_handle_intrinsic() const;          // MethodHandles::is_signature_polymorphic_intrinsic(intrinsic_id)
   bool is_compiled_lambda_form() const;             // intrinsic_id() == vmIntrinsics::_compiledLambdaForm
@@ -647,13 +671,15 @@ class Method : public Metadata {
                                                    Symbol* signature, //anything at all
                                                    TRAPS);
   static Klass* check_non_bcp_klass(Klass* klass);
-  // these operate only on invoke methods:
+
+  // How many extra stack entries for invokedynamic when it's enabled
+  static const int extra_stack_entries_for_jsr292 = 1;
+
+  // this operates only on invoke methods:
   // presize interpreter frames for extra interpreter stack entries, if needed
-  // method handles want to be able to push a few extra values (e.g., a bound receiver), and
-  // invokedynamic sometimes needs to push a bootstrap method, call site, and arglist,
-  // all without checking for a stack overflow
-  static int extra_stack_entries() { return EnableInvokeDynamic ? 2 : 0; }
-  static int extra_stack_words();  // = extra_stack_entries() * Interpreter::stackElementSize()
+  // Account for the extra appendix argument for invokehandle/invokedynamic
+  static int extra_stack_entries() { return EnableInvokeDynamic ? extra_stack_entries_for_jsr292 : 0; }
+  static int extra_stack_words();  // = extra_stack_entries() * Interpreter::stackElementSize
 
   // RedefineClasses() support:
   bool is_old() const                               { return access_flags().is_old(); }
@@ -726,15 +752,16 @@ class Method : public Metadata {
   void init_intrinsic_id();     // updates from _none if a match
   static vmSymbols::SID klass_id_for_intrinsics(Klass* holder);
 
-  bool jfr_towrite()                 { return _jfr_towrite; }
-  void set_jfr_towrite(bool towrite) { _jfr_towrite = towrite; }
-
-  bool     force_inline()       { return _force_inline;     }
-  void set_force_inline(bool x) {        _force_inline = x; }
-  bool     dont_inline()        { return _dont_inline;      }
-  void set_dont_inline(bool x)  {        _dont_inline = x;  }
-  bool  is_hidden()             { return _hidden;           }
-  void set_hidden(bool x)       {        _hidden = x;       }
+  bool     jfr_towrite()            { return _jfr_towrite;          }
+  void set_jfr_towrite(bool x)      {        _jfr_towrite = x;      }
+  bool     caller_sensitive()       { return _caller_sensitive;     }
+  void set_caller_sensitive(bool x) {        _caller_sensitive = x; }
+  bool     force_inline()           { return _force_inline;         }
+  void set_force_inline(bool x)     {        _force_inline = x;     }
+  bool     dont_inline()            { return _dont_inline;          }
+  void set_dont_inline(bool x)      {        _dont_inline = x;      }
+  bool  is_hidden()                 { return _hidden;               }
+  void set_hidden(bool x)           {        _hidden = x;           }
   ConstMethod::MethodType method_type() const {
       return _constMethod->method_type();
   }
@@ -760,29 +787,40 @@ class Method : public Metadata {
   // whether it is not compilable for another reason like having a
   // breakpoint set in it.
   bool  is_not_compilable(int comp_level = CompLevel_any) const;
-  void set_not_compilable(int comp_level = CompLevel_all, bool report = true);
+  void set_not_compilable(int comp_level = CompLevel_all, bool report = true, const char* reason = NULL);
   void set_not_compilable_quietly(int comp_level = CompLevel_all) {
     set_not_compilable(comp_level, false);
   }
   bool  is_not_osr_compilable(int comp_level = CompLevel_any) const;
-  void set_not_osr_compilable(int comp_level = CompLevel_all, bool report = true);
+  void set_not_osr_compilable(int comp_level = CompLevel_all, bool report = true, const char* reason = NULL);
   void set_not_osr_compilable_quietly(int comp_level = CompLevel_all) {
     set_not_osr_compilable(comp_level, false);
   }
 
  private:
-  void print_made_not_compilable(int comp_level, bool is_osr, bool report);
+  void print_made_not_compilable(int comp_level, bool is_osr, bool report, const char* reason);
+
+  MethodCounters* get_method_counters(TRAPS) {
+    if (_method_counters == NULL) {
+      build_method_counters(this, CHECK_AND_CLEAR_NULL);
+    }
+    return _method_counters;
+  }
 
  public:
-  bool  is_not_c1_compilable() const          { return access_flags().is_not_c1_compilable(); }
-  void set_not_c1_compilable()                {       _access_flags.set_not_c1_compilable();  }
-  bool  is_not_c2_compilable() const          { return access_flags().is_not_c2_compilable(); }
-  void set_not_c2_compilable()                {       _access_flags.set_not_c2_compilable();  }
+  bool   is_not_c1_compilable() const         { return access_flags().is_not_c1_compilable();  }
+  void  set_not_c1_compilable()               {       _access_flags.set_not_c1_compilable();   }
+  void clear_not_c1_compilable()              {       _access_flags.clear_not_c1_compilable(); }
+  bool   is_not_c2_compilable() const         { return access_flags().is_not_c2_compilable();  }
+  void  set_not_c2_compilable()               {       _access_flags.set_not_c2_compilable();   }
+  void clear_not_c2_compilable()              {       _access_flags.clear_not_c2_compilable(); }
 
-  bool  is_not_c1_osr_compilable() const      { return is_not_c1_compilable(); }  // don't waste an accessFlags bit
-  void set_not_c1_osr_compilable()            {       set_not_c1_compilable(); }  // don't waste an accessFlags bit
-  bool  is_not_c2_osr_compilable() const      { return access_flags().is_not_c2_osr_compilable(); }
-  void set_not_c2_osr_compilable()            {       _access_flags.set_not_c2_osr_compilable();  }
+  bool    is_not_c1_osr_compilable() const    { return is_not_c1_compilable(); }  // don't waste an accessFlags bit
+  void   set_not_c1_osr_compilable()          {       set_not_c1_compilable(); }  // don't waste an accessFlags bit
+  void clear_not_c1_osr_compilable()          {     clear_not_c1_compilable(); }  // don't waste an accessFlags bit
+  bool   is_not_c2_osr_compilable() const     { return access_flags().is_not_c2_osr_compilable();  }
+  void  set_not_c2_osr_compilable()           {       _access_flags.set_not_c2_osr_compilable();   }
+  void clear_not_c2_osr_compilable()          {       _access_flags.clear_not_c2_osr_compilable(); }
 
   // Background compilation support
   bool queued_for_compilation() const  { return access_flags().queued_for_compilation(); }
@@ -796,16 +834,15 @@ class Method : public Metadata {
   static bool has_unloaded_classes_in_signature(methodHandle m, TRAPS);
 
   // Printing
-  void print_short_name(outputStream* st = tty)  /*PRODUCT_RETURN*/; // prints as klassname::methodname; Exposed so field engineers can debug VM
+  void print_short_name(outputStream* st = tty); // prints as klassname::methodname; Exposed so field engineers can debug VM
+#if INCLUDE_JVMTI
+  void print_name(outputStream* st = tty); // prints as "virtual void foo(int)"; exposed for TraceRedefineClasses
+#else
   void print_name(outputStream* st = tty)        PRODUCT_RETURN; // prints as "virtual void foo(int)"
+#endif
 
   // Helper routine used for method sorting
-  static void sort_methods(Array<Method*>* methods,
-                           Array<AnnotationArray*>* methods_annotations,
-                           Array<AnnotationArray*>* methods_parameter_annotations,
-                           Array<AnnotationArray*>* methods_default_annotations,
-                           Array<AnnotationArray*>* methods_type_annotations,
-                           bool idempotent = false);
+  static void sort_methods(Array<Method*>* methods, bool idempotent = false);
 
   // Deallocation function for redefine classes or if an error occurs
   void deallocate_contents(ClassLoaderData* loader_data);
@@ -951,7 +988,7 @@ class ExceptionTable : public StackObj {
   u2  _length;
 
  public:
-  ExceptionTable(Method* m) {
+  ExceptionTable(const Method* m) {
     if (m->has_exception_handler()) {
       _table = m->exception_table_start();
       _length = m->exception_table_length();

@@ -104,7 +104,8 @@ Node* Parse::array_addressing(BasicType type, int vals, const Type* *result2) {
     if (C->log() != NULL)   C->log()->elem("observe that='!need_range_check'");
   }
 
-  if (!arytype->klass()->is_loaded()) {
+  ciKlass * arytype_klass = arytype->klass();
+  if ((arytype_klass != NULL) && (!arytype_klass->is_loaded())) {
     // Only fails for some -Xcomp runs
     // The class is unloaded.  We have to run this bytecode in the interpreter.
     uncommon_trap(Deoptimization::Reason_unloaded,
@@ -986,7 +987,7 @@ void Parse::do_ifnull(BoolTest::mask btest, Node *c) {
     uncommon_trap(Deoptimization::Reason_unreached,
                   Deoptimization::Action_reinterpret,
                   NULL, "cold");
-    if (EliminateAutoBox) {
+    if (C->eliminate_boxing()) {
       // Mark the successor blocks as parsed
       branch_block->next_path_num();
       next_block->next_path_num();
@@ -1011,7 +1012,7 @@ void Parse::do_ifnull(BoolTest::mask btest, Node *c) {
 
     if (stopped()) {            // Path is dead?
       explicit_null_checks_elided++;
-      if (EliminateAutoBox) {
+      if (C->eliminate_boxing()) {
         // Mark the successor block as parsed
         branch_block->next_path_num();
       }
@@ -1031,7 +1032,7 @@ void Parse::do_ifnull(BoolTest::mask btest, Node *c) {
 
   if (stopped()) {              // Path is dead?
     explicit_null_checks_elided++;
-    if (EliminateAutoBox) {
+    if (C->eliminate_boxing()) {
       // Mark the successor block as parsed
       next_block->next_path_num();
     }
@@ -1068,7 +1069,7 @@ void Parse::do_if(BoolTest::mask btest, Node* c) {
     uncommon_trap(Deoptimization::Reason_unreached,
                   Deoptimization::Action_reinterpret,
                   NULL, "cold");
-    if (EliminateAutoBox) {
+    if (C->eliminate_boxing()) {
       // Mark the successor blocks as parsed
       branch_block->next_path_num();
       next_block->next_path_num();
@@ -1134,7 +1135,7 @@ void Parse::do_if(BoolTest::mask btest, Node* c) {
     set_control(taken_branch);
 
     if (stopped()) {
-      if (EliminateAutoBox) {
+      if (C->eliminate_boxing()) {
         // Mark the successor block as parsed
         branch_block->next_path_num();
       }
@@ -1153,7 +1154,7 @@ void Parse::do_if(BoolTest::mask btest, Node* c) {
 
   // Branch not taken.
   if (stopped()) {
-    if (EliminateAutoBox) {
+    if (C->eliminate_boxing()) {
       // Mark the successor block as parsed
       next_block->next_path_num();
     }
@@ -1385,6 +1386,7 @@ void Parse::do_one_bytecode() {
   if (TraceOptoParse) {
     tty->print(" @");
     dump_bci(bci());
+    tty->cr();
   }
 #endif
 

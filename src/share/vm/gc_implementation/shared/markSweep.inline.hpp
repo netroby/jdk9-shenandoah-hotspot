@@ -28,9 +28,10 @@
 #include "gc_implementation/shared/markSweep.hpp"
 #include "gc_interface/collectedHeap.hpp"
 #include "utilities/stack.inline.hpp"
-#ifndef SERIALGC
+#include "utilities/macros.hpp"
+#if INCLUDE_ALL_GCS
 #include "gc_implementation/parallelScavenge/psParallelCompact.hpp"
-#endif
+#endif // INCLUDE_ALL_GCS
 
 inline void MarkSweep::mark_object(oop obj) {
   // some marks may contain information we need to preserve so we store them away
@@ -75,7 +76,7 @@ void MarkSweep::push_objarray(oop obj, size_t index) {
   _objarray_stack.push(task);
 }
 
-template <class T> inline void MarkSweep::adjust_pointer(T* p, bool isroot) {
+template <class T> inline void MarkSweep::adjust_pointer(T* p) {
   T heap_oop = oopDesc::load_heap_oop(p);
   if (!oopDesc::is_null(heap_oop)) {
     oop obj     = oopDesc::decode_heap_oop_not_null(heap_oop);

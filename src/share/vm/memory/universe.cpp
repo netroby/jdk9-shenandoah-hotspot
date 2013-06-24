@@ -70,7 +70,8 @@
 #include "utilities/events.hpp"
 #include "utilities/hashtable.inline.hpp"
 #include "utilities/preserveException.hpp"
-#ifndef SERIALGC
+#include "utilities/macros.hpp"
+#if INCLUDE_ALL_GCS
 #include "gc_implementation/concurrentMarkSweep/cmsAdaptiveSizePolicy.hpp"
 #include "gc_implementation/concurrentMarkSweep/cmsCollectorPolicy.hpp"
 #include "gc_implementation/g1/g1CollectedHeap.inline.hpp"
@@ -78,7 +79,7 @@
 #include "gc_implementation/parallelScavenge/parallelScavengeHeap.hpp"
 #include "gc_implementation/shenandoah/shenandoahHeap.hpp"
 #include "gc_implementation/shenandoah/shenandoahCollectorPolicy.hpp"
-#endif
+#endif // INCLUDE_ALL_GCS
 
 // Known objects
 Klass* Universe::_boolArrayKlassObj                 = NULL;
@@ -146,6 +147,7 @@ NarrowPtrStruct Universe::_narrow_oop = { NULL, 0, true };
 NarrowPtrStruct Universe::_narrow_klass = { NULL, 0, true };
 address Universe::_narrow_ptrs_base;
 
+size_t          Universe::_class_metaspace_size;
 
 void Universe::basic_type_classes_do(void f(Klass*)) {
   f(boolArrayKlassObj());
@@ -228,11 +230,8 @@ void Universe::serialize(SerializeClosure* f, bool do_all) {
 
 void Universe::check_alignment(uintx size, uintx alignment, const char* name) {
   if (size < alignment || size % alignment != 0) {
-    ResourceMark rm;
-    stringStream st;
-    st.print("Size of %s (" UINTX_FORMAT " bytes) must be aligned to " UINTX_FORMAT " bytes", name, size, alignment);
-    char* error = st.as_string();
-    vm_exit_during_initialization(error);
+    vm_exit_during_initialization(
+      err_msg("Size of %s (" UINTX_FORMAT " bytes) must be aligned to " UINTX_FORMAT " bytes", name, size, alignment));
   }
 }
 
@@ -694,8 +693,15 @@ char* Universe::preferred_heap_base(size_t heap_size, NARROW_OOP_MODE mode) {
     // Return specified base for the first request.
     if (!FLAG_IS_DEFAULT(HeapBaseMinAddress) && (mode == UnscaledNarrowOop)) {
       base = HeapBaseMinAddress;
-    } else if (total_size <= OopEncodingHeapMax && (mode != HeapBasedNarrowOop)) {
-      if (total_size <= NarrowOopHeapMax && (mode == UnscaledNarrowOop) &&
+
+    // If the total size and the metaspace size are small enough to allow
+    // UnscaledNarrowOop then just use UnscaledNarrowOop.
+    } else if ((total_size <= OopEncodingHeapMax) && (mode != HeapBasedNarrowOop) &&
+        (!UseCompressedKlassPointers ||
+          (((OopEncodingHeapMax - heap_size) + Universe::class_metaspace_size()) <= KlassEncodingMetaspaceMax))) {
+      // We don't need to check the metaspace size here because it is always smaller
+      // than total_size.
+      if ((total_size <= NarrowOopHeapMax) && (mode == UnscaledNarrowOop) &&
           (Universe::narrow_oop_shift() == 0)) {
         // Use 32-bits oops without encoding and
         // place heap's top on the 4Gb boundary
@@ -711,14 +717,24 @@ char* Universe::preferred_heap_base(size_t heap_size, NARROW_OOP_MODE mode) {
           base = (OopEncodingHeapMax - heap_size);
         }
       }
+
+    // See if ZeroBaseNarrowOop encoding will work for a heap based at
+    // (KlassEncodingMetaspaceMax - class_metaspace_size()).
+    } else if (UseCompressedKlassPointers && (mode != HeapBasedNarrowOop) &&
+        (Universe::class_metaspace_size() + HeapBaseMinAddress <= KlassEncodingMetaspaceMax) &&
+        (KlassEncodingMetaspaceMax + heap_size - Universe::class_metaspace_size() <= OopEncodingHeapMax)) {
+      base = (KlassEncodingMetaspaceMax - Universe::class_metaspace_size());
     } else {
-      // Can't reserve below 32Gb.
+      // UnscaledNarrowOop encoding didn't work, and no base was found for ZeroBasedOops or
+      // HeapBasedNarrowOop encoding was requested.  So, can't reserve below 32Gb.
       Universe::set_narrow_oop_shift(LogMinObjAlignmentInBytes);
     }
+
     // Set narrow_oop_base and narrow_oop_use_implicit_null_checks
     // used in ReservedHeapSpace() constructors.
     // The final values will be set in initialize_heap() below.
-    if (base != 0 && (base + heap_size) <= OopEncodingHeapMax) {
+    if ((base != 0) && ((base + heap_size) <= OopEncodingHeapMax) &&
+        (!UseCompressedKlassPointers || (base + Universe::class_metaspace_size()) <= KlassEncodingMetaspaceMax)) {
       // Use zero based compressed oops
       Universe::set_narrow_oop_base(NULL);
       // Don't need guard page for implicit checks in indexed
@@ -744,30 +760,30 @@ char* Universe::preferred_heap_base(size_t heap_size, NARROW_OOP_MODE mode) {
 
 jint Universe::initialize_heap() {
   if (UseShenandoahGC) {
-#ifndef SERIALGC
+#ifndef INCLUDE_ALL_GCS
     ShenandoahCollectorPolicy* pgcPolicy =
       new ShenandoahCollectorPolicy();
     Universe::_collectedHeap = 
       new ShenandoahHeap(pgcPolicy);
-#else  // SERIALGC
+#else  // INCLUDE_ALL_GCS
     fatal("UseShenandoahGC not supported in this VM.");
-#endif // SERIALGC
+#endif // INCLUDE_ALL_GCS
   }
   else if (UseParallelGC) {
-#ifndef SERIALGC
+#if INCLUDE_ALL_GCS
     Universe::_collectedHeap = new ParallelScavengeHeap();
-#else  // SERIALGC
+#else  // INCLUDE_ALL_GCS
     fatal("UseParallelGC not supported in this VM.");
-#endif // SERIALGC
+#endif // INCLUDE_ALL_GCS
 
   } else if (UseG1GC) {
-#ifndef SERIALGC
+#if INCLUDE_ALL_GCS
     G1CollectorPolicy* g1p = new G1CollectorPolicy();
     G1CollectedHeap* g1h = new G1CollectedHeap(g1p);
     Universe::_collectedHeap = g1h;
-#else  // SERIALGC
+#else  // INCLUDE_ALL_GCS
     fatal("UseG1GC not supported in java kernel vm.");
-#endif // SERIALGC
+#endif // INCLUDE_ALL_GCS
 
   } else {
     GenCollectorPolicy *gc_policy;
@@ -775,15 +791,15 @@ jint Universe::initialize_heap() {
     if (UseSerialGC) {
       gc_policy = new MarkSweepPolicy();
     } else if (UseConcMarkSweepGC) {
-#ifndef SERIALGC
+#if INCLUDE_ALL_GCS
       if (UseAdaptiveSizePolicy) {
         gc_policy = new ASConcurrentMarkSweepPolicy();
       } else {
         gc_policy = new ConcurrentMarkSweepPolicy();
       }
-#else   // SERIALGC
+#else  // INCLUDE_ALL_GCS
     fatal("UseConcMarkSweepGC not supported in this VM.");
-#endif // SERIALGC
+#endif // INCLUDE_ALL_GCS
     } else { // default old generation
       gc_policy = new MarkSweepPolicy();
     }
@@ -810,17 +826,21 @@ jint Universe::initialize_heap() {
       tty->print("heap address: " PTR_FORMAT ", size: " SIZE_FORMAT " MB",
                  Universe::heap()->base(), Universe::heap()->reserved_region().byte_size()/M);
     }
-    if ((uint64_t)Universe::heap()->reserved_region().end() > OopEncodingHeapMax) {
+    if (((uint64_t)Universe::heap()->reserved_region().end() > OopEncodingHeapMax) ||
+        (UseCompressedKlassPointers &&
+        ((uint64_t)Universe::heap()->base() + Universe::class_metaspace_size() > KlassEncodingMetaspaceMax))) {
       // Can't reserve heap below 32Gb.
       // keep the Universe::narrow_oop_base() set in Universe::reserve_heap()
       Universe::set_narrow_oop_shift(LogMinObjAlignmentInBytes);
       if (verbose) {
-        tty->print(", Compressed Oops with base: "PTR_FORMAT, Universe::narrow_oop_base());
+        tty->print(", %s: "PTR_FORMAT,
+            narrow_oop_mode_to_string(HeapBasedNarrowOop),
+            Universe::narrow_oop_base());
       }
     } else {
       Universe::set_narrow_oop_base(0);
       if (verbose) {
-        tty->print(", zero based Compressed Oops");
+        tty->print(", %s", narrow_oop_mode_to_string(ZeroBasedNarrowOop));
       }
 #ifdef _WIN64
       if (!Universe::narrow_oop_use_implicit_null_checks()) {
@@ -835,7 +855,7 @@ jint Universe::initialize_heap() {
       } else {
         Universe::set_narrow_oop_shift(0);
         if (verbose) {
-          tty->print(", 32-bits Oops");
+          tty->print(", %s", narrow_oop_mode_to_string(UnscaledNarrowOop));
         }
       }
     }
@@ -876,8 +896,10 @@ ReservedSpace Universe::reserve_heap(size_t heap_size, size_t alignment) {
   // be compressed the same as instances.
   // Need to round class space size up because it's below the heap and
   // the actual alignment depends on its size.
-  size_t metaspace_size = align_size_up(ClassMetaspaceSize, alignment);
-  size_t total_reserved = align_size_up(heap_size + metaspace_size, alignment);
+  Universe::set_class_metaspace_size(align_size_up(ClassMetaspaceSize, alignment));
+  size_t total_reserved = align_size_up(heap_size + Universe::class_metaspace_size(), alignment);
+  assert(!UseCompressedOops || (total_reserved <= (OopEncodingHeapMax - os::vm_page_size())),
+      "heap size is too big for compressed oops");
   char* addr = Universe::preferred_heap_base(total_reserved, Universe::UnscaledNarrowOop);
 
   ReservedHeapSpace total_rs(total_reserved, alignment, UseLargePages, addr);
@@ -907,7 +929,7 @@ ReservedSpace Universe::reserve_heap(size_t heap_size, size_t alignment) {
   }
 
   if (!total_rs.is_reserved()) {
-    vm_exit_during_initialization(err_msg("Could not reserve enough space for object heap %d bytes", total_reserved));
+    vm_exit_during_initialization(err_msg("Could not reserve enough space for " SIZE_FORMAT "KB object heap", total_reserved/K));
     return total_rs;
   }
 
@@ -918,8 +940,8 @@ ReservedSpace Universe::reserve_heap(size_t heap_size, size_t alignment) {
   // compressed oops is greater than the one used for compressed klass
   // ptrs, a metadata space on top of the heap could become
   // unreachable.
-  ReservedSpace class_rs = total_rs.first_part(metaspace_size);
-  ReservedSpace heap_rs = total_rs.last_part(metaspace_size, alignment);
+  ReservedSpace class_rs = total_rs.first_part(Universe::class_metaspace_size());
+  ReservedSpace heap_rs = total_rs.last_part(Universe::class_metaspace_size(), alignment);
   Metaspace::initialize_class_space(class_rs);
 
   if (UseCompressedOops) {
@@ -940,19 +962,37 @@ void Universe::update_heap_info_at_gc() {
 }
 
 
+const char* Universe::narrow_oop_mode_to_string(Universe::NARROW_OOP_MODE mode) {
+  switch (mode) {
+    case UnscaledNarrowOop:
+      return "32-bits Oops";
+    case ZeroBasedNarrowOop:
+      return "zero based Compressed Oops";
+    case HeapBasedNarrowOop:
+      return "Compressed Oops with base";
+  }
+
+  ShouldNotReachHere();
+  return "";
+}
+
+
+Universe::NARROW_OOP_MODE Universe::narrow_oop_mode() {
+  if (narrow_oop_base() != 0) {
+    return HeapBasedNarrowOop;
+  }
+
+  if (narrow_oop_shift() != 0) {
+    return ZeroBasedNarrowOop;
+  }
+
+  return UnscaledNarrowOop;
+}
+
 
 void universe2_init() {
   EXCEPTION_MARK;
   Universe::genesis(CATCH);
-  // Although we'd like to verify here that the state of the heap
-  // is good, we can't because the main thread has not yet added
-  // itself to the threads list (so, using current interfaces
-  // we can't "fill" its TLAB), unless TLABs are disabled.
-  if (VerifyBeforeGC && !UseTLAB &&
-      Universe::heap()->total_collections() >= VerifyGCStartAt) {
-     Universe::heap()->prepare_for_verify();
-     Universe::verify();   // make sure we're starting with a clean slate
-  }
 }
 
 
@@ -1270,7 +1310,7 @@ void Universe::print_heap_after_gc(outputStream* st, bool ignore_extended) {
   st->print_cr("}");
 }
 
-void Universe::verify(bool silent, VerifyOption option) {
+void Universe::verify(VerifyOption option, const char* prefix, bool silent) {
   // The use of _verify_in_progress is a temporary work around for
   // 6320749.  Don't bother with a creating a class to set and clear
   // it since it is only used in this method and the control flow is
@@ -1287,11 +1327,12 @@ void Universe::verify(bool silent, VerifyOption option) {
   HandleMark hm;  // Handles created during verification can be zapped
   _verify_count++;
 
+  if (!silent) gclog_or_tty->print(prefix);
   if (!silent) gclog_or_tty->print("[Verifying ");
   if (!silent) gclog_or_tty->print("threads ");
   Threads::verify();
+  if (!silent) gclog_or_tty->print("heap ");
   heap()->verify(silent, option);
-
   if (!silent) gclog_or_tty->print("syms ");
   SymbolTable::verify();
   if (!silent) gclog_or_tty->print("strs ");
@@ -1325,6 +1366,8 @@ void Universe::verify(bool silent, VerifyOption option) {
 static uintptr_t _verify_oop_data[2]   = {0, (uintptr_t)-1};
 static uintptr_t _verify_klass_data[2] = {0, (uintptr_t)-1};
 
+
+#ifndef PRODUCT
 
 static void calculate_verify_data(uintptr_t verify_data[2],
                                   HeapWord* low_boundary,
@@ -1360,9 +1403,7 @@ static void calculate_verify_data(uintptr_t verify_data[2],
   verify_data[1] = bits;
 }
 
-
 // Oop verification (see MacroAssembler::verify_oop)
-#ifndef PRODUCT
 
 uintptr_t Universe::verify_oop_mask() {
   MemRegion m = heap()->reserved_region();
@@ -1424,25 +1465,25 @@ ActiveMethodOopsCache::~ActiveMethodOopsCache() {
 }
 
 
-void ActiveMethodOopsCache::add_previous_version(Method* const method) {
+void ActiveMethodOopsCache::add_previous_version(Method* method) {
   assert(Thread::current()->is_VM_thread(),
     "only VMThread can add previous versions");
 
   // Only append the previous method if it is executing on the stack.
   if (method->on_stack()) {
 
-  if (_prev_methods == NULL) {
-    // This is the first previous version so make some space.
-    // Start with 2 elements under the assumption that the class
-    // won't be redefined much.
+    if (_prev_methods == NULL) {
+      // This is the first previous version so make some space.
+      // Start with 2 elements under the assumption that the class
+      // won't be redefined much.
       _prev_methods = new (ResourceObj::C_HEAP, mtClass) GrowableArray<Method*>(2, true);
-  }
+    }
 
-  // RC_TRACE macro has an embedded ResourceMark
-  RC_TRACE(0x00000100,
-    ("add: %s(%s): adding prev version ref for cached method @%d",
-    method->name()->as_C_string(), method->signature()->as_C_string(),
-    _prev_methods->length()));
+    // RC_TRACE macro has an embedded ResourceMark
+    RC_TRACE(0x00000100,
+      ("add: %s(%s): adding prev version ref for cached method @%d",
+        method->name()->as_C_string(), method->signature()->as_C_string(),
+        _prev_methods->length()));
 
     _prev_methods->append(method);
   }
@@ -1463,16 +1504,17 @@ void ActiveMethodOopsCache::add_previous_version(Method* const method) {
       MetadataFactory::free_metadata(method->method_holder()->class_loader_data(), method);
     } else {
       // RC_TRACE macro has an embedded ResourceMark
-      RC_TRACE(0x00000400, ("add: %s(%s): previous cached method @%d is alive",
-        method->name()->as_C_string(), method->signature()->as_C_string(), i));
+      RC_TRACE(0x00000400,
+        ("add: %s(%s): previous cached method @%d is alive",
+         method->name()->as_C_string(), method->signature()->as_C_string(), i));
     }
   }
 } // end add_previous_version()
 
 
-bool ActiveMethodOopsCache::is_same_method(Method* const method) const {
+bool ActiveMethodOopsCache::is_same_method(const Method* method) const {
   InstanceKlass* ik = InstanceKlass::cast(klass());
-  Method* check_method = ik->method_with_idnum(method_idnum());
+  const Method* check_method = ik->method_with_idnum(method_idnum());
   assert(check_method != NULL, "sanity check");
   if (check_method == method) {
     // done with the easy case

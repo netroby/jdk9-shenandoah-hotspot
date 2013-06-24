@@ -75,8 +75,8 @@ public:
                                       PhaseTransform* phase);
   static bool adr_phi_is_loop_invariant(Node* adr_phi, Node* cast);
 
-  static Node *optimize_simple_memory_chain(Node *mchain, const TypePtr *t_adr, PhaseGVN *phase);
-  static Node *optimize_memory_chain(Node *mchain, const TypePtr *t_adr, PhaseGVN *phase);
+  static Node *optimize_simple_memory_chain(Node *mchain, const TypeOopPtr *t_oop, Node *load, PhaseGVN *phase);
+  static Node *optimize_memory_chain(Node *mchain, const TypePtr *t_adr, Node *load, PhaseGVN *phase);
   // This one should probably be a phase-specific function:
   static bool all_controls_dominate(Node* dom, Node* sub);
 
@@ -1072,11 +1072,11 @@ public:
 
   // See if this store can be captured; return offset where it initializes.
   // Return 0 if the store cannot be moved (any sort of problem).
-  intptr_t can_capture_store(StoreNode* st, PhaseTransform* phase);
+  intptr_t can_capture_store(StoreNode* st, PhaseTransform* phase, bool can_reshape);
 
   // Capture another store; reformat it to write my internal raw memory.
   // Return the captured copy, else NULL if there is some sort of problem.
-  Node* capture_store(StoreNode* st, intptr_t start, PhaseTransform* phase);
+  Node* capture_store(StoreNode* st, intptr_t start, PhaseTransform* phase, bool can_reshape);
 
   // Find captured store which corresponds to the range [start..start+size).
   // Return my own memory projection (meaning the initial zero bits)
@@ -1099,7 +1099,7 @@ public:
 
   Node* make_raw_address(intptr_t offset, PhaseTransform* phase);
 
-  bool detect_init_independence(Node* n, bool st_is_pinned, int& count);
+  bool detect_init_independence(Node* n, int& count);
 
   void coalesce_subword_stores(intptr_t header_size, Node* size_in_bytes,
                                PhaseGVN* phase);

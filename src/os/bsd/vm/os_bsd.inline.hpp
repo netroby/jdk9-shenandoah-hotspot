@@ -25,7 +25,6 @@
 #ifndef OS_BSD_VM_OS_BSD_INLINE_HPP
 #define OS_BSD_VM_OS_BSD_INLINE_HPP
 
-#include "runtime/atomic.hpp"
 #include "runtime/atomic.inline.hpp"
 #include "runtime/os.hpp"
 
@@ -286,4 +285,5 @@ inline int os::set_sock_opt(int fd, int level, int optname,
                             const char* optval, socklen_t optlen) {
   return ::setsockopt(fd, level, optname, optval, optlen);
 }
+
 #endif // OS_BSD_VM_OS_BSD_INLINE_HPP

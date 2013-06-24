@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2005, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2005, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -65,6 +65,7 @@ class BuildConfig {
         String sourceBase = getFieldString(null, "SourceBase");
         String buildSpace = getFieldString(null, "BuildSpace");
         String outDir = buildBase;
+        String jdkTargetRoot = getFieldString(null, "JdkTargetRoot");
 
         put("Id", flavourBuild);
         put("OutputDir", outDir);
@@ -72,6 +73,7 @@ class BuildConfig {
         put("BuildBase", buildBase);
         put("BuildSpace", buildSpace);
         put("OutputDll", outDir + Util.sep + outDll);
+        put("JdkTargetRoot", jdkTargetRoot);
 
         context = new String [] {flavourBuild, flavour, build, null};
     }
@@ -150,7 +152,7 @@ class BuildConfig {
         sysDefines.add("_WINDOWS");
         sysDefines.add("HOTSPOT_BUILD_USER=\\\""+System.getProperty("user.name")+"\\\"");
         sysDefines.add("HOTSPOT_BUILD_TARGET=\\\""+get("Build")+"\\\"");
-        sysDefines.add("INCLUDE_TRACE");
+        sysDefines.add("INCLUDE_TRACE=1");
         sysDefines.add("_JNI_IMPLEMENTATION_");
         if (vars.get("PlatformName").equals("Win32")) {
             sysDefines.add("HOTSPOT_LIB_ARCH=\\\"i386\\\"");
@@ -568,36 +570,6 @@ class CoreProductConfig extends ProductConfig {
     }
 }
 
-class KernelDebugConfig extends GenericDebugConfig {
-    String getOptFlag() {
-        return getCI().getNoOptFlag();
-    }
-
-    KernelDebugConfig() {
-        initNames("kernel", "debug", "jvm.dll");
-        init(getIncludes(), getDefines());
-    }
-}
-
-
-class KernelFastDebugConfig extends GenericDebugConfig {
-    String getOptFlag() {
-        return getCI().getOptFlag();
-    }
-
-    KernelFastDebugConfig() {
-        initNames("kernel", "fastdebug", "jvm.dll");
-        init(getIncludes(), getDefines());
-    }
-}
-
-
-class KernelProductConfig extends ProductConfig {
-    KernelProductConfig() {
-        initNames("kernel", "product", "jvm.dll");
-        init(getIncludes(), getDefines());
-    }
-}
 
 abstract class CompilerInterface {
     abstract Vector getBaseCompilerFlags(Vector defines, Vector includes, String outDir);

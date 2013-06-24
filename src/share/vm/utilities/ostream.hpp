@@ -196,7 +196,7 @@ class fileStream : public outputStream {
   fileStream() { _file = NULL; _need_close = false; }
   fileStream(const char* file_name);
   fileStream(const char* file_name, const char* opentype);
-  fileStream(FILE* file) { _file = file; _need_close = false; }
+  fileStream(FILE* file, bool need_close = false) { _file = file; _need_close = need_close; }
   ~fileStream();
   bool is_open() const { return _file != NULL; }
   void set_need_close(bool b) { _need_close = b;}
@@ -231,7 +231,7 @@ class fdStream : public outputStream {
 class rotatingFileStream : public fileStream {
  protected:
   char*  _file_name;
-  jlong  _bytes_writen;
+  jlong  _bytes_written;
   uintx  _cur_file_num;             // current logfile rotation number, from 0 to MaxGCLogFileNumbers-1
  public:
   rotatingFileStream(const char* file_name);

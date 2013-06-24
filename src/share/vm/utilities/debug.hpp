@@ -174,9 +174,9 @@ do {                                                                         \
 } while (0)
 
 // out of memory
-#define vm_exit_out_of_memory(size, msg)                                     \
+#define vm_exit_out_of_memory(size, vm_err_type, msg)                        \
 do {                                                                         \
-  report_vm_out_of_memory(__FILE__, __LINE__, size, msg);                    \
+  report_vm_out_of_memory(__FILE__, __LINE__, size, vm_err_type, msg);       \
   BREAKPOINT;                                                                \
 } while (0)
 
@@ -192,12 +192,6 @@ do {                                                                         \
   BREAKPOINT;                                                                \
 } while (0)
 
-#define ShouldNotReachHere2(message)                                         \
-do {                                                                         \
-  report_should_not_reach_here2(__FILE__, __LINE__, message);                \
-  BREAKPOINT;                                                                \
-} while (0)
-
 #define Unimplemented()                                                      \
 do {                                                                         \
   report_unimplemented(__FILE__, __LINE__);                                  \
@@ -210,15 +204,22 @@ do {                                                                         \
   BREAKPOINT;                                                                \
 } while (0);
 
+
+// types of VM error - originally in vmError.hpp
+enum VMErrorType {
+  INTERNAL_ERROR   = 0xe0000000,
+  OOM_MALLOC_ERROR = 0xe0000001,
+  OOM_MMAP_ERROR   = 0xe0000002
+};
+
 // error reporting helper functions
 void report_vm_error(const char* file, int line, const char* error_msg,
                      const char* detail_msg = NULL);
 void report_fatal(const char* file, int line, const char* message);
 void report_vm_out_of_memory(const char* file, int line, size_t size,
-                             const char* message);
+                             VMErrorType vm_err_type, const char* message);
 void report_should_not_call(const char* file, int line);
 void report_should_not_reach_here(const char* file, int line);
-void report_should_not_reach_here2(const char* file, int line, const char* message);
 void report_unimplemented(const char* file, int line);
 void report_untested(const char* file, int line, const char* message);
 

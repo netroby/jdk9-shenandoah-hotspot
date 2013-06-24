@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2000, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -28,6 +28,7 @@
 #include "classfile/vmSymbols.hpp"
 #include "code/icBuffer.hpp"
 #include "gc_implementation/shared/collectorCounters.hpp"
+#include "gc_implementation/shared/gcTraceTime.hpp"
 #include "gc_implementation/shared/vmGCOperations.hpp"
 #include "gc_interface/collectedHeap.inline.hpp"
 #include "memory/filemap.hpp"
@@ -51,10 +52,11 @@
 #include "services/memoryService.hpp"
 #include "utilities/vmError.hpp"
 #include "utilities/workgroup.hpp"
-#ifndef SERIALGC
+#include "utilities/macros.hpp"
+#if INCLUDE_ALL_GCS
 #include "gc_implementation/concurrentMarkSweep/concurrentMarkSweepThread.hpp"
 #include "gc_implementation/concurrentMarkSweep/vmCMSOperations.hpp"
-#endif
+#endif // INCLUDE_ALL_GCS
 
 GenCollectedHeap* GenCollectedHeap::_gch;
 NOT_PRODUCT(size_t GenCollectedHeap::_skip_header_HeapWords = 0;)
@@ -141,14 +143,14 @@ jint GenCollectedHeap::initialize() {
   }
   clear_incremental_collection_failed();
 
-#ifndef SERIALGC
+#if INCLUDE_ALL_GCS
   // If we are running CMS, create the collector responsible
   // for collecting the CMS generations.
   if (collector_policy()->is_concurrent_mark_sweep_policy()) {
     bool success = create_cms_collector();
     if (!success) return JNI_ENOMEM;
   }
-#endif // SERIALGC
+#endif // INCLUDE_ALL_GCS
 
   return JNI_OK;
 }
@@ -376,7 +378,7 @@ void GenCollectedHeap::do_collection(bool  full,
 
   ClearedAllSoftRefs casr(do_clear_all_soft_refs, collector_policy());
 
-  const size_t metadata_prev_used = MetaspaceAux::used_in_bytes();
+  const size_t metadata_prev_used = MetaspaceAux::allocated_used_bytes();
 
   print_heap_before_gc();
 
@@ -387,7 +389,7 @@ void GenCollectedHeap::do_collection(bool  full,
     const char* gc_cause_prefix = complete ? "Full GC" : "GC";
     gclog_or_tty->date_stamp(PrintGC && PrintGCDateStamps);
     TraceCPUTime tcpu(PrintGCDetails, true, gclog_or_tty);
-    TraceTime t(GCCauseString(gc_cause_prefix, gc_cause()), PrintGCDetails, false, gclog_or_tty);
+    GCTraceTime t(GCCauseString(gc_cause_prefix, gc_cause()), PrintGCDetails, false, NULL);
 
     gc_prologue(complete);
     increment_total_collections(complete);
@@ -416,10 +418,11 @@ void GenCollectedHeap::do_collection(bool  full,
             // The full_collections increment was missed above.
             increment_total_full_collections();
           }
-          pre_full_gc_dump();    // do any pre full gc dumps
+          pre_full_gc_dump(NULL);    // do any pre full gc dumps
         }
         // Timer for individual generations. Last argument is false: no CR
-        TraceTime t1(_gens[i]->short_name(), PrintGCDetails, false, gclog_or_tty);
+        // FIXME: We should try to start the timing earlier to cover more of the GC pause
+        GCTraceTime t1(_gens[i]->short_name(), PrintGCDetails, false, NULL);
         TraceCollectorStats tcs(_gens[i]->counters());
         TraceMemoryManagerStats tmms(_gens[i]->kind(),gc_cause());
 
@@ -446,8 +449,7 @@ void GenCollectedHeap::do_collection(bool  full,
             prepare_for_verify();
             prepared_for_verification = true;
           }
-          gclog_or_tty->print(" VerifyBeforeGC:");
-          Universe::verify();
+          Universe::verify(" VerifyBeforeGC:");
         }
         COMPILER2_PRESENT(DerivedPointerTable::clear());
 
@@ -518,8 +520,7 @@ void GenCollectedHeap::do_collection(bool  full,
         if (VerifyAfterGC && i >= VerifyGCLevel &&
             total_collections() >= VerifyGCStartAt) {
           HandleMark hm;  // Discard invalid handles created during verification
-          gclog_or_tty->print(" VerifyAfterGC:");
-          Universe::verify();
+          Universe::verify(" VerifyAfterGC:");
         }
 
         if (PrintGCDetails) {
@@ -535,7 +536,8 @@ void GenCollectedHeap::do_collection(bool  full,
     complete = complete || (max_level_collected == n_gens() - 1);
 
     if (complete) { // We did a "major" collection
-      post_full_gc_dump();   // do any post full gc dumps
+      // FIXME: See comment at pre_full_gc_dump call
+      post_full_gc_dump(NULL);   // do any post full gc dumps
     }
 
     if (PrintGCDetails) {
@@ -553,6 +555,9 @@ void GenCollectedHeap::do_collection(bool  full,
     }
 
     if (complete) {
+      // Delete metaspaces for unloaded class loaders and clean up loader_data graph
+      ClassLoaderDataGraph::purge();
+      MetaspaceAux::verify_metrics();
       // Resize the metaspace capacity after full collections
       MetaspaceGC::compute_new_size();
       update_full_collections_completed();
@@ -562,11 +567,6 @@ void GenCollectedHeap::do_collection(bool  full,
     MemoryService::track_memory_usage();
 
     gc_epilogue(complete);
-
-    // Delete metaspaces for unloaded class loaders and clean up loader_data graph
-    if (complete) {
-      ClassLoaderDataGraph::purge();
-    }
 
     if (must_restore_marks_for_biased_locking) {
       BiasedLocking::restore_marks();
@@ -635,9 +635,8 @@ gen_process_strong_roots(int level,
 }
 
 void GenCollectedHeap::gen_process_weak_roots(OopClosure* root_closure,
-                                              CodeBlobClosure* code_roots,
-                                              OopClosure* non_root_closure) {
-  SharedHeap::process_weak_roots(root_closure, code_roots, non_root_closure);
+                                              CodeBlobClosure* code_roots) {
+  SharedHeap::process_weak_roots(root_closure, code_roots);
   // "Local" "weak" refs
   for (int i = 0; i < _n_gens; i++) {
     _gens[i]->ref_processor()->weak_oops_do(root_closure);
@@ -686,12 +685,12 @@ size_t GenCollectedHeap::unsafe_max_alloc() {
 
 void GenCollectedHeap::collect(GCCause::Cause cause) {
   if (should_do_concurrent_full_gc(cause)) {
-#ifndef SERIALGC
+#if INCLUDE_ALL_GCS
     // mostly concurrent full collection
     collect_mostly_concurrent(cause);
-#else  // SERIALGC
+#else  // INCLUDE_ALL_GCS
     ShouldNotReachHere();
-#endif // SERIALGC
+#endif // INCLUDE_ALL_GCS
   } else {
 #ifdef ASSERT
     if (cause == GCCause::_scavenge_alot) {
@@ -736,7 +735,7 @@ void GenCollectedHeap::collect_locked(GCCause::Cause cause, int max_level) {
   }
 }
 
-#ifndef SERIALGC
+#if INCLUDE_ALL_GCS
 bool GenCollectedHeap::create_cms_collector() {
 
   assert(((_gens[1]->kind() == Generation::ConcurrentMarkSweep) ||
@@ -772,7 +771,7 @@ void GenCollectedHeap::collect_mostly_concurrent(GCCause::Cause cause) {
     VMThread::execute(&op);
   }
 }
-#endif // SERIALGC
+#endif // INCLUDE_ALL_GCS
 
 void GenCollectedHeap::do_full_collection(bool clear_all_soft_refs) {
    do_full_collection(clear_all_soft_refs, _n_gens - 1);
@@ -821,12 +820,13 @@ bool GenCollectedHeap::is_in_young(oop p) {
 // Returns "TRUE" iff "p" points into the committed areas of the heap.
 bool GenCollectedHeap::is_in(const void* p) const {
   #ifndef ASSERT
-  guarantee(VerifyBeforeGC   ||
-            VerifyDuringGC   ||
-            VerifyBeforeExit ||
-            PrintAssembly    ||
-            tty->count() != 0 ||   // already printing
-            VerifyAfterGC    ||
+  guarantee(VerifyBeforeGC      ||
+            VerifyDuringGC      ||
+            VerifyBeforeExit    ||
+            VerifyDuringStartup ||
+            PrintAssembly       ||
+            tty->count() != 0   ||   // already printing
+            VerifyAfterGC       ||
     VMError::fatal_error_in_progress(), "too expensive");
 
   #endif
@@ -1116,22 +1116,33 @@ void GenCollectedHeap::gc_threads_do(ThreadClosure* tc) const {
   if (workers() != NULL) {
     workers()->threads_do(tc);
   }
-#ifndef SERIALGC
+#if INCLUDE_ALL_GCS
   if (UseConcMarkSweepGC) {
     ConcurrentMarkSweepThread::threads_do(tc);
   }
-#endif // SERIALGC
+#endif // INCLUDE_ALL_GCS
 }
 
 void GenCollectedHeap::print_gc_threads_on(outputStream* st) const {
-#ifndef SERIALGC
+#if INCLUDE_ALL_GCS
   if (UseParNewGC) {
     workers()->print_worker_threads_on(st);
   }
   if (UseConcMarkSweepGC) {
     ConcurrentMarkSweepThread::print_all_on(st);
   }
-#endif // SERIALGC
+#endif // INCLUDE_ALL_GCS
+}
+
+void GenCollectedHeap::print_on_error(outputStream* st) const {
+  this->CollectedHeap::print_on_error(st);
+
+#if INCLUDE_ALL_GCS
+  if (UseConcMarkSweepGC) {
+    st->cr();
+    CMSCollector::print_on_error(st);
+  }
+#endif // INCLUDE_ALL_GCS
 }
 
 void GenCollectedHeap::print_tracing_info() const {

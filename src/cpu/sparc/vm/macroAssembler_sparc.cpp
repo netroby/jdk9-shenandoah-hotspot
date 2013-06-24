@@ -36,11 +36,12 @@
 #include "runtime/os.hpp"
 #include "runtime/sharedRuntime.hpp"
 #include "runtime/stubRoutines.hpp"
-#ifndef SERIALGC
+#include "utilities/macros.hpp"
+#if INCLUDE_ALL_GCS
 #include "gc_implementation/g1/g1CollectedHeap.inline.hpp"
 #include "gc_implementation/g1/g1SATBCardTableModRefBS.hpp"
 #include "gc_implementation/g1/heapRegion.hpp"
-#endif
+#endif // INCLUDE_ALL_GCS
 
 #ifdef PRODUCT
 #define BLOCK_COMMENT(str) /* nothing */
@@ -1384,13 +1385,13 @@ void MacroAssembler::_verify_oop(Register reg, const char* msg, const char * fil
   }
 #endif
 
-  int len = strlen(file) + strlen(msg) + 1 + 4;
-  sprintf(buffer, "%d", line);
-  len += strlen(buffer);
-  sprintf(buffer, " at offset %d ", offset());
-  len += strlen(buffer);
-  char * real_msg = new char[len];
-  sprintf(real_msg, "%s%s(%s:%d)", msg, buffer, file, line);
+  const char* real_msg = NULL;
+  {
+    ResourceMark rm;
+    stringStream ss;
+    ss.print("%s at offset %d (%s:%d)", msg, offset(), file, line);
+    real_msg = code_string(ss.as_string());
+  }
 
   // Call indirectly to solve generation ordering problem
   AddressLiteral a(StubRoutines::verify_oop_subroutine_entry_address());
@@ -1422,13 +1423,13 @@ void MacroAssembler::_verify_oop_addr(Address addr, const char* msg, const char 
   // plausibility check for oops
   if (!VerifyOops) return;
 
-  char buffer[64];
-  sprintf(buffer, "%d", line);
-  int len = strlen(file) + strlen(msg) + 1 + 4 + strlen(buffer);
-  sprintf(buffer, " at SP+%d ", addr.disp());
-  len += strlen(buffer);
-  char * real_msg = new char[len];
-  sprintf(real_msg, "%s at SP+%d (%s:%d)", msg, addr.disp(), file, line);
+  const char* real_msg = NULL;
+  {
+    ResourceMark rm;
+    stringStream ss;
+    ss.print("%s at SP+%d (%s:%d)", msg, addr.disp(), file, line);
+    real_msg = code_string(ss.as_string());
+  }
 
   // Call indirectly to solve generation ordering problem
   AddressLiteral a(StubRoutines::verify_oop_subroutine_entry_address());
@@ -1621,9 +1622,13 @@ void MacroAssembler::untested(const char* what) {
   // in order to run automated test scripts on the VM
   // Use the flag ShowMessageBoxOnError
 
-  char* b = new char[1024];
-  sprintf(b, "untested: %s", what);
-
+  const char* b = NULL;
+  {
+    ResourceMark rm;
+    stringStream ss;
+    ss.print("untested: %s", what);
+    b = code_string(ss.as_string());
+  }
   if (ShowMessageBoxOnError) { STOP(b); }
   else                       { warn(b); }
 }
@@ -3867,7 +3872,7 @@ void MacroAssembler::bang_stack_size(Register Rsize, Register Rtsp,
 }
 
 ///////////////////////////////////////////////////////////////////////////////////
-#ifndef SERIALGC
+#if INCLUDE_ALL_GCS
 
 static address satb_log_enqueue_with_frame = NULL;
 static u_char* satb_log_enqueue_with_frame_end = NULL;
@@ -4231,7 +4236,7 @@ void MacroAssembler::g1_write_barrier_post(Register store_addr, Register new_val
   bind(filtered);
 }
 
-#endif  // SERIALGC
+#endif // INCLUDE_ALL_GCS
 ///////////////////////////////////////////////////////////////////////////////////
 
 void MacroAssembler::card_write_barrier_post(Register store_addr, Register new_val, Register tmp) {

@@ -328,9 +328,10 @@ const int max_method_code_size = 64*K - 1;  // JVM spec, 2nd ed. section 4.8.1 (
 
 
 //----------------------------------------------------------------------------------------------------
-// Minimum StringTableSize value
+// Default and minimum StringTableSize values
 
-const int defaultStringTableSize=1009;
+const int defaultStringTableSize = NOT_LP64(1009) LP64_ONLY(60013);
+const int minimumStringTableSize=1009;
 
 
 //----------------------------------------------------------------------------------------------------
@@ -379,6 +380,14 @@ const uint64_t KlassEncodingMetaspaceMax = (uint64_t(max_juint) + 1) << LogKlass
 # include "globalDefinitions_ppc.hpp"
 #endif
 
+/*
+ * If a platform does not support NMT_detail
+ * the platform specific globalDefinitions (above)
+ * can set PLATFORM_NMT_DETAIL_SUPPORTED to false
+ */
+#ifndef PLATFORM_NMT_DETAIL_SUPPORTED
+#define PLATFORM_NMT_DETAIL_SUPPORTED true
+#endif
 
 // The byte alignment to be used by Arena::Amalloc.  See bugid 4169348.
 // Note: this value must be a power of 2
@@ -418,6 +427,24 @@ inline bool is_object_aligned(intptr_t addr) {
 inline intptr_t align_object_offset(intptr_t offset) {
   return align_size_up(offset, HeapWordsPerLong);
 }
+
+// Clamp an address to be within a specific page
+// 1. If addr is on the page it is returned as is
+// 2. If addr is above the page_address the start of the *next* page will be returned
+// 3. Otherwise, if addr is below the page_address the start of the page will be returned
+inline address clamp_address_in_page(address addr, address page_address, intptr_t page_size) {
+  if (align_size_down(intptr_t(addr), page_size) == align_size_down(intptr_t(page_address), page_size)) {
+    // address is in the specified page, just return it as is
+    return addr;
+  } else if (addr > page_address) {
+    // address is above specified page, return start of next page
+    return (address)align_size_down(intptr_t(page_address), page_size) + page_size;
+  } else {
+    // address is below specified page, return start of page
+    return (address)align_size_down(intptr_t(page_address), page_size);
+  }
+}
+
 
 // The expected size in bytes of a cache line, used to pad data structures.
 #define DEFAULT_CACHE_LINE_SIZE 64
@@ -736,18 +763,6 @@ inline BasicType as_BasicType(TosState state) {
 TosState as_TosState(BasicType type);
 
 
-// ReferenceType is used to distinguish between java/lang/ref/Reference subclasses
-
-enum ReferenceType {
- REF_NONE,      // Regular class
- REF_OTHER,     // Subclass of java/lang/ref/Reference, but not subclass of one of the classes below
- REF_SOFT,      // Subclass of java/lang/ref/SoftReference
- REF_WEAK,      // Subclass of java/lang/ref/WeakReference
- REF_FINAL,     // Subclass of java/lang/ref/FinalReference
- REF_PHANTOM    // Subclass of java/lang/ref/PhantomReference
-};
-
-
 // JavaThreadState keeps track of which part of the code a thread is executing in. This
 // information is needed by the safepoint code.
 //
@@ -825,6 +840,10 @@ inline bool is_c2_compile(int comp_level) {
 
 inline bool is_highest_tier_compile(int comp_level) {
   return comp_level == CompLevel_highest_tier;
+}
+
+inline bool is_compile(int comp_level) {
+  return is_c1_compile(comp_level) || is_c2_compile(comp_level);
 }
 
 //----------------------------------------------------------------------------------------------------
@@ -1295,5 +1314,16 @@ inline int build_int_from_shorts( jushort low, jushort high ) {
 static inline void* dereference_vptr(void* addr) {
   return *(void**)addr;
 }
+
+
+#ifndef PRODUCT
+
+// For unit testing only
+class GlobalDefinitions {
+public:
+  static void test_globals();
+};
+
+#endif // PRODUCT
 
 #endif // SHARE_VM_UTILITIES_GLOBALDEFINITIONS_HPP

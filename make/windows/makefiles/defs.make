@@ -1,5 +1,5 @@
 #
-# Copyright (c) 2006, 2012, Oracle and/or its affiliates. All rights reserved.
+# Copyright (c) 2006, 2013, Oracle and/or its affiliates. All rights reserved.
 # DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
 #
 # This code is free software; you can redistribute it and/or modify it
@@ -19,7 +19,7 @@
 # Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
 # or visit www.oracle.com if you need additional information or have any
 # questions.
-#  
+#
 #
 
 # The common definitions for hotspot windows builds.
@@ -157,7 +157,7 @@ endif
 MAKE_ARGS += RM="$(RM)"
 MAKE_ARGS += ZIPEXE=$(ZIPEXE)
 
-# On 32 bit windows we build server, client and kernel, on 64 bit just server.
+# On 32 bit windows we build server and client, on 64 bit just server.
 ifeq ($(JVM_VARIANTS),)
   ifeq ($(ARCH_DATA_MODEL), 32)
     JVM_VARIANTS:=client,server
@@ -193,7 +193,7 @@ ifdef COOKED_BUILD_NUMBER
   MAKE_ARGS += JDK_BUILD_NUMBER=$(COOKED_BUILD_NUMBER)
 endif
 
-NMAKE= MAKEFLAGS= MFLAGS= nmake -NOLOGO
+NMAKE= MAKEFLAGS= MFLAGS= EXTRA_CFLAGS="$(EXTRA_CFLAGS)" nmake -NOLOGO
 ifndef SYSTEM_UNAME
   SYSTEM_UNAME := $(shell uname)
   export SYSTEM_UNAME
@@ -209,8 +209,6 @@ endif
 ifneq (,$(findstring MINGW,$(SYSTEM_UNAME)))
   USING_MINGW=true
 endif
-# FIXUP: The subdirectory for a debug build is NOT the same on all platforms
-VM_DEBUG=debug
 
 # Windows wants particular paths due to nmake (must be after macros defined)
 #   It is important that gnumake invokes nmake with C:\\...\\  formated
@@ -250,7 +248,6 @@ endif
 
 EXPORT_SERVER_DIR = $(EXPORT_JRE_BIN_DIR)/server
 EXPORT_CLIENT_DIR = $(EXPORT_JRE_BIN_DIR)/client
-EXPORT_KERNEL_DIR = $(EXPORT_JRE_BIN_DIR)/kernel
 
 ifeq ($(JVM_VARIANT_SERVER),true)
   EXPORT_LIST += $(EXPORT_SERVER_DIR)/Xusage.txt
@@ -277,20 +274,6 @@ ifeq ($(JVM_VARIANT_CLIENT),true)
     endif
   endif
 endif
-ifeq ($(JVM_VARIANT_KERNEL),true)
-  EXPORT_LIST += $(EXPORT_KERNEL_DIR)/Xusage.txt
-  EXPORT_LIST += $(EXPORT_KERNEL_DIR)/jvm.$(LIBRARY_SUFFIX)
-  ifeq ($(ENABLE_FULL_DEBUG_SYMBOLS),1)
-    ifeq ($(ZIP_DEBUGINFO_FILES),1)
-      EXPORT_LIST += $(EXPORT_KERNEL_DIR)/jvm.diz
-    else
-      EXPORT_LIST += $(EXPORT_KERNEL_DIR)/jvm.pdb
-      EXPORT_LIST += $(EXPORT_KERNEL_DIR)/jvm.map
-    endif
-  endif
-endif
-
-EXPORT_LIST += $(EXPORT_JRE_LIB_DIR)/wb.jar
 
 ifeq ($(BUILD_WIN_SA), 1)
   EXPORT_LIST += $(EXPORT_JRE_BIN_DIR)/sawindbg.$(LIBRARY_SUFFIX)
@@ -307,7 +290,7 @@ ifeq ($(BUILD_WIN_SA), 1)
   MAKE_ARGS += BUILD_WIN_SA=1
 endif
 
-# Propagate compiler and tools paths from configure to nmake. 
+# Propagate compiler and tools paths from configure to nmake.
 # Need to make sure they contain \\ and not /.
 ifneq ($(SPEC),)
   ifeq ($(USING_CYGWIN), true)

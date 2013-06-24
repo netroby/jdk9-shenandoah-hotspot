@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -35,7 +35,6 @@
 #include "oops/oop.inline2.hpp"
 #include "runtime/mutexLocker.hpp"
 #include "utilities/hashtable.inline.hpp"
-#include "utilities/numberSeq.hpp"
 
 // --------------------------------------------------------------------------
 
@@ -53,17 +52,16 @@ Symbol* SymbolTable::allocate_symbol(const u1* name, int len, bool c_heap, TRAPS
 
   Symbol* sym;
 
-  if (c_heap) {
+  if (DumpSharedSpaces) {
+    // Allocate all symbols to CLD shared metaspace
+    sym = new (len, ClassLoaderData::the_null_class_loader_data(), THREAD) Symbol(name, len, -1);
+  } else if (c_heap) {
     // refcount starts as 1
-    assert(!DumpSharedSpaces, "never allocate to C heap");
     sym = new (len, THREAD) Symbol(name, len, 1);
     assert(sym != NULL, "new should call vm_exit_out_of_memory if C_HEAP is exhausted");
   } else {
-    if (DumpSharedSpaces) {
-      sym = new (len, ClassLoaderData::the_null_class_loader_data(), THREAD) Symbol(name, len, -1);
-  } else {
+    // Allocate to global arena
     sym = new (len, arena(), THREAD) Symbol(name, len, -1);
-  }
   }
   return sym;
 }
@@ -456,21 +454,7 @@ void SymbolTable::verify() {
 }
 
 void SymbolTable::dump(outputStream* st) {
-  NumberSeq summary;
-  for (int i = 0; i < the_table()->table_size(); ++i) {
-    int count = 0;
-    for (HashtableEntry<Symbol*, mtSymbol>* e = the_table()->bucket(i);
-       e != NULL; e = e->next()) {
-      count++;
-    }
-    summary.add((double)count);
-  }
-  st->print_cr("SymbolTable statistics:");
-  st->print_cr("Number of buckets       : %7d", summary.num());
-  st->print_cr("Average bucket size     : %7.0f", summary.avg());
-  st->print_cr("Variance of bucket size : %7.0f", summary.variance());
-  st->print_cr("Std. dev. of bucket size: %7.0f", summary.sd());
-  st->print_cr("Maximum bucket size     : %7.0f", summary.maximum());
+  the_table()->dump_table(st, "SymbolTable");
 }
 
 
@@ -682,9 +666,14 @@ oop StringTable::lookup(Symbol* symbol) {
   ResourceMark rm;
   int length;
   jchar* chars = symbol->as_unicode(length);
-  unsigned int hashValue = hash_string(chars, length);
-  int index = the_table()->hash_to_index(hashValue);
-  return the_table()->lookup(index, chars, length, hashValue);
+  return lookup(chars, length);
+}
+
+
+oop StringTable::lookup(jchar* name, int len) {
+  unsigned int hash = hash_string(name, len);
+  int index = the_table()->hash_to_index(hash);
+  return the_table()->lookup(index, name, len, hash);
 }
 
 
@@ -735,7 +724,7 @@ oop StringTable::intern(oop string, TRAPS)
   ResourceMark rm(THREAD);
   int length;
   Handle h_string (THREAD, string);
-  jchar* chars = java_lang_String::as_unicode_string(string, length);
+  jchar* chars = java_lang_String::as_unicode_string(string, length, CHECK_NULL);
   oop result = intern(h_string, chars, length, CHECK_NULL);
   return result;
 }
@@ -752,7 +741,7 @@ oop StringTable::intern(const char* utf8_string, TRAPS) {
   return result;
 }
 
-void StringTable::unlink(BoolObjectClosure* is_alive) {
+void StringTable::unlink_or_oops_do(BoolObjectClosure* is_alive, OopClosure* f) {
   // Readers of the table are unlocked, so we should only be removing
   // entries at a safepoint.
   assert(SafepointSynchronize::is_at_safepoint(), "must be at safepoint");
@@ -760,41 +749,31 @@ void StringTable::unlink(BoolObjectClosure* is_alive) {
     HashtableEntry<oop, mtSymbol>** p = the_table()->bucket_addr(i);
     HashtableEntry<oop, mtSymbol>* entry = the_table()->bucket(i);
     while (entry != NULL) {
-      // Shared entries are normally at the end of the bucket and if we run into
-      // a shared entry, then there is nothing more to remove. However, if we
-      // have rehashed the table, then the shared entries are no longer at the
-      // end of the bucket.
-      if (entry->is_shared() && !use_alternate_hashcode()) {
-        break;
-      }
-      assert(entry->literal() != NULL, "just checking");
-      if (entry->is_shared() || is_alive->do_object_b(entry->literal())) {
+      assert(!entry->is_shared(), "CDS not used for the StringTable");
+
+      if (is_alive->do_object_b(entry->literal())) {
+        if (f != NULL) {
+          f->do_oop((oop*)entry->literal_addr());
+        }
         p = entry->next_addr();
       } else {
         *p = entry->next();
         the_table()->free_entry(entry);
       }
-      entry = (HashtableEntry<oop, mtSymbol>*)HashtableEntry<oop, mtSymbol>::make_ptr(*p);
+      entry = *p;
     }
   }
 }
 
 void StringTable::oops_do(OopClosure* f) {
   for (int i = 0; i < the_table()->table_size(); ++i) {
-    HashtableEntry<oop, mtSymbol>** p = the_table()->bucket_addr(i);
     HashtableEntry<oop, mtSymbol>* entry = the_table()->bucket(i);
     while (entry != NULL) {
+      assert(!entry->is_shared(), "CDS not used for the StringTable");
+
       f->do_oop((oop*)entry->literal_addr());
 
-      // Did the closure remove the literal from the table?
-      if (entry->literal() == NULL) {
-        assert(!entry->is_shared(), "immutable hashtable entry?");
-        *p = entry->next();
-        the_table()->free_entry(entry);
-      } else {
-        p = entry->next_addr();
-      }
-      entry = (HashtableEntry<oop, mtSymbol>*)HashtableEntry<oop, mtSymbol>::make_ptr(*p);
+      entry = entry->next();
     }
   }
 }
@@ -814,21 +793,7 @@ void StringTable::verify() {
 }
 
 void StringTable::dump(outputStream* st) {
-  NumberSeq summary;
-  for (int i = 0; i < the_table()->table_size(); ++i) {
-    HashtableEntry<oop, mtSymbol>* p = the_table()->bucket(i);
-    int count = 0;
-    for ( ; p != NULL; p = p->next()) {
-      count++;
-    }
-    summary.add((double)count);
-  }
-  st->print_cr("StringTable statistics:");
-  st->print_cr("Number of buckets       : %7d", summary.num());
-  st->print_cr("Average bucket size     : %7.0f", summary.avg());
-  st->print_cr("Variance of bucket size : %7.0f", summary.variance());
-  st->print_cr("Std. dev. of bucket size: %7.0f", summary.sd());
-  st->print_cr("Maximum bucket size     : %7.0f", summary.maximum());
+  the_table()->dump_table(st, "StringTable");
 }
 
 

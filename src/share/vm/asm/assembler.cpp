@@ -44,7 +44,7 @@ AbstractAssembler::AbstractAssembler(CodeBuffer* code) {
   CodeSection* cs = code->insts();
   cs->clear_mark();   // new assembler kills old mark
   if (cs->start() == NULL)  {
-    vm_exit_out_of_memory(0, err_msg("CodeCache: no room for %s",
+    vm_exit_out_of_memory(0, OOM_MMAP_ERROR, err_msg("CodeCache: no room for %s",
                                      code->name()));
   }
   _code_section = cs;
@@ -284,13 +284,17 @@ void AbstractAssembler::update_delayed_values() {
   DelayedConstant::update_all();
 }
 
-
-
-
 void AbstractAssembler::block_comment(const char* comment) {
   if (sect() == CodeBuffer::SECT_INSTS) {
     code_section()->outer()->block_comment(offset(), comment);
   }
+}
+
+const char* AbstractAssembler::code_string(const char* str) {
+  if (sect() == CodeBuffer::SECT_INSTS || sect() == CodeBuffer::SECT_STUBS) {
+    return code_section()->outer()->code_string(str);
+  }
+  return NULL;
 }
 
 bool MacroAssembler::needs_explicit_null_check(intptr_t offset) {

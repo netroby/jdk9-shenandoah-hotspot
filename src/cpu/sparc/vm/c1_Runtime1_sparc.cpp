@@ -35,6 +35,7 @@
 #include "runtime/sharedRuntime.hpp"
 #include "runtime/signature.hpp"
 #include "runtime/vframeArray.hpp"
+#include "utilities/macros.hpp"
 #include "vmreg_sparc.inline.hpp"
 
 // Implementation of StubAssembler
@@ -822,7 +823,7 @@ OopMapSet* Runtime1::generate_code_for(StubID id, StubAssembler* sasm) {
       }
       break;
 
-#ifndef SERIALGC
+#if INCLUDE_ALL_GCS
     case g1_pre_barrier_slow_id:
       { // G4: previous value of memory
         BarrierSet* bs = Universe::heap()->barrier_set();
@@ -984,7 +985,27 @@ OopMapSet* Runtime1::generate_code_for(StubID id, StubAssembler* sasm) {
         __ delayed()->restore();
       }
       break;
-#endif // !SERIALGC
+#endif // INCLUDE_ALL_GCS
+
+    case predicate_failed_trap_id:
+      {
+        __ set_info("predicate_failed_trap", dont_gc_arguments);
+        OopMap* oop_map = save_live_registers(sasm);
+
+        int call_offset = __ call_RT(noreg, noreg, CAST_FROM_FN_PTR(address, predicate_failed_trap));
+
+        oop_maps = new OopMapSet();
+        oop_maps->add_gc_map(call_offset, oop_map);
+
+        DeoptimizationBlob* deopt_blob = SharedRuntime::deopt_blob();
+        assert(deopt_blob != NULL, "deoptimization blob must have been created");
+        restore_live_registers(sasm);
+
+        AddressLiteral dest(deopt_blob->unpack_with_reexecution());
+        __ jump_to(dest, O0);
+        __ delayed()->restore();
+      }
+      break;
 
     default:
       { __ set_info("unimplemented entry", dont_gc_arguments);

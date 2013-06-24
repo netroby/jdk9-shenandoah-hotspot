@@ -47,6 +47,7 @@
 #include "runtime/vframeArray.hpp"
 #include "stack_zero.inline.hpp"
 #include "utilities/debug.hpp"
+#include "utilities/macros.hpp"
 #ifdef SHARK
 #include "shark/shark_globals.hpp"
 #endif
@@ -211,7 +212,13 @@ int CppInterpreter::native_entry(Method* method, intptr_t UNUSED, TRAPS) {
 
   // Update the invocation counter
   if ((UseCompiler || CountCompiledCalls) && !method->is_synchronized()) {
-    InvocationCounter *counter = method->invocation_counter();
+    MethodCounters* mcs = method->method_counters();
+    if (mcs == NULL) {
+      CALL_VM_NOCHECK(mcs = InterpreterRuntime::build_method_counters(thread, method));
+      if (HAS_PENDING_EXCEPTION)
+        goto unwind_and_return;
+    }
+    InvocationCounter *counter = mcs->invocation_counter();
     counter->increment();
     if (counter->reached_InvocationLimit()) {
       CALL_VM_NOCHECK(
@@ -791,7 +798,7 @@ address InterpreterGenerator::generate_accessor_entry() {
 }
 
 address InterpreterGenerator::generate_Reference_get_entry(void) {
-#ifndef SERIALGC
+#if INCLUDE_ALL_GCS
   if (UseG1GC) {
     // We need to generate have a routine that generates code to:
     //   * load the value in the referent field
@@ -803,7 +810,7 @@ address InterpreterGenerator::generate_Reference_get_entry(void) {
     // field as live.
     Unimplemented();
   }
-#endif // SERIALGC
+#endif // INCLUDE_ALL_GCS
 
   // If G1 is not enabled then attempt to go through the accessor entry point
   // Reference.get is an accessor
@@ -918,7 +925,8 @@ int AbstractInterpreter::layout_activation(Method* method,
                                            int       callee_locals,
                                            frame*    caller,
                                            frame*    interpreter_frame,
-                                           bool      is_top_frame) {
+                                           bool      is_top_frame,
+                                           bool      is_bottom_frame) {
   assert(popframe_extra_args == 0, "what to do?");
   assert(!is_top_frame || (!callee_locals && !callee_param_count),
          "top frame should have no caller");

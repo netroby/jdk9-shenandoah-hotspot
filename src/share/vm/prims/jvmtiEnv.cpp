@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2003, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2003, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -259,7 +259,8 @@ JvmtiEnv::RetransformClasses(jint class_count, const jclass* classes) {
       // bytes to the InstanceKlass here because they have not been
       // validated and we're not at a safepoint.
       constantPoolHandle  constants(current_thread, ikh->constants());
-      MonitorLockerEx ml(constants->lock());    // lock constant pool while we query it
+      oop cplock = constants->lock();
+      ObjectLocker ol(cplock, current_thread, cplock != NULL);    // lock constant pool while we query it
 
       JvmtiClassFileReconstituter reconstituter(ikh);
       if (reconstituter.get_error() != JVMTI_ERROR_NONE) {
@@ -646,8 +647,6 @@ JvmtiEnv::GetJLocationFormat(jvmtiJlocationFormat* format_ptr) {
   *format_ptr = JVMTI_JLOCATION_JVMBCI;
   return JVMTI_ERROR_NONE;
 } /* end GetJLocationFormat */
-
-#ifndef JVMTI_KERNEL
 
   //
   // Thread functions
@@ -2419,7 +2418,8 @@ JvmtiEnv::GetConstantPool(oop k_mirror, jint* constant_pool_count_ptr, jint* con
 
   instanceKlassHandle ikh(thread, k_oop);
   constantPoolHandle  constants(thread, ikh->constants());
-  MonitorLockerEx ml(constants->lock());    // lock constant pool while we query it
+  oop cplock = constants->lock();
+  ObjectLocker ol(cplock, thread, cplock != NULL);    // lock constant pool while we query it
 
   JvmtiConstantPoolReconstituter reconstituter(ikh);
   if (reconstituter.get_error() != JVMTI_ERROR_NONE) {
@@ -3436,5 +3436,3 @@ JvmtiEnv::SetSystemProperty(const char* property, const char* value_ptr) {
   }
   return err;
 } /* end SetSystemProperty */
-
-#endif // !JVMTI_KERNEL

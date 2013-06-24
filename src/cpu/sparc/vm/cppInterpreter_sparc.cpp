@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2007, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2007, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -45,6 +45,7 @@
 #include "runtime/timer.hpp"
 #include "runtime/vframeArray.hpp"
 #include "utilities/debug.hpp"
+#include "utilities/macros.hpp"
 #ifdef SHARK
 #include "shark/shark_globals.hpp"
 #endif
@@ -403,14 +404,20 @@ address CppInterpreter::deopt_entry(TosState state, int length) {
 // ??: invocation counter
 //
 void InterpreterGenerator::generate_counter_incr(Label* overflow, Label* profile_method, Label* profile_method_continue) {
+  Label done;
+  const Register Rcounters = G3_scratch;
+
+  __ ld_ptr(STATE(_method), G5_method);
+  __ get_method_counters(G5_method, Rcounters, done);
+
   // Update standard invocation counters
-  __ increment_invocation_counter(O0, G3_scratch);
-  if (ProfileInterpreter) {  // %%% Merge this into MethodData*
-    __ ld_ptr(STATE(_method), G3_scratch);
-    Address interpreter_invocation_counter(G3_scratch, 0, in_bytes(Method::interpreter_invocation_counter_offset()));
-    __ ld(interpreter_invocation_counter, G3_scratch);
-    __ inc(G3_scratch);
-    __ st(G3_scratch, interpreter_invocation_counter);
+  __ increment_invocation_counter(Rcounters, O0, G4_scratch);
+  if (ProfileInterpreter) {
+    Address interpreter_invocation_counter(Rcounters, 0,
+            in_bytes(MethodCounters::interpreter_invocation_counter_offset()));
+    __ ld(interpreter_invocation_counter, G4_scratch);
+    __ inc(G4_scratch);
+    __ st(G4_scratch, interpreter_invocation_counter);
   }
 
   Address invocation_limit(G3_scratch, (address)&InvocationCounter::InterpreterInvocationLimit);
@@ -419,7 +426,7 @@ void InterpreterGenerator::generate_counter_incr(Label* overflow, Label* profile
   __ cmp(O0, G3_scratch);
   __ br(Assembler::greaterEqualUnsigned, false, Assembler::pn, *overflow);
   __ delayed()->nop();
-
+  __ bind(done);
 }
 
 address InterpreterGenerator::generate_empty_entry(void) {
@@ -551,7 +558,7 @@ address InterpreterGenerator::generate_accessor_entry(void) {
 }
 
 address InterpreterGenerator::generate_Reference_get_entry(void) {
-#ifndef SERIALGC
+#if INCLUDE_ALL_GCS
   if (UseG1GC) {
     // We need to generate have a routine that generates code to:
     //   * load the value in the referent field
@@ -563,7 +570,7 @@ address InterpreterGenerator::generate_Reference_get_entry(void) {
     // field as live.
     Unimplemented();
   }
-#endif // SERIALGC
+#endif // INCLUDE_ALL_GCS
 
   // If G1 is not enabled then attempt to go through the accessor entry point
   // Reference.get is an accessor
@@ -1058,7 +1065,7 @@ void CppInterpreterGenerator::generate_compute_interpreter_state(const Register 
   const int slop_factor = 2*wordSize;
 
   const int fixed_size = ((sizeof(BytecodeInterpreter) + slop_factor) >> LogBytesPerWord) + // what is the slop factor?
-                         //6815692//Method::extra_stack_words() +  // extra push slots for MH adapters
+                         Method::extra_stack_entries() + // extra stack for jsr 292
                          frame::memory_parameter_word_sp_offset +  // register save area + param window
                          (native ?  frame::interpreter_frame_extra_outgoing_argument_words : 0); // JNI, class
 
@@ -1214,9 +1221,7 @@ void CppInterpreterGenerator::generate_compute_interpreter_state(const Register 
   // Full size expression stack
   __ ld_ptr(constMethod, O3);
   __ lduh(O3, in_bytes(ConstMethod::max_stack_offset()), O3);
-  guarantee(!EnableInvokeDynamic, "no support yet for java.lang.invoke.MethodHandle"); //6815692
-  //6815692//if (EnableInvokeDynamic)
-  //6815692//  __ inc(O3, Method::extra_stack_entries());
+  __ inc(O3, Method::extra_stack_entries());
   __ sll(O3, LogBytesPerWord, O3);
   __ sub(O2, O3, O3);
 //  __ sub(O3, wordSize, O3);                    // so prepush doesn't look out of bounds
@@ -2077,9 +2082,7 @@ static int size_activation_helper(int callee_extra_locals, int max_stack, int mo
 
   const int fixed_size = sizeof(BytecodeInterpreter)/wordSize +           // interpreter state object
                          frame::memory_parameter_word_sp_offset;   // register save area + param window
-  const int extra_stack = 0; //6815692//Method::extra_stack_entries();
   return (round_to(max_stack +
-                   extra_stack +
                    slop_factor +
                    fixed_size +
                    monitor_size +
@@ -2166,8 +2169,7 @@ void BytecodeInterpreter::layout_interpreterState(interpreterState to_fill,
   // Need +1 here because stack_base points to the word just above the first expr stack entry
   // and stack_limit is supposed to point to the word just below the last expr stack entry.
   // See generate_compute_interpreter_state.
-  int extra_stack = 0; //6815692//Method::extra_stack_entries();
-  to_fill->_stack_limit = stack_base - (method->max_stack() + 1 + extra_stack);
+  to_fill->_stack_limit = stack_base - (method->max_stack() + 1);
   to_fill->_monitor_base = (BasicObjectLock*) monitor_base;
 
   // sparc specific
@@ -2193,7 +2195,8 @@ int AbstractInterpreter::layout_activation(Method* method,
                                            int callee_locals_size,
                                            frame* caller,
                                            frame* interpreter_frame,
-                                           bool is_top_frame) {
+                                           bool is_top_frame,
+                                           bool is_bottom_frame) {
 
   assert(popframe_extra_args == 0, "NEED TO FIX");
   // NOTE this code must exactly mimic what InterpreterGenerator::generate_compute_interpreter_state()

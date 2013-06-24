@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -34,6 +34,7 @@
 #include "runtime/sharedRuntime.hpp"
 #include "runtime/stubRoutines.hpp"
 #include "runtime/synchronizer.hpp"
+#include "utilities/macros.hpp"
 
 #ifndef CC_INTERP
 #define __ _masm->
@@ -53,7 +54,7 @@ static void do_oop_store(InterpreterMacroAssembler* _masm,
   assert(tmp != val && tmp != base && tmp != index, "register collision");
   assert(index == noreg || offset == 0, "only one offset");
   switch (barrier) {
-#ifndef SERIALGC
+#if INCLUDE_ALL_GCS
     case BarrierSet::G1SATBCT:
     case BarrierSet::G1SATBCTLogging:
       {
@@ -61,6 +62,13 @@ static void do_oop_store(InterpreterMacroAssembler* _masm,
         __ g1_write_barrier_pre(base, index, offset,
                                 noreg /* pre_val */,
                                 tmp, true /*preserve_o_regs*/);
+
+        // G1 barrier needs uncompressed oop for region cross check.
+        Register new_val = val;
+        if (UseCompressedOops && val != G0) {
+          new_val = tmp;
+          __ mov(val, new_val);
+        }
 
         if (index == noreg ) {
           assert(Assembler::is_simm13(offset), "fix this code");
@@ -78,11 +86,11 @@ static void do_oop_store(InterpreterMacroAssembler* _masm,
               __ add(base, index, base);
             }
           }
-          __ g1_write_barrier_post(base, val, tmp);
+          __ g1_write_barrier_post(base, new_val, tmp);
         }
       }
       break;
-#endif // SERIALGC
+#endif // INCLUDE_ALL_GCS
     case BarrierSet::CardTableModRef:
     case BarrierSet::CardTableExtension:
       {
@@ -339,8 +347,6 @@ void TemplateTable::ldc(bool wide) {
 
   __ bind(notInt);
  // __ cmp(O2, JVM_CONSTANT_String);
-  __ brx(Assembler::equal, true, Assembler::pt, isString);
-  __ delayed()->cmp(O2, JVM_CONSTANT_Object);
   __ brx(Assembler::notEqual, true, Assembler::pt, notString);
   __ delayed()->ldf(FloatRegisterImpl::S, O0, O1, Ftos_f);
   __ bind(isString);
@@ -1605,9 +1611,8 @@ void TemplateTable::branch(bool is_jsr, bool is_wide) {
   // Normal (non-jsr) branch handling
 
   // Save the current Lbcp
-  const Register O0_cur_bcp = O0;
-  __ mov( Lbcp, O0_cur_bcp );
-
+  const Register l_cur_bcp = Lscratch;
+  __ mov( Lbcp, l_cur_bcp );
 
   bool increment_invocation_counter_for_backward_branches = UseCompiler && UseLoopCounter;
   if ( increment_invocation_counter_for_backward_branches ) {
@@ -1616,6 +1621,9 @@ void TemplateTable::branch(bool is_jsr, bool is_wide) {
     __ br( Assembler::positive, false,  Assembler::pn, Lforward );
     // Bump bytecode pointer by displacement (take the branch)
     __ delayed()->add( O1_disp, Lbcp, Lbcp );     // add to bc addr
+
+    const Register Rcounters = G3_scratch;
+    __ get_method_counters(Lmethod, Rcounters, Lforward);
 
     if (TieredCompilation) {
       Label Lno_mdo, Loverflow;
@@ -1629,21 +1637,22 @@ void TemplateTable::branch(bool is_jsr, bool is_wide) {
         // Increment backedge counter in the MDO
         Address mdo_backedge_counter(G4_scratch, in_bytes(MethodData::backedge_counter_offset()) +
                                                  in_bytes(InvocationCounter::counter_offset()));
-        __ increment_mask_and_jump(mdo_backedge_counter, increment, mask, G3_scratch, Lscratch,
+        __ increment_mask_and_jump(mdo_backedge_counter, increment, mask, G3_scratch, O0,
                                    Assembler::notZero, &Lforward);
         __ ba_short(Loverflow);
       }
 
-      // If there's no MDO, increment counter in Method*
+      // If there's no MDO, increment counter in MethodCounters*
       __ bind(Lno_mdo);
-      Address backedge_counter(Lmethod, in_bytes(Method::backedge_counter_offset()) +
-                                        in_bytes(InvocationCounter::counter_offset()));
-      __ increment_mask_and_jump(backedge_counter, increment, mask, G3_scratch, Lscratch,
+      Address backedge_counter(Rcounters,
+              in_bytes(MethodCounters::backedge_counter_offset()) +
+              in_bytes(InvocationCounter::counter_offset()));
+      __ increment_mask_and_jump(backedge_counter, increment, mask, G4_scratch, O0,
                                  Assembler::notZero, &Lforward);
       __ bind(Loverflow);
 
       // notify point for loop, pass branch bytecode
-      __ call_VM(noreg, CAST_FROM_FN_PTR(address, InterpreterRuntime::frequency_counter_overflow), O0_cur_bcp);
+      __ call_VM(noreg, CAST_FROM_FN_PTR(address, InterpreterRuntime::frequency_counter_overflow), l_cur_bcp);
 
       // Was an OSR adapter generated?
       // O0 = osr nmethod
@@ -1680,15 +1689,15 @@ void TemplateTable::branch(bool is_jsr, bool is_wide) {
     } else {
       // Update Backedge branch separately from invocations
       const Register G4_invoke_ctr = G4;
-      __ increment_backedge_counter(G4_invoke_ctr, G1_scratch);
+      __ increment_backedge_counter(Rcounters, G4_invoke_ctr, G1_scratch);
       if (ProfileInterpreter) {
         __ test_invocation_counter_for_mdp(G4_invoke_ctr, G3_scratch, Lforward);
         if (UseOnStackReplacement) {
-          __ test_backedge_count_for_osr(O2_bumped_count, O0_cur_bcp, G3_scratch);
+          __ test_backedge_count_for_osr(O2_bumped_count, l_cur_bcp, G3_scratch);
         }
       } else {
         if (UseOnStackReplacement) {
-          __ test_backedge_count_for_osr(G4_invoke_ctr, O0_cur_bcp, G3_scratch);
+          __ test_backedge_count_for_osr(G4_invoke_ctr, l_cur_bcp, G3_scratch);
         }
       }
     }

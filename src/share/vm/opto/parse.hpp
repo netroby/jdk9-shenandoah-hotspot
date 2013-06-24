@@ -58,7 +58,7 @@ class InlineTree : public ResourceObj {
   GrowableArray<InlineTree*> _subtrees;
 
   void print_impl(outputStream* stj, int indent) const PRODUCT_RETURN;
-
+  const char* _msg;
 protected:
   InlineTree(Compile* C,
              const InlineTree* caller_tree,
@@ -70,16 +70,29 @@ protected:
   InlineTree *build_inline_tree_for_callee(ciMethod* callee_method,
                                            JVMState* caller_jvms,
                                            int caller_bci);
-  const char* try_to_inline(ciMethod* callee_method, ciMethod* caller_method, int caller_bci, ciCallProfile& profile, WarmCallInfo* wci_result, bool& should_delay);
-  const char* should_inline(ciMethod* callee_method, ciMethod* caller_method, int caller_bci, ciCallProfile& profile, WarmCallInfo* wci_result) const;
-  const char* should_not_inline(ciMethod* callee_method, ciMethod* caller_method, WarmCallInfo* wci_result) const;
-  void        print_inlining(ciMethod *callee_method, int caller_bci, const char *failure_msg) const;
+  bool        try_to_inline(ciMethod* callee_method,
+                            ciMethod* caller_method,
+                            int caller_bci,
+                            ciCallProfile& profile,
+                            WarmCallInfo* wci_result,
+                            bool& should_delay);
+  bool        should_inline(ciMethod* callee_method,
+                            ciMethod* caller_method,
+                            int caller_bci,
+                            ciCallProfile& profile,
+                            WarmCallInfo* wci_result);
+  bool        should_not_inline(ciMethod* callee_method,
+                                ciMethod* caller_method,
+                                WarmCallInfo* wci_result);
+  void        print_inlining(ciMethod* callee_method, int caller_bci,
+                             bool success) const;
 
-  InlineTree *caller_tree()       const { return _caller_tree;  }
+  InlineTree* caller_tree()       const { return _caller_tree;  }
   InlineTree* callee_at(int bci, ciMethod* m) const;
   int         inline_level()      const { return stack_depth(); }
   int         stack_depth()       const { return _caller_jvms ? _caller_jvms->depth() : 0; }
-
+  const char* msg()               const { return _msg; }
+  void        set_msg(const char* msg)  { _msg = msg; }
 public:
   static const char* check_can_parse(ciMethod* callee);
 
@@ -317,6 +330,7 @@ class Parse : public GraphKit {
   bool          _wrote_final;   // Did we write a final field?
   bool          _count_invocations; // update and test invocation counter
   bool          _method_data_update; // update method data oop
+  Node*         _alloc_with_final;   // An allocation node with final field
 
   // Variables which track Java semantics during bytecode parsing:
 
@@ -357,6 +371,11 @@ class Parse : public GraphKit {
   void      set_wrote_final(bool z)   { _wrote_final = z; }
   bool          count_invocations() const  { return _count_invocations; }
   bool          method_data_update() const { return _method_data_update; }
+  Node*    alloc_with_final() const   { return _alloc_with_final; }
+  void set_alloc_with_final(Node* n)  {
+    assert((_alloc_with_final == NULL) || (_alloc_with_final == n), "different init objects?");
+    _alloc_with_final = n;
+  }
 
   Block*             block()    const { return _block; }
   ciBytecodeStream&  iter()           { return _iter; }
@@ -499,7 +518,7 @@ class Parse : public GraphKit {
 
   // loading from a constant field or the constant pool
   // returns false if push failed (non-perm field constants only, not ldcs)
-  bool push_constant(ciConstant con, bool require_constant = false);
+  bool push_constant(ciConstant con, bool require_constant = false, bool is_autobox_cache = false);
 
   // implementation of object creation bytecodes
   void emit_guard_for_new(ciInstanceKlass* klass);

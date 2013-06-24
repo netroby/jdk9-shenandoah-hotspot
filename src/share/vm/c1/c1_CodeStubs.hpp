@@ -31,6 +31,7 @@
 #include "c1/c1_LIR.hpp"
 #include "c1/c1_Runtime1.hpp"
 #include "utilities/array.hpp"
+#include "utilities/macros.hpp"
 
 class CodeEmitInfo;
 class LIR_Assembler;
@@ -165,6 +166,22 @@ class RangeCheckStub: public CodeStub {
 #endif // PRODUCT
 };
 
+// stub used when predicate fails and deoptimization is needed
+class PredicateFailedStub: public CodeStub {
+ private:
+  CodeEmitInfo* _info;
+
+ public:
+  PredicateFailedStub(CodeEmitInfo* info);
+  virtual void emit_code(LIR_Assembler* e);
+  virtual CodeEmitInfo* info() const             { return _info; }
+  virtual void visit(LIR_OpVisitState* visitor) {
+    visitor->do_slow_case(_info);
+  }
+#ifndef PRODUCT
+  virtual void print_name(outputStream* out) const { out->print("PredicateFailedStub"); }
+#endif // PRODUCT
+};
 
 class DivByZeroStub: public CodeStub {
  private:
@@ -515,7 +532,7 @@ class ArrayCopyStub: public CodeStub {
 };
 
 //////////////////////////////////////////////////////////////////////////////////////////
-#ifndef SERIALGC
+#if INCLUDE_ALL_GCS
 
 // Code stubs for Garbage-First barriers.
 class G1PreBarrierStub: public CodeStub {
@@ -608,7 +625,7 @@ class G1PostBarrierStub: public CodeStub {
 #endif // PRODUCT
 };
 
-#endif // SERIALGC
+#endif // INCLUDE_ALL_GCS
 //////////////////////////////////////////////////////////////////////////////////////////
 
 #endif // SHARE_VM_C1_C1_CODESTUBS_HPP

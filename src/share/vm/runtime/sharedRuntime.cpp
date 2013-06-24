@@ -56,6 +56,7 @@
 #include "utilities/dtrace.hpp"
 #include "utilities/events.hpp"
 #include "utilities/hashtable.inline.hpp"
+#include "utilities/macros.hpp"
 #include "utilities/xmlstream.hpp"
 #ifdef TARGET_ARCH_x86
 # include "nativeInst_x86.hpp"
@@ -212,7 +213,7 @@ void SharedRuntime::print_ic_miss_histogram() {
 }
 #endif // PRODUCT
 
-#ifndef SERIALGC
+#if INCLUDE_ALL_GCS
 
 // G1 write-barrier pre: executed before a pointer store.
 JRT_LEAF(void, SharedRuntime::g1_wb_pre(oopDesc* orig, JavaThread *thread))
@@ -232,7 +233,7 @@ JRT_LEAF(void, SharedRuntime::g1_wb_post(void* card_addr, JavaThread* thread))
   }
 JRT_END
 
-#endif // !SERIALGC
+#endif // INCLUDE_ALL_GCS
 
 
 JRT_LEAF(jlong, SharedRuntime::lmul(jlong y, jlong x))
@@ -884,24 +885,28 @@ address SharedRuntime::continuation_for_implicit_exception(JavaThread* thread,
 }
 
 
-JNI_ENTRY(void, throw_unsatisfied_link_error(JNIEnv* env, ...))
+/**
+ * Throws an java/lang/UnsatisfiedLinkError.  The address of this method is
+ * installed in the native function entry of all native Java methods before
+ * they get linked to their actual native methods.
+ *
+ * \note
+ * This method actually never gets called!  The reason is because
+ * the interpreter's native entries call NativeLookup::lookup() which
+ * throws the exception when the lookup fails.  The exception is then
+ * caught and forwarded on the return from NativeLookup::lookup() call
+ * before the call to the native function.  This might change in the future.
+ */
+JNI_ENTRY(void*, throw_unsatisfied_link_error(JNIEnv* env, ...))
 {
-  THROW(vmSymbols::java_lang_UnsatisfiedLinkError());
-}
-JNI_END
-
-JNI_ENTRY(void, throw_unsupported_operation_exception(JNIEnv* env, ...))
-{
-  THROW(vmSymbols::java_lang_UnsupportedOperationException());
+  // We return a bad value here to make sure that the exception is
+  // forwarded before we look at the return value.
+  THROW_(vmSymbols::java_lang_UnsatisfiedLinkError(), (void*)badJNIHandle);
 }
 JNI_END
 
 address SharedRuntime::native_method_throw_unsatisfied_link_error_entry() {
   return CAST_FROM_FN_PTR(address, &throw_unsatisfied_link_error);
-}
-
-address SharedRuntime::native_method_throw_unsupported_operation_exception_entry() {
-  return CAST_FROM_FN_PTR(address, &throw_unsupported_operation_exception);
 }
 
 
@@ -1316,12 +1321,6 @@ JRT_BLOCK_ENTRY(address, SharedRuntime::handle_wrong_method(JavaThread* thread))
   frame stub_frame = thread->last_frame();
   assert(stub_frame.is_runtime_frame(), "sanity check");
   frame caller_frame = stub_frame.sender(&reg_map);
-
-  // MethodHandle invokes don't have a CompiledIC and should always
-  // simply redispatch to the callee_target.
-  address   sender_pc = caller_frame.pc();
-  CodeBlob* sender_cb = caller_frame.cb();
-  nmethod*  sender_nm = sender_cb->as_nmethod_or_null();
 
   if (caller_frame.is_interpreted_frame() ||
       caller_frame.is_entry_frame()) {
@@ -2729,7 +2728,7 @@ VMReg SharedRuntime::name_for_receiver() {
   return regs.first();
 }
 
-VMRegPair *SharedRuntime::find_callee_arguments(Symbol* sig, bool has_receiver, int* arg_size) {
+VMRegPair *SharedRuntime::find_callee_arguments(Symbol* sig, bool has_receiver, bool has_appendix, int* arg_size) {
   // This method is returning a data structure allocating as a
   // ResourceObject, so do not put any ResourceMarks in here.
   char *s = sig->as_C_string();
@@ -2773,6 +2772,11 @@ VMRegPair *SharedRuntime::find_callee_arguments(Symbol* sig, bool has_receiver, 
     default : ShouldNotReachHere();
     }
   }
+
+  if (has_appendix) {
+    sig_bt[cnt++] = T_OBJECT;
+  }
+
   assert( cnt < 256, "grow table size" );
 
   int comp_args_on_stack;
@@ -2817,10 +2821,6 @@ VMRegPair *SharedRuntime::find_callee_arguments(Symbol* sig, bool has_receiver, 
 // All of this is done NOT at any Safepoint, nor is any safepoint or GC allowed.
 
 JRT_LEAF(intptr_t*, SharedRuntime::OSR_migration_begin( JavaThread *thread) )
-
-#ifdef IA64
-  ShouldNotReachHere(); // NYI
-#endif /* IA64 */
 
   //
   // This code is dependent on the memory layout of the interpreter local

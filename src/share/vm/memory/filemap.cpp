@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2003, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2003, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -210,13 +210,14 @@ void FileMapInfo::open_for_write() {
     tty->print_cr("   %s", _full_path);
   }
 
-  // Remove the existing file in case another process has it open.
-  remove(_full_path);
-#ifdef _WINDOWS  // if 0444 is used on Windows, then remove() will fail.
-  int fd = open(_full_path, O_RDWR | O_CREAT | O_TRUNC | O_BINARY, 0744);
-#else
-  int fd = open(_full_path, O_RDWR | O_CREAT | O_TRUNC | O_BINARY, 0444);
+#ifdef _WINDOWS  // On Windows, need WRITE permission to remove the file.
+  chmod(_full_path, _S_IREAD | _S_IWRITE);
 #endif
+
+  // Use remove() to delete the existing file because, on Unix, this will
+  // allow processes that have it open continued access to the file.
+  remove(_full_path);
+  int fd = open(_full_path, O_RDWR | O_CREAT | O_TRUNC | O_BINARY, 0444);
   if (fd < 0) {
     fail_stop("Unable to create shared archive file %s.", _full_path);
   }
@@ -237,8 +238,8 @@ void FileMapInfo::write_header() {
 
 void FileMapInfo::write_space(int i, Metaspace* space, bool read_only) {
   align_file_position();
-  size_t used = space->used_words(Metaspace::NonClassType) * BytesPerWord;
-  size_t capacity = space->capacity_words(Metaspace::NonClassType) * BytesPerWord;
+  size_t used = space->used_bytes_slow(Metaspace::NonClassType);
+  size_t capacity = space->capacity_bytes_slow(Metaspace::NonClassType);
   struct FileMapInfo::FileMapHeader::space_info* si = &_header._space[i];
   write_region(i, (char*)space->bottom(), used, capacity, read_only, false);
 }
@@ -371,7 +372,7 @@ ReservedSpace FileMapInfo::reserve_shared_memory() {
   // other reserved memory (like the code cache).
   ReservedSpace rs(size, alignment, false, requested_addr);
   if (!rs.is_reserved()) {
-    fail_continue(err_msg("Unable to reserved shared space at required address " INTPTR_FORMAT, requested_addr));
+    fail_continue(err_msg("Unable to reserve shared space at required address " INTPTR_FORMAT, requested_addr));
     return rs;
   }
   // the reserved virtual memory is for mapping class data sharing archive

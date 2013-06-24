@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -31,8 +31,10 @@
 #include "oops/symbol.hpp"
 #include "runtime/java.hpp"
 #include "runtime/reflectionUtils.hpp"
+#include "trace/traceTime.hpp"
 #include "utilities/hashtable.hpp"
 #include "utilities/hashtable.inline.hpp"
+
 
 // The system dictionary stores all loaded classes and maps:
 //
@@ -106,6 +108,7 @@ class SymbolPropertyTable;
   do_klass(ThreadDeath_klass,                           java_lang_ThreadDeath,                     Pre                 ) \
   do_klass(Exception_klass,                             java_lang_Exception,                       Pre                 ) \
   do_klass(RuntimeException_klass,                      java_lang_RuntimeException,                Pre                 ) \
+  do_klass(SecurityManager_klass,                       java_lang_SecurityManager,                 Pre                 ) \
   do_klass(ProtectionDomain_klass,                      java_security_ProtectionDomain,            Pre                 ) \
   do_klass(AccessControlContext_klass,                  java_security_AccessControlContext,        Pre                 ) \
   do_klass(ClassNotFoundException_klass,                java_lang_ClassNotFoundException,          Pre                 ) \
@@ -138,13 +141,14 @@ class SymbolPropertyTable;
   /* NOTE: needed too early in bootstrapping process to have checks based on JDK version */                              \
   /* Universe::is_gte_jdk14x_version() is not set up by this point. */                                                   \
   /* It's okay if this turns out to be NULL in non-1.4 JDKs. */                                                          \
-  do_klass(lambda_MagicLambdaImpl_klass,                java_lang_invoke_MagicLambdaImpl, Opt ) \
+  do_klass(lambda_MagicLambdaImpl_klass,                java_lang_invoke_MagicLambdaImpl,          Opt                 ) \
   do_klass(reflect_MagicAccessorImpl_klass,             sun_reflect_MagicAccessorImpl,             Opt                 ) \
   do_klass(reflect_MethodAccessorImpl_klass,            sun_reflect_MethodAccessorImpl,            Opt_Only_JDK14NewRef) \
   do_klass(reflect_ConstructorAccessorImpl_klass,       sun_reflect_ConstructorAccessorImpl,       Opt_Only_JDK14NewRef) \
   do_klass(reflect_DelegatingClassLoader_klass,         sun_reflect_DelegatingClassLoader,         Opt                 ) \
   do_klass(reflect_ConstantPool_klass,                  sun_reflect_ConstantPool,                  Opt_Only_JDK15      ) \
   do_klass(reflect_UnsafeStaticFieldAccessorImpl_klass, sun_reflect_UnsafeStaticFieldAccessorImpl, Opt_Only_JDK15      ) \
+  do_klass(reflect_CallerSensitive_klass,               sun_reflect_CallerSensitive,               Opt                 ) \
                                                                                                                          \
   /* support for dynamic typing; it's OK if these are NULL in earlier JDKs */                                            \
   do_klass(MethodHandle_klass,                          java_lang_invoke_MethodHandle,             Pre_JSR292          ) \
@@ -167,8 +171,6 @@ class SymbolPropertyTable;
   /* Universe::is_gte_jdk14x_version() is not set up by this point. */                                                   \
   /* It's okay if this turns out to be NULL in non-1.4 JDKs. */                                                          \
   do_klass(nio_Buffer_klass,                            java_nio_Buffer,                           Opt                 ) \
-                                                                                                                         \
-  do_klass(DownloadManager_klass,                       sun_jkernel_DownloadManager,               Opt_Kernel          ) \
                                                                                                                          \
   do_klass(PostVMInitHook_klass,                        sun_misc_PostVMInitHook,                   Opt                 ) \
                                                                                                                          \
@@ -211,7 +213,6 @@ class SystemDictionary : AllStatic {
     Opt,                        // preload tried; NULL if not present
     Opt_Only_JDK14NewRef,       // preload tried; use only with NewReflection
     Opt_Only_JDK15,             // preload tried; use only with JDK1.5+
-    Opt_Kernel,                 // preload tried only #ifdef KERNEL
     OPTION_LIMIT,
     CEIL_LG_OPTION_LIMIT = 4    // OPTION_LIMIT <= (1<<CEIL_LG_OPTION_LIMIT)
   };
@@ -314,10 +315,7 @@ public:
   static void classes_do(void f(Klass*, TRAPS), TRAPS);
   //   All classes, and their class loaders
   static void classes_do(void f(Klass*, ClassLoaderData*));
-  //   All classes, and their class loaders
-  //   (added for helpers that use HandleMarks and ResourceMarks)
-  static void classes_do(void f(Klass*, ClassLoaderData*, TRAPS), TRAPS);
-  // All entries in the placeholder table and their class loaders
+
   static void placeholders_do(void f(Symbol*));
 
   // Iterate over all methods in all klasses in dictionary
@@ -394,7 +392,6 @@ public:
   static Klass* check_klass_Pre(       Klass* k) { return check_klass(k); }
   static Klass* check_klass_Pre_JSR292(Klass* k) { return EnableInvokeDynamic ? check_klass(k) : k; }
   static Klass* check_klass_Opt(       Klass* k) { return k; }
-  static Klass* check_klass_Opt_Kernel(Klass* k) { return k; } //== Opt
   static Klass* check_klass_Opt_Only_JDK15(Klass* k) {
     assert(JDK_Version::is_gte_jdk15x_version(), "JDK 1.5 only");
     return k;
@@ -487,8 +484,8 @@ public:
   // Check class loader constraints
   static bool add_loader_constraint(Symbol* name, Handle loader1,
                                     Handle loader2, TRAPS);
-  static char* check_signature_loaders(Symbol* signature, Handle loader1,
-                                       Handle loader2, bool is_method, TRAPS);
+  static Symbol* check_signature_loaders(Symbol* signature, Handle loader1,
+                                         Handle loader2, bool is_method, TRAPS);
 
   // JSR 292
   // find a java.lang.invoke.MethodHandle.invoke* method for a given signature
@@ -625,18 +622,25 @@ private:
                                                Handle class_loader, TRAPS);
   static instanceKlassHandle load_shared_class(instanceKlassHandle ik,
                                                Handle class_loader, TRAPS);
+  static void clean_up_shared_class(instanceKlassHandle ik, Handle class_loader, TRAPS);
   static instanceKlassHandle load_instance_class(Symbol* class_name, Handle class_loader, TRAPS);
   static Handle compute_loader_lock_object(Handle class_loader, TRAPS);
   static void check_loader_lock_contention(Handle loader_lock, TRAPS);
   static bool is_parallelCapable(Handle class_loader);
   static bool is_parallelDefine(Handle class_loader);
 
+public:
+  static bool is_ext_class_loader(Handle class_loader);
+
+private:
   static Klass* find_shared_class(Symbol* class_name);
 
   // Setup link to hierarchy
   static void add_to_hierarchy(instanceKlassHandle k, TRAPS);
 
-private:
+  // event based tracing
+  static void post_class_load_event(TracingTime start_time, instanceKlassHandle k,
+                                    Handle initiating_loader);
   // We pass in the hashtable index so we can calculate it outside of
   // the SystemDictionary_lock.
 

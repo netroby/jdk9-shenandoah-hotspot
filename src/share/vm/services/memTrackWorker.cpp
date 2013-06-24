@@ -39,7 +39,7 @@ void GenerationData::reset() {
   }
 }
 
-MemTrackWorker::MemTrackWorker() {
+MemTrackWorker::MemTrackWorker(MemSnapshot* snapshot): _snapshot(snapshot) {
   // create thread uses cgc thread type for now. We should revisit
   // the option, or create new thread type.
   _has_error = !os::create_thread(this, os::cgc_thread);
@@ -88,9 +88,10 @@ void MemTrackWorker::run() {
   assert(MemTracker::is_on(), "native memory tracking is off");
   this->initialize_thread_local_storage();
   this->record_stack_base_and_size();
-  MemSnapshot* snapshot = MemTracker::get_snapshot();
-  assert(snapshot != NULL, "Worker should not be started");
+  assert(_snapshot != NULL, "Worker should not be started");
   MemRecorder* rec;
+  unsigned long processing_generation = 0;
+  bool          worker_idle = false;
 
   while (!MemTracker::shutdown_in_progress()) {
     NOT_PRODUCT(_last_gen_in_use = generations_in_use();)
@@ -100,8 +101,14 @@ void MemTrackWorker::run() {
       rec = _gen[_head].next_recorder();
     }
     if (rec != NULL) {
+      if (rec->get_generation() != processing_generation || worker_idle) {
+        processing_generation = rec->get_generation();
+        worker_idle = false;
+        MemTracker::set_current_processing_generation(processing_generation);
+      }
+
       // merge the recorder into staging area
-      if (!snapshot->merge(rec)) {
+      if (!_snapshot->merge(rec)) {
         MemTracker::shutdown(MemTracker::NMT_out_of_memory);
       } else {
         NOT_PRODUCT(_merge_count ++;)
@@ -124,12 +131,15 @@ void MemTrackWorker::run() {
           _head = (_head + 1) % MAX_GENERATIONS;
         }
         // promote this generation data to snapshot
-        if (!snapshot->promote(number_of_classes)) {
+        if (!_snapshot->promote(number_of_classes)) {
           // failed to promote, means out of memory
           MemTracker::shutdown(MemTracker::NMT_out_of_memory);
         }
       } else {
-        snapshot->wait(1000);
+        // worker thread is idle
+        worker_idle = true;
+        MemTracker::report_worker_idle();
+        _snapshot->wait(1000);
         ThreadCritical tc;
         // check if more data arrived
         if (!_gen[_head].has_more_recorder()) {

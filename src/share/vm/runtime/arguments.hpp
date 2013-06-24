@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -309,8 +309,12 @@ class Arguments : AllStatic {
   // Garbage-First (UseG1GC)
   static void set_g1_gc_flags();
   // GC ergonomics
+  static void set_use_compressed_oops();
   static void set_ergonomics_flags();
   static void set_shared_spaces_flags();
+  // limits the given memory size by the maximum amount of memory this process is
+  // currently allowed to allocate or reserve.
+  static julong limit_by_allocatable_memory(julong size);
   // Setup heap size
   static void set_heap_size();
   // Based on automatic selection criteria, should the
@@ -414,6 +418,7 @@ class Arguments : AllStatic {
   // Check for consistency in the selection of the garbage collector.
   static bool check_gc_consistency();
   static void check_deprecated_gcs();
+  static void check_deprecated_gc_flags();
   // Check consistecy or otherwise of VM argument settings
   static bool check_vm_args_consistency();
   // Check stack pages settings
@@ -540,11 +545,6 @@ class Arguments : AllStatic {
 
   // Utility: copies src into buf, replacing "%%" with "%" and "%p" with pid.
   static bool copy_expand_pid(const char* src, size_t srclen, char* buf, size_t buflen);
-
-#ifdef KERNEL
-  // For java kernel vm, return property string for kernel properties.
-  static char *get_kernel_properties();
-#endif // KERNEL
 };
 
 #endif // SHARE_VM_RUNTIME_ARGUMENTS_HPP

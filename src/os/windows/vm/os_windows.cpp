@@ -60,6 +60,7 @@
 #include "runtime/threadCritical.hpp"
 #include "runtime/timer.hpp"
 #include "services/attachListener.hpp"
+#include "services/memTracker.hpp"
 #include "services/runtimeService.hpp"
 #include "utilities/decoder.hpp"
 #include "utilities/defaultStream.hpp"
@@ -349,6 +350,33 @@ address os::current_stack_base() {
 
 #ifdef _M_IA64
   // IA64 has memory and register stacks
+  //
+  // This is the stack layout you get on NT/IA64 if you specify 1MB stack limit
+  // at thread creation (1MB backing store growing upwards, 1MB memory stack
+  // growing downwards, 2MB summed up)
+  //
+  // ...
+  // ------- top of stack (high address) -----
+  // |
+  // |      1MB
+  // |      Backing Store (Register Stack)
+  // |
+  // |         / \
+  // |          |
+  // |          |
+  // |          |
+  // ------------------------ stack base -----
+  // |      1MB
+  // |      Memory Stack
+  // |
+  // |          |
+  // |          |
+  // |          |
+  // |         \ /
+  // |
+  // ----- bottom of stack (low address) -----
+  // ...
+
   stack_size = stack_size / 2;
 #endif
   return stack_bottom + stack_size;
@@ -658,12 +686,17 @@ julong os::physical_memory() {
   return win32::physical_memory();
 }
 
-julong os::allocatable_physical_memory(julong size) {
+bool os::has_allocatable_memory_limit(julong* limit) {
+  MEMORYSTATUSEX ms;
+  ms.dwLength = sizeof(ms);
+  GlobalMemoryStatusEx(&ms);
 #ifdef _LP64
-  return size;
+  *limit = (julong)ms.ullAvailVirtual;
+  return true;
 #else
   // Limit to 1400m because of the 2gb address space wall
-  return MIN2(size, (julong)1400*M);
+  *limit = MIN2((julong)1400*M, (julong)ms.ullAvailVirtual);
+  return true;
 #endif
 }
 
@@ -780,15 +813,21 @@ FILETIME java_to_windows_time(jlong l) {
   return result;
 }
 
-// For now, we say that Windows does not support vtime.  I have no idea
-// whether it can actually be made to (DLD, 9/13/05).
-
-bool os::supports_vtime() { return false; }
+bool os::supports_vtime() { return true; }
 bool os::enable_vtime() { return false; }
 bool os::vtime_enabled() { return false; }
+
 double os::elapsedVTime() {
-  // better than nothing, but not much
-  return elapsedTime();
+  FILETIME created;
+  FILETIME exited;
+  FILETIME kernel;
+  FILETIME user;
+  if (GetThreadTimes(GetCurrentThread(), &created, &exited, &kernel, &user) != 0) {
+    // the resolution of windows_to_java_time() should be sufficient (ms)
+    return (double) (windows_to_java_time(kernel) + windows_to_java_time(user)) / MILLIUNITS;
+  } else {
+    return elapsedTime();
+  }
 }
 
 jlong os::javaTimeMillis() {
@@ -911,6 +950,8 @@ void os::check_or_create_dump(void* exceptionRecord, void* contextRecord, char* 
   MINIDUMP_TYPE dumpType;
   static const char* cwd;
 
+// Default is to always create dump for debug builds, on product builds only dump on server versions of Windows.
+#ifndef ASSERT
   // If running on a client version of Windows and user has not explicitly enabled dumping
   if (!os::win32::is_windows_server() && !CreateMinidumpOnCrash) {
     VMError::report_coredump_status("Minidumps are not enabled by default on client versions of Windows", false);
@@ -920,6 +961,12 @@ void os::check_or_create_dump(void* exceptionRecord, void* contextRecord, char* 
     VMError::report_coredump_status("Minidump has been disabled from the command line", false);
     return;
   }
+#else
+  if (!FLAG_IS_DEFAULT(CreateMinidumpOnCrash) && !CreateMinidumpOnCrash) {
+    VMError::report_coredump_status("Minidump has been disabled from the command line", false);
+    return;
+  }
+#endif
 
   dbghelp = os::win32::load_Windows_dll("DBGHELP.DLL", NULL, 0);
 
@@ -971,7 +1018,21 @@ void os::check_or_create_dump(void* exceptionRecord, void* contextRecord, char* 
   // the dump types we really want. If first call fails, lets fall back to just use MiniDumpWithFullMemory then.
   if (_MiniDumpWriteDump(hProcess, processId, dumpFile, dumpType, pmei, NULL, NULL) == false &&
       _MiniDumpWriteDump(hProcess, processId, dumpFile, (MINIDUMP_TYPE)MiniDumpWithFullMemory, pmei, NULL, NULL) == false) {
-    VMError::report_coredump_status("Call to MiniDumpWriteDump() failed", false);
+        DWORD error = GetLastError();
+        LPTSTR msgbuf = NULL;
+
+        if (FormatMessage(FORMAT_MESSAGE_ALLOCATE_BUFFER |
+                      FORMAT_MESSAGE_FROM_SYSTEM |
+                      FORMAT_MESSAGE_IGNORE_INSERTS,
+                      NULL, error, 0, (LPTSTR)&msgbuf, 0, NULL) != 0) {
+
+          jio_snprintf(buffer, bufferSize, "Call to MiniDumpWriteDump() failed (Error 0x%x: %s)", error, msgbuf);
+          LocalFree(msgbuf);
+        } else {
+          // Call to FormatMessage failed, just include the result from GetLastError
+          jio_snprintf(buffer, bufferSize, "Call to MiniDumpWriteDump() failed (Error 0x%x)", error);
+        }
+        VMError::report_coredump_status(buffer, false);
   } else {
     VMError::report_coredump_status(buffer, true);
   }
@@ -1149,6 +1210,9 @@ bool os::dll_build_name(char *buffer, size_t buflen,
   } else if (strchr(pname, *os::path_separator()) != NULL) {
     int n;
     char** pelements = split_path(pname, &n);
+    if (pelements == NULL) {
+      return false;
+    }
     for (int i = 0 ; i < n ; i++) {
       char* path = pelements[i];
       // Really shouldn't be NULL, but check can't hurt
@@ -1185,8 +1249,10 @@ bool os::dll_build_name(char *buffer, size_t buflen,
 
 // Needs to be in os specific directory because windows requires another
 // header file <direct.h>
-const char* os::get_current_directory(char *buf, int buflen) {
-  return _getcwd(buf, buflen);
+const char* os::get_current_directory(char *buf, size_t buflen) {
+  int n = static_cast<int>(buflen);
+  if (buflen > INT_MAX)  n = INT_MAX;
+  return _getcwd(buf, n);
 }
 
 //-----------------------------------------------------------
@@ -1913,7 +1979,7 @@ int os::sigexitnum_pd(){
 
 // a counter for each possible signal value, including signal_thread exit signal
 static volatile jint pending_signals[NSIG+1] = { 0 };
-static HANDLE sig_sem;
+static HANDLE sig_sem = NULL;
 
 void os::signal_init_pd() {
   // Initialize signal structures
@@ -1943,10 +2009,11 @@ void os::signal_init_pd() {
 
 void os::signal_notify(int signal_number) {
   BOOL ret;
-
-  Atomic::inc(&pending_signals[signal_number]);
-  ret = ::ReleaseSemaphore(sig_sem, 1, NULL);
-  assert(ret != 0, "ReleaseSemaphore() failed");
+  if (sig_sem != NULL) {
+    Atomic::inc(&pending_signals[signal_number]);
+    ret = ::ReleaseSemaphore(sig_sem, 1, NULL);
+    assert(ret != 0, "ReleaseSemaphore() failed");
+  }
 }
 
 static int check_pending_signals(bool wait_for_signal) {
@@ -2005,17 +2072,34 @@ LONG Handle_Exception(struct _EXCEPTION_POINTERS* exceptionInfo, address handler
   JavaThread* thread = JavaThread::current();
   // Save pc in thread
 #ifdef _M_IA64
-  thread->set_saved_exception_pc((address)exceptionInfo->ContextRecord->StIIP);
+  // Do not blow up if no thread info available.
+  if (thread) {
+    // Saving PRECISE pc (with slot information) in thread.
+    uint64_t precise_pc = (uint64_t) exceptionInfo->ExceptionRecord->ExceptionAddress;
+    // Convert precise PC into "Unix" format
+    precise_pc = (precise_pc & 0xFFFFFFFFFFFFFFF0) | ((precise_pc & 0xF) >> 2);
+    thread->set_saved_exception_pc((address)precise_pc);
+  }
   // Set pc to handler
   exceptionInfo->ContextRecord->StIIP = (DWORD64)handler;
+  // Clear out psr.ri (= Restart Instruction) in order to continue
+  // at the beginning of the target bundle.
+  exceptionInfo->ContextRecord->StIPSR &= 0xFFFFF9FFFFFFFFFF;
+  assert(((DWORD64)handler & 0xF) == 0, "Target address must point to the beginning of a bundle!");
 #elif _M_AMD64
-  thread->set_saved_exception_pc((address)exceptionInfo->ContextRecord->Rip);
+  // Do not blow up if no thread info available.
+  if (thread) {
+    thread->set_saved_exception_pc((address)(DWORD_PTR)exceptionInfo->ContextRecord->Rip);
+  }
   // Set pc to handler
   exceptionInfo->ContextRecord->Rip = (DWORD64)handler;
 #else
-  thread->set_saved_exception_pc((address)exceptionInfo->ContextRecord->Eip);
+  // Do not blow up if no thread info available.
+  if (thread) {
+    thread->set_saved_exception_pc((address)(DWORD_PTR)exceptionInfo->ContextRecord->Eip);
+  }
   // Set pc to handler
-  exceptionInfo->ContextRecord->Eip = (LONG)handler;
+  exceptionInfo->ContextRecord->Eip = (DWORD)(DWORD_PTR)handler;
 #endif
 
   // Continue the execution
@@ -2039,6 +2123,14 @@ extern "C" void events();
 // Once a system header becomes available, the "real" define should be
 // included or copied here.
 #define EXCEPTION_INFO_EXEC_VIOLATION 0x08
+
+// Handle NAT Bit consumption on IA64.
+#ifdef _M_IA64
+#define EXCEPTION_REG_NAT_CONSUMPTION    STATUS_REG_NAT_CONSUMPTION
+#endif
+
+// Windows Vista/2008 heap corruption check
+#define EXCEPTION_HEAP_CORRUPTION        0xC0000374
 
 #define def_excpt(val) #val, val
 
@@ -2082,6 +2174,10 @@ struct siglabel exceptlabels[] = {
     def_excpt(EXCEPTION_GUARD_PAGE),
     def_excpt(EXCEPTION_INVALID_HANDLE),
     def_excpt(EXCEPTION_UNCAUGHT_CXX_EXCEPTION),
+    def_excpt(EXCEPTION_HEAP_CORRUPTION),
+#ifdef _M_IA64
+    def_excpt(EXCEPTION_REG_NAT_CONSUMPTION),
+#endif
     NULL, 0
 };
 
@@ -2206,7 +2302,14 @@ LONG WINAPI topLevelExceptionFilter(struct _EXCEPTION_POINTERS* exceptionInfo) {
   if (InterceptOSException) return EXCEPTION_CONTINUE_SEARCH;
   DWORD exception_code = exceptionInfo->ExceptionRecord->ExceptionCode;
 #ifdef _M_IA64
-  address pc = (address) exceptionInfo->ContextRecord->StIIP;
+  // On Itanium, we need the "precise pc", which has the slot number coded
+  // into the least 4 bits: 0000=slot0, 0100=slot1, 1000=slot2 (Windows format).
+  address pc = (address) exceptionInfo->ExceptionRecord->ExceptionAddress;
+  // Convert the pc to "Unix format", which has the slot number coded
+  // into the least 2 bits: 0000=slot0, 0001=slot1, 0010=slot2
+  // This is needed for IA64 because "relocation" / "implicit null check" / "poll instruction"
+  // information is saved in the Unix format.
+  address pc_unix_format = (address) ((((uint64_t)pc) & 0xFFFFFFFFFFFFFFF0) | ((((uint64_t)pc) & 0xF) >> 2));
 #elif _M_AMD64
   address pc = (address) exceptionInfo->ContextRecord->Rip;
 #else
@@ -2321,29 +2424,40 @@ LONG WINAPI topLevelExceptionFilter(struct _EXCEPTION_POINTERS* exceptionInfo) {
     if (exception_code == EXCEPTION_STACK_OVERFLOW) {
       if (os::uses_stack_guard_pages()) {
 #ifdef _M_IA64
-        //
-        // If it's a legal stack address continue, Windows will map it in.
-        //
+        // Use guard page for register stack.
         PEXCEPTION_RECORD exceptionRecord = exceptionInfo->ExceptionRecord;
         address addr = (address) exceptionRecord->ExceptionInformation[1];
-        if (addr > thread->stack_yellow_zone_base() && addr < thread->stack_base() )
-          return EXCEPTION_CONTINUE_EXECUTION;
+        // Check for a register stack overflow on Itanium
+        if (thread->addr_inside_register_stack_red_zone(addr)) {
+          // Fatal red zone violation happens if the Java program
+          // catches a StackOverflow error and does so much processing
+          // that it runs beyond the unprotected yellow guard zone. As
+          // a result, we are out of here.
+          fatal("ERROR: Unrecoverable stack overflow happened. JVM will exit.");
+        } else if(thread->addr_inside_register_stack(addr)) {
+          // Disable the yellow zone which sets the state that
+          // we've got a stack overflow problem.
+          if (thread->stack_yellow_zone_enabled()) {
+            thread->disable_stack_yellow_zone();
+          }
+          // Give us some room to process the exception.
+          thread->disable_register_stack_guard();
+          // Tracing with +Verbose.
+          if (Verbose) {
+            tty->print_cr("SOF Compiled Register Stack overflow at " INTPTR_FORMAT " (SIGSEGV)", pc);
+            tty->print_cr("Register Stack access at " INTPTR_FORMAT, addr);
+            tty->print_cr("Register Stack base " INTPTR_FORMAT, thread->register_stack_base());
+            tty->print_cr("Register Stack [" INTPTR_FORMAT "," INTPTR_FORMAT "]",
+                          thread->register_stack_base(),
+                          thread->register_stack_base() + thread->stack_size());
+          }
 
-        // The register save area is the same size as the memory stack
-        // and starts at the page just above the start of the memory stack.
-        // If we get a fault in this area, we've run out of register
-        // stack.  If we are in java, try throwing a stack overflow exception.
-        if (addr > thread->stack_base() &&
-                      addr <= (thread->stack_base()+thread->stack_size()) ) {
-          char buf[256];
-          jio_snprintf(buf, sizeof(buf),
-                       "Register stack overflow, addr:%p, stack_base:%p\n",
-                       addr, thread->stack_base() );
-          tty->print_raw_cr(buf);
-          // If not in java code, return and hope for the best.
-          return in_java ? Handle_Exception(exceptionInfo,
-            SharedRuntime::continuation_for_implicit_exception(thread, pc, SharedRuntime::STACK_OVERFLOW))
-            :  EXCEPTION_CONTINUE_EXECUTION;
+          // Reguard the permanent register stack red zone just to be sure.
+          // We saw Windows silently disabling this without telling us.
+          thread->enable_register_stack_red_zone();
+
+          return Handle_Exception(exceptionInfo,
+            SharedRuntime::continuation_for_implicit_exception(thread, pc, SharedRuntime::STACK_OVERFLOW));
         }
 #endif
         if (thread->stack_yellow_zone_enabled()) {
@@ -2418,50 +2532,33 @@ LONG WINAPI topLevelExceptionFilter(struct _EXCEPTION_POINTERS* exceptionInfo) {
           {
             // Null pointer exception.
 #ifdef _M_IA64
-            // We catch register stack overflows in compiled code by doing
-            // an explicit compare and executing a st8(G0, G0) if the
-            // BSP enters into our guard area.  We test for the overflow
-            // condition and fall into the normal null pointer exception
-            // code if BSP hasn't overflowed.
-            if ( in_java ) {
-              if(thread->register_stack_overflow()) {
-                assert((address)exceptionInfo->ContextRecord->IntS3 ==
-                                thread->register_stack_limit(),
-                               "GR7 doesn't contain register_stack_limit");
-                // Disable the yellow zone which sets the state that
-                // we've got a stack overflow problem.
-                if (thread->stack_yellow_zone_enabled()) {
-                  thread->disable_stack_yellow_zone();
+            // Process implicit null checks in compiled code. Note: Implicit null checks
+            // can happen even if "ImplicitNullChecks" is disabled, e.g. in vtable stubs.
+            if (CodeCache::contains((void*) pc_unix_format) && !MacroAssembler::needs_explicit_null_check((intptr_t) addr)) {
+              CodeBlob *cb = CodeCache::find_blob_unsafe(pc_unix_format);
+              // Handle implicit null check in UEP method entry
+              if (cb && (cb->is_frame_complete_at(pc) ||
+                         (cb->is_nmethod() && ((nmethod *)cb)->inlinecache_check_contains(pc)))) {
+                if (Verbose) {
+                  intptr_t *bundle_start = (intptr_t*) ((intptr_t) pc_unix_format & 0xFFFFFFFFFFFFFFF0);
+                  tty->print_cr("trap: null_check at " INTPTR_FORMAT " (SIGSEGV)", pc_unix_format);
+                  tty->print_cr("      to addr " INTPTR_FORMAT, addr);
+                  tty->print_cr("      bundle is " INTPTR_FORMAT " (high), " INTPTR_FORMAT " (low)",
+                                *(bundle_start + 1), *bundle_start);
                 }
-                // Give us some room to process the exception
-                thread->disable_register_stack_guard();
-                // Update GR7 with the new limit so we can continue running
-                // compiled code.
-                exceptionInfo->ContextRecord->IntS3 =
-                               (ULONGLONG)thread->register_stack_limit();
                 return Handle_Exception(exceptionInfo,
-                       SharedRuntime::continuation_for_implicit_exception(thread, pc, SharedRuntime::STACK_OVERFLOW));
-              } else {
-                //
-                // Check for implicit null
-                // We only expect null pointers in the stubs (vtable)
-                // the rest are checked explicitly now.
-                //
-                if (((uintptr_t)addr) < os::vm_page_size() ) {
-                  // an access to the first page of VM--assume it is a null pointer
-                  address stub = SharedRuntime::continuation_for_implicit_exception(thread, pc, SharedRuntime::IMPLICIT_NULL);
-                  if (stub != NULL) return Handle_Exception(exceptionInfo, stub);
-                }
+                  SharedRuntime::continuation_for_implicit_exception(thread, pc_unix_format, SharedRuntime::IMPLICIT_NULL));
               }
-            } // in_java
+            }
 
-            // IA64 doesn't use implicit null checking yet. So we shouldn't
-            // get here.
-            tty->print_raw_cr("Access violation, possible null pointer exception");
+            // Implicit null checks were processed above.  Hence, we should not reach
+            // here in the usual case => die!
+            if (Verbose) tty->print_raw_cr("Access violation, possible null pointer exception");
             report_error(t, exception_code, pc, exceptionInfo->ExceptionRecord,
                          exceptionInfo->ContextRecord);
             return EXCEPTION_CONTINUE_SEARCH;
-#else /* !IA64 */
+
+#else // !IA64
 
             // Windows 98 reports faulting addresses incorrectly
             if (!MacroAssembler::needs_explicit_null_check((intptr_t)addr) ||
@@ -2493,7 +2590,24 @@ LONG WINAPI topLevelExceptionFilter(struct _EXCEPTION_POINTERS* exceptionInfo) {
       report_error(t, exception_code, pc, exceptionInfo->ExceptionRecord,
                    exceptionInfo->ContextRecord);
       return EXCEPTION_CONTINUE_SEARCH;
-    }
+    } // /EXCEPTION_ACCESS_VIOLATION
+    // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+#if defined _M_IA64
+    else if ((exception_code == EXCEPTION_ILLEGAL_INSTRUCTION ||
+              exception_code == EXCEPTION_ILLEGAL_INSTRUCTION_2)) {
+      M37 handle_wrong_method_break(0, NativeJump::HANDLE_WRONG_METHOD, PR0);
+
+      // Compiled method patched to be non entrant? Following conditions must apply:
+      // 1. must be first instruction in bundle
+      // 2. must be a break instruction with appropriate code
+      if((((uint64_t) pc & 0x0F) == 0) &&
+         (((IPF_Bundle*) pc)->get_slot0() == handle_wrong_method_break.bits())) {
+        return Handle_Exception(exceptionInfo,
+                                (address)SharedRuntime::get_handle_wrong_method_stub());
+      }
+    } // /EXCEPTION_ILLEGAL_INSTRUCTION
+#endif
+
 
     if (in_java) {
       switch (exception_code) {
@@ -2761,7 +2875,7 @@ static char* allocate_pages_individually(size_t bytes, char* addr, DWORD flags, 
                                 PAGE_READWRITE);
   // If reservation failed, return NULL
   if (p_buf == NULL) return NULL;
-
+  MemTracker::record_virtual_memory_reserve((address)p_buf, size_of_reserve, CALLER_PC);
   os::release_memory(p_buf, bytes + chunk_size);
 
   // we still need to round up to a page boundary (in case we are using large pages)
@@ -2823,6 +2937,11 @@ static char* allocate_pages_individually(size_t bytes, char* addr, DWORD flags, 
       if (next_alloc_addr > p_buf) {
         // Some memory was committed so release it.
         size_t bytes_to_release = bytes - bytes_remaining;
+        // NMT has yet to record any individual blocks, so it
+        // need to create a dummy 'reserve' record to match
+        // the release.
+        MemTracker::record_virtual_memory_reserve((address)p_buf,
+          bytes_to_release, CALLER_PC);
         os::release_memory(p_buf, bytes_to_release);
       }
 #ifdef ASSERT
@@ -2834,10 +2953,19 @@ static char* allocate_pages_individually(size_t bytes, char* addr, DWORD flags, 
 #endif
       return NULL;
     }
+
     bytes_remaining -= bytes_to_rq;
     next_alloc_addr += bytes_to_rq;
     count++;
   }
+  // Although the memory is allocated individually, it is returned as one.
+  // NMT records it as one block.
+  address pc = CALLER_PC;
+  MemTracker::record_virtual_memory_reserve((address)p_buf, bytes, pc);
+  if ((flags & MEM_COMMIT) != 0) {
+    MemTracker::record_virtual_memory_commit((address)p_buf, bytes, pc);
+  }
+
   // made it this far, success
   return p_buf;
 }
@@ -3024,11 +3152,20 @@ char* os::reserve_memory_special(size_t bytes, char* addr, bool exec) {
     // normal policy just allocate it all at once
     DWORD flag = MEM_RESERVE | MEM_COMMIT | MEM_LARGE_PAGES;
     char * res = (char *)VirtualAlloc(NULL, bytes, flag, prot);
+    if (res != NULL) {
+      address pc = CALLER_PC;
+      MemTracker::record_virtual_memory_reserve((address)res, bytes, pc);
+      MemTracker::record_virtual_memory_commit((address)res, bytes, pc);
+    }
+
     return res;
   }
 }
 
 bool os::release_memory_special(char* base, size_t bytes) {
+  assert(base != NULL, "Sanity check");
+  // Memory allocated via reserve_memory_special() is committed
+  MemTracker::record_virtual_memory_uncommit((address)base, bytes);
   return release_memory(base, bytes);
 }
 
@@ -3198,7 +3335,7 @@ void os::pd_start_thread(Thread* thread) {
   assert(ret != SYS_THREAD_ERROR, "StartThread failed"); // should propagate back
 }
 
-class HighResolutionInterval {
+class HighResolutionInterval : public CHeapObj<mtThread> {
   // The default timer resolution seems to be 10 milliseconds.
   // (Where is this written down?)
   // If someone wants to sleep for only a fraction of the default,
@@ -3669,6 +3806,8 @@ extern "C" {
   }
 }
 
+static jint initSock();
+
 // this is called _after_ the global arguments have been parsed
 jint os::init_2(void) {
   // Allocate a single page and mark it as readable for safepoint polling
@@ -3797,6 +3936,10 @@ jint os::init_2(void) {
     // first check whether this Windows OS supports VirtualAllocExNuma, if not ignore this flag
     bool success = numa_interleaving_init();
     if (!success) UseNUMAInterleaving = false;
+  }
+
+  if (initSock() != JNI_OK) {
+    return JNI_ERR;
   }
 
   return JNI_OK;
@@ -3985,6 +4128,10 @@ int os::open(const char *path, int oflag, int mode) {
   return ::open(pathbuf, oflag | O_BINARY | O_NOINHERIT, mode);
 }
 
+FILE* os::open(int fd, const char* mode) {
+  return ::_fdopen(fd, mode);
+}
+
 // Is a (classpath) directory empty?
 bool os::dir_is_empty(const char* path) {
   WIN32_FIND_DATA fd;
@@ -4125,9 +4272,6 @@ char * os::native_path(char *path) {
           path[3] = '\0';
   }
 
-  #ifdef DEBUG
-    jio_fprintf(stderr, "sysNativePath: %s\n", path);
-  #endif DEBUG
   return path;
 }
 
@@ -4795,42 +4939,24 @@ LONG WINAPI os::win32::serialize_fault_filter(struct _EXCEPTION_POINTERS* e) {
 // We don't build a headless jre for Windows
 bool os::is_headless_jre() { return false; }
 
-
-typedef CRITICAL_SECTION mutex_t;
-#define mutexInit(m)    InitializeCriticalSection(m)
-#define mutexDestroy(m) DeleteCriticalSection(m)
-#define mutexLock(m)    EnterCriticalSection(m)
-#define mutexUnlock(m)  LeaveCriticalSection(m)
-
-static bool sock_initialized = FALSE;
-static mutex_t sockFnTableMutex;
-
-static void initSock() {
+static jint initSock() {
   WSADATA wsadata;
 
   if (!os::WinSock2Dll::WinSock2Available()) {
-    jio_fprintf(stderr, "Could not load Winsock 2 (error: %d)\n",
+    jio_fprintf(stderr, "Could not load Winsock (error: %d)\n",
       ::GetLastError());
-    return;
+    return JNI_ERR;
   }
-  if (sock_initialized == TRUE) return;
 
-  ::mutexInit(&sockFnTableMutex);
-  ::mutexLock(&sockFnTableMutex);
-  if (os::WinSock2Dll::WSAStartup(MAKEWORD(1,1), &wsadata) != 0) {
-      jio_fprintf(stderr, "Could not initialize Winsock\n");
+  if (os::WinSock2Dll::WSAStartup(MAKEWORD(2,2), &wsadata) != 0) {
+    jio_fprintf(stderr, "Could not initialize Winsock (error: %d)\n",
+      ::GetLastError());
+    return JNI_ERR;
   }
-  sock_initialized = TRUE;
-  ::mutexUnlock(&sockFnTableMutex);
+  return JNI_OK;
 }
 
 struct hostent* os::get_host_by_name(char* name) {
-  if (!sock_initialized) {
-    initSock();
-  }
-  if (!os::WinSock2Dll::WinSock2Available()) {
-    return NULL;
-  }
   return (struct hostent*)os::WinSock2Dll::gethostbyname(name);
 }
 
@@ -4920,6 +5046,71 @@ int os::get_sock_opt(int fd, int level, int optname,
 int os::set_sock_opt(int fd, int level, int optname,
                      const char* optval, socklen_t optlen) {
   return ::setsockopt(fd, level, optname, optval, optlen);
+}
+
+// WINDOWS CONTEXT Flags for THREAD_SAMPLING
+#if defined(IA32)
+#  define sampling_context_flags (CONTEXT_FULL | CONTEXT_FLOATING_POINT | CONTEXT_EXTENDED_REGISTERS)
+#elif defined (AMD64)
+#  define sampling_context_flags (CONTEXT_FULL | CONTEXT_FLOATING_POINT)
+#endif
+
+// returns true if thread could be suspended,
+// false otherwise
+static bool do_suspend(HANDLE* h) {
+  if (h != NULL) {
+    if (SuspendThread(*h) != ~0) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// resume the thread
+// calling resume on an active thread is a no-op
+static void do_resume(HANDLE* h) {
+  if (h != NULL) {
+    ResumeThread(*h);
+  }
+}
+
+// retrieve a suspend/resume context capable handle
+// from the tid. Caller validates handle return value.
+void get_thread_handle_for_extended_context(HANDLE* h, OSThread::thread_id_t tid) {
+  if (h != NULL) {
+    *h = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION, FALSE, tid);
+  }
+}
+
+//
+// Thread sampling implementation
+//
+void os::SuspendedThreadTask::internal_do_task() {
+  CONTEXT    ctxt;
+  HANDLE     h = NULL;
+
+  // get context capable handle for thread
+  get_thread_handle_for_extended_context(&h, _thread->osthread()->thread_id());
+
+  // sanity
+  if (h == NULL || h == INVALID_HANDLE_VALUE) {
+    return;
+  }
+
+  // suspend the thread
+  if (do_suspend(&h)) {
+    ctxt.ContextFlags = sampling_context_flags;
+    // get thread context
+    GetThreadContext(h, &ctxt);
+    SuspendedThreadTaskContext context(_thread, &ctxt);
+    // pass context to Thread Sampling impl
+    do_task(context);
+    // resume thread
+    do_resume(&h);
+  }
+
+  // close handle
+  CloseHandle(h);
 }
 
 

@@ -25,6 +25,7 @@
 #ifndef SHARE_VM_GC_INTERFACE_COLLECTEDHEAP_INLINE_HPP
 #define SHARE_VM_GC_INTERFACE_COLLECTEDHEAP_INLINE_HPP
 
+#include "gc_interface/allocTracer.hpp"
 #include "gc_interface/collectedHeap.hpp"
 #include "memory/threadLocalAllocBuffer.inline.hpp"
 #include "memory/universe.hpp"
@@ -108,7 +109,7 @@ void CollectedHeap::post_allocation_setup_array(KlassHandle klass,
   post_allocation_notify(klass, (oop)obj);
 }
 
-HeapWord* CollectedHeap::common_mem_allocate_noinit(size_t size, TRAPS) {
+HeapWord* CollectedHeap::common_mem_allocate_noinit(KlassHandle klass, size_t size, TRAPS) {
 
   // Clear unhandled oops for memory allocation.  Memory allocation might
   // not take out a lock if from tlab, so clear here.
@@ -121,7 +122,7 @@ HeapWord* CollectedHeap::common_mem_allocate_noinit(size_t size, TRAPS) {
 
   HeapWord* result = NULL;
   if (UseTLAB) {
-    result = CollectedHeap::allocate_from_tlab(THREAD, size);
+    result = allocate_from_tlab(klass, THREAD, size);
     if (result != NULL) {
       assert(!HAS_PENDING_EXCEPTION,
              "Unexpected exception, will result in uninitialized storage");
@@ -137,6 +138,9 @@ HeapWord* CollectedHeap::common_mem_allocate_noinit(size_t size, TRAPS) {
     assert(!HAS_PENDING_EXCEPTION,
            "Unexpected exception, will result in uninitialized storage");
     THREAD->incr_allocated_bytes(size * HeapWordSize);
+
+    AllocTracer::send_allocation_outside_tlab_event(klass, size * HeapWordSize);
+
     return result;
   }
 
@@ -166,13 +170,13 @@ HeapWord* CollectedHeap::common_mem_allocate_noinit(size_t size, TRAPS) {
   }
 }
 
-HeapWord* CollectedHeap::common_mem_allocate_init(size_t size, TRAPS) {
-  HeapWord* obj = common_mem_allocate_noinit(size, CHECK_NULL);
+HeapWord* CollectedHeap::common_mem_allocate_init(KlassHandle klass, size_t size, TRAPS) {
+  HeapWord* obj = common_mem_allocate_noinit(klass, size, CHECK_NULL);
   init_obj(obj, size);
   return obj;
 }
 
-HeapWord* CollectedHeap::allocate_from_tlab(Thread* thread, size_t size) {
+HeapWord* CollectedHeap::allocate_from_tlab(KlassHandle klass, Thread* thread, size_t size) {
   assert(UseTLAB, "should use UseTLAB");
 
   HeapWord* obj = thread->tlab().allocate(size);
@@ -180,7 +184,7 @@ HeapWord* CollectedHeap::allocate_from_tlab(Thread* thread, size_t size) {
     return obj;
   }
   // Otherwise...
-  return allocate_from_tlab_slow(thread, size);
+  return allocate_from_tlab_slow(klass, thread, size);
 }
 
 void CollectedHeap::init_obj(HeapWord* obj, size_t size) {
@@ -195,7 +199,7 @@ oop CollectedHeap::obj_allocate(KlassHandle klass, int size, TRAPS) {
   debug_only(check_for_valid_allocation_state());
   assert(!Universe::heap()->is_gc_active(), "Allocation during gc not allowed");
   assert(size >= 0, "int won't convert to size_t");
-  HeapWord* obj = common_mem_allocate_init(size, CHECK_NULL);
+  HeapWord* obj = common_mem_allocate_init(klass, size, CHECK_NULL);
   post_allocation_setup_obj(klass, obj);
   NOT_PRODUCT(Universe::heap()->check_for_bad_heap_word_value(obj, size));
   return (oop)obj;
@@ -208,7 +212,7 @@ oop CollectedHeap::array_allocate(KlassHandle klass,
   debug_only(check_for_valid_allocation_state());
   assert(!Universe::heap()->is_gc_active(), "Allocation during gc not allowed");
   assert(size >= 0, "int won't convert to size_t");
-  HeapWord* obj = common_mem_allocate_init(size, CHECK_NULL);
+  HeapWord* obj = common_mem_allocate_init(klass, size, CHECK_NULL);
   post_allocation_setup_array(klass, obj, length);
   NOT_PRODUCT(Universe::heap()->check_for_bad_heap_word_value(obj, size));
   return (oop)obj;
@@ -221,7 +225,7 @@ oop CollectedHeap::array_allocate_nozero(KlassHandle klass,
   debug_only(check_for_valid_allocation_state());
   assert(!Universe::heap()->is_gc_active(), "Allocation during gc not allowed");
   assert(size >= 0, "int won't convert to size_t");
-  HeapWord* obj = common_mem_allocate_noinit(size, CHECK_NULL);
+  HeapWord* obj = common_mem_allocate_noinit(klass, size, CHECK_NULL);
   ((oop)obj)->set_klass_gap(0);
   post_allocation_setup_array(klass, obj, length);
 #ifndef PRODUCT
