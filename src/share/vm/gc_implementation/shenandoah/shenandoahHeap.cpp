@@ -314,7 +314,7 @@ public:
 
 void ShenandoahHeap::update_current_region() {
   if (ShenandoahGCVerbose) {
-     tty->print("Old current region = \n");
+     tty->print("Old current region = ");
      _current_region->print();
   }
    
@@ -329,7 +329,7 @@ void ShenandoahHeap::update_current_region() {
   }
 
   if (ShenandoahGCVerbose) {
-    tty->print("New current region = \n");
+    tty->print("New current region = ");
     _current_region->print();
   }
 }
@@ -527,22 +527,7 @@ private:
     _waste(0) { 
   }
 
-  void copy_object(oop p) {
-    HeapWord* filler = _region.allocate(BROOKS_POINTER_OBJ_SIZE + p->size());
-    assert(filler != NULL, "brooks ptr for copied object must not be NULL");
-	// Copy original object.
-    HeapWord* copy = filler + BROOKS_POINTER_OBJ_SIZE;
-    assert(copy != NULL, "allocation of copy object must not fail");
-    Copy::aligned_disjoint_words((HeapWord*) p, copy, p->size());
-    _heap->initialize_brooks_ptr(filler, copy);
-    HeapWord* old_brooks_ptr = ((HeapWord*) p) - BROOKS_POINTER_OBJ_SIZE;
-    _heap->set_brooks_ptr(old_brooks_ptr, copy);
-    oop c = oop(copy);
-    if (ShenandoahGCVerbose) {
-      tty->print_cr("evacuating object: %p, of size %d with age %d, epoch %d to %p of size %d", 
-		    p, p->size(), getMark(p)->age(), _epoch, copy, oop(copy)->size());
-    }
-
+  void verify_copy(oop p,oop c){
     assert(p != oopDesc::bs()->resolve_oop(p), "forwarded correctly");
     assert(oopDesc::bs()->resolve_oop(p) == c, "verify pointer is correct");
     assert(p->klass() == c->klass(), "verify class");
@@ -550,24 +535,61 @@ private:
     assert(p->mark() == c->mark(), "verify mark");
     assert(c == oopDesc::bs()->resolve_oop(c), "verify only forwarded once");
   }
+
+  void assign_brooks_pointer(oop p, HeapWord* filler, HeapWord* copy) {
+    _heap->initialize_brooks_ptr(filler, copy);
+    HeapWord* old_brooks_ptr = ((HeapWord*) p) - BROOKS_POINTER_OBJ_SIZE;
+    _heap->set_brooks_ptr(old_brooks_ptr, copy);
+    if (ShenandoahGCVerbose) {
+      tty->print_cr("evacuating object: %p, of size %d with age %d, epoch %d to %p of size %d", 
+		    p, p->size(), getMark(p)->age(), _epoch, copy, oop(copy)->size());
+    }
+  }
+
+  // Call this if you know we have enough space.
+  void copy_object(oop p) {
+    HeapWord* filler = _region.allocate(BROOKS_POINTER_OBJ_SIZE + p->size());
+    assert(filler != NULL, "brooks ptr for copied object must not be NULL");
+	// Copy original object.
+    HeapWord* copy = filler + BROOKS_POINTER_OBJ_SIZE;
+    assert(copy != NULL, "allocation of copy object must not fail");
+    Copy::aligned_disjoint_words((HeapWord*) p, copy, p->size());
+    assign_brooks_pointer(p, filler, copy);
+    verify_copy(p, oop(copy));
+  }
+
+  // Call this if we have already allocated the space.
+  void copy_object(oop p, HeapWord* s) {
+    HeapWord* filler = s;
+    HeapWord* copy = s + BROOKS_POINTER_OBJ_SIZE;
+    assert(copy != NULL, "allocation of copy object must not fail");
+    Copy::aligned_disjoint_words((HeapWord*) p, copy, p->size());
+    assign_brooks_pointer(p, filler, copy);
+    verify_copy(p, oop(copy));
+  }    
   
   void do_object(oop p) {
     if (getMark(p)->age() == _epoch) {
       size_t required = BROOKS_POINTER_OBJ_SIZE + p->size();
+      tty->print("required = %d\n", required);
       if (required < _region.space_available()) {
+	tty->print("required < _region.space_available() = %d\n", _region.space_available());
 	copy_object(p);
       } else if (required < _region.region_size()) {
+	tty->print("required < _region.region_size = %d\n ", _region.region_size());
 	_waste += _region.space_available();
 	_region.fill_region();
 	_region.allocate_new_region();
 	copy_object(p);
       } else if (required < ShenandoahHeapRegion::RegionSizeBytes) {
+	tty->print("required < ShenandoahHeapRegion::RegionSizeBytes = %d\n ", ShenandoahHeapRegion::RegionSizeBytes);
 	_waste += _region.space_available();
 	_region.fill_region();
-	_heap->current_region()->fill_region();
-	_heap->update_current_region();
-	_region.allocate_new_region();
-	copy_object(p);
+	//	_heap->current_region()->fill_region();
+	//	_heap->update_current_region();
+	//	_region.allocate_new_region();
+	HeapWord* s = _heap->allocate_new_gclab(required);
+	copy_object(p, s);
       } else {
 	assert(false, "Don't handle humongous objects yet");
       }
@@ -640,9 +662,13 @@ void ShenandoahHeap::verify_evacuated_region(ShenandoahHeapRegion* from_region) 
 void ShenandoahHeap::parallel_evacuate_region(ShenandoahHeapRegion* from_region, 
 					      ShenandoahAllocRegion alloc_region) {
   ParallelEvacuateRegionObjectClosure evacuate_region(_epoch, this, alloc_region);
+  if (ShenandoahGCVerbose) 
+    tty->print("parallel_evacuate_region starting from_region %d: free_regions = %d\n",  from_region->regionNumber, _free_regions->available_regions());
   from_region->object_iterate(&evacuate_region);
   from_region->set_dirty(true);
   verify_evacuated_region(from_region);
+  if (ShenandoahGCVerbose)
+    tty->print("parallel_evacuate_region after from_region = %d: Wasted %d bytes free_regions = %d\n", from_region->regionNumber, evacuate_region.wasted(), _free_regions->available_regions());
 }
 
 class ParallelEvacuationTask : public AbstractGangTask {
@@ -735,6 +761,13 @@ void ShenandoahHeap::parallel_evacuate() {
   
   
   if (ShenandoahGCVerbose) {
+
+    tty->print("Printing postgc collection set which contains %d regions:\n", _collection_set->available_regions());
+    _collection_set->print();
+
+    tty->print("Printing postgc free regions which contain %d free regions:\n", _free_regions->available_regions());
+    _free_regions->print();
+
     tty->print_cr("finished parallel_evacuate");
     PrintHeapRegionsClosure pc2;
     heap_region_iterate(&pc2);
