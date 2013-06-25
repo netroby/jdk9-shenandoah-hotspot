@@ -116,29 +116,28 @@ void ShenandoahHeapRegionSet::choose_empty_regions(ShenandoahHeapRegionSet* regi
 void ShenandoahHeapRegionSet::choose_collection_set(ShenandoahHeapRegionSet* region_set) {
   sortDescendingGarbage();
   int r = 0;
-  while (_regions[r++]->garbage() > _garbage_threshold);
-
-  r--;
-
-  for (int i = 0; i < r; i++)
-    region_set->_regions[i] = _regions[i];
+  while (_regions[r]->garbage() > _garbage_threshold) {
+    region_set->_regions[r] = _regions[r];
+    r++;
+  }
 
   region_set->_inserted = r;
   region_set->_index = 0;
+  region_set->_numRegions = r;
 
 }
 
 void ShenandoahHeapRegionSet::choose_empty_regions(ShenandoahHeapRegionSet* region_set) {
   sortAscendingGarbage();
   int r = 0;
-  while(_regions[r++]->free() > _free_threshold);
-  r--;
-
-  for (int i = 0; i < r; i++)
-    region_set->_regions[i] = _regions[i];
+  while(_regions[r]->free() > _free_threshold) {
+    region_set->_regions[r] = _regions[r];
+    r++;
+  }
 
   region_set->_inserted = r;
   region_set->_index = 0;
+  region_set->_numRegions = r;
 }  
   
 
