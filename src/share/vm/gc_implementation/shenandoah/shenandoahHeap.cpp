@@ -79,19 +79,19 @@ jint ShenandoahHeap::initialize() {
 
   ReservedSpace heap_rs = Universe::reserve_heap(max_byte_size,
 						 ShenandoahHeapRegion::RegionSizeBytes);
-  
   _reserved.set_word_size(0);
   _reserved.set_start((HeapWord*)heap_rs.base());
   _reserved.set_end((HeapWord*) (heap_rs.base() + heap_rs.size()));
 
   set_barrier_set(new ShenandoahBarrierSet());
   ReservedSpace pgc_rs = heap_rs.first_part(max_byte_size);
+  _storage.initialize(pgc_rs, max_byte_size);
 
   tty->print("Calling initialize on reserved space base = %p end = %p\n", 
 	     pgc_rs.base(), pgc_rs.base() + pgc_rs.size());
 
   _numRegions = init_byte_size / ShenandoahHeapRegion::RegionSizeBytes;
-  regions = new ShenandoahHeapRegion*[_numRegions]; 
+  regions = NEW_C_HEAP_ARRAY(ShenandoahHeapRegion*, _numRegions, mtGC); 
 
   ShenandoahHeapRegion* current = new ShenandoahHeapRegion();
   _current_region = current;
@@ -514,13 +514,13 @@ class ParallelEvacuateRegionObjectClosure : public ObjectClosure {
 private:
   uint _epoch;
   ShenandoahHeap* _heap;
-  ShenandoahAllocRegion* _region;
+  ShenandoahAllocRegion _region;
   size_t _waste;
 
   public:
   ParallelEvacuateRegionObjectClosure(uint epoch, 
 				      ShenandoahHeap* heap, 
-				      ShenandoahAllocRegion* allocRegion) :
+				      ShenandoahAllocRegion allocRegion) :
     _epoch(epoch),
     _heap(heap),
     _region(allocRegion),
@@ -528,7 +528,7 @@ private:
   }
 
   void copy_object(oop p) {
-    HeapWord* filler = _region->allocate(BROOKS_POINTER_OBJ_SIZE + p->size());
+    HeapWord* filler = _region.allocate(BROOKS_POINTER_OBJ_SIZE + p->size());
     assert(filler != NULL, "brooks ptr for copied object must not be NULL");
 	// Copy original object.
     HeapWord* copy = filler + BROOKS_POINTER_OBJ_SIZE;
@@ -553,19 +553,19 @@ private:
   void do_object(oop p) {
     if (getMark(p)->age() == _epoch) {
       size_t required = BROOKS_POINTER_OBJ_SIZE + p->size();
-      if (required < _region->space_available()) {
+      if (required < _region.space_available()) {
 	copy_object(p);
-      } else if (required < _region->region_size()) {
-	_waste += _region->space_available();
-	_region->fill_region();
-	_region->allocate_new_region();
+      } else if (required < _region.region_size()) {
+	_waste += _region.space_available();
+	_region.fill_region();
+	_region.allocate_new_region();
 	copy_object(p);
       } else if (required < ShenandoahHeapRegion::RegionSizeBytes) {
-	_waste += _region->space_available();
-	_region->fill_region();
+	_waste += _region.space_available();
+	_region.fill_region();
 	_heap->current_region()->fill_region();
 	_heap->update_current_region();
-	_region->allocate_new_region();
+	_region.allocate_new_region();
 	copy_object(p);
       } else {
 	assert(false, "Don't handle humongous objects yet");
@@ -637,7 +637,7 @@ void ShenandoahHeap::verify_evacuated_region(ShenandoahHeapRegion* from_region) 
 }
 
 void ShenandoahHeap::parallel_evacuate_region(ShenandoahHeapRegion* from_region, 
-					      ShenandoahAllocRegion *alloc_region) {
+					      ShenandoahAllocRegion alloc_region) {
   ParallelEvacuateRegionObjectClosure evacuate_region(_epoch, this, alloc_region);
   from_region->object_iterate(&evacuate_region);
   from_region->set_dirty(true);
@@ -662,7 +662,7 @@ public:
   void work(uint worker_id) {
   
     ShenandoahHeapRegion* from_hr = _cs->claim_next();
-    ShenandoahAllocRegion* allocRegion = new ShenandoahAllocRegion();
+    ShenandoahAllocRegion allocRegion = ShenandoahAllocRegion();
 
     while (from_hr != NULL) {
       if (ShenandoahGCVerbose) {
@@ -681,7 +681,7 @@ public:
 
       from_hr = _cs->claim_next();
     }
-    allocRegion->fill_region();
+    allocRegion.fill_region();
     tty->print("Thread %d entering barrier sync\n", worker_id);
     _barrier_sync->enter();
     tty->print("Thread %d post barrier sync\n", worker_id);
@@ -728,10 +728,9 @@ void ShenandoahHeap::parallel_evacuate() {
 
   barrierSync.set_n_workers(_max_workers);
   
-  ParallelEvacuationTask* evacuationTask = 
-    new ParallelEvacuationTask(this, _collection_set, &barrierSync);
+  ParallelEvacuationTask evacuationTask = ParallelEvacuationTask(this, _collection_set, &barrierSync);
 
-  workers()->run_task(evacuationTask);
+  workers()->run_task(&evacuationTask);
   
   
   if (ShenandoahGCVerbose) {

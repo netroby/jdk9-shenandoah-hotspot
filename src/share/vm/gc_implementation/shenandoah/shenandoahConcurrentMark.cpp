@@ -100,8 +100,8 @@ void ShenandoahConcurrentMark::markFromRoots() {
   ParallelTaskTerminator terminator(_max_worker_id, _task_queues);
 
   
-  SCMConcurrentMarkingTask* markingTask = new SCMConcurrentMarkingTask(this, &terminator);
-  sh->workers()->run_task(markingTask);
+  SCMConcurrentMarkingTask markingTask = SCMConcurrentMarkingTask(this, &terminator);
+  sh->workers()->run_task(&markingTask);
   
   tty->print_cr("Finishing markFromRoots");
   tty->print_cr("RESUMING THE WORLD: after marking");

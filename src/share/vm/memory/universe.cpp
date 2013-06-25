@@ -760,7 +760,7 @@ char* Universe::preferred_heap_base(size_t heap_size, NARROW_OOP_MODE mode) {
 
 jint Universe::initialize_heap() {
   if (UseShenandoahGC) {
-#ifndef INCLUDE_ALL_GCS
+#if INCLUDE_ALL_GCS
     ShenandoahCollectorPolicy* pgcPolicy =
       new ShenandoahCollectorPolicy();
     Universe::_collectedHeap = 

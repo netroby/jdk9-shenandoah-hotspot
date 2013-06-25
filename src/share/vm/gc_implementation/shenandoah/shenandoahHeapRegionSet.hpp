@@ -4,7 +4,7 @@
 #include "gc_implementation/shenandoah/shenandoahHeapRegion.hpp"
 
 
-class ShenandoahHeapRegionSet {
+class ShenandoahHeapRegionSet : public CHeapObj<mtGC> {
 private:
   ShenandoahHeapRegion** _regions;
   // current region to be returned from get_next()
@@ -20,7 +20,7 @@ public:
     _index(0),
     _inserted(0),
     _numRegions(numRegions),
-    _regions(new ShenandoahHeapRegion*[numRegions]),
+    _regions(NEW_C_HEAP_ARRAY(ShenandoahHeapRegion*, numRegions, mtGC)),
     _garbage_threshold(ShenandoahHeapRegion::RegionSizeBytes / 2),
     _free_threshold(ShenandoahHeapRegion::RegionSizeBytes / 2) {}
 

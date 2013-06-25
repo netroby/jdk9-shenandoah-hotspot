@@ -9,7 +9,7 @@ public:
   SOMQItem* _next;
 };
 
-class SharedOverflowMarkQueue {
+class SharedOverflowMarkQueue : public CHeapObj<mtGC> {
 
 private:
   SOMQItem* _first;
