@@ -857,18 +857,22 @@ ShenandoahCollectorPolicy* ShenandoahHeap::collector_policy() const {
 
 
 HeapWord* ShenandoahHeap::block_start(const void* addr) const {
-  Unimplemented();
-  return 0;
+  Space* sp = space_containing(addr);
+  if (sp != NULL) {
+    return sp->block_start(addr);
+  }
+  return NULL;
 }
 
 size_t ShenandoahHeap::block_size(const HeapWord* addr) const {
-  Unimplemented();
-  return 0;
+  Space* sp = space_containing(addr);
+  assert(sp != NULL, "block_size of address outside of heap");
+  return sp->block_size(addr);
 }
 
 bool ShenandoahHeap::block_is_obj(const HeapWord* addr) const {
-  Unimplemented();
-  return false;
+  Space* sp = space_containing(addr);
+  return sp->block_is_obj(addr);
 }
 
 jlong ShenandoahHeap::millis_since_last_gc() {
