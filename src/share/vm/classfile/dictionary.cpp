@@ -396,9 +396,9 @@ void Dictionary::add_protection_domain(int index, unsigned int hash,
   assert(protection_domain() != NULL,
          "real protection domain should be present");
 
-  entry->add_protection_domain(protection_domain());
+  entry->add_protection_domain(oopDesc::bs()->resolve_oop(protection_domain()));
 
-  assert(entry->contains_protection_domain(protection_domain()),
+  assert(entry->contains_protection_domain(oopDesc::bs()->resolve_oop(protection_domain())),
          "now protection domain should be present");
 }
 

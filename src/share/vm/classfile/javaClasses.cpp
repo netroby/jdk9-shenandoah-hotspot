@@ -754,10 +754,10 @@ BasicType java_lang_Class::primitive_type(oop java_class) {
     // Note: create_basic_type_mirror above initializes ak to a non-null value.
     type = ArrayKlass::cast(ak)->element_type();
   } else {
-    assert(java_class == Universe::void_mirror(), "only valid non-array primitive");
+    assert(oopDesc::bs()->resolve_oop(java_class) == oopDesc::bs()->resolve_oop(Universe::void_mirror()), "only valid non-array primitive");
   }
 
-  assert(Universe::java_mirror(type) == java_class, "must be consistent");
+  assert(oopDesc::bs()->resolve_oop(Universe::java_mirror(type)) == oopDesc::bs()->resolve_oop(java_class), "must be consistent");
 
   return type;
 }
