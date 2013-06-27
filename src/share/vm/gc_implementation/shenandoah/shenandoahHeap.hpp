@@ -44,8 +44,8 @@ private:
   VirtualSpace _storage;
   ShenandoahHeapRegion* _current_region;
   ShenandoahHeapRegion* _first_region;
-  // Ordered array of regions
-  ShenandoahHeapRegion** regions;
+  // Ordered array of regions  (name confusing with _regions)
+  ShenandoahHeapRegion** _ordered_regions;
 
   // Sortable array of regions
   ShenandoahHeapRegionSet* _regions;
@@ -178,7 +178,6 @@ public:
   void update_current_region();
   ShenandoahHeapRegion* current_region() { return _current_region;}
 
-  //  ShenandoahHeapRegion* nextEmptyRegion();
 private:
 
   void verify_evacuation(ShenandoahHeapRegion* from_region);
@@ -187,7 +186,6 @@ private:
   void verify_live();
   void verify_liveness_after_concurrent_mark();
   void mark();
-  //  ShenandoahHeapRegion* nextEmptyRegion(size_t required_size);
 
 
 

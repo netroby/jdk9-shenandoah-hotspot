@@ -91,7 +91,7 @@ jint ShenandoahHeap::initialize() {
 	     pgc_rs.base(), pgc_rs.base() + pgc_rs.size());
 
   _numRegions = init_byte_size / ShenandoahHeapRegion::RegionSizeBytes;
-  regions = NEW_C_HEAP_ARRAY(ShenandoahHeapRegion*, _numRegions, mtGC); 
+  _ordered_regions = NEW_C_HEAP_ARRAY(ShenandoahHeapRegion*, _numRegions, mtGC); 
 
   ShenandoahHeapRegion* current = new ShenandoahHeapRegion();
   _current_region = current;
@@ -103,24 +103,22 @@ jint ShenandoahHeap::initialize() {
   _free_regions = new ShenandoahHeapRegionSet(_numRegions);
   _collection_set = new ShenandoahHeapRegionSet(_numRegions);
 
-  regions[0] = current;
+  _ordered_regions[0] = current;
 
   for (size_t i = 0; i < _numRegions - 1; i++) {
     ShenandoahHeapRegion* next = new ShenandoahHeapRegion();
     current->initialize((HeapWord*) pgc_rs.base() + 
 			regionSizeWords * i, regionSizeWords);
-    current->setNext(next);
     current->regionNumber = i;
     _regions->put(i, current);
     _free_regions->put(i, current);
     current = next;
-    regions[i+1] = current;
+    _ordered_regions[i+1] = current;
   }
 
   size_t last_region = _numRegions - 1;
   current->initialize((HeapWord*) pgc_rs.base() + regionSizeWords * (last_region), 
 		      regionSizeWords);
-  current->setNext(NULL);
 
   current->regionNumber = last_region;
   _regions->put(last_region, current);
@@ -179,9 +177,7 @@ public:
 
   bool doHeapRegion(ShenandoahHeapRegion* r) {
     sum = sum + r->used();
-    if (r->next() == NULL)
-      return true;
-    else return false;
+    return false;
   }
 
   size_t getResult() { return sum;}
@@ -421,94 +417,6 @@ void ShenandoahHeap::mark() {
 #endif
 }
 
-class SelectEvacuationRegionsClosure : public ShenandoahHeapRegionClosure {
-
-private:
-  ShenandoahHeapRegion* _empty_region;
-  ShenandoahHeapRegion* _evacuation_region;
-  size_t _most_garbage;
-public:
-  SelectEvacuationRegionsClosure() : _empty_region(NULL), _evacuation_region(NULL), _most_garbage(0) {}
-
-  bool doHeapRegion(ShenandoahHeapRegion* r) {
-    // We piggy-back clearing the heap regions here because it's convenient.
-    r->set_dirty(false);
-    if (r->garbage() > _most_garbage) {
-      _evacuation_region = r;
-      _most_garbage = r->garbage();
-    }
-    if (_empty_region == NULL && r->used() == 0) {
-      _empty_region = r;
-    }
-
-    // TODO: Maybe use smarter heuristic above and stop earlier?
-    if (r->next() == NULL)
-      return true;
-    else return false;
-  }
-
-
-  ShenandoahHeapRegion* evacuation_region() {
-    return _evacuation_region;
-  }
-
-  bool found_evacuation_region() {
-    if (_evacuation_region == NULL)
-      return false;
-    else 
-      return true;
-  }
-
-  ShenandoahHeapRegion* empty_region() {
-    return _empty_region;
-  }
-
-  bool found_empty_region() {
-    if (_empty_region == NULL)
-      return false;
-    else 
-      return true;
-  }
-};
-
-class EvacuateRegionObjectClosure: public ObjectClosure {
-private:
-  uint _epoch;
-  ShenandoahHeap* _heap;
-  ShenandoahHeapRegion* _to_region;
-public:
-  EvacuateRegionObjectClosure(uint epoch, ShenandoahHeap* heap, ShenandoahHeapRegion* to_region) :
-    _epoch(epoch),
-    _heap(heap),
-    _to_region(to_region) {};
-
-  void do_object(oop p) {
-    // if (! ShenandoahBarrierSet::is_brooks_ptr(p)) { // Copy everything except brooks ptrs.
-    if (_heap->isMarkedCurrent(p)) { // Ignores brooks ptr objects because epoch is never 15.
-      // Allocate brooks ptr object for copy.
-      HeapWord* filler = _to_region->allocate(BROOKS_POINTER_OBJ_SIZE);
-      assert(filler != NULL, "brooks ptr for copied object must not be NULL");
-      // Copy original object.
-      HeapWord* copy = _to_region->allocate(p->size());
-      assert(copy != NULL, "allocation of copy object must not fail");
-      Copy::aligned_disjoint_words((HeapWord*) p, copy, p->size());
-      _heap->initialize_brooks_ptr(filler, copy);
-      HeapWord* old_brooks_ptr = ((HeapWord*) p) - BROOKS_POINTER_OBJ_SIZE;
-      // tty->print_cr("setting old brooks ptr: p: %p, old_brooks_ptr: %p to copy: %p", p, old_brooks_ptr, copy);
-      if (ShenandoahGCVerbose) {
-	        tty->print_cr("evacuating object: %p, with brooks ptr %p and age %d, epoch %d to %p with brooks ptr %p", 
-			      p, old_brooks_ptr, getMark(p)->age(), _epoch, copy, filler);
-      }
-
-      _heap->set_brooks_ptr(old_brooks_ptr, copy);
-    }
-    /*
-    else {
-      tty->print_cr("not evacuating object: %p, %d, %d", p, getMark(p)->age(), _epoch);
-    }
-    */
-  }
-};
 
 class ParallelEvacuateRegionObjectClosure : public ObjectClosure {
 private:
@@ -615,22 +523,6 @@ void ShenandoahHeap::initialize_brooks_ptr(HeapWord* filler, HeapWord* obj) {
   assert(ShenandoahBarrierSet::is_brooks_ptr(oop(filler)), "brooks pointer must be brooks pointer");
   arrayOop(filler)->set_length(1);
   set_brooks_ptr(filler, obj);
-}
-
-void ShenandoahHeap::evacuate_region(ShenandoahHeapRegion* from_region, ShenandoahHeapRegion* to_region) {
-
-  if (ShenandoahGCVerbose) {
-    MutexLocker ml(Heap_lock);
-    tty->print_cr("evacuate region %d with garbage: %d, to empty region with used: %d", from_region->regionNumber, from_region->garbage(), to_region->used());
-    tty->print_cr("from region: " );
-    from_region->print_on(tty);
-    tty->print_cr("\nto region");
-    to_region->print_on(tty);
-  }
-
-  EvacuateRegionObjectClosure evacuate_region(_epoch, this, to_region);
-  from_region->object_iterate(&evacuate_region);
-  from_region->set_dirty(true);
 }
 
 class VerifyEvacuatedObjectClosure : public ObjectClosure {
@@ -1111,7 +1003,7 @@ inline ShenandoahHeapRegion*
 ShenandoahHeap::heap_region_containing(const T addr) const {
   intptr_t region_start = ((intptr_t) addr) & ~(ShenandoahHeapRegion::RegionSizeBytes - 1);
   intptr_t index = (region_start - (intptr_t) _first_region->bottom()) / ShenandoahHeapRegion::RegionSizeBytes;
-  return regions[index];
+  return _ordered_regions[index];
 }
 
 Space*  ShenandoahHeap::space_containing(const void* oop) const {
@@ -1130,9 +1022,10 @@ void  ShenandoahHeap::gc_epilogue(bool b) {
 // Apply blk->doHeapRegion() on all committed regions in address order,
 // terminating the iteration early if doHeapRegion() returns true.
 void ShenandoahHeap::heap_region_iterate(ShenandoahHeapRegionClosure* blk, bool skip_dirty_regions) const {
-  ShenandoahHeapRegion* current  = _first_region;
-  while (current != NULL && ((skip_dirty_regions && current->is_dirty()) || !blk->doHeapRegion(current))) {
-    current = current->next();
+  for (size_t i = 0; i < _numRegions; i++) {
+    ShenandoahHeapRegion* current  = _ordered_regions[i];
+    if ( !(skip_dirty_regions && current->is_dirty()) && blk->doHeapRegion(current)) 
+      return;
   }
 }
 
@@ -1151,9 +1044,7 @@ public:
       _result = true;
       return true;
     }
-    if (r->next() == NULL) 
-      return true;
-    else return false;
+    return false;
   }
 
   bool result() { return _result;}
