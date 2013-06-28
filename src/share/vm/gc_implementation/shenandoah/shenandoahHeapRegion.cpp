@@ -24,7 +24,6 @@ void ShenandoahHeapRegion::print() {
 }
 
 
-
 class SkipUnreachableObjectToOopClosure: public ObjectClosure {
   ExtendedOopClosure* _cl;
   bool _skip_unreachable_objects;
@@ -59,6 +58,6 @@ void ShenandoahHeapRegion::fill_region() {
     HeapWord* obj = allocate(end() - top());
     sh->fill_with_object(obj, end());
     sh->initialize_brooks_ptr(filler, obj);
-  }
+  } 
 }
 

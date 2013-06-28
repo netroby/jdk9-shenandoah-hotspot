@@ -172,7 +172,7 @@ public:
   void maybe_update_oop_ref(oop* p);
   void evacuate_region(ShenandoahHeapRegion* from_region, ShenandoahHeapRegion* to_region);
   void parallel_evacuate_region(ShenandoahHeapRegion* from_region,
-				ShenandoahAllocRegion alloc_region);
+				ShenandoahAllocRegion *alloc_region);
   void verify_evacuated_region(ShenandoahHeapRegion* from_region);
 
   void update_current_region();

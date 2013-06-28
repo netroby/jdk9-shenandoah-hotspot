@@ -8,13 +8,13 @@ ShenandoahAllocRegion::ShenandoahAllocRegion() {
   // arbitrary for now
   _start = 0;
   _end = 0;
-  _alignment_reserve = sh->min_fill_size() + BROOKS_POINTER_OBJ_SIZE;
+  _alignment_reserve = (HeapWordSize * (BROOKS_POINTER_OBJ_SIZE + CollectedHeap::min_fill_size()));
   _hard_end = 0;
   allocRegionSize = 1024 * 4;
 }
 
 HeapWord* ShenandoahAllocRegion::allocate(size_t word_size) {
-   if (word_size > allocRegionSize) {
+  if (word_size > allocRegionSize) {
     ShenandoahHeap* sh = (ShenandoahHeap*) Universe::heap();
     if (ShenandoahGCVerbose) 
       tty->print("Allocating new big object alloc region of size: %d\n", word_size);
@@ -46,12 +46,17 @@ void ShenandoahAllocRegion::allocate_new_region() {
 
 void ShenandoahAllocRegion::fill_region() {
   ShenandoahHeap* sh = (ShenandoahHeap*) Universe::heap();
-  if (_start != 0 && 
-      (size_t)(_hard_end - _start) > (HeapWordSize * (BROOKS_POINTER_OBJ_SIZE + CollectedHeap::min_fill_size()))) {
-    HeapWord* filler = _start;
-    _start = _start + BROOKS_POINTER_OBJ_SIZE;
-    sh->fill_with_object(_start, _hard_end);
-    sh->initialize_brooks_ptr(filler, _start);
+  if (_start != 0) {
+    if (ShenandoahGCVerbose) 
+      tty->print("fill allocation region _start = %p _hard_end = %p\n", _start, _hard_end);
+    if ((size_t)(_hard_end - _start) > (HeapWordSize * (BROOKS_POINTER_OBJ_SIZE + CollectedHeap::min_fill_size()))) {
+      HeapWord* filler = _start;
+      _start = _start + BROOKS_POINTER_OBJ_SIZE;
+      sh->fill_with_object(_start, _hard_end);
+      sh->initialize_brooks_ptr(filler, _start);
+    } else {
+      assert(false, "Should have enough reserve space");
+    }
   }
 }
 
