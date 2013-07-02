@@ -584,6 +584,9 @@ JVM_ENTRY(jobject, JVM_Clone(JNIEnv* env, jobject handle))
                                (size_t)align_object_size(size) / HeapWordsPerLong);
   // Clear the header
   new_obj->init_mark();
+  // TODO: Find a nicer way to hook up Shenandoah's special handling of
+  // age bits.
+  Universe::heap()->post_allocation_collector_specific_setup((HeapWord*) new_obj);
 
   // Store check (mark entire object and let gc sort it out)
   BarrierSet* bs = Universe::heap()->barrier_set();

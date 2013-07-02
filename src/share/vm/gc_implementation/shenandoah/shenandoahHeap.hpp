@@ -69,6 +69,7 @@ public:
   ShenandoahHeap(ShenandoahCollectorPolicy* policy);
   HeapWord* allocate_new_tlab(size_t word_size);
   HeapWord* allocate_new_gclab(size_t word_size);
+  HeapWord* allocate_memory(size_t word_size);
   HeapWord* allocate_new_gclab() { 
     return allocate_new_gclab(_default_gclab_size);
   }
@@ -138,7 +139,7 @@ public:
   size_t capacity_in_bytes() { return capacity() * HeapWordSize;}
 
   void heap_region_iterate(ShenandoahHeapRegionClosure* blk, bool skip_dirty_regions = false) const;
-  template<class T> ShenandoahHeapRegion* heap_region_containing(const T addr) const;  
+  ShenandoahHeapRegion* heap_region_containing(const void* addr) const;  
 
   bool is_in_reserved(void* p);
 
@@ -177,6 +178,8 @@ public:
 
   void update_current_region();
   ShenandoahHeapRegion* current_region() { return _current_region;}
+
+  void print_heap_regions();
 
 private:
 

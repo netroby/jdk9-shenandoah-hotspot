@@ -159,9 +159,6 @@ class CollectedHeap : public CHeapObj<mtInternal> {
   // Clears an allocated object.
   inline static void init_obj(HeapWord* obj, size_t size);
 
-  // Collector specific initialization.
-  virtual void post_allocation_collector_specific_setup(HeapWord* obj) { }
-
   // Filler object utilities.
   static inline size_t filler_array_hdr_size();
   static inline size_t filler_array_min_size();
@@ -198,6 +195,9 @@ class CollectedHeap : public CHeapObj<mtInternal> {
   static inline size_t filler_array_max_size() {
     return _filler_array_max_size;
   }
+
+  // Collector specific initialization.
+  virtual void post_allocation_collector_specific_setup(HeapWord* obj) { }
 
   virtual CollectedHeap::Name kind() const { return CollectedHeap::Abstract; }
 

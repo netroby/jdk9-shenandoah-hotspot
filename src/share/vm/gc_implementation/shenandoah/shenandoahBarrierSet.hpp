@@ -90,7 +90,7 @@ public:
 	tty->print("OOPSIE: oop = %p brooksPOop = %p age = %d   \n",
 		   oopWord, brooksPOop, b->mark()->age());
     }
-    assert(is_brooks_ptr(oop(brooksPOop)), "brooks pointer must be a brooks pointer");
+    assert(is_brooks_ptr(oop(brooksPOop)), err_msg("brooks pointer must be a brooks pointer %p", brooksPOop));
     HeapWord** brooksP = (HeapWord**) (brooksPOop + BROOKS_POINTER_OBJ_SIZE - 1);
     HeapWord* forwarded = *brooksP;
     return (oopDesc*) forwarded;
