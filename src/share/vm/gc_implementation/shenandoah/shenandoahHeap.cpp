@@ -345,7 +345,7 @@ HeapWord* ShenandoahHeap::allocate_memory(size_t size) {
 
   assert(! _current_region->is_dirty() && _current_region != NULL, "Never allocate from dirty or NULL region");
 
-  HeapWord* result = _current_region->allocate(size);
+  HeapWord* result = _current_region->par_allocate(size);
   if (result == NULL) {
     update_current_region();
     return allocate_memory(size);
@@ -1198,9 +1198,9 @@ class VerifyLivenessChildClosure : public ExtendedOopClosure {
       ShenandoahHeap* sh = (ShenandoahHeap*) Universe::heap();
       if (! sh->isMarked(obj)) {
         sh->print_on(tty);
-        // tty->print_cr("age of obj: %p, is_displaced: %d, age: %d, mark: %d (current epoch: %d)", obj, obj->has_displaced_mark(), getMark(obj)->age(), getMark(obj), sh->getEpoch());
       }
-      assert(sh->isMarked(obj), "Referenced Objects should be marked");
+      assert(sh->isMarked(obj), err_msg("Referenced Objects should be marked obj: %p, epoch: %d, obj-age: %d, is_in_heap: %d", 
+					obj, sh->getEpoch(), getMark(obj)->age(), sh->is_in(obj)));
     }
    }
 
