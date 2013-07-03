@@ -657,6 +657,57 @@ void ShenandoahHeap::print_heap_regions()  {
   heap_region_iterate(&pc1);
 }
 
+class VerifyAfterMarkingOopClosure: public ExtendedOopClosure {
+private:
+  ShenandoahHeap*  _heap;
+
+public:
+  VerifyAfterMarkingOopClosure() :
+    _heap(ShenandoahHeap::heap()) { }
+
+  void do_oop(oop* p)       {
+    oop oop = *p;
+    if (oop != NULL) {
+      if (! _heap->isMarkedCurrent(oop)) {
+        _heap->print_heap_regions();
+        tty->print_cr("oop not marked, although referrer is marked: %p: in_heap: %d, age: %d, epoch: %d", oop, _heap->is_in(oop), getMark(oop)->age(), _heap->getEpoch());
+      }
+      assert(! _heap->heap_region_containing(oop)->is_dirty(), "references must not point to dirty heap regions");
+      assert(oop == oopDesc::bs()->resolve_oop(oop), "oops must not be forwarded");
+      assert(_heap->isMarkedCurrent(oop), "live oops must be marked current");
+    }
+  }
+
+  void do_oop(narrowOop* p) {
+    Unimplemented();
+  }
+
+};
+
+class IterateMarkedObjectsClosure: public ObjectClosure {
+private:
+  ShenandoahHeap* _heap;
+  ExtendedOopClosure* _cl;
+public:
+  IterateMarkedObjectsClosure(ExtendedOopClosure* cl) :
+    _heap(ShenandoahHeap::heap()), _cl(cl) {};
+
+  void do_object(oop p) {
+    if (_heap->isMarkedCurrent(p)) {
+      p->oop_iterate(_cl);
+    }
+  }
+
+};
+
+void ShenandoahHeap::verify_heap_after_marking() {
+  VerifyAfterMarkingOopClosure cl;
+  roots_iterate(&cl);
+
+  IterateMarkedObjectsClosure marked_oops(&cl);
+  object_iterate(&marked_oops);
+}
+
 void ShenandoahHeap::parallel_evacuate() {
 
   if (ShenandoahGCVerbose) {
@@ -664,6 +715,8 @@ void ShenandoahHeap::parallel_evacuate() {
     PrintHeapRegionsClosure pc1;
     heap_region_iterate(&pc1);
   }
+
+  verify_heap_after_marking();
 
   RecycleDirtyRegionsClosure cl;
   heap_region_iterate(&cl);
@@ -721,6 +774,19 @@ public:
 
 };
 
+void ShenandoahHeap::roots_iterate(ExtendedOopClosure* cl) {
+
+  CodeBlobToOopClosure blobsCl(cl, false);
+  KlassToOopClosure klassCl(cl);
+
+  const int so = SO_AllClasses | SO_Strings | SO_CodeCache;
+
+  ClassLoaderDataGraph::clear_claimed_marks();
+
+  process_strong_roots(true, false, ScanningOption(so), cl, &blobsCl, &klassCl);
+
+}
+
 void ShenandoahHeap::verify_evacuation(ShenandoahHeapRegion* from_region) {
 
   VerifyEvacuationClosure rootsCl(from_region);
@@ -740,9 +806,14 @@ void ShenandoahHeap::verify_evacuation(ShenandoahHeapRegion* from_region) {
 void ShenandoahHeap::maybe_update_oop_ref(oop* p) {
   oop heap_oop = *p;
   if (! oopDesc::is_null(heap_oop)) {
+    if (! is_in(heap_oop)) {
+      print_heap_regions();
+      tty->print_cr("object not in heap: %p, referenced by: %p", heap_oop, p);
+    }
+    assert(is_in(heap_oop), "only ever call this on objects in the heap");
     oop forwarded_oop = oopDesc::bs()->resolve_oop(heap_oop);
     if (forwarded_oop != heap_oop) {
-      // tty->print_cr("updating old ref: %p to new ref: %p", heap_oop, forwarded_oop);
+      // tty->print_cr("updating old ref: %p pointing to %p to new ref: %p", p, heap_oop, forwarded_oop);
       *p = forwarded_oop;
       assert(*p == forwarded_oop, "make sure to update reference correctly");
     }
@@ -1082,7 +1153,7 @@ void ShenandoahMarkRefsClosure::do_oop_work(oop* p) {
   _heap->maybe_update_oop_ref(p);
 
   oop obj = oopDesc::load_heap_oop(p);
-  assert(obj == *p, "we just updated the referrer");
+  assert(oopDesc::bs()->resolve_oop(obj) == *p, "we just updated the referrer");
   ShenandoahMarkObjsClosure cl(_epoch, _worker_id);
   cl.do_object(obj);
 }
@@ -1100,9 +1171,10 @@ ShenandoahMarkObjsClosure::ShenandoahMarkObjsClosure(uint e, uint worker_id) : _
 
 void ShenandoahMarkObjsClosure::do_object(oop obj) {
   ShenandoahHeap* sh = (ShenandoahHeap* ) Universe::heap();
-  if (obj != NULL && (sh->is_in(obj))) {
+  if (obj != NULL /*&& (sh->is_in(obj))*/) {
+    assert(sh->is_in(obj), "referenced objects must be in the heap. No?");
     if (! sh->isMarkedCurrent(obj)) {
-      // tty->print_cr("marking root object %p, %d, %d", obj, getMark(obj)->age(), epoch);
+      // tty->print_cr("marking object %p, %d, %d", obj, getMark(obj)->age(), sh->getEpoch());
       sh->mark_current(obj);
 
       // Calculate liveness of heap region containing object.

@@ -112,6 +112,10 @@ public:
   void oop_iterate(ExtendedOopClosure* cl) {
     oop_iterate(cl, false, false);
   }
+
+  void roots_iterate(ExtendedOopClosure* cl);
+
+  
   void object_iterate(ObjectClosure* cl);
   void safe_object_iterate(ObjectClosure* cl);
 
@@ -182,6 +186,8 @@ public:
   void print_heap_regions();
 
 private:
+
+  void verify_heap_after_marking();
 
   void verify_evacuation(ShenandoahHeapRegion* from_region);
   bool set_concurrent_mark_in_progress(bool in_progress);
