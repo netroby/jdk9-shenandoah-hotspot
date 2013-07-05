@@ -192,7 +192,7 @@ UNSAFE_ENTRY(jobject, Unsafe_GetObject140(JNIEnv *env, jobject unsafe, jobject o
   // We could be accessing the referent field in a reference
   // object. If G1 is enabled then we need to register a non-null
   // referent with the SATB barrier.
-  if (UseG1GC) {
+  if (UseG1GC || UseShenandoahGC) {
     bool needs_barrier = false;
 
     if (ret != NULL) {
@@ -250,7 +250,7 @@ UNSAFE_ENTRY(jobject, Unsafe_GetObject(JNIEnv *env, jobject unsafe, jobject obj,
   // We could be accessing the referent field in a reference
   // object. If G1 is enabled then we need to register non-null
   // referent with the SATB barrier.
-  if (UseG1GC) {
+  if (UseG1GC || UseShenandoahGC) {
     bool needs_barrier = false;
 
     if (ret != NULL) {

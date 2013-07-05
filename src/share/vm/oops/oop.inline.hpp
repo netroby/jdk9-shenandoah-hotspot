@@ -284,20 +284,25 @@ inline oop oopDesc::load_decode_heap_oop(narrowOop* p) {
 }
 
 // Store already encoded heap oop into the heap.
-inline void oopDesc::store_heap_oop(oop* p, oop v)                 { *p = v; }
+inline void oopDesc::store_heap_oop(oop* p, oop v)                 {
+ *p = v;
+ }
 inline void oopDesc::store_heap_oop(narrowOop* p, narrowOop v)     { *p = v; }
 
 // Encode and store a heap oop.
 inline void oopDesc::encode_store_heap_oop_not_null(narrowOop* p, oop v) {
   *p = encode_heap_oop_not_null(v);
 }
-inline void oopDesc::encode_store_heap_oop_not_null(oop* p, oop v) { *p = v; }
+inline void oopDesc::encode_store_heap_oop_not_null(oop* p, oop v) {
+ *p = v;
+ }
 
 // Encode and store a heap oop allowing for null.
 inline void oopDesc::encode_store_heap_oop(narrowOop* p, oop v) {
   *p = encode_heap_oop(v);
 }
-inline void oopDesc::encode_store_heap_oop(oop* p, oop v) { *p = v; }
+inline void oopDesc::encode_store_heap_oop(oop* p, oop v) {
+ *p = v; }
 
 // Store heap oop as is for volatile fields.
 inline void oopDesc::release_store_heap_oop(volatile oop* p, oop v) {
@@ -310,6 +315,7 @@ inline void oopDesc::release_store_heap_oop(volatile narrowOop* p,
 
 inline void oopDesc::release_encode_store_heap_oop_not_null(
                                                 volatile narrowOop* p, oop v) {
+
   // heap oop is not pointer sized.
   OrderAccess::release_store(p, encode_heap_oop_not_null(v));
 }
@@ -332,6 +338,7 @@ inline void oopDesc::release_encode_store_heap_oop(
 // These functions are only used to exchange oop fields in instances,
 // not headers.
 inline oop oopDesc::atomic_exchange_oop(oop exchange_value, volatile HeapWord *dest) {
+
   if (UseCompressedOops) {
     // encode exchange value from oop to T
     narrowOop val = encode_heap_oop(exchange_value);

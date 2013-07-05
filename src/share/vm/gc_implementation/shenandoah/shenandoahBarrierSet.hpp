@@ -5,6 +5,7 @@
 #include "asm/macroAssembler.hpp"
 #include "memory/barrierSet.hpp"
 #include "memory/universe.hpp"
+#include "gc_implementation/g1/g1SATBCardTableModRefBS.hpp"
 
 #define BROOKS_POINTER_OBJ_SIZE 4
 
@@ -58,19 +59,58 @@ public:
   bool write_prim_needs_barrier(HeapWord* hw, size_t s, juint x, juint y){
     nyi();
   }
-  void write_ref_array_work(MemRegion mr){}
-  void write_ref_field_work(void* v, oop o){
-    //    tty->print("write_ref_field_work: v = "PTR_FORMAT" o = "PTR_FORMAT"\n",
-    //	       v, o);
+  void write_ref_array_work(MemRegion mr){
   }
-  void write_ref_field_pre(void* v, oop o){}
+
+  void write_ref_array_pre(oop* dst, int length,
+                           bool dest_uninitialized){
+    // tty->print_cr("write_ref_array_pre: %p, %d", dst, length);
+    for (int i = 0; i < length; i++) {
+      oop o = dst[i];
+      if (o != NULL) {
+        G1SATBCardTableModRefBS::enqueue(o);
+      }
+      // tty->print("write_ref_array_pre: oop: "PTR_FORMAT"\n",o);
+    }
+  }
+  
+  void write_ref_field_pre_work(oop* v, oop o){
+    oop old = *v;
+    if (old != NULL) {
+      G1SATBCardTableModRefBS::enqueue(old);
+      // tty->print("write_ref_field_pre_work: v = "PTR_FORMAT" o = "PTR_FORMAT" old: %p\n",
+      //            v, o, *v);
+    }
+  }
+
+  void write_ref_field_pre_work(narrowOop* v, oop o){
+    Unimplemented();
+    G1SATBCardTableModRefBS::enqueue(o);
+    tty->print("write_ref_field_pre_work: v = "PTR_FORMAT" o = "PTR_FORMAT"\n",
+               v, o);
+  }
+  void write_ref_field_work(void* v, oop o){
+    /*
+    tty->print("write_ref_field_work: v = "PTR_FORMAT" o = "PTR_FORMAT"\n",
+               v, o);
+    */
+  }
+  void write_ref_field_pre(void* v, oop o){
+    // tty->print("write_ref_field_pre: v = "PTR_FORMAT" o = "PTR_FORMAT"\n",
+    //            v, o);
+  }
 
   void write_ref_field(void* v, oop o) {
-    //    tty->print("write_ref_field: v = "PTR_FORMAT" o = "PTR_FORMAT"\n",
+    // tty->print("write_ref_field: v = "PTR_FORMAT" o = "PTR_FORMAT"\n",
     //	       v, o);
   }
 
-  void write_region_work(MemRegion mr){}
+  void write_region_work(MemRegion mr){
+    // tty->print_cr("write_region_work: %p, %p", mr.start(), mr.end());
+    // for (HeapWord* start  = mr.start(); start < mr.end(); start++) {
+    //   tty->print_cr("write_region_work: oop (?): %p", *((oop*) start));
+    // }
+  }
   void nyi() {
     assert(false, "not yet implemented");
     tty->print_cr("Not yet implemented");

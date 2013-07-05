@@ -657,6 +657,44 @@ void ShenandoahHeap::print_heap_regions()  {
   heap_region_iterate(&pc1);
 }
 
+class PrintAllRefsOopClosure: public ExtendedOopClosure {
+public:
+
+  void do_oop(oop* p)       {
+    oop o = *p;
+    if (o != NULL) {
+      tty->print_cr("-> %p", o);
+    }
+  }
+
+  void do_oop(narrowOop* p) {
+    Unimplemented();
+  }
+
+};
+
+class PrintAllRefsObjectClosure : public ObjectClosure {
+  uint _epoch;
+
+public:
+  void do_object(oop p) {
+    tty->print_cr("object %p refers to:");
+    PrintAllRefsOopClosure cl;
+    p->oop_iterate(&cl);
+  }
+};
+
+void ShenandoahHeap::print_all_refs() {
+  tty->print_cr("printing all references in the heap");
+  tty->print_cr("root references:");
+  PrintAllRefsOopClosure cl;
+  roots_iterate(&cl);
+
+  tty->print_cr("heap references:");
+  PrintAllRefsObjectClosure cl2;
+  object_iterate(&cl2);
+}
+
 class VerifyAfterMarkingOopClosure: public ExtendedOopClosure {
 private:
   ShenandoahHeap*  _heap;
@@ -666,15 +704,16 @@ public:
     _heap(ShenandoahHeap::heap()) { }
 
   void do_oop(oop* p)       {
-    oop oop = *p;
-    if (oop != NULL) {
-      if (! _heap->isMarkedCurrent(oop)) {
+    oop o = *p;
+    if (o != NULL) {
+      if (! _heap->isMarkedCurrent(o)) {
         _heap->print_heap_regions();
-        tty->print_cr("oop not marked, although referrer is marked: %p: in_heap: %d, age: %d, epoch: %d", oop, _heap->is_in(oop), getMark(oop)->age(), _heap->getEpoch());
+        // _heap->print_all_refs();
+        tty->print_cr("oop not marked, although referrer is marked: %p: in_heap: %d, age: %d, epoch: %d", o, _heap->is_in(o), getMark(o)->age(), _heap->getEpoch());
       }
-      assert(! _heap->heap_region_containing(oop)->is_dirty(), "references must not point to dirty heap regions");
-      assert(oop == oopDesc::bs()->resolve_oop(oop), "oops must not be forwarded");
-      assert(_heap->isMarkedCurrent(oop), "live oops must be marked current");
+      assert(! _heap->heap_region_containing(o)->is_dirty(), "references must not point to dirty heap regions");
+      assert(o == oopDesc::bs()->resolve_oop(o), "oops must not be forwarded");
+      assert(_heap->isMarkedCurrent(o), "live oops must be marked current");
     }
   }
 
@@ -1149,6 +1188,7 @@ ShenandoahMarkRefsClosure::ShenandoahMarkRefsClosure(uint e, uint worker_id) :
 
 void ShenandoahMarkRefsClosure::do_oop_work(oop* p) {
 
+  // tty->print_cr("marking oop ref: %p", p);
   // We piggy-back reference updating to the marking tasks.
   _heap->maybe_update_oop_ref(p);
 
@@ -1183,6 +1223,11 @@ void ShenandoahMarkObjsClosure::do_object(oop obj) {
 
       sh->concurrentMark()->addTask(obj, _worker_id);
     }
+    /*
+    else {
+      tty->print_cr("already marked object %p, %d, %d", obj, getMark(obj)->age(), sh->getEpoch());
+    }
+    */
   }
   /*
   else {
@@ -1237,9 +1282,10 @@ public:
   }
 };
 
-
 void ShenandoahHeap::start_concurrent_marking() {
   set_concurrent_mark_in_progress(true);
+
+  // print_all_refs();
 
   // Increase and wrap epoch back to 1 (not 0!)
   _epoch = _epoch % MAX_EPOCH + 1;

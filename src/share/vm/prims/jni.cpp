@@ -2619,7 +2619,7 @@ JNI_ENTRY(jobject, jni_GetObjectField(JNIEnv *env, jobject obj, jfieldID fieldID
   // If G1 is enabled and we are accessing the value of the referent
   // field in a reference object then we need to register a non-null
   // referent with the SATB barrier.
-  if (UseG1GC) {
+  if (UseG1GC || UseShenandoahGC) {
     bool needs_barrier = false;
 
     if (ret != NULL &&

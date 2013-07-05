@@ -196,7 +196,7 @@ private:
   void verify_liveness_after_concurrent_mark();
   void mark();
 
-
+  void print_all_refs();
 
   
 };

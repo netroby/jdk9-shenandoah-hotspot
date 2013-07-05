@@ -1183,6 +1183,7 @@ class StubGenerator: public StubCodeGenerator {
     switch (bs->kind()) {
       case BarrierSet::G1SATBCT:
       case BarrierSet::G1SATBCTLogging:
+      case BarrierSet::ShenandoahBarrierSet:
         // With G1, don't generate the call if we statically know that the target in uninitialized
         if (!dest_uninitialized) {
            __ pusha();                      // push registers
@@ -1205,7 +1206,6 @@ class StubGenerator: public StubCodeGenerator {
       case BarrierSet::CardTableModRef:
       case BarrierSet::CardTableExtension:
       case BarrierSet::ModRef:
-      case BarrierSet::ShenandoahBarrierSet:
         break;
       default:
         ShouldNotReachHere();
@@ -1229,6 +1229,7 @@ class StubGenerator: public StubCodeGenerator {
     switch (bs->kind()) {
       case BarrierSet::G1SATBCT:
       case BarrierSet::G1SATBCTLogging:
+      case BarrierSet::ShenandoahBarrierSet: 
         {
           __ pusha();             // push registers (overkill)
           if (c_rarg0 == count) { // On win64 c_rarg0 == rcx
@@ -1268,7 +1269,6 @@ class StubGenerator: public StubCodeGenerator {
           __ jcc(Assembler::greaterEqual, L_loop);
         }
         break;
-      case BarrierSet::ShenandoahBarrierSet: 
         break;
 
       default:
