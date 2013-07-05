@@ -3612,6 +3612,8 @@ void TemplateTable::monitorenter() {
   // check for NULL object
   __ null_check(rax);
 
+  oopDesc::bs()->compile_resolve_oop_not_null(_masm, rax);
+
   const Address monitor_block_top(
         rbp, frame::interpreter_frame_monitor_block_top_offset * wordSize);
   const Address monitor_block_bot(
@@ -3638,7 +3640,9 @@ void TemplateTable::monitorenter() {
     // if not used then remember entry in c_rarg1
     __ cmov(Assembler::equal, c_rarg1, c_rarg3);
     // check if current entry is for same object
-    __ cmpptr(rax, Address(c_rarg3, BasicObjectLock::obj_offset_in_bytes()));
+    __ movptr(rscratch1, Address(c_rarg3, BasicObjectLock::obj_offset_in_bytes()));
+    oopDesc::bs()->compile_resolve_oop(_masm, rscratch1);
+    __ cmpptr(rax, rscratch1);
     // if same object then stop searching
     __ jccb(Assembler::equal, exit);
     // otherwise advance to next entry
@@ -3706,6 +3710,8 @@ void TemplateTable::monitorexit() {
   // check for NULL object
   __ null_check(rax);
 
+  oopDesc::bs()->compile_resolve_oop_not_null(_masm, rax);
+
   const Address monitor_block_top(
         rbp, frame::interpreter_frame_monitor_block_top_offset * wordSize);
   const Address monitor_block_bot(
@@ -3725,7 +3731,10 @@ void TemplateTable::monitorexit() {
 
     __ bind(loop);
     // check if current entry is for same object
-    __ cmpptr(rax, Address(c_rarg1, BasicObjectLock::obj_offset_in_bytes()));
+    __ movptr(rscratch1, Address(c_rarg1, BasicObjectLock::obj_offset_in_bytes()));
+    oopDesc::bs()->compile_resolve_oop(_masm, rscratch1);
+    __ cmpptr(rax, rscratch1);
+
     // if same object then stop searching
     __ jcc(Assembler::equal, found);
     // otherwise advance to next entry

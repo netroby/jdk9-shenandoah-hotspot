@@ -1193,6 +1193,7 @@ ObjectMonitor* ObjectSynchronizer::inflate_helper(oop obj) {
 ObjectMonitor * ATTR ObjectSynchronizer::inflate (Thread * Self, oop object) {
   // Inflate mutates the heap ...
   // Relaxing assertion for bug 6320749.
+  object = oopDesc::bs()->resolve_oop(object);
   assert (Universe::verify_in_progress() ||
           !SafepointSynchronize::is_at_safepoint(), "invariant") ;
 
@@ -1211,7 +1212,7 @@ ObjectMonitor * ATTR ObjectSynchronizer::inflate (Thread * Self, oop object) {
       if (mark->has_monitor()) {
           ObjectMonitor * inf = mark->monitor() ;
           assert (inf->header()->is_neutral(), "invariant");
-	  assert(inf->object() == object, "invariant");
+	  assert(oopDesc::bs()->resolve_oop((oop) inf->object()) == object, "invariant");
           assert (ObjectSynchronizer::verify_objmon_isinpool(inf), "monitor is invalid");
           return inf ;
       }
