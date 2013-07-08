@@ -160,7 +160,11 @@ public:
   bool isMarkedPrev(oop obj) const;
   bool isMarkedCurrent(oop obj) const;
   bool isMarked(oop obj)  { return isMarkedPrev(obj) || isMarkedCurrent(obj);}
-  bool is_obj_ill(oop obj) const { return isMarkedPrev(obj);}
+
+  bool is_obj_ill(const oop obj) {
+    return isMarkedPrev(obj);
+  }
+
   virtual void post_allocation_collector_specific_setup(HeapWord* obj);
 
   void mark_object_live(oop obj, bool enqueue);

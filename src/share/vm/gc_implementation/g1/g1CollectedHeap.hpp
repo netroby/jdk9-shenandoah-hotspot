@@ -1657,7 +1657,7 @@ public:
     else return is_obj_dead(obj, hr);
   }
 
-  bool is_obj_ill(const oop obj) const {
+  bool is_obj_ill(const oop obj) {
     const HeapRegion* hr = heap_region_containing(obj);
     if (hr == NULL) {
       if (obj == NULL) return false;
@@ -1687,7 +1687,7 @@ public:
   }
 
   bool is_obj_dead_cond(const oop obj,
-                        const VerifyOption vo) const {
+                        const VerifyOption vo) {
     switch (vo) {
     case VerifyOption_G1UsePrevMarking: return is_obj_dead(obj);
     case VerifyOption_G1UseNextMarking: return is_obj_ill(obj);
