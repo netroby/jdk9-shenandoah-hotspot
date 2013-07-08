@@ -62,42 +62,64 @@ public:
   void write_ref_array_work(MemRegion mr){
   }
 
-  void write_ref_array_pre(oop* dst, int length,
-                           bool dest_uninitialized){
-    // tty->print_cr("write_ref_array_pre: %p, %d", dst, length);
-    for (int i = 0; i < length; i++) {
-      oop o = dst[i];
-      if (o != NULL) {
-        G1SATBCardTableModRefBS::enqueue(o);
+  template <class T> void
+  write_ref_array_pre_work(T* dst, int count) {
+    if (!JavaThread::satb_mark_queue_set().is_active()) return;
+    // tty->print_cr("write_ref_array_pre_work: %p, %d", dst, count);
+    T* elem_ptr = dst;
+    for (int i = 0; i < count; i++, elem_ptr++) {
+      T heap_oop = oopDesc::load_heap_oop(elem_ptr);
+      if (!oopDesc::is_null(heap_oop)) {
+        G1SATBCardTableModRefBS::enqueue(oopDesc::decode_heap_oop_not_null(heap_oop));
       }
-      // tty->print("write_ref_array_pre: oop: "PTR_FORMAT"\n",o);
-    }
-  }
-  
-  void write_ref_field_pre_work(oop* v, oop o){
-    oop old = *v;
-    if (old != NULL) {
-      G1SATBCardTableModRefBS::enqueue(old);
-      // tty->print("write_ref_field_pre_work: v = "PTR_FORMAT" o = "PTR_FORMAT" old: %p\n",
-      //            v, o, *v);
+      // tty->print("write_ref_array_pre_work: oop: "PTR_FORMAT"\n", heap_oop);
     }
   }
 
-  void write_ref_field_pre_work(narrowOop* v, oop o){
-    Unimplemented();
-    G1SATBCardTableModRefBS::enqueue(o);
-    tty->print("write_ref_field_pre_work: v = "PTR_FORMAT" o = "PTR_FORMAT"\n",
-               v, o);
+  virtual void write_ref_array_pre(oop* dst, int count, bool dest_uninitialized) {
+    if (!dest_uninitialized) {
+      write_ref_array_pre_work(dst, count);
+    }
   }
+
+  virtual void write_ref_array_pre(narrowOop* dst, int count, bool dest_uninitialized) {
+    if (!dest_uninitialized) {
+      write_ref_array_pre_work(dst, count);
+    }
+  }
+
+  template <class T> static void write_ref_field_pre_static(T* field, oop newVal) {
+    T heap_oop = oopDesc::load_heap_oop(field);
+    if (!oopDesc::is_null(heap_oop)) {
+      G1SATBCardTableModRefBS::enqueue(oopDesc::decode_heap_oop(heap_oop));
+      // tty->print("write_ref_field_pre_work: v = "PTR_FORMAT" o = "PTR_FORMAT" old: %p\n",
+      //           field, newVal, heap_oop);
+    }
+  }
+
+  // We export this to make it available in cases where the static
+  // type of the barrier set is known.  Note that it is non-virtual.
+  template <class T> inline void inline_write_ref_field_pre(T* field, oop newVal) {
+    write_ref_field_pre_static(field, newVal);
+  }
+
+  // These are the more general virtual versions.
+  virtual void write_ref_field_pre_work(oop* field, oop new_val) {
+    inline_write_ref_field_pre(field, new_val);
+  }
+  virtual void write_ref_field_pre_work(narrowOop* field, oop new_val) {
+    inline_write_ref_field_pre(field, new_val);
+  }
+  virtual void write_ref_field_pre_work(void* field, oop new_val) {
+    guarantee(false, "Not needed");
+  }
+
+
   void write_ref_field_work(void* v, oop o){
     /*
     tty->print("write_ref_field_work: v = "PTR_FORMAT" o = "PTR_FORMAT"\n",
                v, o);
     */
-  }
-  void write_ref_field_pre(void* v, oop o){
-    // tty->print("write_ref_field_pre: v = "PTR_FORMAT" o = "PTR_FORMAT"\n",
-    //            v, o);
   }
 
   void write_ref_field(void* v, oop o) {
