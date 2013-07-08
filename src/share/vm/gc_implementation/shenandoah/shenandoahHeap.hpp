@@ -189,6 +189,8 @@ public:
 
   void print_heap_regions();
 
+  void print_all_refs();
+
 private:
 
   void verify_heap_after_marking();
@@ -199,8 +201,6 @@ private:
   void verify_live();
   void verify_liveness_after_concurrent_mark();
   void mark();
-
-  void print_all_refs();
 
   
 };

@@ -658,13 +658,19 @@ void ShenandoahHeap::print_heap_regions()  {
 }
 
 class PrintAllRefsOopClosure: public ExtendedOopClosure {
+private:
+  int _index;
 public:
+  PrintAllRefsOopClosure() : _index(0) {}
 
   void do_oop(oop* p)       {
     oop o = *p;
     if (o != NULL) {
-      tty->print_cr("-> %p", o);
+      tty->print_cr("%d -> %p (%s)", _index, o, o->klass()->internal_name());
+    } else {
+      tty->print_cr("%d -> %p", _index, o);
     }
+    _index++;
   }
 
   void do_oop(narrowOop* p) {
@@ -678,7 +684,7 @@ class PrintAllRefsObjectClosure : public ObjectClosure {
 
 public:
   void do_object(oop p) {
-    tty->print_cr("object %p refers to:");
+    tty->print_cr("object %p (%s) refers to:", p, p->klass()->internal_name());
     PrintAllRefsOopClosure cl;
     p->oop_iterate(&cl);
   }
@@ -1211,7 +1217,7 @@ ShenandoahMarkObjsClosure::ShenandoahMarkObjsClosure(uint e, uint worker_id) : _
 
 void ShenandoahMarkObjsClosure::do_object(oop obj) {
   ShenandoahHeap* sh = (ShenandoahHeap* ) Universe::heap();
-  if (obj != NULL /*&& (sh->is_in(obj))*/) {
+  if (obj != NULL) {
     assert(sh->is_in(obj), "referenced objects must be in the heap. No?");
     if (! sh->isMarkedCurrent(obj)) {
       // tty->print_cr("marking object %p, %d, %d", obj, getMark(obj)->age(), sh->getEpoch());
