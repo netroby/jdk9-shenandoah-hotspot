@@ -717,8 +717,14 @@ public:
         // _heap->print_all_refs();
         tty->print_cr("oop not marked, although referrer is marked: %p: in_heap: %d, age: %d, epoch: %d", o, _heap->is_in(o), getMark(o)->age(), _heap->getEpoch());
       }
-      assert(! _heap->heap_region_containing(o)->is_dirty(), "references must not point to dirty heap regions");
+      assert(o->is_oop(), "oop must be an oop");
+      assert(! ShenandoahBarrierSet::is_brooks_ptr(o), "oop must not be a brooks ptr");
+      if (! ShenandoahBarrierSet::is_brooks_ptr(oop(((HeapWord*) o) - BROOKS_POINTER_OBJ_SIZE))) {
+        tty->print_cr("oop doesn't have a brooks ptr: %p", o);
+      }
+      assert(ShenandoahBarrierSet::is_brooks_ptr(oop(((HeapWord*) o) - BROOKS_POINTER_OBJ_SIZE)), "oop must have a brooks ptr");
       assert(o == oopDesc::bs()->resolve_oop(o), "oops must not be forwarded");
+      assert(! _heap->heap_region_containing(o)->is_dirty(), "references must not point to dirty heap regions");
       assert(_heap->isMarkedCurrent(o), "live oops must be marked current");
     }
   }
@@ -1200,6 +1206,7 @@ void ShenandoahMarkRefsClosure::do_oop_work(oop* p) {
 
   oop obj = oopDesc::load_heap_oop(p);
   assert(oopDesc::bs()->resolve_oop(obj) == *p, "we just updated the referrer");
+  assert(obj == NULL || ! _heap->heap_region_containing(obj)->is_dirty(), "must not point to dirty region");
   ShenandoahMarkObjsClosure cl(_epoch, _worker_id);
   cl.do_object(obj);
 }
