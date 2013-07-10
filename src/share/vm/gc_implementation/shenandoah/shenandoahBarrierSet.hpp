@@ -180,6 +180,7 @@ public:
     }
   }
 
+#ifndef CC_INTERP
   // TODO: The following should really live in an X86 specific subclass.
   virtual void compile_resolve_oop(MacroAssembler* masm, Register dst) {
     Label is_null;
@@ -192,6 +193,7 @@ public:
   virtual void compile_resolve_oop_not_null(MacroAssembler* masm, Register dst) {
     __ movptr(dst, Address(dst, -8));
   }
+#endif
 };
 
 #endif //SHARE_VM_GC_IMPLEMENTATION_SHENANDOAH_SHENANDOAHBARRIERSET_HPP

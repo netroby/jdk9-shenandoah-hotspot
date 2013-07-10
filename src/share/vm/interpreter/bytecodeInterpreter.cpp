@@ -483,7 +483,7 @@ BytecodeInterpreter::run(interpreterState istate) {
     if (EnableInvokeDynamic || FLAG_IS_CMDLINE(EnableInvokeDynamic)) {
       assert(abs(istate->_stack_base - istate->_stack_limit) == (istate->_method->max_stack() + 1), "bad stack limit");
     } else {
-      const int extra_stack_entries = Method::extra_stack_entries_for_indy;
+      const int extra_stack_entries = Method::extra_stack_entries_for_jsr292;
       assert(labs(istate->_stack_base - istate->_stack_limit) == (istate->_method->max_stack() + extra_stack_entries
                                                                                                + 1), "bad stack limit");
     }
@@ -502,8 +502,6 @@ BytecodeInterpreter::run(interpreterState istate) {
   interpreterState orig = istate;
 #endif
 
-  static volatile jbyte* _byte_map_base; // adjusted card table base for oop store barrier
-
   register intptr_t*        topOfStack = (intptr_t *)istate->stack(); /* access with STACK macros */
   register address          pc = istate->bcp();
   register jubyte opcode;
@@ -511,12 +509,9 @@ BytecodeInterpreter::run(interpreterState istate) {
   register ConstantPoolCache*    cp = istate->constants(); // method()->constants()->cache()
 #ifdef LOTS_OF_REGS
   register JavaThread*      THREAD = istate->thread();
-  register volatile jbyte*  BYTE_MAP_BASE = _byte_map_base;
 #else
 #undef THREAD
 #define THREAD istate->thread()
-#undef BYTE_MAP_BASE
-#define BYTE_MAP_BASE _byte_map_base
 #endif
 
 #ifdef USELABELS
@@ -629,9 +624,6 @@ BytecodeInterpreter::run(interpreterState istate) {
 #ifdef VM_JVMTI
       _jvmti_interp_events = JvmtiExport::can_post_interpreter_events();
 #endif
-      BarrierSet* bs = Universe::heap()->barrier_set();
-      assert(bs->kind() == BarrierSet::CardTableModRef, "Wrong barrier set kind");
-      _byte_map_base = (volatile jbyte*)(((CardTableModRefBS*)bs)->byte_map_base);
       return;
     }
     break;
@@ -1568,6 +1560,7 @@ run:
 //        arrayOopDesc* arrObj = (arrayOopDesc*)STACK_OBJECT(arrayOff);
 #define ARRAY_INTRO(arrayOff)                                                  \
       arrayOop arrObj = (arrayOop)STACK_OBJECT(arrayOff);                      \
+      arrObj = (arrayOop) Universe::heap()->barrier_set()->resolve_oop(arrObj); \
       jint     index  = STACK_INT(arrayOff + 1);                               \
       char message[jintAsStringSize];                                          \
       CHECK_NULL(arrObj);                                                      \
@@ -1657,9 +1650,10 @@ run:
           }
           oop* elem_loc = (oop*)(((address) arrObj->base(T_OBJECT)) + index * sizeof(oop));
           // *(oop*)(((address) arrObj->base(T_OBJECT)) + index * sizeof(oop)) = rhsObject;
+          Universe::heap()->barrier_set()->write_ref_field_pre(elem_loc, rhsObject);
           *elem_loc = rhsObject;
           // Mark the card
-          OrderAccess::release_store(&BYTE_MAP_BASE[(uintptr_t)elem_loc >> CardTableModRefBS::card_shift], 0);
+          Universe::heap()->barrier_set()->write_ref_field(elem_loc, rhsObject);
           UPDATE_PC_AND_TOS_AND_CONTINUE(1, -3);
       }
       CASE(_bastore):
@@ -1801,6 +1795,9 @@ run:
             CHECK_NULL(obj);
           }
 
+          // Possibly follow forwarding pointer (e.g. for Shenandoah GC).
+          obj = Universe::heap()->barrier_set()->resolve_oop(obj);
+
           //
           // Now store the result on the stack
           //
@@ -1913,6 +1910,9 @@ run:
             CHECK_NULL(obj);
           }
 
+          // Possibly follow forwarding pointer (e.g. for Shenandoah GC).
+          obj = Universe::heap()->barrier_set()->resolve_oop(obj);
+
           //
           // Now store the result
           //
@@ -1923,7 +1923,6 @@ run:
             } else if (tos_type == atos) {
               VERIFY_OOP(STACK_OBJECT(-1));
               obj->release_obj_field_put(field_offset, STACK_OBJECT(-1));
-              OrderAccess::release_store(&BYTE_MAP_BASE[(uintptr_t)obj >> CardTableModRefBS::card_shift], 0);
             } else if (tos_type == btos) {
               obj->release_byte_field_put(field_offset, STACK_INT(-1));
             } else if (tos_type == ltos) {
@@ -1944,7 +1943,6 @@ run:
             } else if (tos_type == atos) {
               VERIFY_OOP(STACK_OBJECT(-1));
               obj->obj_field_put(field_offset, STACK_OBJECT(-1));
-              OrderAccess::release_store(&BYTE_MAP_BASE[(uintptr_t)obj >> CardTableModRefBS::card_shift], 0);
             } else if (tos_type == btos) {
               obj->byte_field_put(field_offset, STACK_INT(-1));
             } else if (tos_type == ltos) {
@@ -1973,7 +1971,10 @@ run:
           Klass* k_entry = (Klass*) entry;
           assert(k_entry->oop_is_instance(), "Should be InstanceKlass");
           InstanceKlass* ik = (InstanceKlass*) k_entry;
-          if ( ik->is_initialized() && ik->can_be_fastpath_allocated() ) {
+          // TODO: How can we do fastpath allocation with a clean GC interface? This
+          // code assumes a bunch of things about the GC, and the setup code is
+          // sensitive to changes in setup code in CollectedHeap.
+          if (false && ik->is_initialized() && ik->can_be_fastpath_allocated() ) {
             size_t obj_size = ik->size_helper();
             oop result = NULL;
             // If the TLAB isn't pre-zeroed then we'll have to do it
