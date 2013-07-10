@@ -70,6 +70,7 @@ public:
   HeapWord* allocate_new_tlab(size_t word_size);
   HeapWord* allocate_new_gclab(size_t word_size);
   HeapWord* allocate_memory(size_t word_size);
+  HeapWord* allocate_memory_gclab(size_t word_size);
   HeapWord* allocate_new_gclab() { 
     return allocate_new_gclab(_default_gclab_size);
   }
