@@ -38,23 +38,24 @@ G1SATBCardTableModRefBS::G1SATBCardTableModRefBS(MemRegion whole_heap,
 
 
 void G1SATBCardTableModRefBS::enqueue(oop pre_val) {
+  Unimplemented(); // TODO: Calls to this must go through the barrier.
   // Nulls should have been already filtered.
   assert(pre_val->is_oop(true), "Error");
 
-  if (!JavaThread::satb_mark_queue_set().is_active()) return;
+  if (!JavaThread::satb_mark_queue_set()->is_active()) return;
   Thread* thr = Thread::current();
   if (thr->is_Java_thread()) {
     JavaThread* jt = (JavaThread*)thr;
     jt->satb_mark_queue().enqueue(pre_val);
   } else {
     MutexLocker x(Shared_SATB_Q_lock);
-    JavaThread::satb_mark_queue_set().shared_satb_queue()->enqueue(pre_val);
+    ((SATBMarkQueueSet*) JavaThread::satb_mark_queue_set())->shared_satb_queue()->enqueue(pre_val);
   }
 }
 
 template <class T> void
 G1SATBCardTableModRefBS::write_ref_array_pre_work(T* dst, int count) {
-  if (!JavaThread::satb_mark_queue_set().is_active()) return;
+  if (!JavaThread::satb_mark_queue_set()->is_active()) return;
   T* elem_ptr = dst;
   for (int i = 0; i < count; i++, elem_ptr++) {
     T heap_oop = oopDesc::load_heap_oop(elem_ptr);

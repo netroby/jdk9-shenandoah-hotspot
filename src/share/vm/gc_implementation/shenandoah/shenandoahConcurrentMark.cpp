@@ -24,7 +24,7 @@
 
 #include "gc_implementation/shenandoah/shenandoahConcurrentMark.hpp"
 #include "gc_implementation/shenandoah/shenandoahHeap.hpp"
-
+#include "gc_implementation/shenandoah/shenandoahSATBQueue.hpp"
 
 SCMRootRegionScanTask::SCMRootRegionScanTask(ShenandoahConcurrentMark* cm) :
   AbstractGangTask("Root Region Scan"), _cm(cm) { }
@@ -85,7 +85,7 @@ void ShenandoahConcurrentMark::initialize(FlexibleWorkGang* workers) {
     task_queue->initialize();
     _task_queues->register_queue(i, task_queue);
   }
-  JavaThread::satb_mark_queue_set().set_buffer_size(1014 /* G1SATBBufferSize */);
+  JavaThread::satb_mark_queue_set()->set_buffer_size(1014 /* G1SATBBufferSize */);
 }
 
 void ShenandoahConcurrentMark::scanRootRegions() {
@@ -160,16 +160,33 @@ void ShenandoahConcurrentMark::finishMarkFromRoots() {
 #endif
 }
 
+class DrainSATBClosure : public ShenandoahSATBElementClosure {
+
+private:
+  ShenandoahMarkObjsClosure* _mark_objs;
+
+public:
+  DrainSATBClosure(ShenandoahMarkObjsClosure* mark_objs) : _mark_objs(mark_objs) {}
+
+  void do_satb_element(ShenandoahSATBElement* satb_element)  {
+    oop prev_val = satb_element->get_previous_value();
+    if (prev_val != NULL) {
+      _mark_objs->do_object(prev_val);
+    }
+    ShenandoahHeap::heap()->maybe_update_oop_ref(satb_element->get_referrer());
+  }
+};
+
 void ShenandoahConcurrentMark::drain_satb_buffers() {
   ShenandoahHeap* sh = (ShenandoahHeap*) Universe::heap();
   ShenandoahMarkObjsClosure cl(sh->getEpoch(), 0);
-
+  DrainSATBClosure drainCl(&cl);
   // This can be parallelized. See g1/concurrentMark.cpp
-  SATBMarkQueueSet& satb_mq_set = JavaThread::satb_mark_queue_set();
-  satb_mq_set.set_closure(&cl);
-  while (satb_mq_set.apply_closure_to_completed_buffer());
-  satb_mq_set.iterate_closure_all_threads();
-  satb_mq_set.set_closure(NULL);
+  ShenandoahSATBQueueSet* satb_mq_set = (ShenandoahSATBQueueSet*) JavaThread::satb_mark_queue_set();
+  satb_mq_set->set_closure(&drainCl);
+  while (satb_mq_set->apply_closure_to_completed_buffer());
+  satb_mq_set->iterate_closure_all_threads();
+  satb_mq_set->set_closure(NULL);
 
 }
 

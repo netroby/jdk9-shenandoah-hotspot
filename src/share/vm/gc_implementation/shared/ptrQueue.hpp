@@ -22,8 +22,8 @@
  *
  */
 
-#ifndef SHARE_VM_GC_IMPLEMENTATION_G1_PTRQUEUE_HPP
-#define SHARE_VM_GC_IMPLEMENTATION_G1_PTRQUEUE_HPP
+#ifndef SHARE_VM_GC_IMPLEMENTATION_SHARED_PTRQUEUE_HPP
+#define SHARE_VM_GC_IMPLEMENTATION_SHARED_PTRQUEUE_HPP
 
 #include "memory/allocation.hpp"
 #include "utilities/sizes.hpp"
@@ -63,7 +63,7 @@ protected:
   // If there is a lock associated with this buffer, this is that lock.
   Mutex* _lock;
 
-  PtrQueueSet* qset() { return _qset; }
+  PtrQueueSet* qset();
 
 public:
   // Initialize this queue to contain a null buffer, and be part of the
@@ -195,6 +195,12 @@ public:
 // set, and return completed buffers to the set.
 // All these variables are are protected by the TLOQ_CBL_mon. XXX ???
 class PtrQueueSet VALUE_OBJ_CLASS_SPEC {
+
+ private:
+#ifdef ASSERT
+  void dump_active_values(JavaThread* first, bool expected_active);
+#endif // ASSERT
+
 protected:
   Monitor* _cbl_mon;  // Protects the fields below.
   BufferNode* _completed_buffers_head;
@@ -306,6 +312,13 @@ public:
 
   // Notify the consumer if the number of buffers crossed the threshold
   void notify_if_necessary();
+
+  // Apply "set_active(b)" to all Java threads' SATB queues. It should be
+  // called only with the world stopped. The method will assert that the
+  // SATB queues of all threads it visits, as well as the SATB queue
+  // set itself, has an active value same as expected_active.
+  void set_active_all_threads(bool b, bool expected_active);
+
 };
 
-#endif // SHARE_VM_GC_IMPLEMENTATION_G1_PTRQUEUE_HPP
+#endif // SHARE_VM_GC_IMPLEMENTATION_SHARED_PTRQUEUE_HPP

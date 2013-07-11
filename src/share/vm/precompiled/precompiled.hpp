@@ -297,7 +297,7 @@
 # include "gc_implementation/g1/g1OopClosures.hpp"
 # include "gc_implementation/g1/g1_globals.hpp"
 # include "gc_implementation/g1/g1_specialized_oop_closures.hpp"
-# include "gc_implementation/g1/ptrQueue.hpp"
+# include "gc_implementation/shared/ptrQueue.hpp"
 # include "gc_implementation/g1/satbQueue.hpp"
 # include "gc_implementation/parNew/parOopClosures.hpp"
 # include "gc_implementation/parallelScavenge/objectStartArray.hpp"
