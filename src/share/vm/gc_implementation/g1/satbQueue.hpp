@@ -25,7 +25,7 @@
 #ifndef SHARE_VM_GC_IMPLEMENTATION_G1_SATBQUEUE_HPP
 #define SHARE_VM_GC_IMPLEMENTATION_G1_SATBQUEUE_HPP
 
-#include "gc_implementation/g1/ptrQueue.hpp"
+#include "gc_implementation/shared/ptrQueue.hpp"
 
 class ObjectClosure;
 class JavaThread;
@@ -86,10 +86,6 @@ class SATBMarkQueueSet: public PtrQueueSet {
   // is ignored.
   bool apply_closure_to_completed_buffer_work(bool par, int worker);
 
-#ifdef ASSERT
-  void dump_active_values(JavaThread* first, bool expected_active);
-#endif // ASSERT
-
 public:
   SATBMarkQueueSet();
 
@@ -98,12 +94,6 @@ public:
                   Mutex* lock);
 
   static void handle_zero_index_for_thread(JavaThread* t);
-
-  // Apply "set_active(b)" to all Java threads' SATB queues. It should be
-  // called only with the world stopped. The method will assert that the
-  // SATB queues of all threads it visits, as well as the SATB queue
-  // set itself, has an active value same as expected_active.
-  void set_active_all_threads(bool b, bool expected_active);
 
   // Filter all the currently-active SATB buffers.
   void filter_thread_buffers();

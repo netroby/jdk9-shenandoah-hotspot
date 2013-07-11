@@ -2148,7 +2148,8 @@ jint G1CollectedHeap::initialize() {
                                     concurrent_g1_refine());
   JavaThread::dirty_card_queue_set().set_closure(_refine_cte_cl);
 
-  JavaThread::satb_mark_queue_set().initialize(SATB_Q_CBL_mon,
+  JavaThread::set_satb_mark_queue_set(new SATBMarkQueueSet());
+  ((SATBMarkQueueSet*) JavaThread::satb_mark_queue_set())->initialize(SATB_Q_CBL_mon,
                                                SATB_Q_FL_lock,
                                                G1SATBProcessCompletedThreshold,
                                                Shared_SATB_Q_lock);
@@ -5155,7 +5156,7 @@ g1_process_strong_roots(bool is_scavenging,
     if (mark_in_progress()) {
       double satb_filter_start = os::elapsedTime();
 
-      JavaThread::satb_mark_queue_set().filter_thread_buffers();
+      ((SATBMarkQueueSet*) JavaThread::satb_mark_queue_set())->filter_thread_buffers();
 
       satb_filtering_ms = (os::elapsedTime() - satb_filter_start) * 1000.0;
     }
