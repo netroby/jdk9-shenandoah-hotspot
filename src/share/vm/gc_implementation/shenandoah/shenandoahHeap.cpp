@@ -100,7 +100,6 @@ jint ShenandoahHeap::initialize() {
   _ordered_regions = NEW_C_HEAP_ARRAY(ShenandoahHeapRegion*, _numRegions, mtGC); 
 
   ShenandoahHeapRegion* current = new ShenandoahHeapRegion();
-  _current_region = current;
   _first_region = current;
   _initialSize = _numRegions * ShenandoahHeapRegion::RegionSizeBytes;
   size_t regionSizeWords = ShenandoahHeapRegion::RegionSizeBytes / HeapWordSize;
@@ -135,6 +134,8 @@ jint ShenandoahHeap::initialize() {
   _regions->print();
   tty->print("Free Regions\n");
   _free_regions->print();
+
+  _current_region = _free_regions->get_next();
 
   JavaThread::set_satb_mark_queue_set(new ShenandoahSATBQueueSet());
   ((ShenandoahSATBQueueSet*) JavaThread::satb_mark_queue_set())->initialize(SATB_Q_CBL_mon,
@@ -260,7 +261,7 @@ HeapWord* ShenandoahHeap::allocate_new_tlab(size_t word_size) {
 
 
 HeapWord* ShenandoahHeap::allocate_new_gclab(size_t word_size) {
-  HeapWord* result = allocate_memory(word_size);
+  HeapWord* result = allocate_memory_gclab(word_size);
   assert(! heap_region_containing(result)->is_dirty(), "Never allocate in dirty region");
   if (result != NULL) {
     _current_region->increase_live_data((jlong)word_size);
@@ -338,24 +339,52 @@ void ShenandoahHeap::update_current_region() {
   }
 }
 
+HeapWord* ShenandoahHeap::allocate_memory_gclab(size_t size) {
+  if (_current_region->is_dirty() || (_current_region == NULL))
+    update_current_region();
+
+  assert(! _current_region->is_dirty() && _current_region != NULL, "Never allocate from dirty or NULL region");
+
+  // This isn't necessary when doing mem_allocate_locked but is for gc lab allocation.
+  HeapWord* result = _current_region->par_allocate(size);
+  // Try next free region.
+  if (result == NULL) {
+    update_current_region();
+    result = _current_region->par_allocate(size);
+  }
+  if (result != NULL) {
+    assert(! heap_region_containing(result)->is_dirty(), "never allocate in dirty region");
+    return result;
+  } else {
+    // If we failed in both the current region and the next free region 
+    // then we know we can't allocate the object anywhere.
+    assert(false, "Failed to allocate object");
+  }
+}
+
 HeapWord* ShenandoahHeap::allocate_memory(size_t size) {
   if (_current_region->is_dirty() || (_current_region == NULL))
     update_current_region();
 
   assert(! _current_region->is_dirty() && _current_region != NULL, "Never allocate from dirty or NULL region");
 
-  HeapWord* result = _current_region->par_allocate(size);
+  HeapWord* result = _current_region->allocate(size);
+  // Try next free region.
   if (result == NULL) {
     update_current_region();
-    return allocate_memory(size);
-  } else {
+    result = _current_region->par_allocate(size);
+  }
+  if (result != NULL) {
     assert(! heap_region_containing(result)->is_dirty(), "never allocate in dirty region");
     return result;
+  } else {
+    // If we failed in both the current region and the next free region 
+    // then we know we can't allocate the object anywhere.
+    assert(false, "Failed to allocate object");
   }
 }
 
 HeapWord* ShenandoahHeap::mem_allocate_locked(size_t size,
-
 					      bool* gc_overhead_limit_was_exceeded) {
 
   HeapWord* filler = allocate_memory(BROOKS_POINTER_OBJ_SIZE + size);
