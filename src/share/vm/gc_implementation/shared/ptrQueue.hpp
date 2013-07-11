@@ -74,6 +74,8 @@ public:
   // Calls flush() when destroyed.
   ~PtrQueue() { flush(); }
 
+  void initialize();
+
   // Associate a lock with a ptr queue.
   void set_lock(Mutex* lock) { _lock = lock; }
 

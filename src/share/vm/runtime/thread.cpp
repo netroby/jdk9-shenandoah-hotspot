@@ -1933,15 +1933,11 @@ void JavaThread::initialize_queues() {
 
   PtrQueue& satb_queue = satb_mark_queue();
   PtrQueueSet* satb_queue_set = satb_mark_queue_set();
-  // The SATB queue should have been constructed with its active
-  // field set to false.
-  assert(!satb_queue.is_active(), "SATB queue should not be active");
-  assert(satb_queue.is_empty(), "SATB queue should be empty");
-  // If we are creating the thread during a marking cycle, we should
-  // set the active field of the SATB queue to true.
-  if (satb_queue_set->is_active()) {
-    satb_queue.set_active(true);
+  if (satb_queue_set == NULL) {
+    // Defer initialization until we get a queue.
+    return;
   }
+  satb_queue.initialize();
 
   DirtyCardQueue& dirty_queue = dirty_card_queue();
   // The dirty card queue should have been constructed with its
