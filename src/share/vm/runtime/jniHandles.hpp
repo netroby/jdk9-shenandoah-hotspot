@@ -176,6 +176,7 @@ inline oop JNIHandles::resolve(jobject handle) {
 inline oop JNIHandles::resolve_external_guard(jobject handle) {
   if (handle == NULL) return NULL;
   oop result = *(oop*)handle;
+  result = oopDesc::bs()->resolve_oop(result);
   if (result == NULL || result == badJNIHandle) return NULL;
   return result;
 };
@@ -184,6 +185,7 @@ inline oop JNIHandles::resolve_external_guard(jobject handle) {
 inline oop JNIHandles::resolve_non_null(jobject handle) {
   assert(handle != NULL, "JNI handle should not be null");
   oop result = *(oop*)handle;
+  result = oopDesc::bs()->resolve_oop(result);
   assert(result != NULL, "Invalid value read from jni handle");
   assert(result != badJNIHandle, "Pointing to zapped jni handle area");
   // Don't let that private _deleted_handle object escape into the wild.
