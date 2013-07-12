@@ -846,7 +846,7 @@ void ShenandoahHeap::parallel_evacuate() {
   }
 
 #ifdef ASSERT
-  verify_live();
+  verify_heap_after_evacuation();
 #endif
 
 
@@ -1111,7 +1111,9 @@ void ShenandoahHeap::verify(bool silent , VerifyOption vo) {
 
     object_iterate(&heapCl);
     // TODO: Implement rest of it.
+#ifdef ASSERT_DISABLED
     verify_live();
+#endif
   } else {
     if (!silent) gclog_or_tty->print("(SKIPPING roots, heapRegions, remset) ");
   }
@@ -1405,6 +1407,49 @@ void ShenandoahHeap::verify_live() {
   roots_iterate(&cl);
 
   IterateMarkedObjectsClosure marked_oops(&cl);
+  object_iterate(&marked_oops);
+
+}
+
+class VerifyAfterEvacuationClosure : public ExtendedOopClosure {
+
+  ShenandoahHeap* _sh;
+
+public:
+  VerifyAfterEvacuationClosure() : _sh ( ShenandoahHeap::heap() ) {}
+
+  template<class T> void do_oop_nv(T* p) {
+    T heap_oop = oopDesc::load_heap_oop(p);
+    if (!oopDesc::is_null(heap_oop)) {
+      oop obj = oopDesc::decode_heap_oop_not_null(heap_oop);
+      guarantee(_sh->heap_region_containing(obj)->is_dirty() == (obj != oopDesc::bs()->resolve_oop(obj)),
+                err_msg("forwarded objects can only exist in dirty (from-space) regions is_dirty: %d, is_forwarded: %d",
+                        _sh->heap_region_containing(obj)->is_dirty(),
+                        obj != oopDesc::bs()->resolve_oop(obj))
+                );
+      obj = oopDesc::bs()->resolve_oop(obj);
+      guarantee(! _sh->heap_region_containing(obj)->is_dirty(), "forwarded oops must not point to dirty regions");
+      guarantee(obj->is_oop(), "is_oop");
+      ShenandoahHeap* sh = (ShenandoahHeap*) Universe::heap();
+      if (! sh->isMarked(obj)) {
+        sh->print_on(tty);
+      }
+      assert(sh->isMarked(obj), err_msg("Referenced Objects should be marked obj: %p, epoch: %d, obj-age: %d, is_in_heap: %d", 
+					obj, sh->getEpoch(), getMark(obj)->age(), sh->is_in(obj)));
+    }
+  }
+
+  void do_oop(oop* p)       { do_oop_nv(p); }
+  void do_oop(narrowOop* p) { do_oop_nv(p); }
+
+};
+
+void ShenandoahHeap::verify_heap_after_evacuation() {
+
+  VerifyAfterEvacuationClosure cl;
+  roots_iterate(&cl);
+
+  IterateMarkedCurrentObjectsClosure marked_oops(&cl);
   object_iterate(&marked_oops);
 
 }
