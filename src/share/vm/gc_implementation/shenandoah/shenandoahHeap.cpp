@@ -419,7 +419,7 @@ public:
 HeapWord*  ShenandoahHeap::mem_allocate(size_t size, 
 					bool*  gc_overhead_limit_was_exceeded) {
 
-#ifdef SLOWDEBUG
+#ifdef ASSERT
   if (_numAllocs > 1000000) {
     _numAllocs = 0;
     VM_ShenandoahVerifyHeap op(0, 0, GCCause::_allocation_failure);
@@ -462,9 +462,6 @@ void ShenandoahHeap::mark() {
     VM_ShenandoahFinishMark finishMark;
     VMThread::execute(&finishMark);
 
-#ifdef SLOWDEBUG   
-    verify_liveness_after_concurrent_mark();
-#endif
 }
 
 
@@ -763,12 +760,12 @@ public:
 
 };
 
-class IterateMarkedObjectsClosure: public ObjectClosure {
+class IterateMarkedCurrentObjectsClosure: public ObjectClosure {
 private:
   ShenandoahHeap* _heap;
   ExtendedOopClosure* _cl;
 public:
-  IterateMarkedObjectsClosure(ExtendedOopClosure* cl) :
+  IterateMarkedCurrentObjectsClosure(ExtendedOopClosure* cl) :
     _heap(ShenandoahHeap::heap()), _cl(cl) {};
 
   void do_object(oop p) {
@@ -779,11 +776,27 @@ public:
 
 };
 
+class IterateMarkedObjectsClosure: public ObjectClosure {
+private:
+  ShenandoahHeap* _heap;
+  ExtendedOopClosure* _cl;
+public:
+  IterateMarkedObjectsClosure(ExtendedOopClosure* cl) :
+    _heap(ShenandoahHeap::heap()), _cl(cl) {};
+
+  void do_object(oop p) {
+    if (_heap->isMarked(p)) {
+      p->oop_iterate(_cl);
+    }
+  }
+
+};
+
 void ShenandoahHeap::verify_heap_after_marking() {
   VerifyAfterMarkingOopClosure cl;
   roots_iterate(&cl);
 
-  IterateMarkedObjectsClosure marked_oops(&cl);
+  IterateMarkedCurrentObjectsClosure marked_oops(&cl);
   object_iterate(&marked_oops);
 }
 
@@ -795,7 +808,9 @@ void ShenandoahHeap::parallel_evacuate() {
     heap_region_iterate(&pc1);
   }
 
+#ifdef ASSERT
   verify_heap_after_marking();
+#endif
 
   RecycleDirtyRegionsClosure cl;
   heap_region_iterate(&cl);
@@ -829,6 +844,12 @@ void ShenandoahHeap::parallel_evacuate() {
     PrintHeapRegionsClosure pc2;
     heap_region_iterate(&pc2);
   }
+
+#ifdef ASSERT
+  verify_heap_after_evacuation();
+#endif
+
+
 }
 
 class VerifyEvacuationClosure: public ExtendedOopClosure {
@@ -1090,7 +1111,9 @@ void ShenandoahHeap::verify(bool silent , VerifyOption vo) {
 
     object_iterate(&heapCl);
     // TODO: Implement rest of it.
+#ifdef ASSERT_DISABLED
     verify_live();
+#endif
   } else {
     if (!silent) gclog_or_tty->print("(SKIPPING roots, heapRegions, remset) ");
   }
@@ -1333,7 +1356,7 @@ void ShenandoahHeap::start_concurrent_marking() {
   assert(_epoch > 0 && _epoch <= MAX_EPOCH, err_msg("invalid epoch: %d", _epoch));
   tty->print_cr("epoch = %d", _epoch);
 
-#ifdef SLOWDEBUG
+#ifdef ASSERT
   BumpObjectAgeClosure boc(this);
   object_iterate(&boc);
 #endif
@@ -1345,14 +1368,24 @@ void ShenandoahHeap::start_concurrent_marking() {
 }
 
 
-class VerifyLivenessChildClosure : public ExtendedOopClosure {
- private:
+class VerifyLivenessClosure : public ExtendedOopClosure {
 
-   template<class T> void do_oop_nv(T* p) {
-   T heap_oop = oopDesc::load_heap_oop(p);
+  ShenandoahHeap* _sh;
+
+public:
+  VerifyLivenessClosure() : _sh ( ShenandoahHeap::heap() ) {}
+
+  template<class T> void do_oop_nv(T* p) {
+    T heap_oop = oopDesc::load_heap_oop(p);
     if (!oopDesc::is_null(heap_oop)) {
       oop obj = oopDesc::decode_heap_oop_not_null(heap_oop);
+      guarantee(_sh->heap_region_containing(obj)->is_dirty() == (obj != oopDesc::bs()->resolve_oop(obj)),
+                err_msg("forwarded objects can only exist in dirty (from-space) regions is_dirty: %d, is_forwarded: %d",
+                        _sh->heap_region_containing(obj)->is_dirty(),
+                        obj != oopDesc::bs()->resolve_oop(obj))
+                );
       obj = oopDesc::bs()->resolve_oop(obj);
+      guarantee(! _sh->heap_region_containing(obj)->is_dirty(), "forwarded oops must not point to dirty regions");
       guarantee(obj->is_oop(), "is_oop");
       ShenandoahHeap* sh = (ShenandoahHeap*) Universe::heap();
       if (! sh->isMarked(obj)) {
@@ -1360,29 +1393,6 @@ class VerifyLivenessChildClosure : public ExtendedOopClosure {
       }
       assert(sh->isMarked(obj), err_msg("Referenced Objects should be marked obj: %p, epoch: %d, obj-age: %d, is_in_heap: %d", 
 					obj, sh->getEpoch(), getMark(obj)->age(), sh->is_in(obj)));
-    }
-   }
-
-  void do_oop(oop* p)       { do_oop_nv(p); }
-  void do_oop(narrowOop* p) { do_oop_nv(p); }
-
-};
-
-class VerifyLivenessParentClosure : public ExtendedOopClosure {
-private:
-
-  template<class T> void do_oop_nv(T* p) {
-    ShenandoahHeap* sh = ShenandoahHeap::heap();
-    T heap_oop = oopDesc::load_heap_oop(p);
-    if (!oopDesc::is_null(heap_oop)) {
-      oop obj = oopDesc::decode_heap_oop_not_null(heap_oop);
-      obj = oopDesc::bs()->resolve_oop(obj);
-      guarantee(! sh->heap_region_containing(obj)->is_dirty(), "forwarded oops must not point to dirty regions");
-      guarantee(obj->is_oop(), "is_oop");
-      if (sh->isMarked(obj)) {
- 	VerifyLivenessChildClosure childClosure;
- 	obj->oop_iterate(&childClosure);
-      }
     }
   }
 
@@ -1392,8 +1402,56 @@ private:
 };
 
 void ShenandoahHeap::verify_live() {
-  VerifyLivenessParentClosure verifyLive;
-  oop_iterate(&verifyLive, true, true);
+
+  VerifyLivenessClosure cl;
+  roots_iterate(&cl);
+
+  IterateMarkedObjectsClosure marked_oops(&cl);
+  object_iterate(&marked_oops);
+
+}
+
+class VerifyAfterEvacuationClosure : public ExtendedOopClosure {
+
+  ShenandoahHeap* _sh;
+
+public:
+  VerifyAfterEvacuationClosure() : _sh ( ShenandoahHeap::heap() ) {}
+
+  template<class T> void do_oop_nv(T* p) {
+    T heap_oop = oopDesc::load_heap_oop(p);
+    if (!oopDesc::is_null(heap_oop)) {
+      oop obj = oopDesc::decode_heap_oop_not_null(heap_oop);
+      guarantee(_sh->heap_region_containing(obj)->is_dirty() == (obj != oopDesc::bs()->resolve_oop(obj)),
+                err_msg("forwarded objects can only exist in dirty (from-space) regions is_dirty: %d, is_forwarded: %d",
+                        _sh->heap_region_containing(obj)->is_dirty(),
+                        obj != oopDesc::bs()->resolve_oop(obj))
+                );
+      obj = oopDesc::bs()->resolve_oop(obj);
+      guarantee(! _sh->heap_region_containing(obj)->is_dirty(), "forwarded oops must not point to dirty regions");
+      guarantee(obj->is_oop(), "is_oop");
+      ShenandoahHeap* sh = (ShenandoahHeap*) Universe::heap();
+      if (! sh->isMarked(obj)) {
+        sh->print_on(tty);
+      }
+      assert(sh->isMarked(obj), err_msg("Referenced Objects should be marked obj: %p, epoch: %d, obj-age: %d, is_in_heap: %d", 
+					obj, sh->getEpoch(), getMark(obj)->age(), sh->is_in(obj)));
+    }
+  }
+
+  void do_oop(oop* p)       { do_oop_nv(p); }
+  void do_oop(narrowOop* p) { do_oop_nv(p); }
+
+};
+
+void ShenandoahHeap::verify_heap_after_evacuation() {
+
+  VerifyAfterEvacuationClosure cl;
+  roots_iterate(&cl);
+
+  IterateMarkedCurrentObjectsClosure marked_oops(&cl);
+  object_iterate(&marked_oops);
+
 }
 
 void ShenandoahHeap::stop_concurrent_marking() {
@@ -1447,73 +1505,3 @@ bool ShenandoahHeap::isMarkedCurrent(oop obj) const {
   return getMark(obj)->age() == _epoch;
 }
   
-class VerifyLivenessAfterConcurrentMarkChildClosure : public ExtendedOopClosure {
-
- private:
-
-   template<class T> void do_oop_nv(T* p) {
-   T heap_oop = oopDesc::load_heap_oop(p);
-    if (!oopDesc::is_null(heap_oop)) {
-      oop obj = oopDesc::decode_heap_oop_not_null(heap_oop);
-      obj = oopDesc::bs()->resolve_oop(obj);
-      guarantee(obj->is_oop(), "is_oop");
-      ShenandoahHeap* sh = (ShenandoahHeap*) Universe::heap();
-      if (ShenandoahGCVerbose) {
-	if (obj->has_displaced_mark()) 
-	  tty->print("Verifying liveness of reference obj "PTR_FORMAT" with displaced mark %x\n", 
-		     obj, getMark(obj)->age());
-	else tty->print("Verifying liveness of reference obj "PTR_FORMAT" with mark %x\n", 
-			obj, getMark(obj)->age());
-	obj->print();
-      }
-      /*
-      if (! sh->isMarkedCurrent(obj)) {
-        tty->print_cr("obj should be marked: %p, forwardee: %p", obj, oopDesc::bs()->resolve_oop(obj));
-      }
-      */
-      assert(sh->isMarkedCurrent(obj), err_msg("Referenced Objects should be marked obj: %p, epoch: %d, obj-age: %d, is_in_heap: %d", obj, sh->getEpoch(), getMark(obj)->age(), sh->is_in(obj)));
-    }
-   }
-
-  void do_oop(oop* p)       { do_oop_nv(p); }
-  void do_oop(narrowOop* p) { do_oop_nv(p); }
-
-};
-
-class VerifyLivenessAfterConcurrentMarkParentClosure : public ExtendedOopClosure {
-private:
-
-  template<class T> void do_oop_nv(T* p) {
-    ShenandoahHeap* sh = ShenandoahHeap::heap();
-    T heap_oop = oopDesc::load_heap_oop(p);
-    if (!oopDesc::is_null(heap_oop)) {
-      oop obj = oopDesc::decode_heap_oop_not_null(heap_oop);
-      guarantee(! sh->heap_region_containing(obj)->is_dirty(), "oops must not point to dirty region oops");
-      guarantee(obj->is_oop(), "is_oop");
-      if (sh->isMarkedCurrent(obj)) {
-	if (ShenandoahGCVerbose) {
-	  if (obj->has_displaced_mark())
-	    tty->print("Verifying liveness of objects pointed to by "PTR_FORMAT" with displaced mark %d\n", 
-		       obj, getMark(obj)->age());
-	  else tty->print("Verifying liveness of objects pointed to by "PTR_FORMAT" with mark %d\n", 
-			  obj, getMark(obj)->age());
-	  obj->print();
-        }
- 	VerifyLivenessAfterConcurrentMarkChildClosure childClosure;
- 	obj->oop_iterate(&childClosure);
-      }
-    }
-  }
-
-  void do_oop(oop* p)       { do_oop_nv(p); }
-  void do_oop(narrowOop* p) { do_oop_nv(p); }
-
-};
-
-// This should only be called after we finish concurrent mark before we start up mutator threads again.
-
-void ShenandoahHeap::verify_liveness_after_concurrent_mark() {
-  VerifyLivenessAfterConcurrentMarkParentClosure verifyLive;
-  oop_iterate(&verifyLive, true, true);
-}
-

@@ -195,6 +195,7 @@ public:
 private:
 
   void verify_heap_after_marking();
+  void verify_heap_after_evacuation();
 
   void verify_evacuation(ShenandoahHeapRegion* from_region);
   bool set_concurrent_mark_in_progress(bool in_progress);
