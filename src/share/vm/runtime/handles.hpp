@@ -26,6 +26,7 @@
 #define SHARE_VM_RUNTIME_HANDLES_HPP
 
 #include "oops/klass.hpp"
+#include "memory/barrierSet.hpp"
 
 //------------------------------------------------------------------------------------------------------------------------
 // In order to preserve oops during garbage collection, they should be
@@ -66,8 +67,8 @@ class Handle VALUE_OBJ_CLASS_SPEC {
   oop* _handle;
 
  protected:
-  oop     obj() const                            { return _handle == NULL ? (oop)NULL : *_handle; }
-  oop     non_null_obj() const                   { assert(_handle != NULL, "resolving NULL handle"); return *_handle;}
+  oop     obj() const                            { return _handle == NULL ? (oop)NULL : oopDesc::bs()->resolve_oop(*_handle); }
+  oop     non_null_obj() const                   { assert(_handle != NULL, "resolving NULL handle"); return oopDesc::bs()->resolve_oop(*_handle);}
 
  public:
   // Constructors
