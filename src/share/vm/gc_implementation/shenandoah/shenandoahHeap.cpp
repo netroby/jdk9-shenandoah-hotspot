@@ -913,6 +913,7 @@ void ShenandoahHeap::maybe_update_oop_ref(oop* p) {
       tty->print_cr("object not in heap: %p, referenced by: %p", heap_oop, p);
     }
     assert(is_in(heap_oop), "only ever call this on objects in the heap");
+    assert(! (is_in(p) && heap_region_containing(p)->is_dirty()), "we don't want to update references in from-space");
     oop forwarded_oop = oopDesc::bs()->resolve_oop(heap_oop);
     if (forwarded_oop != heap_oop) {
       // tty->print_cr("updating old ref: %p pointing to %p to new ref: %p", p, heap_oop, forwarded_oop);
@@ -1252,6 +1253,27 @@ ShenandoahMarkRefsClosure::ShenandoahMarkRefsClosure(uint e, uint worker_id) :
 }
 
 void ShenandoahMarkRefsClosure::do_oop_work(oop* p) {
+
+  if (_heap->is_in(p) && _heap->heap_region_containing(p)->is_dirty()) {
+    // If the reference is in an object in from-space, we need to first
+    // find its to-space counterpart.
+    // TODO: This here is slow (linear search inside region). Make it faster.
+    HeapWord* from_space_ref = (HeapWord*) p;
+    ShenandoahHeapRegion* region = _heap->heap_region_containing(from_space_ref);
+    HeapWord* from_space_obj = NULL;
+    for (HeapWord* curr = region->bottom(); curr < from_space_ref; ) {
+      oop curr_obj = (oop) curr;
+      if (curr < from_space_ref && from_space_ref < (curr + curr_obj->size())) {
+        from_space_obj = curr;
+        break;
+      } else {
+        curr += curr_obj->size();
+      }
+    }
+    assert (from_space_obj != NULL, "must not happen");
+    HeapWord* to_space_obj = (HeapWord*) oopDesc::bs()->resolve_oop((oop) from_space_obj);
+    p = (oop*) (to_space_obj + (from_space_ref - from_space_obj));
+  }
 
   // tty->print_cr("marking oop ref: %p", p);
   // We piggy-back reference updating to the marking tasks.
