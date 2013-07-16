@@ -120,6 +120,7 @@ jint ShenandoahHeap::initialize() {
     current = next;
     _ordered_regions[i+1] = current;
   }
+  _last_region = current;
 
   size_t last_region = _numRegions - 1;
   current->initialize((HeapWord*) pgc_rs.base() + regionSizeWords * (last_region), 
@@ -235,11 +236,12 @@ public:
 };
 
 bool ShenandoahHeap::is_in(const void* p) const {
-  IsInRegionClosure isIn(p);
-  heap_region_iterate(&isIn);
-  bool result = isIn.result();
+  //  IsInRegionClosure isIn(p);
+  //  heap_region_iterate(&isIn);
+  //  bool result = isIn.result();
   
-  return isIn.result();
+  //  return isIn.result();
+  return p > _first_region->bottom() && p < _last_region->end();
 }
 
 bool ShenandoahHeap::is_in_partial_collection(const void* p ) {

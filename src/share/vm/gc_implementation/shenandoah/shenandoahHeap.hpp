@@ -44,6 +44,7 @@ private:
   VirtualSpace _storage;
   ShenandoahHeapRegion* _current_region;
   ShenandoahHeapRegion* _first_region;
+  ShenandoahHeapRegion* _last_region;
   // Ordered array of regions  (name confusing with _regions)
   ShenandoahHeapRegion** _ordered_regions;
 
