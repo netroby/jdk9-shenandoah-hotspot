@@ -1086,10 +1086,6 @@ ReferenceProcessor::add_to_discovered_list_mt(DiscoveredList& refs_list,
   // elided this out for G1, but left in the test for some future
   // collector that might have need for a pre-barrier here, e.g.:-
   // _bs->write_ref_field_pre((oop* or narrowOop*)discovered_addr, next_discovered);
-<<<<<<< local
-=======
-  //  assert(false, "if we get here, we might be in trouble");
->>>>>>> other
   assert(!_discovered_list_needs_barrier || UseG1GC,
          "Need to check non-G1 collector: "
          "may need a pre-write-barrier for CAS from NULL below");
