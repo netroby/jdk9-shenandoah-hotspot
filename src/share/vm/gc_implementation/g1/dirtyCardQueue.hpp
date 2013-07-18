@@ -25,7 +25,7 @@
 #ifndef SHARE_VM_GC_IMPLEMENTATION_G1_DIRTYCARDQUEUE_HPP
 #define SHARE_VM_GC_IMPLEMENTATION_G1_DIRTYCARDQUEUE_HPP
 
-#include "gc_implementation/shared/ptrQueue.hpp"
+#include "gc_implementation/g1/ptrQueue.hpp"
 #include "memory/allocation.hpp"
 
 class FreeIdSet;
