@@ -36,24 +36,9 @@ PtrQueue::PtrQueue(PtrQueueSet* qset, bool perm, bool active) :
 {
 }
 
-void PtrQueue::initialize() {
-
-  // The SATB queue should have been constructed with its active
-  // field set to false.
-  assert(! is_active(), "SATB queue should not be active");
-  assert(is_empty(), "SATB queue should be empty");
-
-  // If we are creating the thread during a marking cycle, we should
-  // set the active field of the SATB queue to true.
-  if (qset()->is_active()) {
-    set_active(true);
-  }
-}
-
 PtrQueueSet* PtrQueue::qset() {
   if (_qset == NULL) {
     _qset = JavaThread::satb_mark_queue_set();
-    initialize();
   }
   return _qset;
 }
