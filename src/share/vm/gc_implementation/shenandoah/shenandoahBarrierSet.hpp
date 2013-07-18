@@ -5,7 +5,7 @@
 #include "asm/macroAssembler.hpp"
 #include "memory/barrierSet.hpp"
 #include "memory/universe.hpp"
-#include "gc_implementation/shenandoah/shenandoahSATBQueue.hpp"
+#include "gc_implementation/g1/g1SATBCardTableModRefBS.hpp"
 
 #define BROOKS_POINTER_OBJ_SIZE 4
 
@@ -64,12 +64,14 @@ public:
 
   template <class T> void
   write_ref_array_pre_work(T* dst, int count) {
-    if (!JavaThread::satb_mark_queue_set()->is_active()) return;
+    if (!JavaThread::satb_mark_queue_set().is_active()) return;
     // tty->print_cr("write_ref_array_pre_work: %p, %d", dst, count);
     T* elem_ptr = dst;
     for (int i = 0; i < count; i++, elem_ptr++) {
       T heap_oop = oopDesc::load_heap_oop(elem_ptr);
-      enqueue(heap_oop, elem_ptr);
+      if (!oopDesc::is_null(heap_oop)) {
+        G1SATBCardTableModRefBS::enqueue(oopDesc::decode_heap_oop_not_null(heap_oop));
+      }
       // tty->print("write_ref_array_pre_work: oop: "PTR_FORMAT"\n", heap_oop);
     }
   }
@@ -88,9 +90,11 @@ public:
 
   template <class T> static void write_ref_field_pre_static(T* field, oop newVal) {
     T heap_oop = oopDesc::load_heap_oop(field);
-    enqueue(heap_oop, field);
-    // tty->print("write_ref_field_pre_work: v = "PTR_FORMAT" o = "PTR_FORMAT" old: %p\n",
-    //           field, newVal, heap_oop);
+    if (!oopDesc::is_null(heap_oop)) {
+      G1SATBCardTableModRefBS::enqueue(oopDesc::decode_heap_oop(heap_oop));
+      // tty->print("write_ref_field_pre_work: v = "PTR_FORMAT" o = "PTR_FORMAT" old: %p\n",
+      //           field, newVal, heap_oop);
+    }
   }
 
   // We export this to make it available in cases where the static
@@ -174,26 +178,6 @@ public:
     } else {
       return NULL;
     }
-  }
-
-private:
-  static void enqueue(oop prev, oop* dst) {
-
-    ShenandoahSATBElement* satb_elem = new ShenandoahSATBElement(prev, dst);
-    
-    if (!JavaThread::satb_mark_queue_set()->is_active()) return;
-    Thread* thr = Thread::current();
-    if (thr->is_Java_thread()) {
-      JavaThread* jt = (JavaThread*)thr;
-      jt->satb_mark_queue().enqueue(satb_elem);
-    } else {
-      MutexLocker x(Shared_SATB_Q_lock);
-      ((ShenandoahSATBQueueSet*) JavaThread::satb_mark_queue_set())->shared_satb_queue()->enqueue(satb_elem);
-    }
-  }
-
-  static void enqueue(narrowOop prev, narrowOop* dst) {
-    Unimplemented(); // Maybe use templates above?
   }
 
 #ifndef CC_INTERP

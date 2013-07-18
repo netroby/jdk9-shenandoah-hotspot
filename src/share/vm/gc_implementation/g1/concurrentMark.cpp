@@ -559,8 +559,8 @@ ConcurrentMark::ConcurrentMark(G1CollectedHeap* g1h, ReservedSpace heap_rs) :
   assert(_markBitMap1.covers(heap_rs), "_markBitMap1 inconsistency");
   assert(_markBitMap2.covers(heap_rs), "_markBitMap2 inconsistency");
 
-  SATBMarkQueueSet* satb_qs = (SATBMarkQueueSet*) JavaThread::satb_mark_queue_set();
-  satb_qs->set_buffer_size(G1SATBBufferSize);
+  SATBMarkQueueSet& satb_qs = JavaThread::satb_mark_queue_set();
+  satb_qs.set_buffer_size(G1SATBBufferSize);
 
   _root_regions.init(_g1h, this);
 
@@ -933,10 +933,10 @@ void ConcurrentMark::checkpointRootsInitialPost() {
   rp->enable_discovery(true /*verify_disabled*/, true /*verify_no_refs*/);
   rp->setup_policy(false); // snapshot the soft ref policy to be used in this cycle
 
-  PtrQueueSet* satb_mq_set = JavaThread::satb_mark_queue_set();
+  SATBMarkQueueSet& satb_mq_set = JavaThread::satb_mark_queue_set();
   // This is the start of  the marking cycle, we're expected all
   // threads to have SATB queues with active set to false.
-  satb_mq_set->set_active_all_threads(true, /* new active value */
+  satb_mq_set.set_active_all_threads(true, /* new active value */
                                      false /* expected_active */);
 
   _root_regions.prepare_for_scan();
@@ -1315,11 +1315,11 @@ void ConcurrentMark::checkpointRootsFinal(bool clear_all_soft_refs) {
     // while marking.
     aggregate_count_data();
 
-    PtrQueueSet* satb_mq_set = JavaThread::satb_mark_queue_set();
+    SATBMarkQueueSet& satb_mq_set = JavaThread::satb_mark_queue_set();
     // We're done with marking.
     // This is the end of  the marking cycle, we're expected all
     // threads to have SATB queues with active set to true.
-    satb_mq_set->set_active_all_threads(false, /* new active value */
+    satb_mq_set.set_active_all_threads(false, /* new active value */
                                        true /* expected_active */);
 
     if (VerifyDuringGC) {
@@ -2611,12 +2611,12 @@ void ConcurrentMark::checkpointRootsFinalWork() {
     CMRemarkTask remarkTask(this, active_workers, true /* is_serial*/);
     remarkTask.work(0);
   }
-  SATBMarkQueueSet* satb_mq_set = (SATBMarkQueueSet*) JavaThread::satb_mark_queue_set();
+  SATBMarkQueueSet& satb_mq_set = JavaThread::satb_mark_queue_set();
   guarantee(has_overflown() ||
-            satb_mq_set->completed_buffers_num() == 0,
+            satb_mq_set.completed_buffers_num() == 0,
             err_msg("Invariant: has_overflown = %s, num buffers = %d",
                     BOOL_TO_STR(has_overflown()),
-                    satb_mq_set->completed_buffers_num()));
+                    satb_mq_set.completed_buffers_num()));
 
   print_stats();
 }
@@ -2969,18 +2969,18 @@ void ConcurrentMark::verify_no_cset_oops(bool verify_stacks,
     }
   }
 
-  SATBMarkQueueSet* satb_qs = (SATBMarkQueueSet*) JavaThread::satb_mark_queue_set();
+  SATBMarkQueueSet& satb_qs = JavaThread::satb_mark_queue_set();
 
   // Verify entries on the enqueued SATB buffers
   if (verify_enqueued_buffers) {
     cl.set_phase(VerifyNoCSetOopsSATBCompleted);
-    satb_qs->iterate_completed_buffers_read_only(&cl);
+    satb_qs.iterate_completed_buffers_read_only(&cl);
   }
 
   // Verify entries on the per-thread SATB buffers
   if (verify_thread_buffers) {
     cl.set_phase(VerifyNoCSetOopsSATBThread);
-    satb_qs->iterate_thread_buffers_read_only(&cl);
+    satb_qs.iterate_thread_buffers_read_only(&cl);
   }
 
   if (verify_fingers) {
@@ -3230,13 +3230,13 @@ void ConcurrentMark::abort() {
   }
   _has_aborted = true;
 
-  SATBMarkQueueSet* satb_mq_set = (SATBMarkQueueSet*) JavaThread::satb_mark_queue_set();
-  satb_mq_set->abandon_partial_marking();
+  SATBMarkQueueSet& satb_mq_set = JavaThread::satb_mark_queue_set();
+  satb_mq_set.abandon_partial_marking();
   // This can be called either during or outside marking, we'll read
   // the expected_active value from the SATB queue set.
-  satb_mq_set->set_active_all_threads(
+  satb_mq_set.set_active_all_threads(
                                  false, /* new active value */
-                                 satb_mq_set->is_active() /* expected_active */);
+                                 satb_mq_set.is_active() /* expected_active */);
 
   _g1h->trace_heap_after_concurrent_cycle();
   _g1h->register_concurrent_cycle_end();
@@ -3621,8 +3621,8 @@ void CMTask::regular_clock_call() {
 
   // (6) Finally, we check whether there are enough completed STAB
   // buffers available for processing. If there are, we abort.
-  SATBMarkQueueSet* satb_mq_set = (SATBMarkQueueSet*) JavaThread::satb_mark_queue_set();
-  if (!_draining_satb_buffers && satb_mq_set->process_completed_buffers()) {
+  SATBMarkQueueSet& satb_mq_set = JavaThread::satb_mark_queue_set();
+  if (!_draining_satb_buffers && satb_mq_set.process_completed_buffers()) {
     if (_cm->verbose_low()) {
       gclog_or_tty->print_cr("[%u] aborting to deal with pending SATB buffers",
                              _worker_id);
@@ -3836,18 +3836,18 @@ void CMTask::drain_satb_buffers() {
   _draining_satb_buffers = true;
 
   CMObjectClosure oc(this);
-  SATBMarkQueueSet* satb_mq_set = (SATBMarkQueueSet*) JavaThread::satb_mark_queue_set();
+  SATBMarkQueueSet& satb_mq_set = JavaThread::satb_mark_queue_set();
   if (G1CollectedHeap::use_parallel_gc_threads()) {
-    satb_mq_set->set_par_closure(_worker_id, &oc);
+    satb_mq_set.set_par_closure(_worker_id, &oc);
   } else {
-    satb_mq_set->set_closure(&oc);
+    satb_mq_set.set_closure(&oc);
   }
 
   // This keeps claiming and applying the closure to completed buffers
   // until we run out of buffers or we need to abort.
   if (G1CollectedHeap::use_parallel_gc_threads()) {
     while (!has_aborted() &&
-           satb_mq_set->par_apply_closure_to_completed_buffer(_worker_id)) {
+           satb_mq_set.par_apply_closure_to_completed_buffer(_worker_id)) {
       if (_cm->verbose_medium()) {
         gclog_or_tty->print_cr("[%u] processed an SATB buffer", _worker_id);
       }
@@ -3856,7 +3856,7 @@ void CMTask::drain_satb_buffers() {
     }
   } else {
     while (!has_aborted() &&
-           satb_mq_set->apply_closure_to_completed_buffer()) {
+           satb_mq_set.apply_closure_to_completed_buffer()) {
       if (_cm->verbose_medium()) {
         gclog_or_tty->print_cr("[%u] processed an SATB buffer", _worker_id);
       }
@@ -3868,9 +3868,9 @@ void CMTask::drain_satb_buffers() {
   if (!concurrent() && !has_aborted()) {
     // We should only do this during remark.
     if (G1CollectedHeap::use_parallel_gc_threads()) {
-      satb_mq_set->par_iterate_closure_all_threads(_worker_id);
+      satb_mq_set.par_iterate_closure_all_threads(_worker_id);
     } else {
-      satb_mq_set->iterate_closure_all_threads();
+      satb_mq_set.iterate_closure_all_threads();
     }
   }
 
@@ -3878,12 +3878,12 @@ void CMTask::drain_satb_buffers() {
 
   assert(has_aborted() ||
          concurrent() ||
-         satb_mq_set->completed_buffers_num() == 0, "invariant");
+         satb_mq_set.completed_buffers_num() == 0, "invariant");
 
   if (G1CollectedHeap::use_parallel_gc_threads()) {
-    satb_mq_set->set_par_closure(_worker_id, NULL);
+    satb_mq_set.set_par_closure(_worker_id, NULL);
   } else {
-    satb_mq_set->set_closure(NULL);
+    satb_mq_set.set_closure(NULL);
   }
 
   // again, this was a potentially expensive operation, decrease the

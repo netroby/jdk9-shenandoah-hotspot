@@ -1,5 +1,4 @@
 #include "gc_implementation/shenandoah/shenandoahHeap.hpp"
-#include "gc_implementation/shenandoah/shenandoahSATBQueue.hpp"
 #include "gc_implementation/shenandoah/vm_operations_shenandoah.hpp"
 #include "runtime/vmThread.hpp"
 #include "memory/iterator.hpp"
@@ -136,8 +135,9 @@ jint ShenandoahHeap::initialize() {
   tty->print("Free Regions\n");
   _free_regions->print();
 
-  JavaThread::set_satb_mark_queue_set(new ShenandoahSATBQueueSet());
-  ((ShenandoahSATBQueueSet*) JavaThread::satb_mark_queue_set())->initialize(SATB_Q_CBL_mon,
+  // The call below uses stuff (the SATB* things) that are in G1, but probably
+  // belong into a shared location.
+  JavaThread::satb_mark_queue_set().initialize(SATB_Q_CBL_mon,
                                                SATB_Q_FL_lock,
                                                20 /*G1SATBProcessCompletedThreshold */,
                                                Shared_SATB_Q_lock);
@@ -159,6 +159,7 @@ ShenandoahHeap::ShenandoahHeap(ShenandoahCollectorPolicy* policy) :
   _pgc = this;
   _scm = new ShenandoahConcurrentMark();
 }
+
 
 void ShenandoahHeap::print_on(outputStream* st) const {
   st->print("Shenandoah Heap");
@@ -1387,7 +1388,7 @@ bool ShenandoahHeap::concurrent_mark_in_progress() {
 
 bool ShenandoahHeap::set_concurrent_mark_in_progress(bool in_progress) {
   _concurrent_mark_in_progress = in_progress;
-  JavaThread::satb_mark_queue_set()->set_active_all_threads(in_progress, ! in_progress);
+  JavaThread::satb_mark_queue_set().set_active_all_threads(in_progress, ! in_progress);
 }
 
 void ShenandoahHeap::post_allocation_collector_specific_setup(HeapWord* hw) {

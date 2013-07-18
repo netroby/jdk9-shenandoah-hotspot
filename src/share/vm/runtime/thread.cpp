@@ -1484,14 +1484,14 @@ void JavaThread::initialize() {
 }
 
 #if INCLUDE_ALL_GCS
-PtrQueueSet* JavaThread::_satb_mark_queue_set;
+SATBMarkQueueSet JavaThread::_satb_mark_queue_set;
 DirtyCardQueueSet JavaThread::_dirty_card_queue_set;
 #endif // INCLUDE_ALL_GCS
 
 JavaThread::JavaThread(bool is_attaching_via_jni) :
   Thread()
 #if INCLUDE_ALL_GCS
-  , _satb_mark_queue(_satb_mark_queue_set),
+  , _satb_mark_queue(&_satb_mark_queue_set),
   _dirty_card_queue(&_dirty_card_queue_set)
 #endif // INCLUDE_ALL_GCS
 {
@@ -1549,7 +1549,7 @@ static void compiler_thread_entry(JavaThread* thread, TRAPS);
 JavaThread::JavaThread(ThreadFunction entry_point, size_t stack_sz) :
   Thread()
 #if INCLUDE_ALL_GCS
-  , _satb_mark_queue(_satb_mark_queue_set),
+  , _satb_mark_queue(&_satb_mark_queue_set),
   _dirty_card_queue(&_dirty_card_queue_set)
 #endif // INCLUDE_ALL_GCS
 {
@@ -1931,15 +1931,15 @@ void JavaThread::initialize_queues() {
   assert(!SafepointSynchronize::is_at_safepoint(),
          "we should not be at a safepoint");
 
-  PtrQueue& satb_queue = satb_mark_queue();
-  PtrQueueSet* satb_queue_set = satb_mark_queue_set();
+  ObjPtrQueue& satb_queue = satb_mark_queue();
+  SATBMarkQueueSet& satb_queue_set = satb_mark_queue_set();
   // The SATB queue should have been constructed with its active
   // field set to false.
   assert(!satb_queue.is_active(), "SATB queue should not be active");
   assert(satb_queue.is_empty(), "SATB queue should be empty");
   // If we are creating the thread during a marking cycle, we should
   // set the active field of the SATB queue to true.
-  if (satb_queue_set->is_active()) {
+  if (satb_queue_set.is_active()) {
     satb_queue.set_active(true);
   }
 
@@ -3893,12 +3893,6 @@ void Threads::create_vm_init_libraries() {
   }
 }
 
-void JavaThread::set_satb_mark_queue_set(PtrQueueSet* satb_mark_queue_set) {
-  guarantee(_satb_mark_queue_set == NULL, "Only initialize once");
-  _satb_mark_queue_set = satb_mark_queue_set;
-  Threads::set_satb_mark_queue_set(satb_mark_queue_set);
-}
-
 // Last thread running calls java.lang.Shutdown.shutdown()
 void JavaThread::invoke_shutdown_hooks() {
   HandleMark hm(this);
@@ -4692,11 +4686,4 @@ void Threads::verify() {
   }
   VMThread* thread = VMThread::vm_thread();
   if (thread != NULL) thread->verify();
-}
-
-void Threads::set_satb_mark_queue_set(PtrQueueSet* satb_mark_queue_set) {
-  MutexLockerEx ml(Threads_lock);
-  ALL_JAVA_THREADS(t) {
-    t->set_satb_mark_queue_set(satb_mark_queue_set);
-  }
 }

@@ -23,7 +23,7 @@
  */
 
 #include "precompiled.hpp"
-#include "gc_implementation/shared/ptrQueue.hpp"
+#include "gc_implementation/g1/ptrQueue.hpp"
 #include "memory/allocation.hpp"
 #include "memory/allocation.inline.hpp"
 #include "runtime/mutex.hpp"
@@ -33,15 +33,7 @@
 PtrQueue::PtrQueue(PtrQueueSet* qset, bool perm, bool active) :
   _qset(qset), _buf(NULL), _index(0), _active(active),
   _perm(perm), _lock(NULL)
-{
-}
-
-PtrQueueSet* PtrQueue::qset() {
-  if (_qset == NULL) {
-    _qset = JavaThread::satb_mark_queue_set();
-  }
-  return _qset;
-}
+{}
 
 void PtrQueue::flush() {
   if (!_perm && _buf != NULL) {
@@ -99,8 +91,7 @@ PtrQueueSet::PtrQueueSet(bool notify_when_complete) :
   _completed_buffers_tail(NULL),
   _n_completed_buffers(0),
   _process_completed_threshold(0), _process_completed(false),
-  _buf_free_list(NULL), _buf_free_list_sz(0),
-  _all_active(false)
+  _buf_free_list(NULL), _buf_free_list_sz(0)
 {
   _fl_owner = this;
 }
@@ -303,59 +294,3 @@ void PtrQueueSet::notify_if_necessary() {
       _cbl_mon->notify();
   }
 }
-
-#ifdef ASSERT
-void PtrQueueSet::dump_active_values(JavaThread* first,
-                                          bool expected_active) {
-  gclog_or_tty->print_cr("SATB queue active values for Java Threads");
-  gclog_or_tty->print_cr(" SATB queue set: active is %s",
-                         (is_active()) ? "TRUE" : "FALSE");
-  gclog_or_tty->print_cr(" expected_active is %s",
-                         (expected_active) ? "TRUE" : "FALSE");
-  for (JavaThread* t = first; t; t = t->next()) {
-    bool active = t->satb_mark_queue().is_active();
-    gclog_or_tty->print_cr("  thread %s, active is %s",
-                           t->name(), (active) ? "TRUE" : "FALSE");
-  }
-}
-#endif // ASSERT
-
-void PtrQueueSet::set_active_all_threads(bool b,
-                                         bool expected_active) {
-  assert(SafepointSynchronize::is_at_safepoint(), "Must be at safepoint.");
-  JavaThread* first = Threads::first();
-
-#ifdef ASSERT
-  if (_all_active != expected_active) {
-    dump_active_values(first, expected_active);
-
-    // I leave this here as a guarantee, instead of an assert, so
-    // that it will still be compiled in if we choose to uncomment
-    // the #ifdef ASSERT in a product build. The whole block is
-    // within an #ifdef ASSERT so the guarantee will not be compiled
-    // in a product build anyway.
-    guarantee(false,
-              "SATB queue set has an unexpected active value");
-  }
-#endif // ASSERT
-  _all_active = b;
-
-  for (JavaThread* t = first; t; t = t->next()) {
-#ifdef ASSERT
-    bool active = t->satb_mark_queue().is_active();
-    if (active != expected_active) {
-      dump_active_values(first, expected_active);
-
-      // I leave this here as a guarantee, instead of an assert, so
-      // that it will still be compiled in if we choose to uncomment
-      // the #ifdef ASSERT in a product build. The whole block is
-      // within an #ifdef ASSERT so the guarantee will not be compiled
-      // in a product build anyway.
-      guarantee(false,
-                "thread has an unexpected active value in its SATB queue");
-    }
-#endif // ASSERT
-    t->satb_mark_queue().set_active(b);
-  }
-}
-

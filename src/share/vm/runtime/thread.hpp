@@ -930,9 +930,9 @@ class JavaThread: public Thread {
 #if INCLUDE_ALL_GCS
   // Support for G1 barriers
 
-  PtrQueue _satb_mark_queue;          // Thread-local log for SATB barrier.
+  ObjPtrQueue _satb_mark_queue;          // Thread-local log for SATB barrier.
   // Set of all such queues.
-  static PtrQueueSet* _satb_mark_queue_set;
+  static SATBMarkQueueSet _satb_mark_queue_set;
 
   DirtyCardQueue _dirty_card_queue;      // Thread-local log for dirty cards.
   // Set of all such queues.
@@ -1638,12 +1638,10 @@ public:
 
 #if INCLUDE_ALL_GCS
   // SATB marking queue support
-  PtrQueue& satb_mark_queue() { return _satb_mark_queue; }
-  static PtrQueueSet* satb_mark_queue_set() {
+  ObjPtrQueue& satb_mark_queue() { return _satb_mark_queue; }
+  static SATBMarkQueueSet& satb_mark_queue_set() {
     return _satb_mark_queue_set;
   }
-
-  static void set_satb_mark_queue_set(PtrQueueSet* satb_mark_queue_set);
 
   // Dirty card queue support
   DirtyCardQueue& dirty_card_queue() { return _dirty_card_queue; }
@@ -1920,7 +1918,6 @@ class Threads: AllStatic {
   // RedefineClasses support
   static void metadata_do(void f(Metadata*));
 
-  static void set_satb_mark_queue_set(PtrQueueSet* satb_mark_queue_set);
   static void gc_epilogue();
   static void gc_prologue();
 #ifdef ASSERT
