@@ -1413,7 +1413,7 @@ run:
 #define COMPARISON_OP2(name, comparison)                                     \
       COMPARISON_OP(name, comparison)                                        \
       CASE(_if_acmp##name): {                                                \
-          int skip = (STACK_OBJECT(-2) comparison STACK_OBJECT(-1))          \
+        int skip = oopDesc::bs()->resolve_oop(STACK_OBJECT(-2)) comparison oopDesc::bs()->resolve_oop(STACK_OBJECT(-1)) \
                        ? (int16_t)Bytes::get_Java_u2(pc + 1) : 3;            \
           address branch_pc = pc;                                            \
           UPDATE_PC_AND_TOS(skip, -2);                                       \
@@ -1679,6 +1679,7 @@ run:
 
       CASE(_monitorenter): {
         oop lockee = STACK_OBJECT(-1);
+        lockee = oopDesc::bs()->resolve_oop(lockee);
         // derefing's lockee ought to provoke implicit null check
         CHECK_NULL(lockee);
         // find a free monitor or one already allocated for this object
@@ -1713,6 +1714,7 @@ run:
 
       CASE(_monitorexit): {
         oop lockee = STACK_OBJECT(-1);
+        lockee = oopDesc::bs()->resolve_oop(lockee);
         CHECK_NULL(lockee);
         // derefing's lockee ought to provoke implicit null check
         // find our monitor slot
