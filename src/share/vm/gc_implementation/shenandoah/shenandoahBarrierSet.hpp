@@ -9,6 +9,24 @@
 
 #define __ masm->
 
+class UpdateRefsForOopClosure: public ExtendedOopClosure {
+private:
+  ShenandoahHeap*  _heap;
+
+public:
+  UpdateRefsForOopClosure() :
+    _heap(ShenandoahHeap::heap()) { }
+
+  void do_oop(oop* p)       {
+    _heap->maybe_update_oop_ref(p);
+  }
+
+  void do_oop(narrowOop* p) {
+    Unimplemented();
+  }
+
+};
+
 class ShenandoahBarrierSet: public BarrierSet {
   
   bool is_a(BarrierSet::Name bsn) {
@@ -57,7 +75,13 @@ public:
   bool write_prim_needs_barrier(HeapWord* hw, size_t s, juint x, juint y){
     nyi();
   }
-  void write_ref_array_work(MemRegion mr){
+  void write_ref_array_work(MemRegion mr) {
+    if (!JavaThread::satb_mark_queue_set().is_active()) return;
+    ShenandoahHeap* heap = ShenandoahHeap::heap();
+    for (HeapWord* word = mr.start(); word < mr.end(); word++) {
+      oop* oop_ptr = (oop*) word;
+      heap->maybe_update_oop_ref(oop_ptr);
+    }
   }
 
   template <class T> void
@@ -90,8 +114,7 @@ public:
     T heap_oop = oopDesc::load_heap_oop(field);
     if (!oopDesc::is_null(heap_oop)) {
       G1SATBCardTableModRefBS::enqueue(oopDesc::decode_heap_oop(heap_oop));
-      // tty->print("write_ref_field_pre_work: v = "PTR_FORMAT" o = "PTR_FORMAT" old: %p\n",
-      //           field, newVal, heap_oop);
+      tty->print("write_ref_field_pre_work: v = "PTR_FORMAT" o = "PTR_FORMAT" old: %p\n", field, newVal, heap_oop);
     }
   }
 
@@ -116,10 +139,7 @@ public:
   void write_ref_field_work(void* v, oop o){
     assert (! UseCompressedOops, "compressed oops not supported yet");
     ShenandoahHeap::heap()->maybe_update_oop_ref((oop*) v);
-    /*
-    tty->print("write_ref_field_work: v = "PTR_FORMAT" o = "PTR_FORMAT"\n",
-               v, o);
-    */
+    // tty->print("write_ref_field_work: v = "PTR_FORMAT" o = "PTR_FORMAT"\n", v, o);
   }
 
   void write_region_work(MemRegion mr){
@@ -130,17 +150,11 @@ public:
     // that potentially need to be updated.
 
     // tty->print_cr("write_region_work: %p, %p", mr.start(), mr.end());
-    ShenandoahHeap* heap = ShenandoahHeap::heap();
-    for (HeapWord* word  = mr.start(); word < mr.end(); word++) {
-      oop* oop_ptr = (oop*) word;
-      oop potential_oop = *oop_ptr;
-      if (heap->is_in(potential_oop) && potential_oop->is_oop() && is_brooks_ptr(oop(((HeapWord*) potential_oop) - BROOKS_POINTER_OBJ_SIZE))) {
-        // We've got an oop*. Update it if necessary.
-        heap->maybe_update_oop_ref(oop_ptr);
-      }
-
-      //tty->print_cr("write_region_work: oop (?): %p", *((oop*) start));
-    }
+    oop obj = oop(mr.start());
+    assert(obj->is_oop(), "must be an oop");
+    assert(ShenandoahBarrierSet::has_brooks_ptr(obj), "must have brooks pointer");
+    UpdateRefsForOopClosure cl;
+    obj->oop_iterate(&cl);
   }
 
   void nyi() {
@@ -180,6 +194,10 @@ public:
     if (p->has_displaced_mark())
       return false;
     return p->mark()->age() == 15;
+  }
+
+  static bool has_brooks_ptr(oopDesc* p) {
+    return is_brooks_ptr(oop(((HeapWord*) p) - BROOKS_POINTER_OBJ_SIZE));
   }
 
   virtual oopDesc* resolve_oop(oopDesc* src) {

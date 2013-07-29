@@ -7,6 +7,7 @@
 #include "memory/universe.hpp"
 #include "utilities/copy.hpp"
 #include "gc_implementation/shared/vmGCOperations.hpp"
+#include "runtime/atomic.inline.hpp"
 
 ShenandoahHeap* ShenandoahHeap::_pgc = NULL;
 
@@ -743,15 +744,15 @@ public:
     if (o != NULL) {
       if (! _heap->isMarkedCurrent(o)) {
         _heap->print_heap_regions();
-        // _heap->print_all_refs();
+        _heap->print_all_refs();
         tty->print_cr("oop not marked, although referrer is marked: %p: in_heap: %d, age: %d, epoch: %d", o, _heap->is_in(o), getMark(o)->age(), _heap->getEpoch());
       }
       assert(o->is_oop(), "oop must be an oop");
       assert(! ShenandoahBarrierSet::is_brooks_ptr(o), "oop must not be a brooks ptr");
-      if (! ShenandoahBarrierSet::is_brooks_ptr(oop(((HeapWord*) o) - BROOKS_POINTER_OBJ_SIZE))) {
+      if (! ShenandoahBarrierSet::has_brooks_ptr(o)) {
         tty->print_cr("oop doesn't have a brooks ptr: %p", o);
       }
-      assert(ShenandoahBarrierSet::is_brooks_ptr(oop(((HeapWord*) o) - BROOKS_POINTER_OBJ_SIZE)), "oop must have a brooks ptr");
+      assert(ShenandoahBarrierSet::has_brooks_ptr(o), "oop must have a brooks ptr");
       if (! (o == oopDesc::bs()->resolve_oop(o))) {
         tty->print_cr("oops has forwardee: p: %p (%d), o = %p (%d), new-o: %p (%d)", p, _heap->heap_region_containing(p)->is_dirty(), o,  _heap->heap_region_containing(o)->is_dirty(), oopDesc::bs()->resolve_oop(o),  _heap->heap_region_containing(oopDesc::bs()->resolve_oop(o))->is_dirty());
         tty->print_cr("oop class: %s", o->klass()->internal_name());
@@ -919,12 +920,15 @@ void ShenandoahHeap::maybe_update_oop_ref(oop* p) {
     if (! is_in(heap_oop)) {
       print_heap_regions();
       tty->print_cr("object not in heap: %p, referenced by: %p", heap_oop, p);
+      assert(is_in(heap_oop), "object must be in heap");
     }
     assert(is_in(heap_oop), "only ever call this on objects in the heap");
     assert(! (is_in(p) && heap_region_containing(p)->is_dirty()), "we don't want to update references in from-space");
     oop forwarded_oop = oopDesc::bs()->resolve_oop(heap_oop);
     if (forwarded_oop != heap_oop) {
       // tty->print_cr("updating old ref: %p pointing to %p to new ref: %p", p, heap_oop, forwarded_oop);
+      assert(forwarded_oop->is_oop(), "oop required");
+      assert(ShenandoahBarrierSet::has_brooks_ptr(forwarded_oop), "brooks pointer required");
       *p = forwarded_oop;
       assert(*p == forwarded_oop, "make sure to update reference correctly");
     }
