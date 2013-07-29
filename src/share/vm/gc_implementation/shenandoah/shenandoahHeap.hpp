@@ -148,7 +148,7 @@ public:
   ShenandoahHeapRegion* heap_region_containing(const void* addr) const;  
 
   bool is_in_reserved(void* p);
-
+  oop* resolve_oop_ptr(oop* p);
   void temp();
 
   volatile unsigned int _concurrent_mark_in_progress;
