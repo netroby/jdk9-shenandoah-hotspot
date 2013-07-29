@@ -1690,7 +1690,7 @@ run:
         BasicObjectLock* entry = NULL;
         while (most_recent != limit ) {
           if (most_recent->obj() == NULL) entry = most_recent;
-          else if (most_recent->obj() == lockee) break;
+          else if (oopDesc::bs()->resolve_oop(most_recent->obj()) == lockee) break;
           most_recent++;
         }
         if (entry != NULL) {
@@ -1721,7 +1721,7 @@ run:
         BasicObjectLock* limit = istate->monitor_base();
         BasicObjectLock* most_recent = (BasicObjectLock*) istate->stack_base();
         while (most_recent != limit ) {
-          if ((most_recent)->obj() == lockee) {
+          if (oopDesc::bs()->resolve_oop(most_recent->obj()) == lockee) {
             BasicLock* lock = most_recent->lock();
             markOop header = lock->displaced_header();
             most_recent->set_obj(NULL);

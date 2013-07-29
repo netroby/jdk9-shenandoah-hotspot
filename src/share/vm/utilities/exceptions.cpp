@@ -51,6 +51,10 @@ void ThreadShadow::set_pending_exception(oop exception, const char* file, int li
   _exception_line    = line;
 }
 
+oop ThreadShadow::pending_exception() const {
+  return Universe::heap()->barrier_set()->resolve_oop(_pending_exception);
+}
+
 void ThreadShadow::clear_pending_exception() {
   if (TraceClearedExceptions) {
     if (_pending_exception != NULL) {

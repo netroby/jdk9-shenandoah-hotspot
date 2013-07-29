@@ -148,8 +148,6 @@ public:
   void heap_region_iterate(ShenandoahHeapRegionClosure* blk, bool skip_dirty_regions = false) const;
   ShenandoahHeapRegion* heap_region_containing(const void* addr) const;  
 
-  bool is_in_reserved(void* p);
-
 /**
  * Maybe we need that at some point...
 
@@ -169,6 +167,7 @@ public:
   ShenandoahConcurrentMark* concurrentMark() { return _scm;}
   size_t bump_object_age(HeapWord* start, HeapWord* end);
   void mark_current(oop obj) const;
+  void mark_current_no_checks(oop obj) const;
   bool isMarkedPrev(oop obj) const;
   bool isMarkedCurrent(oop obj) const;
   bool isMarked(oop obj)  { return isMarkedPrev(obj) || isMarkedCurrent(obj);}
@@ -201,7 +200,7 @@ public:
 
   void print_heap_regions();
 
-  void print_all_refs();
+  void print_all_refs(const char* prefix);
 
 private:
 

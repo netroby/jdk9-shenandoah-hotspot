@@ -75,7 +75,7 @@ class ThreadShadow: public CHeapObj<mtThread> {
   virtual void unused_initial_virtual() { }
 
  public:
-  oop  pending_exception() const                 { return _pending_exception; }
+  oop  pending_exception() const;
   bool has_pending_exception() const             { return _pending_exception != NULL; }
   const char* exception_file() const             { return _exception_file; }
   int  exception_line() const                    { return _exception_line; }

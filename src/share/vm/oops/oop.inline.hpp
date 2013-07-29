@@ -627,6 +627,10 @@ inline bool oopDesc::is_oop(bool ignore_mark_word) const {
   if (!Universe::heap()->is_in_reserved(obj)) return false;
   // obj is aligned and accessible in heap
   if (Universe::heap()->is_in_reserved(obj->klass_or_null())) return false;
+  Klass* klass = obj->klass();
+  if (! Metaspace::contains(klass)) {
+    return false;
+  }
 
   // Header verification: the mark is typically non-NULL. If we're
   // at a safepoint, it must not be null.
@@ -707,6 +711,10 @@ inline markOop oopDesc::displaced_mark() const {
 
 inline void oopDesc::set_displaced_mark(markOop m) {
   mark()->set_displaced_mark_helper(m);
+}
+
+inline markOop oopDesc::cas_set_displaced_mark(markOop m, markOop old) {
+  return mark()->cas_set_displaced_mark_helper(m, old);
 }
 
 // The following method needs to be MT safe.
