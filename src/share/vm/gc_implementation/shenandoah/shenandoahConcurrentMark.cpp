@@ -161,6 +161,7 @@ void ShenandoahConcurrentMark::finishMarkFromRoots() {
 }
 
 void ShenandoahConcurrentMark::drain_satb_buffers() {
+  // tty->print_cr("start draining SATB buffers");
   ShenandoahHeap* sh = (ShenandoahHeap*) Universe::heap();
   ShenandoahMarkObjsClosure cl(sh->getEpoch(), 0);
 
@@ -170,6 +171,7 @@ void ShenandoahConcurrentMark::drain_satb_buffers() {
   while (satb_mq_set.apply_closure_to_completed_buffer());
   satb_mq_set.iterate_closure_all_threads();
   satb_mq_set.set_closure(NULL);
+  // tty->print_cr("end draining SATB buffers");
 
 }
 
