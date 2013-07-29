@@ -7,8 +7,6 @@
 #include "memory/universe.hpp"
 #include "gc_implementation/g1/g1SATBCardTableModRefBS.hpp"
 
-#define BROOKS_POINTER_OBJ_SIZE 4
-
 #define __ masm->
 
 class ShenandoahBarrierSet: public BarrierSet {
@@ -128,11 +126,26 @@ public:
   }
 
   void write_region_work(MemRegion mr){
+    
+    // This is called for cloning an object (see jvm.cpp) after the clone
+    // has been made. We are not interested in any 'previous value' because
+    // it would be NULL in any case. But we *are* interested in any oop*
+    // that potentially need to be updated.
+
     // tty->print_cr("write_region_work: %p, %p", mr.start(), mr.end());
-    // for (HeapWord* start  = mr.start(); start < mr.end(); start++) {
-    //   tty->print_cr("write_region_work: oop (?): %p", *((oop*) start));
-    // }
+    ShenandoahHeap* heap = ShenandoahHeap::heap();
+    for (HeapWord* word  = mr.start(); word < mr.end(); word++) {
+      oop* oop_ptr = (oop*) word;
+      oop potential_oop = *oop_ptr;
+      if (heap->is_in(potential_oop) && potential_oop->is_oop() && is_brooks_ptr(oop(((HeapWord*) potential_oop) - BROOKS_POINTER_OBJ_SIZE))) {
+        // We've got an oop*. Update it if necessary.
+        heap->maybe_update_oop_ref(oop_ptr);
+      }
+
+      //tty->print_cr("write_region_work: oop (?): %p", *((oop*) start));
+    }
   }
+
   void nyi() {
     assert(false, "not yet implemented");
     tty->print_cr("Not yet implemented");

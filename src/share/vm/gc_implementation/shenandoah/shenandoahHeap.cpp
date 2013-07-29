@@ -1,4 +1,5 @@
 #include "gc_implementation/shenandoah/shenandoahHeap.hpp"
+#include "gc_implementation/shenandoah/shenandoahBarrierSet.hpp"
 #include "gc_implementation/shenandoah/vm_operations_shenandoah.hpp"
 #include "runtime/vmThread.hpp"
 #include "memory/iterator.hpp"
@@ -751,6 +752,10 @@ public:
         tty->print_cr("oop doesn't have a brooks ptr: %p", o);
       }
       assert(ShenandoahBarrierSet::is_brooks_ptr(oop(((HeapWord*) o) - BROOKS_POINTER_OBJ_SIZE)), "oop must have a brooks ptr");
+      if (! (o == oopDesc::bs()->resolve_oop(o))) {
+        tty->print_cr("oops has forwardee: p: %p (%d), o = %p (%d), new-o: %p (%d)", p, _heap->heap_region_containing(p)->is_dirty(), o,  _heap->heap_region_containing(o)->is_dirty(), oopDesc::bs()->resolve_oop(o),  _heap->heap_region_containing(oopDesc::bs()->resolve_oop(o))->is_dirty());
+        tty->print_cr("oop class: %s", o->klass()->internal_name());
+      }
       assert(o == oopDesc::bs()->resolve_oop(o), "oops must not be forwarded");
       assert(! _heap->heap_region_containing(o)->is_dirty(), "references must not point to dirty heap regions");
       assert(_heap->isMarkedCurrent(o), "live oops must be marked current");
@@ -1249,30 +1254,41 @@ public:
    heap_region_iterate(&blk);
  }
 
+/**
+ * Maybe we need that at some point...
 oop* ShenandoahHeap::resolve_oop_ptr(oop* p) {
   if (is_in(p) && heap_region_containing(p)->is_dirty()) {
     // If the reference is in an object in from-space, we need to first
     // find its to-space counterpart.
     // TODO: This here is slow (linear search inside region). Make it faster.
-    HeapWord* from_space_ref = (HeapWord*) p;
-    ShenandoahHeapRegion* region = heap_region_containing(from_space_ref);
-    HeapWord* from_space_obj = NULL;
-    for (HeapWord* curr = region->bottom(); curr < from_space_ref; ) {
-      oop curr_obj = (oop) curr;
-      if (curr < from_space_ref && from_space_ref < (curr + curr_obj->size())) {
-        from_space_obj = curr;
-        break;
-      } else {
-        curr += curr_obj->size();
-      }
-    }
-    assert (from_space_obj != NULL, "must not happen");
-    HeapWord* to_space_obj = (HeapWord*) oopDesc::bs()->resolve_oop((oop) from_space_obj);
-    return (oop*) (to_space_obj + (from_space_ref - from_space_obj));
+    oop from_space_oop = oop_containing_oop_ptr(p);
+    HeapWord* to_space_obj = (HeapWord*) oopDesc::bs()->resolve_oop(from_space_oop);
+    return (oop*) (to_space_obj + ((HeapWord*) p - ((HeapWord*) from_space_oop)));
   } else {
     return p;
   }
 }
+
+oop ShenandoahHeap::oop_containing_oop_ptr(oop* p) {
+  HeapWord* from_space_ref = (HeapWord*) p;
+  ShenandoahHeapRegion* region = heap_region_containing(from_space_ref);
+  HeapWord* from_space_obj = NULL;
+  for (HeapWord* curr = region->bottom(); curr < from_space_ref; ) {
+    oop curr_obj = (oop) curr;
+    if (curr < from_space_ref && from_space_ref < (curr + curr_obj->size())) {
+      from_space_obj = curr;
+      break;
+    } else {
+      curr += curr_obj->size();
+    }
+  }
+  assert (from_space_obj != NULL, "must not happen");
+  oop from_space_oop = (oop) from_space_obj;
+  assert (from_space_oop->is_oop(), "must be oop");
+  assert(ShenandoahBarrierSet::is_brooks_ptr(oop(((HeapWord*) from_space_oop) - BROOKS_POINTER_OBJ_SIZE)), "oop must have a brooks ptr");
+  return from_space_oop;
+}
+ */
 
 ShenandoahMarkRefsClosure::ShenandoahMarkRefsClosure(uint e, uint worker_id) :
   _epoch(e), _worker_id(worker_id), _heap(ShenandoahHeap::heap()) {

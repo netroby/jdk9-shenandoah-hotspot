@@ -2,7 +2,6 @@
 #define SHARE_VM_GC_IMPLEMENTATION_SHENANDOAH_SHENANDOAHHEAP_HPP
 
 #include "gc_implementation/shenandoah/shenandoahAllocRegion.hpp"
-#include "gc_implementation/shenandoah/shenandoahBarrierSet.hpp"
 #include "gc_implementation/shenandoah/shenandoahCollectorPolicy.hpp"
 #include "gc_implementation/shenandoah/shenandoahConcurrentMark.hpp"
 #include "gc_implementation/shenandoah/shenandoahHeapRegion.hpp"
@@ -16,6 +15,8 @@
 #include "oops/markOop.hpp"
 
 #define MAX_EPOCH 14
+#define BROOKS_POINTER_OBJ_SIZE 4
+
 
 class SpaceClosure;
 
@@ -148,7 +149,16 @@ public:
   ShenandoahHeapRegion* heap_region_containing(const void* addr) const;  
 
   bool is_in_reserved(void* p);
+
+/**
+ * Maybe we need that at some point...
+
   oop* resolve_oop_ptr(oop* p);
+
+  oop oop_containing_oop_ptr(oop* p);
+
+*/
+
   void temp();
 
   volatile unsigned int _concurrent_mark_in_progress;
