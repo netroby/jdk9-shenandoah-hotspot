@@ -114,15 +114,12 @@ public:
 
 
   void write_ref_field_work(void* v, oop o){
+    assert (! UseCompressedOops, "compressed oops not supported yet");
+    ShenandoahHeap::heap()->maybe_update_oop_ref((oop*) v);
     /*
     tty->print("write_ref_field_work: v = "PTR_FORMAT" o = "PTR_FORMAT"\n",
                v, o);
     */
-  }
-
-  void write_ref_field(void* v, oop o) {
-    // tty->print("write_ref_field: v = "PTR_FORMAT" o = "PTR_FORMAT"\n",
-    //	       v, o);
   }
 
   void write_region_work(MemRegion mr){
