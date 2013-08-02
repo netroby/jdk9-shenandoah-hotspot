@@ -1851,6 +1851,8 @@ void TemplateTable::if_acmp(Condition cc) {
   // assume branch is more often taken than not (loops use backward branches)
   Label not_taken;
   __ pop_ptr(rdx);
+  oopDesc::bs()->compile_resolve_oop(_masm, rdx);
+  oopDesc::bs()->compile_resolve_oop(_masm, rax);
   __ cmpptr(rdx, rax);
   __ jcc(j_not(cc), not_taken);
   branch(false, false);
@@ -2893,6 +2895,7 @@ void TemplateTable::fast_xaccess(TosState state) {
   // next instruction)
   __ increment(r13);
   __ null_check(rax);
+  oopDesc::bs()->compile_resolve_oop_not_null(_masm, rax);
   switch (state) {
   case itos:
     __ movl(rax, Address(rax, rbx, Address::times_1));
