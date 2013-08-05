@@ -1365,14 +1365,7 @@ void ShenandoahMarkObjsClosure::do_object(oop obj) {
 
 void ShenandoahHeap::prepare_unmarked_root_objs() {
   ShenandoahMarkRefsClosure rootsCl(_epoch, 0);
-  CodeBlobToOopClosure blobsCl(&rootsCl, false);
-  KlassToOopClosure klassCl(&rootsCl);
-
-  const int so = SO_AllClasses | SO_Strings | SO_CodeCache;
-
-  ClassLoaderDataGraph::clear_claimed_marks();
-
-  process_strong_roots(true, false, ScanningOption(so), &rootsCl, &blobsCl, &klassCl);
+  roots_iterate(&rootsCl);
 }
 
 class ClearLivenessClosure : public ShenandoahHeapRegionClosure {
