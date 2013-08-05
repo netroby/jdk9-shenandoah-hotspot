@@ -217,20 +217,13 @@ void SharedRuntime::print_ic_miss_histogram() {
 
 // G1 write-barrier pre: executed before a pointer store.
 JRT_LEAF(void, SharedRuntime::g1_wb_pre(oopDesc* orig, JavaThread *thread))
-  if (orig == NULL) {
-    assert(false, "should be optimized out");
-    return;
-  }
-  assert(orig->is_oop(true /* ignore mark word */), "Error");
-  // store the original value that was in the field reference
-  thread->satb_mark_queue().enqueue(orig);
+// NOTE: The write barrier loads the previous value out of the &orig pointer. The 2nd arg is superfluous IMO.
+oopDesc::bs()->write_ref_field_pre(&orig, orig);
 JRT_END
 
 // G1 write-barrier post: executed after a pointer store.
-JRT_LEAF(void, SharedRuntime::g1_wb_post(void* card_addr, JavaThread* thread))
-  if (! UseShenandoahGC) {
-    thread->dirty_card_queue().enqueue(card_addr);
-  }
+JRT_LEAF(void, SharedRuntime::g1_wb_post(oopDesc* val, oop* field, JavaThread* thread))
+  oopDesc::bs()->write_ref_field(field, val);
 JRT_END
 
 #endif // INCLUDE_ALL_GCS

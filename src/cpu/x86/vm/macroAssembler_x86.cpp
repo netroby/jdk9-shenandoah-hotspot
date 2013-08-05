@@ -3256,7 +3256,7 @@ void MacroAssembler::g1_write_barrier_pre(Register obj,
   if (obj != noreg) {
     load_heap_oop(pre_val, Address(obj, 0));
   }
-
+  /*
   // Is the previous value null?
   cmpptr(pre_val, (int32_t) NULL_WORD);
   jcc(Assembler::equal, done);
@@ -3276,7 +3276,7 @@ void MacroAssembler::g1_write_barrier_pre(Register obj,
   // Record the previous value
   movptr(Address(tmp, 0), pre_val);
   jmp(done);
-
+  */
   bind(runtime);
   // save the live input values
   if(tosca_live) push(rax);
@@ -3300,7 +3300,6 @@ void MacroAssembler::g1_write_barrier_pre(Register obj,
   // expand_call should be passed true.
 
   NOT_LP64( push(thread); )
-
   if (expand_call) {
     LP64_ONLY( assert(pre_val != c_rarg1, "smashed arg"); )
     pass_arg1(this, thread);
@@ -3333,89 +3332,19 @@ void MacroAssembler::g1_write_barrier_post(Register store_addr,
   assert(thread == r15_thread, "must be");
 #endif // _LP64
 
-  Address queue_index(thread, in_bytes(JavaThread::dirty_card_queue_offset() +
-                                       PtrQueue::byte_offset_of_index()));
-  Address buffer(thread, in_bytes(JavaThread::dirty_card_queue_offset() +
-                                       PtrQueue::byte_offset_of_buf()));
-
-  BarrierSet* bs = Universe::heap()->barrier_set();
-  CardTableModRefBS* ct = (CardTableModRefBS*)bs;
-  Label done;
-  Label runtime;
-
-  // Does store cross heap regions?
-
-  movptr(tmp, store_addr);
-  xorptr(tmp, new_val);
-  shrptr(tmp, HeapRegion::LogOfHRGrainBytes);
-  jcc(Assembler::equal, done);
-
-  // crosses regions, storing NULL?
-
-  cmpptr(new_val, (int32_t) NULL_WORD);
-  jcc(Assembler::equal, done);
-
-  // storing region crossing non-NULL, is card already dirty?
-
-  ExternalAddress cardtable((address) ct->byte_map_base);
-  assert(sizeof(*ct->byte_map_base) == sizeof(jbyte), "adjust this code");
-#ifdef _LP64
-  const Register card_addr = tmp;
-
-  movq(card_addr, store_addr);
-  shrq(card_addr, CardTableModRefBS::card_shift);
-
-  lea(tmp2, cardtable);
-
-  // get the address of the card
-  addq(card_addr, tmp2);
-#else
-  const Register card_index = tmp;
-
-  movl(card_index, store_addr);
-  shrl(card_index, CardTableModRefBS::card_shift);
-
-  Address index(noreg, card_index, Address::times_1);
-  const Register card_addr = tmp;
-  lea(card_addr, as_Address(ArrayAddress(cardtable, index)));
-#endif
-  cmpb(Address(card_addr, 0), 0);
-  jcc(Assembler::equal, done);
-
-  // storing a region crossing, non-NULL oop, card is clean.
-  // dirty card and log.
-
-  movb(Address(card_addr, 0), 0);
-
-  cmpl(queue_index, 0);
-  jcc(Assembler::equal, runtime);
-  subl(queue_index, wordSize);
-  movptr(tmp2, buffer);
-#ifdef _LP64
-  movslq(rscratch1, queue_index);
-  addq(tmp2, rscratch1);
-  movq(Address(tmp2, 0), card_addr);
-#else
-  addl(tmp2, queue_index);
-  movl(Address(tmp2, 0), card_index);
-#endif
-  jmp(done);
-
-  bind(runtime);
   // save the live input values
   push(store_addr);
   push(new_val);
 #ifdef _LP64
-  call_VM_leaf(CAST_FROM_FN_PTR(address, SharedRuntime::g1_wb_post), card_addr, r15_thread);
+  call_VM_leaf(CAST_FROM_FN_PTR(address, SharedRuntime::g1_wb_post), store_addr, new_val, thread);
 #else
   push(thread);
-  call_VM_leaf(CAST_FROM_FN_PTR(address, SharedRuntime::g1_wb_post), card_addr, thread);
+  call_VM_leaf(CAST_FROM_FN_PTR(address, SharedRuntime::g1_wb_post), store_addr, new_val, thread);
   pop(thread);
 #endif
   pop(new_val);
   pop(store_addr);
 
-  bind(done);
 }
 
 #endif // INCLUDE_ALL_GCS
