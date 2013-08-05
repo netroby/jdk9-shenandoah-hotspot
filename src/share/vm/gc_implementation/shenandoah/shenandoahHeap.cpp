@@ -803,7 +803,7 @@ public:
     _heap(ShenandoahHeap::heap()), _cl(cl) {};
 
   void do_object(oop p) {
-    if (_heap->isMarkedCurrent(p)) {
+    if (_heap->isMarkedCurrent(p) && ! p->is_a(SystemDictionary::IllegalMonitorStateException_klass())) {
       p->oop_iterate(_cl);
     }
   }
