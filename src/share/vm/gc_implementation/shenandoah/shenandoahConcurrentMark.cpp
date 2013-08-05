@@ -149,6 +149,18 @@ void ShenandoahConcurrentMark::finishMarkFromRoots() {
     obj = _overflow_queue->pop();
   }
 
+  found = _task_queues->queue(0)->pop_local(obj);
+
+  while (found) {
+    if (ShenandoahGCVerbose) {
+      tty->print("Pop single threaded Task: obj = "PTR_FORMAT"\n", obj);
+    }
+    assert(obj->is_oop(), "Oops, not an oop");
+    obj->oop_iterate(&cl);
+    found = _task_queues->queue(0)->pop_local(obj);
+  }
+
+
   assert(_task_queues->queue(0)->is_empty(), "Should be empty");
   tty->print_cr("Finishing finishMarkFromRoots");
 #ifdef SLOWDEBUG
