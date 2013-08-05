@@ -41,7 +41,7 @@ void G1SATBCardTableModRefBS::enqueue(oop pre_val) {
   // Nulls should have been already filtered.
   assert(pre_val->is_oop(true), "Error");
 
-  tty->print_cr("enqueue: %p pre_val, active: %d", pre_val, JavaThread::satb_mark_queue_set().is_active());
+  // tty->print_cr("enqueue: %p pre_val, active: %d", pre_val, JavaThread::satb_mark_queue_set().is_active());
   if (!JavaThread::satb_mark_queue_set().is_active()) return;
   Thread* thr = Thread::current();
   if (thr->is_Java_thread()) {

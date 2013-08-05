@@ -411,7 +411,7 @@ HeapWord* ShenandoahHeap::mem_allocate_locked(size_t size,
     initialize_brooks_ptr(filler, result);
     _bytesAllocSinceCM+= size;
     _current_region->setLiveData(_current_region->used());
-    // if (ShenandoahGCVerbose)
+    if (ShenandoahGCVerbose)
       tty->print("mem_allocate_locked object of size %d at addr %p in epoch %d\n", size, result, _epoch);
 
     assert(! heap_region_containing(result)->is_dirty(), "never allocate in dirty region");
@@ -542,7 +542,7 @@ private:
     assert(copy != NULL, "allocation of copy object must not fail");
     Copy::aligned_disjoint_words((HeapWord*) p, copy, p->size());
     assign_brooks_pointer(p, filler, copy);
-    tty->print_cr("copy object from %p to: %p epoch: %d, age: %d", p, copy, ShenandoahHeap::heap()->getEpoch(), getMark(p)->age());
+    // tty->print_cr("copy object from %p to: %p epoch: %d, age: %d", p, copy, ShenandoahHeap::heap()->getEpoch(), getMark(p)->age());
     verify_copy(p, oop(copy));
   }    
   
@@ -713,7 +713,7 @@ public:
     oop o = *p;
     if (o != NULL) {
       if (ShenandoahHeap::heap()->is_in(o) && o->is_oop()) {
-        tty->print_cr("%s (e%d) %d (%p)-> %p (age: %d) (%s)", _prefix, ShenandoahHeap::heap()->getEpoch(), _index, p, o, getMark(o)->age(), o->klass()->internal_name());
+        tty->print_cr("%s (e%d) %d (%p)-> %p (age: %d) (%s %p)", _prefix, ShenandoahHeap::heap()->getEpoch(), _index, p, o, getMark(o)->age(), o->klass()->internal_name(), o->klass());
       } else {
         tty->print_cr("%s (e%d) %d (%p dirty: %d) -> %p (not in heap, possibly corrupted or dirty (%d))", _prefix, ShenandoahHeap::heap()->getEpoch(), _index, p, ShenandoahHeap::heap()->heap_region_containing(p)->is_dirty(), o, ShenandoahHeap::heap()->heap_region_containing(o)->is_dirty());
       }
@@ -737,7 +737,7 @@ public:
 
   void do_object(oop p) {
     //if (ShenandoahHeap::heap()->isMarkedCurrent(p)) {
-      tty->print_cr("%s (e%d) object %p (age: %d) (%s) refers to:", _prefix, ShenandoahHeap::heap()->getEpoch(), p, getMark(p)->age(), p->klass()->internal_name());
+    tty->print_cr("%s (e%d) object %p (age: %d) (%s %p) refers to:", _prefix, ShenandoahHeap::heap()->getEpoch(), p, getMark(p)->age(), p->klass()->internal_name(), p->klass());
       PrintAllRefsOopClosure cl(_prefix);
       p->oop_iterate(&cl);
       //}
@@ -1335,7 +1335,11 @@ void ShenandoahMarkObjsClosure::do_object(oop obj) {
     assert(! sh->heap_region_containing(obj)->is_dirty(), "we don't want to mark objects in from-space");
     assert(sh->is_in(obj), "referenced objects must be in the heap. No?");
     if (! sh->isMarkedCurrent(obj)) {
-      // tty->print_cr("marking object %p, %d, %d", obj, getMark(obj)->age(), sh->getEpoch());
+      /*
+      if (obj->is_a(SystemDictionary::Throwable_klass())) {
+        tty->print_cr("marking Throwable object %p, %d, %d", obj, getMark(obj)->age(), sh->getEpoch());
+      }
+      */
       sh->mark_current(obj);
 
       // Calculate liveness of heap region containing object.
@@ -1406,12 +1410,12 @@ public:
 void ShenandoahHeap::start_concurrent_marking() {
   set_concurrent_mark_in_progress(true);
 
-  print_all_refs("pre -mark");
-
   // Increase and wrap epoch back to 1 (not 0!)
   _epoch = _epoch % MAX_EPOCH + 1;
   assert(_epoch > 0 && _epoch <= MAX_EPOCH, err_msg("invalid epoch: %d", _epoch));
   tty->print_cr("epoch = %d", _epoch);
+
+  print_all_refs("pre-mark0");
 
 #ifdef ASSERT
   BumpObjectAgeClosure boc(this);
@@ -1421,7 +1425,14 @@ void ShenandoahHeap::start_concurrent_marking() {
   ClearLivenessClosure clc(this);
   heap_region_iterate(&clc);
 
+  // print_all_refs("pre -mark");
+
+  // oopDesc::_debug = true;
   prepare_unmarked_root_objs();
+  // if (getEpoch() < 5) {
+  // oopDesc::_debug = false;
+    //}
+  //print_all_refs("pre-mark2");
 }
 
 
@@ -1494,7 +1505,7 @@ public:
         sh->print_on(tty);
       }
       assert(sh->isMarked(obj), err_msg("Referenced Objects should be marked obj: %p, epoch: %d, obj-age: %d, is_in_heap: %d", 
-					obj, sh->getEpoch(), getMark(obj)->age(), sh->is_in(obj)));
+                                        obj, sh->getEpoch(), getMark(obj)->age(), sh->is_in(obj)));
     }
   }
 
@@ -1542,7 +1553,7 @@ void ShenandoahHeap::post_allocation_collector_specific_setup(HeapWord* hw) {
 
   // Assuming for now that objects can't be created already locked
   assert(! obj->has_displaced_mark(), "hopefully new objects don't have displaced mark");
-  tty->print_cr("post_allocation_collector_specific_setup:: %p, (%d)", obj, _epoch);
+  // tty->print_cr("post_allocation_collector_specific_setup:: %p, (%d)", obj, _epoch);
   mark_current_no_checks(obj);
 
 }
@@ -1560,6 +1571,7 @@ void ShenandoahHeap::mark_current_no_checks(oop obj) const {
     markOop new_mark = mark->set_age(_epoch);
     success = cas_setMark(obj, new_mark, mark);
   }
+  // tty->print_cr("mark current: %p", obj);
   // setMark(obj, getMark(obj)->set_age(_epoch));
 }
 
