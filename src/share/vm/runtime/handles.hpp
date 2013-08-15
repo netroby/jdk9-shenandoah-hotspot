@@ -79,7 +79,7 @@ class Handle VALUE_OBJ_CLASS_SPEC {
   // General access
   oop     operator () () const                   { return obj(); }
   oop     operator -> () const                   { return non_null_obj(); }
-  bool    operator == (oop o) const              { return obj() == o; }
+  bool    operator == (oop o) const              { return obj() == oopDesc::bs()->resolve_oop(o); }
   bool    operator == (const Handle& h) const          { return obj() == h.obj(); }
 
   // Null checks

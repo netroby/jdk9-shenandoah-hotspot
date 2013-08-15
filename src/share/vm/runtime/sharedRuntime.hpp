@@ -75,6 +75,8 @@ class SharedRuntime: AllStatic {
   // Counters
   static int     _nof_megamorphic_calls;         // total # of megamorphic calls (through vtable)
 #endif // !PRODUCT
+  // Used for method tracing 
+  //  static int     _indentation;
 
  private:
   enum { POLL_AT_RETURN,  POLL_AT_LOOP, POLL_AT_VECTOR_LOOP };

@@ -544,6 +544,7 @@ private:
     assign_brooks_pointer(p, filler, copy);
     // tty->print_cr("copy object from %p to: %p epoch: %d, age: %d", p, copy, ShenandoahHeap::heap()->getEpoch(), getMark(p)->age());
     verify_copy(p, oop(copy));
+    }
   }    
   
   void do_object(oop p) {
@@ -1306,7 +1307,10 @@ void ShenandoahMarkRefsClosure::do_oop_work(oop* p) {
 
   // tty->print_cr("marking oop ref: %p", p);
   // We piggy-back reference updating to the marking tasks.
+   oop* old = p;
   _heap->maybe_update_oop_ref(p);
+  if (ShenandoahGCVerbose)
+    tty->print("Update %p => %p  to %p => %p\n", p, *p, old, *old);
 
   oop obj = oopDesc::load_heap_oop(p);
   assert(oopDesc::bs()->resolve_oop(obj) == *p, "we just updated the referrer");
@@ -1316,7 +1320,7 @@ void ShenandoahMarkRefsClosure::do_oop_work(oop* p) {
 }
 
 void ShenandoahMarkRefsClosure::do_oop(narrowOop* p) {
-  assert(false, "narrorOops not supported");
+  assert(false, "narrowOops not supported");
 }
 
 void ShenandoahMarkRefsClosure::do_oop(oop* p) {
@@ -1402,13 +1406,18 @@ public:
 
 void ShenandoahHeap::start_concurrent_marking() {
   set_concurrent_mark_in_progress(true);
+  
+  if (ShenandoahGCVerbose) 
+    print_all_refs("pre -mark");
 
   // Increase and wrap epoch back to 1 (not 0!)
   _epoch = _epoch % MAX_EPOCH + 1;
   assert(_epoch > 0 && _epoch <= MAX_EPOCH, err_msg("invalid epoch: %d", _epoch));
-  tty->print_cr("epoch = %d", _epoch);
-
-  print_all_refs("pre-mark0");
+  
+  if (ShenandoahGCVerbose) {
+    tty->print_cr("epoch = %d", _epoch);
+    print_all_refs("pre-mark0");
+  }
 
 #ifdef ASSERT
   BumpObjectAgeClosure boc(this);
@@ -1547,6 +1556,7 @@ void ShenandoahHeap::post_allocation_collector_specific_setup(HeapWord* hw) {
   // Assuming for now that objects can't be created already locked
   assert(! obj->has_displaced_mark(), "hopefully new objects don't have displaced mark");
   // tty->print_cr("post_allocation_collector_specific_setup:: %p, (%d)", obj, _epoch);
+
   mark_current_no_checks(obj);
 
 }

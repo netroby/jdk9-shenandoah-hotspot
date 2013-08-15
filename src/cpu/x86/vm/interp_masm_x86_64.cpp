@@ -798,6 +798,7 @@ void InterpreterMacroAssembler::unlock_object(Register lock_reg) {
 
     // Load oop into obj_reg(%c_rarg3)
     movptr(obj_reg, Address(lock_reg, BasicObjectLock::obj_offset_in_bytes()));
+    oopDesc::bs()->compile_resolve_oop(this, obj_reg);
 
     // Free entry
     movptr(Address(lock_reg, BasicObjectLock::obj_offset_in_bytes()), (int32_t)NULL_WORD);
