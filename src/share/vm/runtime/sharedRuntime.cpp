@@ -185,7 +185,7 @@ int SharedRuntime::_rethrow_ctr=0;
 int     SharedRuntime::_ICmiss_index                    = 0;
 int     SharedRuntime::_ICmiss_count[SharedRuntime::maxICmiss_count];
 address SharedRuntime::_ICmiss_at[SharedRuntime::maxICmiss_count];
-int SharedRuntime::_indentation=0;
+// int SharedRuntime::_indentation=0;
 
 void SharedRuntime::trace_ic_miss(address at) {
   for (int i = 0; i < _ICmiss_index; i++) {

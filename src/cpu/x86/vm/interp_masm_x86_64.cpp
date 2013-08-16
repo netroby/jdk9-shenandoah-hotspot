@@ -707,6 +707,7 @@ void InterpreterMacroAssembler::lock_object(Register lock_reg) {
 
     // Load object pointer into obj_reg %c_rarg3
     movptr(obj_reg, Address(lock_reg, obj_offset));
+    oopDesc::bs()->compile_resolve_oop(this, obj_reg);
 
     if (UseBiasedLocking) {
       biased_locking_enter(lock_reg, obj_reg, swap_reg, rscratch1, false, done, &slow_case);
