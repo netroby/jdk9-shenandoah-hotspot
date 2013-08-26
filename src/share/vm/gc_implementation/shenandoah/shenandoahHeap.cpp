@@ -453,7 +453,7 @@ HeapWord*  ShenandoahHeap::mem_allocate(size_t size,
 
 
   // These are just arbitrary numbers for now.  CHF
-  size_t targetStartMarking = capacity() / 5;
+  size_t targetStartMarking = capacity() / 64;
   size_t targetBytesAllocated = ShenandoahHeapRegion::RegionSizeBytes;
 
   if (used() > targetStartMarking && _bytesAllocSinceCM > targetBytesAllocated && should_start_concurrent_marking()) {
@@ -544,7 +544,6 @@ private:
     assign_brooks_pointer(p, filler, copy);
     // tty->print_cr("copy object from %p to: %p epoch: %d, age: %d", p, copy, ShenandoahHeap::heap()->getEpoch(), getMark(p)->age());
     verify_copy(p, oop(copy));
-    }
   }    
   
   void do_object(oop p) {
