@@ -54,7 +54,7 @@ void ShenandoahAllocRegion::fill_region() {
       _start = _start + BROOKS_POINTER_OBJ_SIZE;
       CollectedHeap::fill_with_object(_start, _hard_end - _start);
       sh->initialize_brooks_ptr(filler, _start);
-      tty->print_cr("fill region object at: %p", _start);
+      // tty->print_cr("fill region object at: %p", _start);
       _start = 0;
       _end = 0;
       _hard_end = 0;
