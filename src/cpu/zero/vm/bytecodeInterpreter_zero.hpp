@@ -111,7 +111,7 @@
 #define STACK_ADDR(offset)    (*((address *) &topOfStack[-(offset)]))
 #define STACK_INT(offset)     (*((jint*) &topOfStack[-(offset)]))
 #define STACK_FLOAT(offset)   (*((jfloat *) &topOfStack[-(offset)]))
-#define STACK_OBJECT(offset)  (*((oop *) &topOfStack [-(offset)]))
+#define STACK_OBJECT(offset)  (oopDesc::bs()->resolve_oop(*((oop *) &topOfStack [-(offset)])))
 #define STACK_DOUBLE(offset)  (((VMJavaVal64*) &topOfStack[-(offset)])->d)
 #define STACK_LONG(offset)    (((VMJavaVal64 *) &topOfStack[-(offset)])->l)
 
@@ -132,7 +132,7 @@
 #define LOCALS_ADDR(offset)    ((address)locals[-(offset)])
 #define LOCALS_INT(offset)     (*((jint*)&locals[-(offset)]))
 #define LOCALS_FLOAT(offset)   (*((jfloat*)&locals[-(offset)]))
-#define LOCALS_OBJECT(offset)  ((oop)locals[-(offset)])
+#define LOCALS_OBJECT(offset)  (oopDesc::bs()->resolve_oop((oop)locals[-(offset)]))
 #define LOCALS_DOUBLE(offset)  (((VMJavaVal64*)&locals[-((offset) + 1)])->d)
 #define LOCALS_LONG(offset)    (((VMJavaVal64*)&locals[-((offset) + 1)])->l)
 #define LOCALS_LONG_AT(offset) (((address)&locals[-((offset) + 1)]))

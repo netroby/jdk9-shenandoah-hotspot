@@ -674,15 +674,15 @@ BytecodeInterpreter::run(interpreterState istate) {
           // oop rcvr = locals[0].j.r;
           oop rcvr;
           if (METHOD->is_static()) {
-            rcvr = METHOD->constants()->pool_holder()->java_mirror();
+            rcvr = oopDesc::bs()->resolve_oop(METHOD->constants()->pool_holder()->java_mirror());
           } else {
             rcvr = LOCALS_OBJECT(0);
             VERIFY_OOP(rcvr);
           }
           // The initial monitor is ours for the taking
           BasicObjectLock* mon = &istate->monitor_base()[-1];
-          oop monobj = mon->obj();
-          assert(mon->obj() == rcvr, "method monitor mis-initialized");
+          oop monobj = oopDesc::bs()->resolve_oop(mon->obj());
+          assert(monobj == rcvr, "method monitor mis-initialized");
 
           bool success = UseBiasedLocking;
           if (UseBiasedLocking) {
@@ -1413,7 +1413,7 @@ run:
 #define COMPARISON_OP2(name, comparison)                                     \
       COMPARISON_OP(name, comparison)                                        \
       CASE(_if_acmp##name): {                                                \
-        int skip = oopDesc::bs()->resolve_oop(STACK_OBJECT(-2)) comparison oopDesc::bs()->resolve_oop(STACK_OBJECT(-1)) \
+        int skip = STACK_OBJECT(-2) comparison STACK_OBJECT(-1)              \
                        ? (int16_t)Bytes::get_Java_u2(pc + 1) : 3;            \
           address branch_pc = pc;                                            \
           UPDATE_PC_AND_TOS(skip, -2);                                       \
@@ -1560,7 +1560,6 @@ run:
 //        arrayOopDesc* arrObj = (arrayOopDesc*)STACK_OBJECT(arrayOff);
 #define ARRAY_INTRO(arrayOff)                                                  \
       arrayOop arrObj = (arrayOop)STACK_OBJECT(arrayOff);                      \
-      arrObj = (arrayOop) Universe::heap()->barrier_set()->resolve_oop(arrObj); \
       jint     index  = STACK_INT(arrayOff + 1);                               \
       char message[jintAsStringSize];                                          \
       CHECK_NULL(arrObj);                                                      \
@@ -1679,7 +1678,6 @@ run:
 
       CASE(_monitorenter): {
         oop lockee = STACK_OBJECT(-1);
-        lockee = oopDesc::bs()->resolve_oop(lockee);
         // derefing's lockee ought to provoke implicit null check
         CHECK_NULL(lockee);
         // find a free monitor or one already allocated for this object
@@ -1714,7 +1712,6 @@ run:
 
       CASE(_monitorexit): {
         oop lockee = STACK_OBJECT(-1);
-        lockee = oopDesc::bs()->resolve_oop(lockee);
         CHECK_NULL(lockee);
         // derefing's lockee ought to provoke implicit null check
         // find our monitor slot
@@ -1790,15 +1787,12 @@ run:
           oop obj;
           if ((Bytecodes::Code)opcode == Bytecodes::_getstatic) {
             Klass* k = cache->f1_as_klass();
-            obj = k->java_mirror();
+            obj = Universe::heap()->barrier_set()->resolve_oop(k->java_mirror());
             MORE_STACK(1);  // Assume single slot push
           } else {
             obj = (oop) STACK_OBJECT(-1);
             CHECK_NULL(obj);
           }
-
-          // Possibly follow forwarding pointer (e.g. for Shenandoah GC).
-          obj = Universe::heap()->barrier_set()->resolve_oop(obj);
 
           //
           // Now store the result on the stack
@@ -1905,15 +1899,12 @@ run:
           }
           if ((Bytecodes::Code)opcode == Bytecodes::_putstatic) {
             Klass* k = cache->f1_as_klass();
-            obj = k->java_mirror();
+            obj = Universe::heap()->barrier_set()->resolve_oop(k->java_mirror());
           } else {
             --count;
             obj = (oop) STACK_OBJECT(count);
             CHECK_NULL(obj);
           }
-
-          // Possibly follow forwarding pointer (e.g. for Shenandoah GC).
-          obj = Universe::heap()->barrier_set()->resolve_oop(obj);
 
           //
           // Now store the result
