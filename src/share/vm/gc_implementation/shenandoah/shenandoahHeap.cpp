@@ -604,7 +604,7 @@ public:
   VerifyEvacuatedObjectClosure(uint epoch) : _epoch(epoch) {}
   
   void do_object(oop p) {
-    if (p->mark()->age() == _epoch) {
+    if (getMark(p)->age() == _epoch) {
       oop p_prime = oopDesc::bs()->resolve_oop(p);
       assert(p != p_prime, "Should point to evacuated copy");
       assert(p->klass() == p_prime->klass(), "Should have the same class");
