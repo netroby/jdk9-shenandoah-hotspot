@@ -1000,7 +1000,7 @@ void ShenandoahHeap::collect(GCCause::Cause) {
 }
 
 void ShenandoahHeap::do_full_collection(bool clear_all_soft_refs) {
-  assert(false, "Shouldn't need to do full collections");
+  //assert(false, "Shouldn't need to do full collections");
 }
 
 AdaptiveSizePolicy* ShenandoahHeap::size_policy() {
