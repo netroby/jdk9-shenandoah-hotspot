@@ -3,7 +3,7 @@
 
 #include "oops/oop.inline.hpp"
 
-class SOMQItem {
+class SOMQItem : public CHeapObj<mtGC> {
 public:
   oop _obj;
   SOMQItem* _next;
