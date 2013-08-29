@@ -222,7 +222,7 @@ oopDesc::bs()->write_ref_field_pre(&orig, orig);
 JRT_END
 
 // G1 write-barrier post: executed after a pointer store.
-JRT_LEAF(void, SharedRuntime::g1_wb_post(oopDesc* val, oop* field, JavaThread* thread))
+JRT_LEAF(void, SharedRuntime::g1_wb_post(oop* field, oopDesc* val, JavaThread* thread))
   oopDesc::bs()->write_ref_field(field, val);
 JRT_END
 

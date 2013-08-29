@@ -3332,14 +3332,17 @@ void MacroAssembler::g1_write_barrier_post(Register store_addr,
   assert(thread == r15_thread, "must be");
 #endif // _LP64
 
+  const Register addr = tmp;
+  movq(addr, store_addr);
+
   // save the live input values
   push(store_addr);
   push(new_val);
 #ifdef _LP64
-  call_VM_leaf(CAST_FROM_FN_PTR(address, SharedRuntime::g1_wb_post), store_addr, new_val, thread);
+  call_VM_leaf(CAST_FROM_FN_PTR(address, SharedRuntime::g1_wb_post), addr, new_val, thread);
 #else
   push(thread);
-  call_VM_leaf(CAST_FROM_FN_PTR(address, SharedRuntime::g1_wb_post), store_addr, new_val, thread);
+  call_VM_leaf(CAST_FROM_FN_PTR(address, SharedRuntime::g1_wb_post), addr, new_val, thread);
   pop(thread);
 #endif
   pop(new_val);

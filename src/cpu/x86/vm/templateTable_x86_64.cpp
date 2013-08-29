@@ -166,13 +166,11 @@ static void do_oop_store(InterpreterMacroAssembler* _masm,
             __ movptr(new_val, val);
           }
           __ store_heap_oop(Address(rdx, 0), val);
-          if (barrier != BarrierSet::ShenandoahBarrierSet) {
           __ g1_write_barrier_post(rdx /* store_adr */,
                                    new_val /* new_val */,
                                    r15_thread /* thread */,
                                    r8 /* tmp */,
                                    rbx /* tmp2 */);
-          }
         }
       }
       break;

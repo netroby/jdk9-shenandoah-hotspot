@@ -174,7 +174,7 @@ class SharedRuntime: AllStatic {
 #if INCLUDE_ALL_GCS
   // G1 write barriers
   static void g1_wb_pre(oopDesc* orig, JavaThread *thread);
-  static void g1_wb_post(oopDesc* val, oop* field, JavaThread* thread);
+  static void g1_wb_post(oop* field, oopDesc* val, JavaThread* thread);
 #endif // INCLUDE_ALL_GCS
 
   // exception handling and implicit exceptions
