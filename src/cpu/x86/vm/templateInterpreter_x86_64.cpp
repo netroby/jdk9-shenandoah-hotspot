@@ -635,6 +635,7 @@ address InterpreterGenerator::generate_accessor_entry(void) {
     __ jcc(Assembler::notEqual, slow_path);
     // rbx: method
     __ movptr(rax, Address(rsp, wordSize));
+    oopDesc::bs()->compile_resolve_oop(_masm, rax);
 
     // check if local 0 != NULL and read field
     __ testptr(rax, rax);
