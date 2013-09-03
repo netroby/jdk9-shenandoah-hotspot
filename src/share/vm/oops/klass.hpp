@@ -79,7 +79,6 @@
 //    [last_biased_lock_bulk_revocation_time] (64 bits)
 //    [prototype_header]
 //    [biased_lock_revocation_count]
-//    [alloc_count   ]
 //    [_modified_oops]
 //    [_accumulated_modified_oops]
 //    [trace_id]
@@ -170,8 +169,6 @@ class Klass : public Metadata {
   jlong    _last_biased_lock_bulk_revocation_time;
   markOop  _prototype_header;   // Used when biased locking is both enabled and disabled for this type
   jint     _biased_lock_revocation_count;
-
-  juint    _alloc_count;        // allocation profiling support
 
   TRACE_DEFINE_KLASS_TRACE_ID;
 
@@ -290,11 +287,6 @@ class Klass : public Metadata {
   void     set_next_sibling(Klass* s);
 
  public:
-  // Allocation profiling support
-  juint alloc_count() const          { return _alloc_count; }
-  void set_alloc_count(juint n)      { _alloc_count = n; }
-  virtual juint alloc_size() const = 0;
-  virtual void set_alloc_size(juint n) = 0;
 
   // Compiler support
   static ByteSize super_offset()                 { return in_ByteSize(offset_of(Klass, _super)); }
@@ -360,7 +352,8 @@ class Klass : public Metadata {
   static int layout_helper_log2_element_size(jint lh) {
     assert(lh < (jint)_lh_neutral_value, "must be array");
     int l2esz = (lh >> _lh_log2_element_size_shift) & _lh_log2_element_size_mask;
-    assert(l2esz <= LogBitsPerLong, "sanity");
+    assert(l2esz <= LogBitsPerLong,
+        err_msg("sanity. l2esz: 0x%x for lh: 0x%x", (uint)l2esz, (uint)lh));
     return l2esz;
   }
   static jint array_layout_helper(jint tag, int hsize, BasicType etype, int log2_esize) {
@@ -677,7 +670,6 @@ class Klass : public Metadata {
 #endif // INCLUDE_ALL_GCS
 
   virtual void array_klasses_do(void f(Klass* k)) {}
-  virtual void with_array_klasses_do(void f(Klass* k));
 
   // Return self, except for abstract classes with exactly 1
   // implementor.  Then return the 1 concrete implementation.
@@ -703,14 +695,24 @@ class Klass : public Metadata {
   virtual const char* internal_name() const = 0;
 
   // Verification
-  virtual void verify_on(outputStream* st);
-  void verify() { verify_on(tty); }
+  virtual void verify_on(outputStream* st, bool check_dictionary);
+  void verify(bool check_dictionary = true) { verify_on(tty, check_dictionary); }
 
 #ifndef PRODUCT
   void verify_vtable_index(int index);
 #endif
 
   virtual void oop_verify_on(oop obj, outputStream* st);
+
+  static bool is_null(narrowKlass obj);
+  static bool is_null(Klass* obj);
+
+  // klass encoding for klass pointer in objects.
+  static narrowKlass encode_klass_not_null(Klass* v);
+  static narrowKlass encode_klass(Klass* v);
+
+  static Klass* decode_klass_not_null(narrowKlass v);
+  static Klass* decode_klass(narrowKlass v);
 
  private:
   // barriers used by klass_oop_store

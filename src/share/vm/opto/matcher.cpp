@@ -67,8 +67,8 @@ const uint Matcher::_begin_rematerialize = _BEGIN_REMATERIALIZE;
 const uint Matcher::_end_rematerialize   = _END_REMATERIALIZE;
 
 //---------------------------Matcher-------------------------------------------
-Matcher::Matcher( Node_List &proj_list ) :
-  PhaseTransform( Phase::Ins_Select ),
+Matcher::Matcher()
+: PhaseTransform( Phase::Ins_Select ),
 #ifdef ASSERT
   _old2new_map(C->comp_arena()),
   _new2old_map(C->comp_arena()),
@@ -78,7 +78,7 @@ Matcher::Matcher( Node_List &proj_list ) :
   _swallowed(swallowed),
   _begin_inst_chain_rule(_BEGIN_INST_CHAIN_RULE),
   _end_inst_chain_rule(_END_INST_CHAIN_RULE),
-  _must_clone(must_clone), _proj_list(proj_list),
+  _must_clone(must_clone),
   _register_save_policy(register_save_policy),
   _c_reg_save_policy(c_reg_save_policy),
   _register_save_type(register_save_type),
@@ -985,6 +985,8 @@ Node *Matcher::xform( Node *n, int max_stack ) {
   mstack.push(n, Visit, NULL, -1);  // set NULL as parent to indicate root
 
   while (mstack.is_nonempty()) {
+    C->check_node_count(NodeLimitFudgeFactor, "too many nodes matching instructions");
+    if (C->failing()) return NULL;
     n = mstack.node();          // Leave node on stack
     Node_State nstate = mstack.state();
     if (nstate == Visit) {
@@ -1302,8 +1304,9 @@ MachNode *Matcher::match_sfpt( SafePointNode *sfpt ) {
       for (int i = begin_out_arg_area; i < out_arg_limit_per_call; i++)
         proj->_rout.Insert(OptoReg::Name(i));
     }
-    if( proj->_rout.is_NotEmpty() )
-      _proj_list.push(proj);
+    if (proj->_rout.is_NotEmpty()) {
+      push_projection(proj);
+    }
   }
   // Transfer the safepoint information from the call to the mcall
   // Move the JVMState list
@@ -1683,14 +1686,15 @@ MachNode *Matcher::ReduceInst( State *s, int rule, Node *&mem ) {
   }
 
   // If the _leaf is an AddP, insert the base edge
-  if( leaf->is_AddP() )
+  if (leaf->is_AddP()) {
     mach->ins_req(AddPNode::Base,leaf->in(AddPNode::Base));
+  }
 
-  uint num_proj = _proj_list.size();
+  uint number_of_projections_prior = number_of_projections();
 
   // Perform any 1-to-many expansions required
-  MachNode *ex = mach->Expand(s,_proj_list, mem);
-  if( ex != mach ) {
+  MachNode *ex = mach->Expand(s, _projection_list, mem);
+  if (ex != mach) {
     assert(ex->ideal_reg() == mach->ideal_reg(), "ideal types should match");
     if( ex->in(1)->is_Con() )
       ex->in(1)->set_req(0, C->root());
@@ -1711,7 +1715,7 @@ MachNode *Matcher::ReduceInst( State *s, int rule, Node *&mem ) {
   // generated belatedly during spill code generation.
   if (_allocation_started) {
     guarantee(ex == mach, "no expand rules during spill generation");
-    guarantee(_proj_list.size() == num_proj, "no allocation during spill generation");
+    guarantee(number_of_projections_prior == number_of_projections(), "no allocation during spill generation");
   }
 
   if (leaf->is_Con() || leaf->is_DecodeNarrowPtr()) {
@@ -2303,26 +2307,26 @@ void Matcher::validate_null_checks( ) {
 // atomic instruction acting as a store_load barrier without any
 // intervening volatile load, and thus we don't need a barrier here.
 // We retain the Node to act as a compiler ordering barrier.
-bool Matcher::post_store_load_barrier(const Node *vmb) {
-  Compile *C = Compile::current();
-  assert( vmb->is_MemBar(), "" );
-  assert( vmb->Opcode() != Op_MemBarAcquire, "" );
-  const MemBarNode *mem = (const MemBarNode*)vmb;
+bool Matcher::post_store_load_barrier(const Node* vmb) {
+  Compile* C = Compile::current();
+  assert(vmb->is_MemBar(), "");
+  assert(vmb->Opcode() != Op_MemBarAcquire, "");
+  const MemBarNode* membar = vmb->as_MemBar();
 
-  // Get the Proj node, ctrl, that can be used to iterate forward
-  Node *ctrl = NULL;
-  DUIterator_Fast imax, i = mem->fast_outs(imax);
-  while( true ) {
-    ctrl = mem->fast_out(i);            // Throw out-of-bounds if proj not found
-    assert( ctrl->is_Proj(), "only projections here" );
-    ProjNode *proj = (ProjNode*)ctrl;
-    if( proj->_con == TypeFunc::Control &&
-        !C->node_arena()->contains(ctrl) ) // Unmatched old-space only
+  // Get the Ideal Proj node, ctrl, that can be used to iterate forward
+  Node* ctrl = NULL;
+  for (DUIterator_Fast imax, i = membar->fast_outs(imax); i < imax; i++) {
+    Node* p = membar->fast_out(i);
+    assert(p->is_Proj(), "only projections here");
+    if ((p->as_Proj()->_con == TypeFunc::Control) &&
+        !C->node_arena()->contains(p)) { // Unmatched old-space only
+      ctrl = p;
       break;
-    i++;
+    }
   }
+  assert((ctrl != NULL), "missing control projection");
 
-  for( DUIterator_Fast jmax, j = ctrl->fast_outs(jmax); j < jmax; j++ ) {
+  for (DUIterator_Fast jmax, j = ctrl->fast_outs(jmax); j < jmax; j++) {
     Node *x = ctrl->fast_out(j);
     int xop = x->Opcode();
 
@@ -2334,37 +2338,36 @@ bool Matcher::post_store_load_barrier(const Node *vmb) {
     // that a monitor exit operation contains a serializing instruction.
 
     if (xop == Op_MemBarVolatile ||
-        xop == Op_FastLock ||
         xop == Op_CompareAndSwapL ||
         xop == Op_CompareAndSwapP ||
         xop == Op_CompareAndSwapN ||
-        xop == Op_CompareAndSwapI)
+        xop == Op_CompareAndSwapI) {
       return true;
+    }
+
+    // Op_FastLock previously appeared in the Op_* list above.
+    // With biased locking we're no longer guaranteed that a monitor
+    // enter operation contains a serializing instruction.
+    if ((xop == Op_FastLock) && !UseBiasedLocking) {
+      return true;
+    }
 
     if (x->is_MemBar()) {
       // We must retain this membar if there is an upcoming volatile
-      // load, which will be preceded by acquire membar.
-      if (xop == Op_MemBarAcquire)
+      // load, which will be followed by acquire membar.
+      if (xop == Op_MemBarAcquire) {
         return false;
-      // For other kinds of barriers, check by pretending we
-      // are them, and seeing if we can be removed.
-      else
-        return post_store_load_barrier((const MemBarNode*)x);
+      } else {
+        // For other kinds of barriers, check by pretending we
+        // are them, and seeing if we can be removed.
+        return post_store_load_barrier(x->as_MemBar());
+      }
     }
 
-    // Delicate code to detect case of an upcoming fastlock block
-    if( x->is_If() && x->req() > 1 &&
-        !C->node_arena()->contains(x) ) { // Unmatched old-space only
-      Node *iff = x;
-      Node *bol = iff->in(1);
-      // The iff might be some random subclass of If or bol might be Con-Top
-      if (!bol->is_Bool())  return false;
-      assert( bol->req() > 1, "" );
-      return (bol->in(1)->Opcode() == Op_FastUnlock);
-    }
     // probably not necessary to check for these
-    if (x->is_Call() || x->is_SafePoint() || x->is_block_proj())
+    if (x->is_Call() || x->is_SafePoint() || x->is_block_proj()) {
       return false;
+    }
   }
   return false;
 }

@@ -42,7 +42,7 @@ define_pd_global(bool, ProfileInterpreter,           false);
 #else
 define_pd_global(bool, ProfileInterpreter,           true);
 #endif // CC_INTERP
-define_pd_global(bool, TieredCompilation,            false);
+define_pd_global(bool, TieredCompilation,            trueInTiered);
 define_pd_global(intx, CompileThreshold,             10000);
 define_pd_global(intx, BackEdgeThreshold,            140000);
 
@@ -86,7 +86,8 @@ define_pd_global(intx, CodeCacheExpansionSize,       32*K);
 // Ergonomics related flags
 define_pd_global(uint64_t,MaxRAM,                    4ULL*G);
 #endif
-define_pd_global(uintx,CodeCacheMinBlockLength,      4);
+define_pd_global(uintx, CodeCacheMinBlockLength,     4);
+define_pd_global(uintx, CodeCacheMinimumUseSpace,    400*K);
 
 // Heap related flags
 define_pd_global(uintx,MetaspaceSize,    ScaleForWordSize(16*M));

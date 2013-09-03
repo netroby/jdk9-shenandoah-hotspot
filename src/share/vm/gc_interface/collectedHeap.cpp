@@ -85,16 +85,16 @@ GCHeapSummary CollectedHeap::create_heap_summary() {
 
 MetaspaceSummary CollectedHeap::create_metaspace_summary() {
   const MetaspaceSizes meta_space(
-      0, /*MetaspaceAux::capacity_in_bytes(),*/
-      0, /*MetaspaceAux::used_in_bytes(),*/
+      MetaspaceAux::allocated_capacity_bytes(),
+      MetaspaceAux::allocated_used_bytes(),
       MetaspaceAux::reserved_in_bytes());
   const MetaspaceSizes data_space(
-      0, /*MetaspaceAux::capacity_in_bytes(Metaspace::NonClassType),*/
-      0, /*MetaspaceAux::used_in_bytes(Metaspace::NonClassType),*/
+      MetaspaceAux::allocated_capacity_bytes(Metaspace::NonClassType),
+      MetaspaceAux::allocated_used_bytes(Metaspace::NonClassType),
       MetaspaceAux::reserved_in_bytes(Metaspace::NonClassType));
   const MetaspaceSizes class_space(
-      0, /*MetaspaceAux::capacity_in_bytes(Metaspace::ClassType),*/
-      0, /*MetaspaceAux::used_in_bytes(Metaspace::ClassType),*/
+      MetaspaceAux::allocated_capacity_bytes(Metaspace::ClassType),
+      MetaspaceAux::allocated_used_bytes(Metaspace::ClassType),
       MetaspaceAux::reserved_in_bytes(Metaspace::ClassType));
 
   return MetaspaceSummary(meta_space, data_space, class_space);
@@ -116,6 +116,14 @@ void CollectedHeap::print_heap_after_gc() {
   if (_gc_heap_log != NULL) {
     _gc_heap_log->log_heap_after();
   }
+}
+
+void CollectedHeap::register_nmethod(nmethod* nm) {
+  assert_locked_or_safepoint(CodeCache_lock);
+}
+
+void CollectedHeap::unregister_nmethod(nmethod* nm) {
+  assert_locked_or_safepoint(CodeCache_lock);
 }
 
 void CollectedHeap::trace_heap(GCWhen::Type when, GCTracer* gc_tracer) {

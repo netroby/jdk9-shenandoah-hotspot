@@ -133,6 +133,8 @@ class OopMapBlock VALUE_OBJ_CLASS_SPEC {
   uint _count;
 };
 
+struct JvmtiCachedClassFileData;
+
 class InstanceKlass: public Klass {
   friend class VMStructs;
   friend class ClassFileParser;
@@ -199,14 +201,10 @@ class InstanceKlass: public Klass {
   // number_of_inner_classes * 4 + enclosing_method_attribute_size.
   Array<jushort>* _inner_classes;
 
-  // Name of source file containing this klass, NULL if not specified.
-  Symbol*         _source_file_name;
   // the source debug extension for this klass, NULL if not specified.
   // Specified as UTF-8 string without terminating zero byte in the classfile,
   // it is stored in the instanceklass as a NULL-terminated UTF-8 string
   char*           _source_debug_extension;
-  // Generic signature, or null if none.
-  Symbol*         _generic_signature;
   // Array name derived from this class which needs unreferencing
   // if this class is unloaded.
   Symbol*         _array_name;
@@ -215,6 +213,12 @@ class InstanceKlass: public Klass {
   // (including inherited fields but after header_size()).
   int             _nonstatic_field_size;
   int             _static_field_size;    // number words used by static fields (oop and non-oop) in this klass
+  // Constant pool index to the utf8 entry of the Generic signature,
+  // or 0 if none.
+  u2              _generic_signature_index;
+  // Constant pool index to the utf8 entry for the name of source file
+  // containing this klass, 0 if not specified.
+  u2              _source_file_name_index;
   u2              _static_oop_field_count;// number of static oop fields in this klass
   u2              _java_fields_count;    // The number of declared Java fields
   int             _nonstatic_oop_map_size;// size in words of nonstatic oop map blocks
@@ -249,8 +253,8 @@ class InstanceKlass: public Klass {
   // InstanceKlass. See PreviousVersionWalker below.
   GrowableArray<PreviousVersionNode *>* _previous_versions;
   // JVMTI fields can be moved to their own structure - see 6315920
-  unsigned char * _cached_class_file_bytes;       // JVMTI: cached class file, before retransformable agent modified it in CFLH
-  jint            _cached_class_file_len;         // JVMTI: length of above
+  // JVMTI: cached class file, before retransformable agent modified it in CFLH
+  JvmtiCachedClassFileData* _cached_class_file;
 
   volatile u2     _idnum_allocated_count;         // JNI/JVMTI: increments with the addition of methods, old ids don't change
 
@@ -568,8 +572,16 @@ class InstanceKlass: public Klass {
   }
 
   // source file name
-  Symbol* source_file_name() const         { return _source_file_name; }
-  void set_source_file_name(Symbol* n);
+  Symbol* source_file_name() const               {
+    return (_source_file_name_index == 0) ?
+      (Symbol*)NULL : _constants->symbol_at(_source_file_name_index);
+  }
+  u2 source_file_name_index() const              {
+    return _source_file_name_index;
+  }
+  void set_source_file_name_index(u2 sourcefile_index) {
+    _source_file_name_index = sourcefile_index;
+  }
 
   // minor and major version numbers of class file
   u2 minor_version() const                 { return _minor_version; }
@@ -615,11 +627,12 @@ class InstanceKlass: public Klass {
   static void purge_previous_versions(InstanceKlass* ik);
 
   // JVMTI: Support for caching a class file before it is modified by an agent that can do retransformation
-  void set_cached_class_file(unsigned char *class_file_bytes,
-                             jint class_file_len)     { _cached_class_file_len = class_file_len;
-                                                        _cached_class_file_bytes = class_file_bytes; }
-  jint get_cached_class_file_len()                    { return _cached_class_file_len; }
-  unsigned char * get_cached_class_file_bytes()       { return _cached_class_file_bytes; }
+  void set_cached_class_file(JvmtiCachedClassFileData *data) {
+    _cached_class_file = data;
+  }
+  JvmtiCachedClassFileData * get_cached_class_file() { return _cached_class_file; }
+  jint get_cached_class_file_len();
+  unsigned char * get_cached_class_file_bytes();
 
   // JVMTI: Support for caching of field indices, types, and offsets
   void set_jvmti_cached_class_field_map(JvmtiCachedClassFieldMap* descriptor) {
@@ -645,8 +658,16 @@ class InstanceKlass: public Klass {
   void set_initial_method_idnum(u2 value)             { _idnum_allocated_count = value; }
 
   // generics support
-  Symbol* generic_signature() const                   { return _generic_signature; }
-  void set_generic_signature(Symbol* sig)             { _generic_signature = sig; }
+  Symbol* generic_signature() const                   {
+    return (_generic_signature_index == 0) ?
+      (Symbol*)NULL : _constants->symbol_at(_generic_signature_index);
+  }
+  u2 generic_signature_index() const                  {
+    return _generic_signature_index;
+  }
+  void set_generic_signature_index(u2 sig_index)      {
+    _generic_signature_index = sig_index;
+  }
 
   u2 enclosing_method_data(int offset);
   u2 enclosing_method_class_index() {
@@ -794,7 +815,6 @@ class InstanceKlass: public Klass {
   void methods_do(void f(Method* method));
   void array_klasses_do(void f(Klass* k));
   void array_klasses_do(void f(Klass* k, TRAPS), TRAPS);
-  void with_array_klasses_do(void f(Klass* k));
   bool super_types_do(SuperTypeClosure* blk);
 
   // Casting from Klass*
@@ -873,10 +893,6 @@ class InstanceKlass: public Klass {
       return NULL;
     }
   }
-
-  // Allocation profiling support
-  juint alloc_size() const            { return _alloc_count * size_helper(); }
-  void set_alloc_size(juint n)        {}
 
   // Use this to return the size of an instance in heap words:
   int size_helper() const {
@@ -1050,7 +1066,7 @@ public:
   const char* internal_name() const;
 
   // Verification
-  void verify_on(outputStream* st);
+  void verify_on(outputStream* st, bool check_dictionary);
 
   void oop_verify_on(oop obj, outputStream* st);
 };

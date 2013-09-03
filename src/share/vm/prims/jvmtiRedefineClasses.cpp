@@ -1554,6 +1554,20 @@ bool VM_RedefineClasses::rewrite_cp_refs(instanceKlassHandle scratch_class,
     return false;
   }
 
+  // rewrite sourc file name index:
+  u2 source_file_name_idx = scratch_class->source_file_name_index();
+  if (source_file_name_idx != 0) {
+    u2 new_source_file_name_idx = find_new_index(source_file_name_idx);
+    scratch_class->set_source_file_name_index(new_source_file_name_idx);
+  }
+
+  // rewrite class generic signature index:
+  u2 generic_signature_index = scratch_class->generic_signature_index();
+  if (generic_signature_index != 0) {
+    u2 new_generic_signature_index = find_new_index(generic_signature_index);
+    scratch_class->set_generic_signature_index(new_generic_signature_index);
+  }
+
   return true;
 } // end rewrite_cp_refs()
 
@@ -3217,15 +3231,6 @@ void VM_RedefineClasses::redefine_single_class(jclass the_jclass,
   JvmtiBreakpoints& jvmti_breakpoints = JvmtiCurrentBreakpoints::get_jvmti_breakpoints();
   jvmti_breakpoints.clearall_in_class_at_safepoint(the_class_oop);
 
-  if (the_class_oop == Universe::reflect_invoke_cache()->klass()) {
-    // We are redefining java.lang.reflect.Method. Method.invoke() is
-    // cached and users of the cache care about each active version of
-    // the method so we have to track this previous version.
-    // Do this before methods get switched
-    Universe::reflect_invoke_cache()->add_previous_version(
-      the_class->method_with_idnum(Universe::reflect_invoke_cache()->method_idnum()));
-  }
-
   // Deoptimize all compiled code that depends on this class
   flush_dependent_code(the_class, THREAD);
 
@@ -3342,9 +3347,7 @@ void VM_RedefineClasses::redefine_single_class(jclass the_jclass,
   // should get cleared in the_class too.
   if (the_class->get_cached_class_file_bytes() == 0) {
     // the_class doesn't have a cache yet so copy it
-    the_class->set_cached_class_file(
-      scratch_class->get_cached_class_file_bytes(),
-      scratch_class->get_cached_class_file_len());
+    the_class->set_cached_class_file(scratch_class->get_cached_class_file());
   }
 #ifndef PRODUCT
   else {
@@ -3357,7 +3360,7 @@ void VM_RedefineClasses::redefine_single_class(jclass the_jclass,
 
   // NULL out in scratch class to not delete twice.  The class to be redefined
   // always owns these bytes.
-  scratch_class->set_cached_class_file(NULL, 0);
+  scratch_class->set_cached_class_file(NULL);
 
   // Replace inner_classes
   Array<u2>* old_inner_classes = the_class->inner_classes();
@@ -3381,7 +3384,8 @@ void VM_RedefineClasses::redefine_single_class(jclass the_jclass,
   // Leave arrays of jmethodIDs and itable index cache unchanged
 
   // Copy the "source file name" attribute from new class version
-  the_class->set_source_file_name(scratch_class->source_file_name());
+  the_class->set_source_file_name_index(
+    scratch_class->source_file_name_index());
 
   // Copy the "source debug extension" attribute from new class version
   the_class->set_source_debug_extension(

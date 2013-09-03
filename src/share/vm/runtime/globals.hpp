@@ -175,6 +175,7 @@ define_pd_global(intx, InitialCodeCacheSize,         160*K);
 define_pd_global(intx, ReservedCodeCacheSize,        32*M);
 define_pd_global(intx, CodeCacheExpansionSize,       32*K);
 define_pd_global(intx, CodeCacheMinBlockLength,      1);
+define_pd_global(intx, CodeCacheMinimumUseSpace,     200*K);
 define_pd_global(uintx,MetaspaceSize,    ScaleForWordSize(4*M));
 define_pd_global(bool, NeverActAsServerClassMachine, true);
 define_pd_global(uint64_t,MaxRAM,                    1ULL*G);
@@ -220,7 +221,8 @@ struct Flag {
   // number of flags
   static size_t numFlags;
 
-  static Flag* find_flag(char* name, size_t length, bool allow_locked = false);
+  static Flag* find_flag(const char* name, size_t length, bool allow_locked = false);
+  static Flag* fuzzy_match(const char* name, size_t length, bool allow_locked = false);
 
   bool is_bool() const        { return strcmp(type, "bool") == 0; }
   bool get_bool() const       { return *((bool*) addr); }
@@ -643,6 +645,9 @@ class CommandLineFlags {
                                                                             \
   product(bool, UseAESIntrinsics, false,                                    \
           "use intrinsics for AES versions of crypto")                      \
+                                                                            \
+  product(bool, UseCRC32Intrinsics, false,                                  \
+          "use intrinsics for java.util.zip.CRC32")                         \
                                                                             \
   develop(bool, TraceCallFixup, false,                                      \
           "traces all call fixups")                                         \
@@ -1690,6 +1695,9 @@ class CommandLineFlags {
   product(bool, CMSAbortSemantics, false,                                   \
           "Whether abort-on-overflow semantics is implemented")             \
                                                                             \
+  product(bool, CMSParallelInitialMarkEnabled, true,                        \
+          "Use the parallel initial mark.")                                 \
+                                                                            \
   product(bool, CMSParallelRemarkEnabled, true,                             \
           "Whether parallel remark enabled (only if ParNewGC)")             \
                                                                             \
@@ -1700,6 +1708,14 @@ class CommandLineFlags {
   product(bool, CMSPLABRecordAlways, true,                                  \
           "Whether to always record survivor space PLAB bdries"             \
           " (effective only if CMSParallelSurvivorRemarkEnabled)")          \
+                                                                            \
+  product(bool, CMSEdenChunksRecordAlways, true,                            \
+          "Whether to always record eden chunks used for "                  \
+          "the parallel initial mark or remark of eden" )                   \
+                                                                            \
+  product(bool, CMSPrintEdenSurvivorChunks, false,                          \
+          "Print the eden and the survivor chunks used for the parallel "   \
+          "initial mark or remark of the eden/survivor spaces")             \
                                                                             \
   product(bool, CMSConcurrentMTEnabled, true,                               \
           "Whether multi-threaded concurrent work enabled (if ParNewGC)")   \
@@ -2590,9 +2606,6 @@ class CommandLineFlags {
   product(bool, AggressiveOpts, false,                                      \
           "Enable aggressive optimizations - see arguments.cpp")            \
                                                                             \
-  product(bool, UseStringCache, false,                                      \
-          "Enable String cache capabilities on String.java")                \
-                                                                            \
   /* statistics */                                                          \
   develop(bool, CountCompiledCalls, false,                                  \
           "counts method invocations")                                      \
@@ -3029,7 +3042,7 @@ class CommandLineFlags {
   product(uintx, MaxMetaspaceSize, max_uintx,                               \
           "Maximum size of Metaspaces (in bytes)")                          \
                                                                             \
-  product(uintx, ClassMetaspaceSize, 2*M,                                   \
+  product(uintx, ClassMetaspaceSize, 1*G,                                   \
           "Maximum size of InstanceKlass area in Metaspace used for "       \
           "UseCompressedKlassPointers")                                     \
                                                                             \
@@ -3165,6 +3178,9 @@ class CommandLineFlags {
                                                                             \
   product_pd(uintx, InitialCodeCacheSize,                                   \
           "Initial code cache size (in bytes)")                             \
+                                                                            \
+  develop_pd(uintx, CodeCacheMinimumUseSpace,                               \
+          "Minimum code cache size (in bytes) required to start VM.")       \
                                                                             \
   product_pd(uintx, ReservedCodeCacheSize,                                  \
           "Reserved code cache size (in bytes) - maximum code cache size")  \
@@ -3677,6 +3693,9 @@ class CommandLineFlags {
                                                                             \
   develop(bool, VerifyGenericSignatures, false,                             \
           "Abort VM on erroneous or inconsistent generic signatures")       \
+                                                                            \
+  product(bool, ParseGenericDefaults, false,                                \
+          "Parse generic signatures for default method handling")           \
                                                                             \
   product(bool, UseVMInterruptibleIO, false,                                \
           "(Unstable, Solaris-specific) Thread interrupt before or with "   \

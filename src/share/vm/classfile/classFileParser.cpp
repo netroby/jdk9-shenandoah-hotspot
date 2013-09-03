@@ -2590,7 +2590,7 @@ void ClassFileParser::parse_classfile_sourcefile_attribute(TRAPS) {
     valid_symbol_at(sourcefile_index),
     "Invalid SourceFile attribute at constant pool index %u in class file %s",
     sourcefile_index, CHECK);
-  set_class_sourcefile(_cp->symbol_at(sourcefile_index));
+  set_class_sourcefile_index(sourcefile_index);
 }
 
 
@@ -2728,7 +2728,7 @@ void ClassFileParser::parse_classfile_signature_attribute(TRAPS) {
     valid_symbol_at(signature_index),
     "Invalid constant pool index %u in Signature attribute in class file %s",
     signature_index, CHECK);
-  set_class_generic_signature(_cp->symbol_at(signature_index));
+  set_class_generic_signature_index(signature_index);
 }
 
 void ClassFileParser::parse_classfile_bootstrap_methods_attribute(u4 attribute_byte_length, TRAPS) {
@@ -2975,13 +2975,11 @@ void ClassFileParser::parse_classfile_attributes(ClassFileParser::ClassAnnotatio
 void ClassFileParser::apply_parsed_class_attributes(instanceKlassHandle k) {
   if (_synthetic_flag)
     k->set_is_synthetic();
-  if (_sourcefile != NULL) {
-    _sourcefile->increment_refcount();
-    k->set_source_file_name(_sourcefile);
+  if (_sourcefile_index != 0) {
+    k->set_source_file_name_index(_sourcefile_index);
   }
-  if (_generic_signature != NULL) {
-    _generic_signature->increment_refcount();
-    k->set_generic_signature(_generic_signature);
+  if (_generic_signature_index != 0) {
+    k->set_generic_signature_index(_generic_signature_index);
   }
   if (_sde_buffer != NULL) {
     k->set_source_debug_extension(_sde_buffer, _sde_length);
@@ -3647,8 +3645,7 @@ instanceKlassHandle ClassFileParser::parseClassFile(Symbol* name,
   // If RedefineClasses() was used before the retransformable
   // agent attached, then the cached class bytes may not be the
   // original class bytes.
-  unsigned char *cached_class_file_bytes = NULL;
-  jint cached_class_file_length;
+  JvmtiCachedClassFileData *cached_class_file = NULL;
   Handle class_loader(THREAD, loader_data->class_loader());
   bool has_default_methods = false;
   ResourceMark rm(THREAD);
@@ -3680,10 +3677,7 @@ instanceKlassHandle ClassFileParser::parseClassFile(Symbol* name,
       if (h_class_being_redefined != NULL) {
         instanceKlassHandle ikh_class_being_redefined =
           instanceKlassHandle(THREAD, (*h_class_being_redefined)());
-        cached_class_file_bytes =
-          ikh_class_being_redefined->get_cached_class_file_bytes();
-        cached_class_file_length =
-          ikh_class_being_redefined->get_cached_class_file_len();
+        cached_class_file = ikh_class_being_redefined->get_cached_class_file();
       }
     }
 
@@ -3691,9 +3685,7 @@ instanceKlassHandle ClassFileParser::parseClassFile(Symbol* name,
     unsigned char* end_ptr = cfs->buffer() + cfs->length();
 
     JvmtiExport::post_class_file_load_hook(name, class_loader(), protection_domain,
-                                           &ptr, &end_ptr,
-                                           &cached_class_file_bytes,
-                                           &cached_class_file_length);
+                                           &ptr, &end_ptr, &cached_class_file);
 
     if (ptr != cfs->buffer()) {
       // JVMTI agent has modified class file data.
@@ -4011,10 +4003,9 @@ instanceKlassHandle ClassFileParser::parseClassFile(Symbol* name,
       }
     }
 
-    if (cached_class_file_bytes != NULL) {
+    if (cached_class_file != NULL) {
       // JVMTI: we have an InstanceKlass now, tell it about the cached bytes
-      this_klass->set_cached_class_file(cached_class_file_bytes,
-                                        cached_class_file_length);
+      this_klass->set_cached_class_file(cached_class_file);
     }
 
     // Fill in field values obtained by parse_classfile_attributes

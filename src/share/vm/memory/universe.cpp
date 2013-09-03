@@ -52,7 +52,6 @@
 #include "oops/oop.inline.hpp"
 #include "oops/typeArrayKlass.hpp"
 #include "prims/jvmtiRedefineClassesTrace.hpp"
-#include "runtime/aprofiler.hpp"
 #include "runtime/arguments.hpp"
 #include "runtime/deoptimization.hpp"
 #include "runtime/fprofiler.hpp"
@@ -108,11 +107,12 @@ objArrayOop Universe::_the_empty_class_klass_array    = NULL;
 Array<Klass*>* Universe::_the_array_interfaces_array = NULL;
 oop Universe::_the_null_string                        = NULL;
 oop Universe::_the_min_jint_string                   = NULL;
-LatestMethodOopCache* Universe::_finalizer_register_cache = NULL;
-LatestMethodOopCache* Universe::_loader_addClass_cache    = NULL;
-ActiveMethodOopsCache* Universe::_reflect_invoke_cache    = NULL;
+LatestMethodCache* Universe::_finalizer_register_cache = NULL;
+LatestMethodCache* Universe::_loader_addClass_cache    = NULL;
+LatestMethodCache* Universe::_pd_implies_cache         = NULL;
 oop Universe::_out_of_memory_error_java_heap          = NULL;
-oop Universe::_out_of_memory_error_perm_gen           = NULL;
+oop Universe::_out_of_memory_error_metaspace          = NULL;
+oop Universe::_out_of_memory_error_class_metaspace    = NULL;
 oop Universe::_out_of_memory_error_array_size         = NULL;
 oop Universe::_out_of_memory_error_gc_overhead_limit  = NULL;
 objArrayOop Universe::_preallocated_out_of_memory_error_array = NULL;
@@ -147,8 +147,6 @@ NarrowPtrStruct Universe::_narrow_oop = { NULL, 0, true };
 NarrowPtrStruct Universe::_narrow_klass = { NULL, 0, true };
 address Universe::_narrow_ptrs_base;
 
-size_t          Universe::_class_metaspace_size;
-
 void Universe::basic_type_classes_do(void f(Klass*)) {
   f(boolArrayKlassObj());
   f(byteArrayKlassObj());
@@ -181,7 +179,8 @@ void Universe::oops_do(OopClosure* f, bool do_all) {
   f->do_oop((oop*)&_the_null_string);
   f->do_oop((oop*)&_the_min_jint_string);
   f->do_oop((oop*)&_out_of_memory_error_java_heap);
-  f->do_oop((oop*)&_out_of_memory_error_perm_gen);
+  f->do_oop((oop*)&_out_of_memory_error_metaspace);
+  f->do_oop((oop*)&_out_of_memory_error_class_metaspace);
   f->do_oop((oop*)&_out_of_memory_error_array_size);
   f->do_oop((oop*)&_out_of_memory_error_gc_overhead_limit);
     f->do_oop((oop*)&_preallocated_out_of_memory_error_array);
@@ -225,7 +224,7 @@ void Universe::serialize(SerializeClosure* f, bool do_all) {
   f->do_ptr((void**)&_the_empty_klass_array);
   _finalizer_register_cache->serialize(f);
   _loader_addClass_cache->serialize(f);
-  _reflect_invoke_cache->serialize(f);
+  _pd_implies_cache->serialize(f);
 }
 
 void Universe::check_alignment(uintx size, uintx alignment, const char* name) {
@@ -531,7 +530,9 @@ void Universe::reinitialize_vtable_of(KlassHandle k_h, TRAPS) {
   if (vt) vt->initialize_vtable(false, CHECK);
   if (ko->oop_is_instance()) {
     InstanceKlass* ik = (InstanceKlass*)ko;
-    for (KlassHandle s_h(THREAD, ik->subklass()); s_h() != NULL; s_h = (THREAD, s_h()->next_sibling())) {
+    for (KlassHandle s_h(THREAD, ik->subklass());
+         s_h() != NULL;
+         s_h = KlassHandle(THREAD, s_h()->next_sibling())) {
       reinitialize_vtable_of(s_h, CHECK);
     }
   }
@@ -561,7 +562,8 @@ bool Universe::should_fill_in_stack_trace(Handle throwable) {
   // a potential loop which could happen if an out of memory occurs when attempting
   // to allocate the backtrace.
   return ((throwable() != Universe::_out_of_memory_error_java_heap) &&
-          (throwable() != Universe::_out_of_memory_error_perm_gen)  &&
+          (throwable() != Universe::_out_of_memory_error_metaspace)  &&
+          (throwable() != Universe::_out_of_memory_error_class_metaspace)  &&
           (throwable() != Universe::_out_of_memory_error_array_size) &&
           (throwable() != Universe::_out_of_memory_error_gc_overhead_limit));
 }
@@ -642,15 +644,17 @@ jint universe_init() {
     return status;
   }
 
+  Metaspace::global_initialize();
+
   // Create memory for metadata.  Must be after initializing heap for
   // DumpSharedSpaces.
   ClassLoaderData::init_null_class_loader_data();
 
   // We have a heap so create the Method* caches before
   // Metaspace::initialize_shared_spaces() tries to populate them.
-  Universe::_finalizer_register_cache = new LatestMethodOopCache();
-  Universe::_loader_addClass_cache    = new LatestMethodOopCache();
-  Universe::_reflect_invoke_cache     = new ActiveMethodOopsCache();
+  Universe::_finalizer_register_cache = new LatestMethodCache();
+  Universe::_loader_addClass_cache    = new LatestMethodCache();
+  Universe::_pd_implies_cache         = new LatestMethodCache();
 
   if (UseSharedSpaces) {
     // Read the data structures supporting the shared spaces (shared
@@ -694,13 +698,9 @@ char* Universe::preferred_heap_base(size_t heap_size, NARROW_OOP_MODE mode) {
     if (!FLAG_IS_DEFAULT(HeapBaseMinAddress) && (mode == UnscaledNarrowOop)) {
       base = HeapBaseMinAddress;
 
-    // If the total size and the metaspace size are small enough to allow
-    // UnscaledNarrowOop then just use UnscaledNarrowOop.
-    } else if ((total_size <= OopEncodingHeapMax) && (mode != HeapBasedNarrowOop) &&
-        (!UseCompressedKlassPointers ||
-          (((OopEncodingHeapMax - heap_size) + Universe::class_metaspace_size()) <= KlassEncodingMetaspaceMax))) {
-      // We don't need to check the metaspace size here because it is always smaller
-      // than total_size.
+    // If the total size is small enough to allow UnscaledNarrowOop then
+    // just use UnscaledNarrowOop.
+    } else if ((total_size <= OopEncodingHeapMax) && (mode != HeapBasedNarrowOop)) {
       if ((total_size <= NarrowOopHeapMax) && (mode == UnscaledNarrowOop) &&
           (Universe::narrow_oop_shift() == 0)) {
         // Use 32-bits oops without encoding and
@@ -717,13 +717,6 @@ char* Universe::preferred_heap_base(size_t heap_size, NARROW_OOP_MODE mode) {
           base = (OopEncodingHeapMax - heap_size);
         }
       }
-
-    // See if ZeroBaseNarrowOop encoding will work for a heap based at
-    // (KlassEncodingMetaspaceMax - class_metaspace_size()).
-    } else if (UseCompressedKlassPointers && (mode != HeapBasedNarrowOop) &&
-        (Universe::class_metaspace_size() + HeapBaseMinAddress <= KlassEncodingMetaspaceMax) &&
-        (KlassEncodingMetaspaceMax + heap_size - Universe::class_metaspace_size() <= OopEncodingHeapMax)) {
-      base = (KlassEncodingMetaspaceMax - Universe::class_metaspace_size());
     } else {
       // UnscaledNarrowOop encoding didn't work, and no base was found for ZeroBasedOops or
       // HeapBasedNarrowOop encoding was requested.  So, can't reserve below 32Gb.
@@ -733,8 +726,7 @@ char* Universe::preferred_heap_base(size_t heap_size, NARROW_OOP_MODE mode) {
     // Set narrow_oop_base and narrow_oop_use_implicit_null_checks
     // used in ReservedHeapSpace() constructors.
     // The final values will be set in initialize_heap() below.
-    if ((base != 0) && ((base + heap_size) <= OopEncodingHeapMax) &&
-        (!UseCompressedKlassPointers || (base + Universe::class_metaspace_size()) <= KlassEncodingMetaspaceMax)) {
+    if ((base != 0) && ((base + heap_size) <= OopEncodingHeapMax)) {
       // Use zero based compressed oops
       Universe::set_narrow_oop_base(NULL);
       // Don't need guard page for implicit checks in indexed
@@ -826,9 +818,7 @@ jint Universe::initialize_heap() {
       tty->print("heap address: " PTR_FORMAT ", size: " SIZE_FORMAT " MB",
                  Universe::heap()->base(), Universe::heap()->reserved_region().byte_size()/M);
     }
-    if (((uint64_t)Universe::heap()->reserved_region().end() > OopEncodingHeapMax) ||
-        (UseCompressedKlassPointers &&
-        ((uint64_t)Universe::heap()->base() + Universe::class_metaspace_size() > KlassEncodingMetaspaceMax))) {
+    if (((uint64_t)Universe::heap()->reserved_region().end() > OopEncodingHeapMax)) {
       // Can't reserve heap below 32Gb.
       // keep the Universe::narrow_oop_base() set in Universe::reserve_heap()
       Universe::set_narrow_oop_shift(LogMinObjAlignmentInBytes);
@@ -859,20 +849,16 @@ jint Universe::initialize_heap() {
         }
       }
     }
+
     if (verbose) {
       tty->cr();
       tty->cr();
     }
-    if (UseCompressedKlassPointers) {
-      Universe::set_narrow_klass_base(Universe::narrow_oop_base());
-      Universe::set_narrow_klass_shift(MIN2(Universe::narrow_oop_shift(), LogKlassAlignmentInBytes));
-    }
     Universe::set_narrow_ptrs_base(Universe::narrow_oop_base());
   }
-  // Universe::narrow_oop_base() is one page below the metaspace
-  // base. The actual metaspace base depends on alignment constraints
-  // so we don't know its exact location here.
-  assert((intptr_t)Universe::narrow_oop_base() <= (intptr_t)(Universe::heap()->base() - os::vm_page_size() - ClassMetaspaceSize) ||
+  // Universe::narrow_oop_base() is one page below the heap.
+  assert((intptr_t)Universe::narrow_oop_base() <= (intptr_t)(Universe::heap()->base() -
+         os::vm_page_size()) ||
          Universe::narrow_oop_base() == NULL, "invalid value");
   assert(Universe::narrow_oop_shift() == LogMinObjAlignmentInBytes ||
          Universe::narrow_oop_shift() == 0, "invalid value");
@@ -892,12 +878,7 @@ jint Universe::initialize_heap() {
 
 // Reserve the Java heap, which is now the same for all GCs.
 ReservedSpace Universe::reserve_heap(size_t heap_size, size_t alignment) {
-  // Add in the class metaspace area so the classes in the headers can
-  // be compressed the same as instances.
-  // Need to round class space size up because it's below the heap and
-  // the actual alignment depends on its size.
-  Universe::set_class_metaspace_size(align_size_up(ClassMetaspaceSize, alignment));
-  size_t total_reserved = align_size_up(heap_size + Universe::class_metaspace_size(), alignment);
+  size_t total_reserved = align_size_up(heap_size, alignment);
   assert(!UseCompressedOops || (total_reserved <= (OopEncodingHeapMax - os::vm_page_size())),
       "heap size is too big for compressed oops");
   char* addr = Universe::preferred_heap_base(total_reserved, Universe::UnscaledNarrowOop);
@@ -933,28 +914,17 @@ ReservedSpace Universe::reserve_heap(size_t heap_size, size_t alignment) {
     return total_rs;
   }
 
-  // Split the reserved space into main Java heap and a space for
-  // classes so that they can be compressed using the same algorithm
-  // as compressed oops. If compress oops and compress klass ptrs are
-  // used we need the meta space first: if the alignment used for
-  // compressed oops is greater than the one used for compressed klass
-  // ptrs, a metadata space on top of the heap could become
-  // unreachable.
-  ReservedSpace class_rs = total_rs.first_part(Universe::class_metaspace_size());
-  ReservedSpace heap_rs = total_rs.last_part(Universe::class_metaspace_size(), alignment);
-  Metaspace::initialize_class_space(class_rs);
-
   if (UseCompressedOops) {
     // Universe::initialize_heap() will reset this to NULL if unscaled
     // or zero-based narrow oops are actually used.
     address base = (address)(total_rs.base() - os::vm_page_size());
     Universe::set_narrow_oop_base(base);
   }
-  return heap_rs;
+  return total_rs;
 }
 
 
-// It's the caller's repsonsibility to ensure glitch-freedom
+// It's the caller's responsibility to ensure glitch-freedom
 // (if required).
 void Universe::update_heap_info_at_gc() {
   _heap_capacity_at_last_gc = heap()->capacity();
@@ -1023,7 +993,8 @@ bool universe_post_init() {
     k = SystemDictionary::resolve_or_fail(vmSymbols::java_lang_OutOfMemoryError(), true, CHECK_false);
     k_h = instanceKlassHandle(THREAD, k);
     Universe::_out_of_memory_error_java_heap = k_h->allocate_instance(CHECK_false);
-    Universe::_out_of_memory_error_perm_gen = k_h->allocate_instance(CHECK_false);
+    Universe::_out_of_memory_error_metaspace = k_h->allocate_instance(CHECK_false);
+    Universe::_out_of_memory_error_class_metaspace = k_h->allocate_instance(CHECK_false);
     Universe::_out_of_memory_error_array_size = k_h->allocate_instance(CHECK_false);
     Universe::_out_of_memory_error_gc_overhead_limit =
       k_h->allocate_instance(CHECK_false);
@@ -1056,7 +1027,9 @@ bool universe_post_init() {
     java_lang_Throwable::set_message(Universe::_out_of_memory_error_java_heap, msg());
 
     msg = java_lang_String::create_from_str("Metadata space", CHECK_false);
-    java_lang_Throwable::set_message(Universe::_out_of_memory_error_perm_gen, msg());
+    java_lang_Throwable::set_message(Universe::_out_of_memory_error_metaspace, msg());
+    msg = java_lang_String::create_from_str("Class Metadata space", CHECK_false);
+    java_lang_Throwable::set_message(Universe::_out_of_memory_error_class_metaspace, msg());
 
     msg = java_lang_String::create_from_str("Requested array size exceeds VM limit", CHECK_false);
     java_lang_Throwable::set_message(Universe::_out_of_memory_error_array_size, msg());
@@ -1092,35 +1065,38 @@ bool universe_post_init() {
                                   vmSymbols::register_method_name(),
                                   vmSymbols::register_method_signature());
   if (m == NULL || !m->is_static()) {
-    THROW_MSG_(vmSymbols::java_lang_NoSuchMethodException(),
-      "java.lang.ref.Finalizer.register", false);
+    tty->print_cr("Unable to link/verify Finalizer.register method");
+    return false; // initialization failed (cannot throw exception yet)
   }
   Universe::_finalizer_register_cache->init(
-    SystemDictionary::Finalizer_klass(), m, CHECK_false);
-
-  // Resolve on first use and initialize class.
-  // Note: No race-condition here, since a resolve will always return the same result
-
-  // Setup method for security checks
-  k = SystemDictionary::resolve_or_fail(vmSymbols::java_lang_reflect_Method(), true, CHECK_false);
-  k_h = instanceKlassHandle(THREAD, k);
-  k_h->link_class(CHECK_false);
-  m = k_h->find_method(vmSymbols::invoke_name(), vmSymbols::object_object_array_object_signature());
-  if (m == NULL || m->is_static()) {
-    THROW_MSG_(vmSymbols::java_lang_NoSuchMethodException(),
-      "java.lang.reflect.Method.invoke", false);
-  }
-  Universe::_reflect_invoke_cache->init(k_h(), m, CHECK_false);
+    SystemDictionary::Finalizer_klass(), m);
 
   // Setup method for registering loaded classes in class loader vector
   InstanceKlass::cast(SystemDictionary::ClassLoader_klass())->link_class(CHECK_false);
   m = InstanceKlass::cast(SystemDictionary::ClassLoader_klass())->find_method(vmSymbols::addClass_name(), vmSymbols::class_void_signature());
   if (m == NULL || m->is_static()) {
-    THROW_MSG_(vmSymbols::java_lang_NoSuchMethodException(),
-      "java.lang.ClassLoader.addClass", false);
+    tty->print_cr("Unable to link/verify ClassLoader.addClass method");
+    return false; // initialization failed (cannot throw exception yet)
   }
   Universe::_loader_addClass_cache->init(
-    SystemDictionary::ClassLoader_klass(), m, CHECK_false);
+    SystemDictionary::ClassLoader_klass(), m);
+
+  // Setup method for checking protection domain
+  InstanceKlass::cast(SystemDictionary::ProtectionDomain_klass())->link_class(CHECK_false);
+  m = InstanceKlass::cast(SystemDictionary::ProtectionDomain_klass())->
+            find_method(vmSymbols::impliesCreateAccessControlContext_name(),
+                        vmSymbols::void_boolean_signature());
+  // Allow NULL which should only happen with bootstrapping.
+  if (m != NULL) {
+    if (m->is_static()) {
+      // NoSuchMethodException doesn't actually work because it tries to run the
+      // <init> function before java_lang_Class is linked. Print error and exit.
+      tty->print_cr("ProtectionDomain.impliesCreateAccessControlContext() has the wrong linkage");
+      return false; // initialization failed
+    }
+    Universe::_pd_implies_cache->init(
+      SystemDictionary::ProtectionDomain_klass(), m);;
+  }
 
   // The folowing is initializing converter functions for serialization in
   // JVM.cpp. If we clean up the StrictMath code above we may want to find
@@ -1139,6 +1115,9 @@ bool universe_post_init() {
 
   // Initialize performance counters for metaspaces
   MetaspaceCounters::initialize_performance_counters();
+  CompressedClassSpaceCounters::initialize_performance_counters();
+
+  MemoryService::add_metaspace_memory_pools();
 
   GC_locker::unlock();  // allow gc after bootstrapping
 
@@ -1441,7 +1420,7 @@ void Universe::compute_verify_oop_data() {
 }
 
 
-void CommonMethodOopCache::init(Klass* k, Method* m, TRAPS) {
+void LatestMethodCache::init(Klass* k, Method* m) {
   if (!UseSharedSpaces) {
     _klass = k;
   }
@@ -1457,88 +1436,8 @@ void CommonMethodOopCache::init(Klass* k, Method* m, TRAPS) {
 }
 
 
-ActiveMethodOopsCache::~ActiveMethodOopsCache() {
-  if (_prev_methods != NULL) {
-    delete _prev_methods;
-    _prev_methods = NULL;
-  }
-}
-
-
-void ActiveMethodOopsCache::add_previous_version(Method* method) {
-  assert(Thread::current()->is_VM_thread(),
-    "only VMThread can add previous versions");
-
-  // Only append the previous method if it is executing on the stack.
-  if (method->on_stack()) {
-
-    if (_prev_methods == NULL) {
-      // This is the first previous version so make some space.
-      // Start with 2 elements under the assumption that the class
-      // won't be redefined much.
-      _prev_methods = new (ResourceObj::C_HEAP, mtClass) GrowableArray<Method*>(2, true);
-    }
-
-    // RC_TRACE macro has an embedded ResourceMark
-    RC_TRACE(0x00000100,
-      ("add: %s(%s): adding prev version ref for cached method @%d",
-        method->name()->as_C_string(), method->signature()->as_C_string(),
-        _prev_methods->length()));
-
-    _prev_methods->append(method);
-  }
-
-
-  // Since the caller is the VMThread and we are at a safepoint, this is a good
-  // time to clear out unused method references.
-
-  if (_prev_methods == NULL) return;
-
-  for (int i = _prev_methods->length() - 1; i >= 0; i--) {
-    Method* method = _prev_methods->at(i);
-    assert(method != NULL, "weak method ref was unexpectedly cleared");
-
-    if (!method->on_stack()) {
-      // This method isn't running anymore so remove it
-      _prev_methods->remove_at(i);
-      MetadataFactory::free_metadata(method->method_holder()->class_loader_data(), method);
-    } else {
-      // RC_TRACE macro has an embedded ResourceMark
-      RC_TRACE(0x00000400,
-        ("add: %s(%s): previous cached method @%d is alive",
-         method->name()->as_C_string(), method->signature()->as_C_string(), i));
-    }
-  }
-} // end add_previous_version()
-
-
-bool ActiveMethodOopsCache::is_same_method(const Method* method) const {
-  InstanceKlass* ik = InstanceKlass::cast(klass());
-  const Method* check_method = ik->method_with_idnum(method_idnum());
-  assert(check_method != NULL, "sanity check");
-  if (check_method == method) {
-    // done with the easy case
-    return true;
-  }
-
-  if (_prev_methods != NULL) {
-    // The cached method has been redefined at least once so search
-    // the previous versions for a match.
-    for (int i = 0; i < _prev_methods->length(); i++) {
-      check_method = _prev_methods->at(i);
-      if (check_method == method) {
-        // a previous version matches
-        return true;
-      }
-    }
-  }
-
-  // either no previous versions or no previous version matched
-  return false;
-}
-
-
-Method* LatestMethodOopCache::get_Method() {
+Method* LatestMethodCache::get_method() {
+  if (klass() == NULL) return NULL;
   InstanceKlass* ik = InstanceKlass::cast(klass());
   Method* m = ik->method_with_idnum(method_idnum());
   assert(m != NULL, "sanity check");

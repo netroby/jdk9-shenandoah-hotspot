@@ -299,6 +299,7 @@ const char* Runtime1::name_for_address(address entry) {
 #ifdef TRACE_HAVE_INTRINSICS
   FUNCTION_CASE(entry, TRACE_TIME_METHOD);
 #endif
+  FUNCTION_CASE(entry, StubRoutines::updateBytesCRC32());
 
 #undef FUNCTION_CASE
 
@@ -914,16 +915,6 @@ JRT_ENTRY(void, Runtime1::patch_code(JavaThread* thread, Runtime1::StubID stub_i
     // Return to the now deoptimized frame.
   }
 
-  // If we are patching in a non-perm oop, make sure the nmethod
-  // is on the right list.
-  if (ScavengeRootsInCode && mirror.not_null() && mirror()->is_scavengable()) {
-    MutexLockerEx ml_code (CodeCache_lock, Mutex::_no_safepoint_check_flag);
-    nmethod* nm = CodeCache::find_nmethod(caller_frame.pc());
-    guarantee(nm != NULL, "only nmethods can contain non-perm oops");
-    if (!nm->on_scavenge_root_list())
-      CodeCache::add_scavenge_root_nmethod(nm);
-  }
-
   // Now copy code back
 
   {
@@ -1123,6 +1114,21 @@ JRT_ENTRY(void, Runtime1::patch_code(JavaThread* thread, Runtime1::StubID stub_i
         }
       }
     }
+  }
+
+  // If we are patching in a non-perm oop, make sure the nmethod
+  // is on the right list.
+  if (ScavengeRootsInCode && mirror.not_null() && mirror()->is_scavengable()) {
+    MutexLockerEx ml_code (CodeCache_lock, Mutex::_no_safepoint_check_flag);
+    nmethod* nm = CodeCache::find_nmethod(caller_frame.pc());
+    guarantee(nm != NULL, "only nmethods can contain non-perm oops");
+    if (!nm->on_scavenge_root_list()) {
+      CodeCache::add_scavenge_root_nmethod(nm);
+    }
+
+    // Since we've patched some oops in the nmethod,
+    // (re)register it with the heap.
+    Universe::heap()->register_nmethod(nm);
   }
 JRT_END
 
