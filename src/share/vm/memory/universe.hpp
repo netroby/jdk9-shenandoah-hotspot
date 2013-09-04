@@ -297,30 +297,18 @@ class Universe: AllStatic {
 
   static objArrayOop  the_empty_class_klass_array ()  { return (objArrayOop) resolve_oop((oop) _the_empty_class_klass_array);   }
   static Array<Klass*>* the_array_interfaces_array() { return _the_array_interfaces_array;   }
-<<<<<<< local
   static oop          the_null_string()               { return resolve_oop(_the_null_string);               }
   static oop          the_min_jint_string()          { return resolve_oop(_the_min_jint_string);          }
-  static Method*      finalizer_register_method()     { return _finalizer_register_cache->get_Method(); }
-  static Method*      loader_addClass_method()        { return _loader_addClass_cache->get_Method(); }
-  static ActiveMethodOopsCache* reflect_invoke_cache() { return _reflect_invoke_cache; }
-  static oop          null_ptr_exception_instance()   { return resolve_oop(_null_ptr_exception_instance);   }
-  static oop          arithmetic_exception_instance() { return resolve_oop(_arithmetic_exception_instance); }
-  static oop          virtual_machine_error_instance() { return resolve_oop(_virtual_machine_error_instance); }
-  static oop          vm_exception()                  { return resolve_oop(_vm_exception); }
-=======
-  static oop          the_null_string()               { return _the_null_string;               }
-  static oop          the_min_jint_string()          { return _the_min_jint_string;          }
 
   static Method*      finalizer_register_method()     { return _finalizer_register_cache->get_method(); }
   static Method*      loader_addClass_method()        { return _loader_addClass_cache->get_method(); }
 
   static Method*      protection_domain_implies_method() { return _pd_implies_cache->get_method(); }
 
-  static oop          null_ptr_exception_instance()   { return _null_ptr_exception_instance;   }
-  static oop          arithmetic_exception_instance() { return _arithmetic_exception_instance; }
-  static oop          virtual_machine_error_instance() { return _virtual_machine_error_instance; }
-  static oop          vm_exception()                  { return _vm_exception; }
->>>>>>> other
+  static oop          null_ptr_exception_instance()   { return resolve_oop(_null_ptr_exception_instance);   }
+  static oop          arithmetic_exception_instance() { return resolve_oop(_arithmetic_exception_instance); }
+  static oop          virtual_machine_error_instance() { return resolve_oop(_virtual_machine_error_instance); }
+  static oop          vm_exception()                  { return resolve_oop(_vm_exception); }
 
   static Array<int>*       the_empty_int_array()    { return _the_empty_int_array; }
   static Array<u2>*        the_empty_short_array()  { return _the_empty_short_array; }
