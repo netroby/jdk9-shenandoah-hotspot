@@ -184,7 +184,8 @@ public:
 
   void do_oop(oop* p)       {
     // tty->print_cr("updating queued ref: %p", p);
-    _heap->maybe_update_oop_ref((oop*) p);
+    oop result = _heap->maybe_update_oop_ref((oop*) p);
+    assert(result != NULL || *p == NULL, "CAS-Updating refs must not fail when draining buffers because we do not run concurrently with Java threads");
   }
 
   void do_oop(narrowOop* p)       {

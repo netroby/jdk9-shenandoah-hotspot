@@ -937,7 +937,7 @@ void ShenandoahHeap::verify_evacuation(ShenandoahHeapRegion* from_region) {
 
 }
 
-void ShenandoahHeap::maybe_update_oop_ref(oop* p) {
+oop ShenandoahHeap::maybe_update_oop_ref(oop* p) {
 
   assert((! is_in(p)) || (! heap_region_containing(p)->is_dirty()), "never update refs in from-space"); 
 
@@ -952,16 +952,18 @@ void ShenandoahHeap::maybe_update_oop_ref(oop* p) {
     assert(is_in(heap_oop), "only ever call this on objects in the heap");
     assert(! (is_in(p) && heap_region_containing(p)->is_dirty()), "we don't want to update references in from-space");
     oop forwarded_oop = oopDesc::bs()->resolve_oop(heap_oop); // read brooks ptr
-
     if (forwarded_oop != heap_oop) {
       // tty->print_cr("updating old ref: %p pointing to %p to new ref: %p", p, heap_oop, forwarded_oop);
       assert(forwarded_oop->is_oop(), "oop required");
       assert(ShenandoahBarrierSet::has_brooks_ptr(forwarded_oop), "brooks pointer required");
       // If this fails, another thread wrote to p before us, it will be logged in SATB and the
       // reference be updated later.
-      Atomic::cmpxchg_ptr(forwarded_oop, p, heap_oop);
-      *p = forwarded_oop; // store p
-      assert(*p == forwarded_oop, "make sure to update reference correctly");
+      oop result = (oop) Atomic::cmpxchg_ptr(forwarded_oop, p, heap_oop);
+      if (result == heap_oop) { // CAS successful.
+        return forwarded_oop;
+      }
+    } else {
+      return forwarded_oop;
     }
     /*
       else {
@@ -969,6 +971,7 @@ void ShenandoahHeap::maybe_update_oop_ref(oop* p) {
       }
     */
   }
+  return NULL;
 }
 
 size_t  ShenandoahHeap::unsafe_max_tlab_alloc(Thread *thread) const {
@@ -1307,13 +1310,16 @@ void ShenandoahMarkRefsClosure::do_oop_work(oop* p) {
   // tty->print_cr("marking oop ref: %p", p);
   // We piggy-back reference updating to the marking tasks.
    oop* old = p;
-  _heap->maybe_update_oop_ref(p);
+  oop obj = _heap->maybe_update_oop_ref(p);
   if (ShenandoahGCVerbose)
     tty->print("Update %p => %p  to %p => %p\n", p, *p, old, *old);
 
-  oop obj = oopDesc::load_heap_oop(p);
-  assert(oopDesc::bs()->resolve_oop(obj) == *p, "we just updated the referrer");
-  assert(obj == NULL || ! _heap->heap_region_containing(obj)->is_dirty(), "must not point to dirty region");
+  // NOTE: We used to assert the following here. This does not always work because
+  // a concurrent Java thread could change the the field after we updated it.
+  // oop obj = oopDesc::load_heap_oop(p);
+  // assert(oopDesc::bs()->resolve_oop(obj) == *p, "we just updated the referrer");
+  // assert(obj == NULL || ! _heap->heap_region_containing(obj)->is_dirty(), "must not point to dirty region");
+
   ShenandoahMarkObjsClosure cl(_epoch, _worker_id);
   cl.do_object(obj);
 }

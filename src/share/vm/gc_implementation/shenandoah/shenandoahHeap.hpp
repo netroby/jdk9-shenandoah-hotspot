@@ -189,7 +189,7 @@ public:
   void initialize_brooks_ptr(HeapWord* brooks_ptr, HeapWord* object);
   void set_brooks_ptr(HeapWord* brooks_ptr, HeapWord* object);
 
-  void maybe_update_oop_ref(oop* p);
+  oop maybe_update_oop_ref(oop* p);
   void evacuate_region(ShenandoahHeapRegion* from_region, ShenandoahHeapRegion* to_region);
   void parallel_evacuate_region(ShenandoahHeapRegion* from_region,
 				ShenandoahAllocRegion *alloc_region);
