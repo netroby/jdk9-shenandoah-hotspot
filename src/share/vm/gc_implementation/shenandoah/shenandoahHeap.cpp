@@ -918,22 +918,13 @@ void ShenandoahHeap::roots_iterate(ExtendedOopClosure* cl) {
   ClassLoaderDataGraph::clear_claimed_marks();
 
   process_strong_roots(true, false, ScanningOption(so), cl, &blobsCl, &klassCl);
-
+  process_weak_roots(cl, &blobsCl);
 }
 
 void ShenandoahHeap::verify_evacuation(ShenandoahHeapRegion* from_region) {
 
   VerifyEvacuationClosure rootsCl(from_region);
-  CodeBlobToOopClosure blobsCl(&rootsCl, false);
-  KlassToOopClosure klassCl(&rootsCl);
-
-  const int so = SO_AllClasses | SO_Strings | SO_CodeCache;
-
-  ClassLoaderDataGraph::clear_claimed_marks();
-
-  process_strong_roots(true, false, ScanningOption(so), &rootsCl, &blobsCl, &klassCl);
-
-  //oop_iterate(&rootsCl);
+  roots_iterate(&rootsCl);
 
 }
 
@@ -1134,24 +1125,7 @@ void ShenandoahHeap::verify(bool silent , VerifyOption vo) {
     assert(Thread::current()->is_VM_thread(),
 	   "Expected to be executed serially by the VM thread at this point");
 
-    CodeBlobToOopClosure blobsCl(&rootsCl, /*do_marking=*/ false);
-    ShenandoahVerifyKlassClosure klassCl(&rootsCl);
-
-    // We apply the relevant closures to all the oops in the
-    // system dictionary, the string table and the code cache.
-    const int so = SO_AllClasses | SO_Strings | SO_CodeCache;
-
-    // Need cleared claim bits for the strong roots processing
-    ClassLoaderDataGraph::clear_claimed_marks();
-
-    process_strong_roots(true,      // activate StrongRootsScope
-			 false,     // we set "is scavenging" to false,
-			 // so we don't reset the dirty cards.
-			 ScanningOption(so),  // roots scanning options
-			 &rootsCl,
-			 &blobsCl,
-			 &klassCl
-			 );
+    roots_iterate(&rootsCl);
 
     bool failures = rootsCl.failures();
     gclog_or_tty->print("verify failures: %d", failures); 
