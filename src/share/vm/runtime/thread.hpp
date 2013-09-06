@@ -1019,7 +1019,7 @@ class JavaThread: public Thread {
 
   // Thread oop. threadObj() can be NULL for initial JavaThread
   // (or for threads attached via JNI)
-  oop threadObj() const                          { return _threadObj; }
+  oop threadObj() const                          { return oopDesc::bs()->resolve_oop(_threadObj); }
   void set_threadObj(oop p)                      { _threadObj = p; }
 
   ThreadPriority java_priority() const;          // Read from threadObj()
@@ -1267,7 +1267,7 @@ class JavaThread: public Thread {
   void set_callee_target  (Method* x)          { _callee_target   = x; }
 
   // Oop results of vm runtime calls
-  oop  vm_result() const                         { return _vm_result; }
+  oop  vm_result() const                         { return oopDesc::bs()->resolve_oop(_vm_result); }
   void set_vm_result  (oop x)                    { _vm_result   = x; }
 
   Metadata*    vm_result_2() const               { return _vm_result_2; }
@@ -1277,7 +1277,7 @@ class JavaThread: public Thread {
   void set_deferred_card_mark(MemRegion mr)      { _deferred_card_mark = mr;   }
 
   // Exception handling for compiled methods
-  oop      exception_oop() const                 { return _exception_oop; }
+  oop      exception_oop() const                 { return oopDesc::bs()->resolve_oop(_exception_oop); }
   address  exception_pc() const                  { return _exception_pc; }
   address  exception_handler_pc() const          { return _exception_handler_pc; }
   bool     is_method_handle_return() const       { return _is_method_handle_return == 1; }

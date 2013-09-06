@@ -403,7 +403,7 @@ oop Reflection::array_component_type(oop mirror, TRAPS) {
     assert(lower_dim->oop_is_array(), "just checking");
     result2 = lower_dim->java_mirror();
   }
-  assert(result == result2, "results must be consistent");
+  assert(oopDesc::bs()->resolve_oop(result) == oopDesc::bs()->resolve_oop(result2), "results must be consistent");
 #endif //ASSERT
   return result;
 }
