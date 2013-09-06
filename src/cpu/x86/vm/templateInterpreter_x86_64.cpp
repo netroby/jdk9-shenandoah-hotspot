@@ -798,6 +798,8 @@ address InterpreterGenerator::generate_Reference_get_entry(void) {
     // If the receiver is null then it is OK to jump to the slow path.
     __ movptr(rax, Address(rsp, wordSize));
 
+    oopDesc::bs()->compile_resolve_oop(_masm, rax);
+
     __ testptr(rax, rax);
     __ jcc(Assembler::zero, slow_path);
 
