@@ -1039,7 +1039,7 @@ void ShenandoahHeap::prepare_for_verify() {
 }
 
 void ShenandoahHeap::print_gc_threads_on(outputStream* st) const {
-  Unimplemented();
+  st->print_cr("Not yet implemented: ShenandoahHeap::print_gc_threads_on()");
 }
 
 void ShenandoahHeap::gc_threads_do(ThreadClosure* tcl) const {

@@ -26,6 +26,7 @@
 #define SHARE_VM_OOPS_KLASS_HPP
 
 #include "memory/genOopClosures.hpp"
+#include "memory/barrierSet.hpp"
 #include "memory/iterator.hpp"
 #include "memory/memRegion.hpp"
 #include "memory/specialized_oop_closures.hpp"
@@ -242,7 +243,7 @@ class Klass : public Metadata {
   void klass_oop_store(volatile oop* p, oop v);
 
   // java mirror
-  oop java_mirror() const              { return _java_mirror; }
+  oop java_mirror() const              { return oopDesc::bs()->resolve_oop(_java_mirror); }
   void set_java_mirror(oop m) { klass_oop_store(&_java_mirror, m); }
 
   // modifier flags
