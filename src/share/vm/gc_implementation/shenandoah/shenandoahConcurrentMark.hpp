@@ -65,6 +65,13 @@ public:
   // We need to do this later when the heap is already created.
   void initialize(FlexibleWorkGang* workers);
 
+  #if TASKQUEUE_STATS
+  static void print_taskqueue_stats_hdr(outputStream* const st = gclog_or_tty);
+  void print_taskqueue_stats(outputStream* const st = gclog_or_tty) const;
+  void reset_taskqueue_stats();
+  #endif // TASKQUEUE_STATS
+
+
 };
 
 

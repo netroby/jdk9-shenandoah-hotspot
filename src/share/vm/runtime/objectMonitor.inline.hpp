@@ -70,7 +70,7 @@ inline void ObjectMonitor::clear() {
 
 
 inline void* ObjectMonitor::object() const {
-  return _object;
+  return oopDesc::bs()->maybe_resolve_oop(oop(_object));
 }
 
 inline void* ObjectMonitor::object_addr() {

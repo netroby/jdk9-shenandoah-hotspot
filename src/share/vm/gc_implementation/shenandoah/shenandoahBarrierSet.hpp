@@ -178,6 +178,14 @@ public:
     }
   }
 
+  virtual oopDesc* maybe_resolve_oop(oopDesc* src) {
+    if (Universe::heap()->is_in(src)) {
+      return get_shenandoah_forwardee(src);
+    } else {
+      return src;
+    }
+  }
+
   void enqueue_update_ref(oop* ref);
 
 #ifndef CC_INTERP
