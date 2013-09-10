@@ -190,6 +190,9 @@ public:
   virtual oopDesc* resolve_oop(oopDesc* src) {
     return src;
   }
+  virtual oopDesc* maybe_resolve_oop(oopDesc* src) {
+    return src;
+  }
 
   virtual void compile_resolve_oop(MacroAssembler* masm, Register dst) {
     // Default implementation does nothing.

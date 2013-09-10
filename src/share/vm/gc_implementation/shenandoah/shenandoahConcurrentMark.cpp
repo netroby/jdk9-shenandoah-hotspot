@@ -65,9 +65,9 @@ void SCMConcurrentMarkingTask::work(uint worker_id) {
     // We got one.
     
     assert(obj->is_oop(), "Oops, not an oop");
-    // if (ShenandoahGCVerbose) {
-    //   tty->print("popping object: "PTR_FORMAT"\n", obj);
-    // }
+    if (ShenandoahGCVerbose) {
+      tty->print("popping object: "PTR_FORMAT"\n", obj);
+    }
     obj->oop_iterate(&cl);
   }
 }
@@ -106,6 +106,8 @@ void ShenandoahConcurrentMark::markFromRoots() {
   
   tty->print_cr("Finishing markFromRoots");
   tty->print_cr("RESUMING THE WORLD: after marking");
+  TASKQUEUE_STATS_ONLY(print_taskqueue_stats());
+  TASKQUEUE_STATS_ONLY(reset_taskqueue_stats());
 }
 
 void ShenandoahConcurrentMark::finishMarkFromRoots() {
@@ -134,7 +136,7 @@ void ShenandoahConcurrentMark::finishMarkFromRoots() {
 
   while (found) {
     if (ShenandoahGCVerbose) {
-      tty->print("Pop single threaded Task: obj = "PTR_FORMAT"\n", obj);
+      tty->print("Pop Task: obj = %p\n", obj);
     }
     assert(obj->is_oop(), "Oops, not an oop");
     obj->oop_iterate(&cl);
@@ -241,7 +243,7 @@ void ShenandoahConcurrentMark::addTask(oop obj, int q) {
   assert(obj->is_oop(), "Oops, not an oop");
 
   // if (ShenandoahGCVerbose) {
-  //   tty->print("addTask q = %d: obj = "PTR_FORMAT" epoch = %d object age = %d\n", q, obj, epoch, age);
+  //  tty->print("addTask q = %d: obj = "PTR_FORMAT" epoch = %d object age = %d\n", q, obj, epoch, age);
   // }
 
   assert(age == epoch, "Only push marked objects on the queue");
@@ -286,3 +288,32 @@ SharedOverflowMarkQueue* ShenandoahConcurrentMark::overflow_queue() {
 //       return NULL;
 //   }
 // }
+#if TASKQUEUE_STATS
+void ShenandoahConcurrentMark::print_taskqueue_stats_hdr(outputStream* const st) {
+  st->print_raw_cr("GC Task Stats");
+  st->print_raw("thr "); TaskQueueStats::print_header(1, st); st->cr();
+  st->print_raw("--- "); TaskQueueStats::print_header(2, st); st->cr();
+}
+
+void ShenandoahConcurrentMark::print_taskqueue_stats(outputStream* const st) const {
+  print_taskqueue_stats_hdr(st);
+  ShenandoahHeap* sh = (ShenandoahHeap*) Universe::heap();
+  TaskQueueStats totals;
+  const int n = sh->workers() != NULL ? sh->workers()->total_workers() : 1;
+  for (int i = 0; i < n; ++i) {
+    st->print("%3d ", i); _task_queues->queue(i)->stats.print(st); st->cr();
+    totals += _task_queues->queue(i)->stats;
+  }
+  st->print_raw("tot "); totals.print(st); st->cr();
+
+  DEBUG_ONLY(totals.verify());
+}
+
+void ShenandoahConcurrentMark::reset_taskqueue_stats() {
+  ShenandoahHeap* sh = (ShenandoahHeap*) Universe::heap();
+  const int n = sh->workers() != NULL ? sh->workers()->total_workers() : 1;
+  for (int i = 0; i < n; ++i) {
+    _task_queues->queue(i)->stats.reset();
+  }
+}
+#endif // TASKQUEUE_STATS

@@ -544,6 +544,8 @@ private:
     assign_brooks_pointer(p, filler, copy);
     // tty->print_cr("copy object from %p to: %p epoch: %d, age: %d", p, copy, ShenandoahHeap::heap()->getEpoch(), getMark(p)->age());
     verify_copy(p, oop(copy));
+    if (p->has_displaced_mark())
+      p->set_mark(p->displaced_mark());
   }    
   
   void do_object(oop p) {
@@ -593,7 +595,7 @@ void ShenandoahHeap::initialize_brooks_ptr(HeapWord* filler, HeapWord* obj) {
   markOop mark = oop(filler)->mark();
   oop(filler)->set_mark(mark->set_age(15));
   assert(ShenandoahBarrierSet::is_brooks_ptr(oop(filler)), "brooks pointer must be brooks pointer");
-  arrayOop(filler)->set_length(1);
+  //  arrayOop(filler)->set_length(1);
   set_brooks_ptr(filler, obj);
 }
 
@@ -608,7 +610,7 @@ public:
       oop p_prime = oopDesc::bs()->resolve_oop(p);
       assert(p != p_prime, "Should point to evacuated copy");
       assert(p->klass() == p_prime->klass(), "Should have the same class");
-      assert(p->mark() == p_prime->mark(), "Should have the same mark");
+      //      assert(p->mark() == p_prime->mark(), "Should have the same mark");
       assert(p->size() == p_prime->size(), "Should be the same size");
       assert(p_prime == oopDesc::bs()->resolve_oop(p_prime), "One forward once");
     }
@@ -767,9 +769,18 @@ public:
     oop o = *p;
     if (o != NULL) {
       if (! _heap->isMarkedCurrent(o)) {
-        _heap->print_heap_regions();
-        _heap->print_all_refs("post-mark");
+	_heap->print_heap_regions();
+	_heap->print_all_refs("post-mark");
         tty->print_cr("oop not marked, although referrer is marked: %p: in_heap: %d, age: %d, epoch: %d", o, _heap->is_in(o), getMark(o)->age(), _heap->getEpoch());
+        tty->print_cr("oop class: %s", o->klass()->internal_name());
+	if (_heap->is_in(p)) {
+	  oop referrer = oop(_heap->heap_region_containing(p)->block_start_const(p));
+	  tty->print("Referrer starts at addr %p\n", referrer);
+	  referrer->print();
+	}
+	_heap->heap_region_containing(o)->print();
+	_heap->heap_region_containing(p)->print();
+	
       }
       assert(o->is_oop(), "oop must be an oop");
       assert(Metaspace::contains(o->klass()), "klass pointer must go to metaspace");
@@ -829,6 +840,7 @@ public:
 void ShenandoahHeap::verify_heap_after_marking() {
   VerifyAfterMarkingOopClosure cl;
   roots_iterate(&cl);
+  tty->print("After verifying roots\n");
 
   IterateMarkedCurrentObjectsClosure marked_oops(&cl);
   object_iterate(&marked_oops);
@@ -950,8 +962,9 @@ oop ShenandoahHeap::maybe_update_oop_ref(oop* p) {
       // If this fails, another thread wrote to p before us, it will be logged in SATB and the
       // reference be updated later.
       oop result = (oop) Atomic::cmpxchg_ptr(forwarded_oop, p, heap_oop);
+
       if (result == heap_oop) { // CAS successful.
-        return forwarded_oop;
+	  return forwarded_oop;
       }
     } else {
       return forwarded_oop;
@@ -1099,7 +1112,7 @@ public:
 
     HeapWord* oopWord = (HeapWord*) p;
     if (ShenandoahBarrierSet::is_brooks_ptr(oop(oopWord))) { // Brooks pointer
-      guarantee(arrayOop(oopWord)->length() == 1, "brooks ptr objects must have length == 1");
+      guarantee(arrayOop(oopWord)->length() == 2, "brooks ptr objects must have length == 2");
     } else {
       HeapWord* brooksPOop = (oopWord - BROOKS_POINTER_OBJ_SIZE);
       guarantee(ShenandoahBarrierSet::is_brooks_ptr(oop(brooksPOop)), "age in mark word of brooks obj must be 15");
@@ -1283,8 +1296,9 @@ void ShenandoahMarkRefsClosure::do_oop_work(oop* p) {
 
   // tty->print_cr("marking oop ref: %p", p);
   // We piggy-back reference updating to the marking tasks.
-   oop* old = p;
+  oop* old = p;
   oop obj = _heap->maybe_update_oop_ref(p);
+
   if (ShenandoahGCVerbose)
     tty->print("Update %p => %p  to %p => %p\n", p, *p, old, *old);
 
@@ -1413,7 +1427,7 @@ void ShenandoahHeap::start_concurrent_marking() {
   // if (getEpoch() < 5) {
   // oopDesc::_debug = false;
     //}
-  //print_all_refs("pre-mark2");
+  //  print_all_refs("pre-mark2");
 }
 
 
