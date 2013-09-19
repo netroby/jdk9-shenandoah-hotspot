@@ -933,6 +933,7 @@ address InterpreterGenerator::generate_CRC32_updateBytes_entry(AbstractInterpret
       __ movl(crc,   Address(rsp, 5*wordSize)); // Initial CRC
     } else {
       __ movptr(buf, Address(rsp, 3*wordSize)); // byte[] array
+      oopDesc::bs()->compile_resolve_oop(_masm, buf);
       __ addptr(buf, arrayOopDesc::base_offset_in_bytes(T_BYTE)); // + header size
       __ movl2ptr(off, Address(rsp, 2*wordSize)); // offset
       __ addq(buf, off); // + offset
