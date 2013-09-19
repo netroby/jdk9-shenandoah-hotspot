@@ -357,27 +357,48 @@ void ShenandoahHeap::update_current_region() {
   }
 }
 
-HeapWord* ShenandoahHeap::allocate_memory_gclab(size_t size) {
-  if (_current_region->is_dirty() || (_current_region == NULL))
-    update_current_region();
+ShenandoahHeapRegion* ShenandoahHeap::cas_update_current_region(ShenandoahHeapRegion* expected) {
 
-  assert(! _current_region->is_dirty() && _current_region != NULL, "Never allocate from dirty or NULL region");
+  
+  if (_free_regions->has_next()) {
+    ShenandoahHeapRegion* previous = (ShenandoahHeapRegion*) Atomic::cmpxchg_ptr(_free_regions->peek_next(), &_current_region, expected);
+    if (previous == expected) {
+      // Advance the region set.
+      _free_regions->get_next();
+    }
+    // If the above CAS fails, we want the caller to get the _current_region that the other thread
+    // CAS'ed.
+    return _current_region;
+  } else {
+    assert(false, "No GC implemented");
+  }
+
+}
+
+HeapWord* ShenandoahHeap::allocate_memory_gclab(size_t size) {
+  ShenandoahHeapRegion* my_current_region = _current_region;
+  assert(! my_current_region->is_dirty(), "never get dirty regions in free-lists");
+  if (my_current_region == NULL) {
+    my_current_region = cas_update_current_region(my_current_region);
+  }
+  assert(! my_current_region->is_dirty() && my_current_region != NULL, "Never allocate from dirty or NULL region");
 
   // This isn't necessary when doing mem_allocate_locked but is for gc lab allocation.
-  HeapWord* result = _current_region->par_allocate(size);
-  // Try next free region.
+  HeapWord* result;
+  do {
+    result = my_current_region->par_allocate(size);
+    if (result == NULL) {
+      my_current_region = cas_update_current_region(my_current_region);
+    }
+  } while (result == NULL && my_current_region != NULL);
+
   if (result == NULL) {
-    update_current_region();
-    result = _current_region->par_allocate(size);
-  }
-  if (result != NULL) {
-    assert(! heap_region_containing(result)->is_dirty(), "never allocate in dirty region");
-    return result;
-  } else {
-    // If we failed in both the current region and the next free region 
-    // then we know we can't allocate the object anywhere.
+    assert(my_current_region == NULL, "This can only happen if we run out of regions");
     assert(false, "Failed to allocate object");
+  } else {
+    assert(! heap_region_containing(result)->is_dirty(), "never allocate in dirty region");
   }
+  return result;
 }
 
 HeapWord* ShenandoahHeap::allocate_memory(size_t size) {
@@ -503,7 +524,10 @@ private:
   void verify_copy(oop p,oop c){
     assert(p != oopDesc::bs()->resolve_oop(p), "forwarded correctly");
     assert(oopDesc::bs()->resolve_oop(p) == c, "verify pointer is correct");
-    assert(p->klass() == c->klass(), "verify class");
+    if (p->klass() != c->klass()) {
+      _heap->print_heap_regions();
+    }
+    assert(p->klass() == c->klass(), err_msg("verify class p-size: %d c-size: %d", p->size(), c->size()));
     assert(p->size() == c->size(), "verify size");
     assert(p->mark() == c->mark(), "verify mark");
     assert(c == oopDesc::bs()->resolve_oop(c), "verify only forwarded once");
@@ -542,7 +566,7 @@ private:
     assert(copy != NULL, "allocation of copy object must not fail");
     Copy::aligned_disjoint_words((HeapWord*) p, copy, p->size());
     assign_brooks_pointer(p, filler, copy);
-    // tty->print_cr("copy object from %p to: %p epoch: %d, age: %d", p, copy, ShenandoahHeap::heap()->getEpoch(), getMark(p)->age());
+    // tty->print_cr("copy object from %p to: %p epoch: %d, age: %d, size: %d", p, copy, ShenandoahHeap::heap()->getEpoch(), getMark(p)->age(), p->size());
     verify_copy(p, oop(copy));
     if (p->has_displaced_mark())
       p->set_mark(p->displaced_mark());
@@ -569,7 +593,7 @@ private:
 	  tty->print("required < ShenandoahHeapRegion::RegionSizeBytes = %d\n ", ShenandoahHeapRegion::RegionSizeBytes);
 	_waste += _region->space_available();
         _region->fill_region();
-	HeapWord* s = _heap->allocate_memory(required);
+	HeapWord* s = _heap->allocate_memory_gclab(required);
 	copy_object(p, s);
       } else {
 	assert(false, "Don't handle humongous objects yet");
@@ -653,7 +677,7 @@ public:
     _barrier_sync(barrier_sync) {}
   
   void work(uint worker_id) {
-  
+
     ShenandoahHeapRegion* from_hr = _cs->claim_next();
     ShenandoahAllocRegion allocRegion = ShenandoahAllocRegion();
 
@@ -664,6 +688,7 @@ public:
      		   from_hr->regionNumber);
 	from_hr->print();
       }
+
       // Not sure if the check is worth it or not.
       if (from_hr->getLiveData() != 0) {
 	_sh->parallel_evacuate_region(from_hr, &allocRegion);
@@ -674,7 +699,9 @@ public:
 
       from_hr = _cs->claim_next();
     }
+
     allocRegion.fill_region();
+
     tty->print("Thread %d entering barrier sync\n", worker_id);
     _barrier_sync->enter();
     tty->print("Thread %d post barrier sync\n", worker_id);
@@ -894,7 +921,6 @@ void ShenandoahHeap::parallel_evacuate() {
 #ifdef ASSERT
   verify_heap_after_evacuation();
 #endif
-
 
 }
 

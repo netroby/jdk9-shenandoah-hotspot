@@ -196,6 +196,8 @@ public:
   void verify_evacuated_region(ShenandoahHeapRegion* from_region);
 
   void update_current_region();
+  ShenandoahHeapRegion* cas_update_current_region(ShenandoahHeapRegion* expected);
+
   ShenandoahHeapRegion* current_region() { return _current_region;}
 
   void print_heap_regions();

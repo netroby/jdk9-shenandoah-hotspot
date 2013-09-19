@@ -150,6 +150,7 @@ void ShenandoahHeapRegionSet::choose_empty_regions(ShenandoahHeapRegionSet* regi
        return result;
      }
    }
+   return NULL;
  }
 
   
