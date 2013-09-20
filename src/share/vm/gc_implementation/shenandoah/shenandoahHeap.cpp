@@ -419,6 +419,9 @@ HeapWord* ShenandoahHeap::allocate_memory(size_t size) {
   } else {
     // If we failed in both the current region and the next free region 
     // then we know we can't allocate the object anywhere.
+    print_heap_regions();
+    tty->print_cr("free regions:");
+    _free_regions->print();
     assert(false, "Failed to allocate object");
   }
 }
