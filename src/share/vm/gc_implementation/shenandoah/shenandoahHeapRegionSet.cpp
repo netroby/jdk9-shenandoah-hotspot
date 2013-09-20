@@ -82,6 +82,9 @@ void ShenandoahHeapRegionSet::sortDescendingGarbage() {
   
 void ShenandoahHeapRegionSet::print() {
   for (int i = 0; i < _inserted; i++) {
+    if (i == _index) {
+      tty->print_cr("-->");
+    }
     _regions[i]->print();
   }
 }
@@ -151,6 +154,7 @@ void ShenandoahHeapRegionSet::choose_empty_regions(ShenandoahHeapRegionSet* regi
        return result;
      }
    }
+   return NULL;
  }
 
   

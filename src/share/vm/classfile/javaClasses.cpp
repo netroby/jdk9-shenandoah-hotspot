@@ -612,7 +612,7 @@ void java_lang_Class::set_static_oop_field_count(oop java_class, int size) {
 
 oop java_lang_Class::protection_domain(oop java_class) {
   assert(_protection_domain_offset != 0, "must be set");
-  return java_class->obj_field(_protection_domain_offset);
+  return oopDesc::bs()->resolve_oop(java_class->obj_field(_protection_domain_offset));
 }
 void java_lang_Class::set_protection_domain(oop java_class, oop pd) {
   assert(_protection_domain_offset != 0, "must be set");
@@ -621,7 +621,7 @@ void java_lang_Class::set_protection_domain(oop java_class, oop pd) {
 
 oop java_lang_Class::init_lock(oop java_class) {
   assert(_init_lock_offset != 0, "must be set");
-  return java_class->obj_field(_init_lock_offset);
+  return oopDesc::bs()->resolve_oop(java_class->obj_field(_init_lock_offset));
 }
 void java_lang_Class::set_init_lock(oop java_class, oop init_lock) {
   assert(_init_lock_offset != 0, "must be set");
@@ -630,7 +630,7 @@ void java_lang_Class::set_init_lock(oop java_class, oop init_lock) {
 
 objArrayOop java_lang_Class::signers(oop java_class) {
   assert(_signers_offset != 0, "must be set");
-  return (objArrayOop)java_class->obj_field(_signers_offset);
+  return (objArrayOop) oopDesc::bs()->resolve_oop(java_class->obj_field(_signers_offset));
 }
 void java_lang_Class::set_signers(oop java_class, objArrayOop signers) {
   assert(_signers_offset != 0, "must be set");

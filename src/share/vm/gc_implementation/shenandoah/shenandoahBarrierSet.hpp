@@ -134,7 +134,7 @@ public:
   inline oopDesc* get_shenandoah_forwardee_helper(oopDesc* p) {
     assert(UseShenandoahGC, "must only be called when Shenandoah is used.");
     assert(Universe::heap()->is_in(p), "We shouldn't be calling this on objects not in the heap");
-    assert(! is_brooks_ptr(p), "oop must not be a brooks pointer itself");
+    assert(! is_brooks_ptr(p), err_msg("oop must not be a brooks pointer itself. oop's mark word: %p", p->mark()));
     HeapWord* oopWord = (HeapWord*) p;
     HeapWord* brooksPOop = oopWord - BROOKS_POINTER_OBJ_SIZE;
     if (!is_brooks_ptr(oop(brooksPOop))) {

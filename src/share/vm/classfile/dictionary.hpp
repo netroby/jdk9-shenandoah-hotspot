@@ -202,7 +202,7 @@ class DictionaryEntry : public HashtableEntry<Klass*, mtClass> {
     for (ProtectionDomainEntry* current = _pd_set;
                                 current != NULL;
                                 current = current->_next) {
-      current->_protection_domain->verify();
+      current->protection_domain()->verify();
     }
   }
 
