@@ -73,7 +73,8 @@ void SCMConcurrentMarkingTask::work(uint worker_id) {
 }
 
 void ShenandoahConcurrentMark::initialize(FlexibleWorkGang* workers) {
-  tty->print("ActiveWorkers  = %d total workers = %d\n", 
+  if (ShenandoahGCVerbose) 
+    tty->print("ActiveWorkers  = %d total workers = %d\n", 
 	     workers->active_workers(), 
 	     workers->total_workers());
   _max_worker_id = MAX2((uint)ParallelGCThreads, 1U);
@@ -95,8 +96,10 @@ void ShenandoahConcurrentMark::scanRootRegions() {
 }
 
 void ShenandoahConcurrentMark::markFromRoots() {
-  tty->print_cr("STOPPING THE WORLD: before marking");
-  tty->print_cr("Starting markFromRoots");
+  if (ShenandoahGCVerbose) {
+    tty->print_cr("STOPPING THE WORLD: before marking");
+    tty->print_cr("Starting markFromRoots");
+  }
   ShenandoahHeap* sh = (ShenandoahHeap *) Universe::heap();
   ParallelTaskTerminator terminator(_max_worker_id, _task_queues);
 
@@ -104,14 +107,18 @@ void ShenandoahConcurrentMark::markFromRoots() {
   SCMConcurrentMarkingTask markingTask = SCMConcurrentMarkingTask(this, &terminator);
   sh->workers()->run_task(&markingTask);
   
-  tty->print_cr("Finishing markFromRoots");
-  tty->print_cr("RESUMING THE WORLD: after marking");
-  TASKQUEUE_STATS_ONLY(print_taskqueue_stats());
-  TASKQUEUE_STATS_ONLY(reset_taskqueue_stats());
+  if (ShenandoahGCVerbose) {
+    tty->print_cr("Finishing markFromRoots");
+    tty->print_cr("RESUMING THE WORLD: after marking");
+    TASKQUEUE_STATS_ONLY(print_taskqueue_stats());
+    TASKQUEUE_STATS_ONLY(reset_taskqueue_stats());
+  }
 }
 
 void ShenandoahConcurrentMark::finishMarkFromRoots() {
-  tty->print_cr("Starting finishMarkFromRoots");
+  if (ShenandoahGCVerbose) {
+    tty->print_cr("Starting finishMarkFromRoots");
+  }
   ShenandoahHeap* sh = (ShenandoahHeap *) Universe::heap();
   //  ParallelTaskTerminator terminator(_max_worker_id, _task_queues);
   // Trace any (new) unmarked root references.
@@ -164,15 +171,17 @@ void ShenandoahConcurrentMark::finishMarkFromRoots() {
 
 
   assert(_task_queues->queue(0)->is_empty(), "Should be empty");
-  tty->print_cr("Finishing finishMarkFromRoots");
+  if (ShenandoahGCVerbose) {
+    tty->print_cr("Finishing finishMarkFromRoots");
 #ifdef SLOWDEBUG
-  for (int i = 0; i <(int)_max_worker_id; i++) {
-    tty->print("Queue: %d:", i);
-    _task_queues->queue(i)->stats.print(tty, 10);
-    tty->print("\n");
-    //    _task_queues->queue(i)->stats.verify();
-  }
+    for (int i = 0; i <(int)_max_worker_id; i++) {
+      tty->print("Queue: %d:", i);
+      _task_queues->queue(i)->stats.print(tty, 10);
+      tty->print("\n");
+      //    _task_queues->queue(i)->stats.verify();
+    }
 #endif
+  }
 }
 
 class UpdateRefsClosure: public ExtendedOopClosure {
@@ -185,7 +194,8 @@ public:
     { }
 
   void do_oop(oop* p)       {
-    // tty->print_cr("updating queued ref: %p", p);
+    if (ShenandoahGCVerbose) 
+      tty->print_cr("updating queued ref: %p", p);
     oop result = _heap->maybe_update_oop_ref((oop*) p);
     assert(result != NULL || *p == NULL, "CAS-Updating refs must not fail when draining buffers because we do not run concurrently with Java threads");
   }

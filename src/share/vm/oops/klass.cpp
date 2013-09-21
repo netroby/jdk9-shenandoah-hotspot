@@ -542,7 +542,7 @@ Klass* Klass::array_klass_impl(bool or_null, TRAPS) {
   return NULL;
 }
 
-oop Klass::class_loader() const { return class_loader_data()->class_loader(); }
+oop Klass::class_loader() const { return oopDesc::bs()->resolve_oop(class_loader_data()->class_loader()); }
 
 const char* Klass::external_name() const {
   if (oop_is_instance()) {

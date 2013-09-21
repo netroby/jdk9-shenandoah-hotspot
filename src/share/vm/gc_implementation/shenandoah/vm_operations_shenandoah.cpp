@@ -3,7 +3,8 @@
 
 void VM_ShenandoahInitMark::doit() {
   ShenandoahHeap *sh = (ShenandoahHeap*) Universe::heap();
-  tty->print("vm_ShenandoahInitMark\n");
+  if (ShenandoahGCVerbose)
+    tty->print("vm_ShenandoahInitMark\n");
   sh->start_concurrent_marking();
 }
 
