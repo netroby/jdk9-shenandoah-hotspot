@@ -81,8 +81,8 @@ jint ShenandoahHeap::initialize() {
 
   size_t init_byte_size = collector_policy()->initial_heap_byte_size();
   size_t max_byte_size = collector_policy()->max_heap_byte_size();
-
-  tty->print("init_byte_size = %d,%x  max_byte_size = %d,%x\n", 
+  if (ShenandoahGCVerbose) 
+    tty->print("init_byte_size = %d,%x  max_byte_size = %d,%x\n", 
 	     init_byte_size, init_byte_size, max_byte_size, max_byte_size);
 
   Universe::check_alignment(max_byte_size,  
@@ -101,9 +101,10 @@ jint ShenandoahHeap::initialize() {
   set_barrier_set(new ShenandoahBarrierSet());
   ReservedSpace pgc_rs = heap_rs.first_part(max_byte_size);
   _storage.initialize(pgc_rs, max_byte_size);
-
-  tty->print("Calling initialize on reserved space base = %p end = %p\n", 
-	     pgc_rs.base(), pgc_rs.base() + pgc_rs.size());
+  if (ShenandoahGCVerbose) {
+    tty->print("Calling initialize on reserved space base = %p end = %p\n", 
+	       pgc_rs.base(), pgc_rs.base() + pgc_rs.size());
+  }
 
   _numRegions = init_byte_size / ShenandoahHeapRegion::RegionSizeBytes;
   _ordered_regions = NEW_C_HEAP_ARRAY(ShenandoahHeapRegion*, _numRegions, mtGC); 
@@ -139,11 +140,12 @@ jint ShenandoahHeap::initialize() {
   _regions->put(last_region, current);
   _free_regions->put(last_region, current);
   _numAllocs = 0;
-
-  tty->print("All Regions\n");
-  _regions->print();
-  tty->print("Free Regions\n");
-  _free_regions->print();
+  if (ShenandoahGCVerbose) {
+    tty->print("All Regions\n");
+    _regions->print();
+    tty->print("Free Regions\n");
+    _free_regions->print();
+  }
 
   _current_region = _free_regions->get_next();
 
@@ -304,7 +306,8 @@ public:
     : VM_GC_Operation(gc_count_before, cause, full_gc_count_before) { }
   virtual VMOp_Type type() const { return VMOp_G1CollectFull; }
   virtual void doit() {
-    tty->print_cr("verifying heap");
+    if (ShenandoahGCVerbose)
+      tty->print_cr("verifying heap");
      Universe::heap()->prepare_for_verify();
      Universe::verify();
   }
@@ -485,7 +488,8 @@ HeapWord*  ShenandoahHeap::mem_allocate(size_t size,
 
   if (used() > targetStartMarking && _bytesAllocSinceCM > targetBytesAllocated && should_start_concurrent_marking()) {
     _bytesAllocSinceCM = 0;
-    tty->print("Capacity = "SIZE_FORMAT" Used = "SIZE_FORMAT" Target = "SIZE_FORMAT" doing initMark\n", capacity(), used(), targetStartMarking);
+    if (ShenandoahGCVerbose) 
+      tty->print("Capacity = "SIZE_FORMAT" Used = "SIZE_FORMAT" Target = "SIZE_FORMAT" doing initMark\n", capacity(), used(), targetStartMarking);
     mark();
 
   }
@@ -497,7 +501,7 @@ HeapWord*  ShenandoahHeap::mem_allocate(size_t size,
 
 void ShenandoahHeap::mark() {
 
-    tty->print("Starting a mark");
+  if (ShenandoahGCVerbose) tty->print("Starting a mark");
 
     VM_ShenandoahInitMark initMark;
     VMThread::execute(&initMark);
@@ -572,7 +576,10 @@ private:
     assert(copy != NULL, "allocation of copy object must not fail");
     Copy::aligned_disjoint_words((HeapWord*) p, copy, p->size());
     assign_brooks_pointer(p, filler, copy);
-    // tty->print_cr("copy object from %p to: %p epoch: %d, age: %d, size: %d", p, copy, ShenandoahHeap::heap()->getEpoch(), getMark(p)->age(), p->size());
+
+    if (ShenandoahGCVerbose) {
+      tty->print_cr("copy object from %p to: %p epoch: %d, age: %d", p, copy, ShenandoahHeap::heap()->getEpoch(), getMark(p)->age());
+    }
     verify_copy(p, oop(copy));
     if (p->has_displaced_mark())
       p->set_mark(p->displaced_mark());
@@ -648,8 +655,10 @@ public:
 };
 
 void ShenandoahHeap::verify_evacuated_region(ShenandoahHeapRegion* from_region) {
-  tty->print("Verifying From Region\n");
-  from_region->print();
+  if (ShenandoahGCVerbose) {
+    tty->print("Verifying From Region\n");
+    from_region->print();
+  }
 
   VerifyEvacuatedObjectClosure verify_evacuation(_epoch);
   from_region->object_iterate(&verify_evacuation);
@@ -708,9 +717,12 @@ public:
 
     allocRegion.fill_region();
 
-    tty->print("Thread %d entering barrier sync\n", worker_id);
+    if (ShenandoahGCVerbose) 
+      tty->print("Thread %d entering barrier sync\n", worker_id);
+
     _barrier_sync->enter();
-    tty->print("Thread %d post barrier sync\n", worker_id);
+    if (ShenandoahGCVerbose) 
+      tty->print("Thread %d post barrier sync\n", worker_id);
   }
 };
 
@@ -873,7 +885,6 @@ public:
 void ShenandoahHeap::verify_heap_after_marking() {
   VerifyAfterMarkingOopClosure cl;
   roots_iterate(&cl);
-  tty->print("After verifying roots\n");
 
   IterateMarkedCurrentObjectsClosure marked_oops(&cl);
   object_iterate(&marked_oops);
@@ -898,12 +909,13 @@ void ShenandoahHeap::parallel_evacuate() {
   _regions->choose_collection_set(_collection_set);
   _regions->choose_empty_regions(_free_regions);
   update_current_region();
-  
-  tty->print("Printing collection set which contains %d regions:\n", _collection_set->available_regions());
-  _collection_set->print();
+  if (ShenandoahGCVerbose) {
+    tty->print("Printing collection set which contains %d regions:\n", _collection_set->available_regions());
+    _collection_set->print();
 
-  tty->print("Printing %d free regions:\n", _free_regions->available_regions());
-  _free_regions->print();
+    tty->print("Printing %d free regions:\n", _free_regions->available_regions());
+    _free_regions->print();
+  }
 
   barrierSync.set_n_workers(_max_workers);
   
@@ -1173,7 +1185,8 @@ void ShenandoahHeap::verify(bool silent , VerifyOption vo) {
     roots_iterate(&rootsCl);
 
     bool failures = rootsCl.failures();
-    gclog_or_tty->print("verify failures: %d", failures); 
+    if (ShenandoahGCVerbose)
+      gclog_or_tty->print("verify failures: %d", failures); 
 
     ShenandoahVerifyHeapClosure heapCl(rootsCl);
 

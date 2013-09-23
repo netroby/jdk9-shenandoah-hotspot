@@ -149,7 +149,8 @@ void ShenandoahHeapRegionSet::choose_empty_regions(ShenandoahHeapRegionSet* regi
      ShenandoahHeapRegion* result = _regions[_index];
      if (result->claim()) {
        Atomic::add(1, &_index);
-       tty->print("Claiming region %p\n", result);
+       if (ShenandoahGCVerbose)
+	 tty->print("Claiming region %p\n", result);
        return result;
      }
    }
