@@ -441,7 +441,10 @@ HeapWord* ShenandoahHeap::mem_allocate_locked(size_t size,
     assert(! heap_region_containing(result)->is_dirty(), "never allocate in dirty region");
     return result;
   } else {
-    assert(false, "No GC implemented");
+    tty->print_cr("Out of memory. Requested number of words: %x", size);
+    print_heap_regions();    
+    assert(false, "Out of memory");
+    return NULL;
   }
 }
 
