@@ -573,13 +573,10 @@ private:
     assert(copy != NULL, "allocation of copy object must not fail");
     Copy::aligned_disjoint_words((HeapWord*) p, copy, p->size());
     assign_brooks_pointer(p, filler, copy);
-<<<<<<< local
+
     if (ShenandoahGCVerbose) {
       tty->print_cr("copy object from %p to: %p epoch: %d, age: %d", p, copy, ShenandoahHeap::heap()->getEpoch(), getMark(p)->age());
     }
-=======
-    // tty->print_cr("copy object from %p to: %p epoch: %d, age: %d, size: %d", p, copy, ShenandoahHeap::heap()->getEpoch(), getMark(p)->age(), p->size());
->>>>>>> other
     verify_copy(p, oop(copy));
     if (p->has_displaced_mark())
       p->set_mark(p->displaced_mark());
@@ -716,16 +713,10 @@ public:
     }
 
     allocRegion.fill_region();
-<<<<<<< local
+
     if (ShenandoahGCVerbose) 
       tty->print("Thread %d entering barrier sync\n", worker_id);
-=======
->>>>>>> other
 
-<<<<<<< local
-=======
-    tty->print("Thread %d entering barrier sync\n", worker_id);
->>>>>>> other
     _barrier_sync->enter();
     if (ShenandoahGCVerbose) 
       tty->print("Thread %d post barrier sync\n", worker_id);
