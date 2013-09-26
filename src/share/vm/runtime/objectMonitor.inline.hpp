@@ -40,6 +40,14 @@ inline void ObjectMonitor::set_header(markOop hdr) {
   _header = hdr;
 }
 
+inline void ObjectMonitor::release_set_header(markOop hdr) {
+  OrderAccess::release_store_ptr(&_header, hdr);
+}
+
+inline volatile markOop* ObjectMonitor::header_addr() {
+  return &_header;
+}
+
 inline intptr_t ObjectMonitor::count() const {
   return _count;
 }
@@ -57,7 +65,7 @@ inline void* ObjectMonitor::owner() const {
 }
 
 inline void ObjectMonitor::clear() {
-  assert(_header, "Fatal logic error in ObjectMonitor header!");
+  // assert(_header, "Fatal logic error in ObjectMonitor header!");
   assert(_count == 0, "Fatal logic error in ObjectMonitor count!");
   assert(_waiters == 0, "Fatal logic error in ObjectMonitor waiters!");
   assert(_recursions == 0, "Fatal logic error in ObjectMonitor recursions!");
