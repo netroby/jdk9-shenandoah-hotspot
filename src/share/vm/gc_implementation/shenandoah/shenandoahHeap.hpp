@@ -79,6 +79,10 @@ public:
 
   uint getEpoch() {return _epoch;}
 
+  static markOop getMark(oop obj);
+  static void setMark(oop obj, markOop mark);
+  static bool cas_setMark(oop obj, markOop mark, markOop old_mark);
+
   // For now we are ignoring eden.
   inline bool should_alloc_in_eden(size_t size) { return false;}
   void print_on(outputStream* st) const ;

@@ -239,9 +239,7 @@ void ShenandoahConcurrentMark::checkpointRootsFinal() {
 int getAge(oop obj) {
   ShenandoahHeap* sh = (ShenandoahHeap*) Universe::heap();
   assert(sh->is_in((HeapWord*) obj), "We are only interested in heap objects");
-  if (obj->has_displaced_mark())
-    return obj->displaced_mark()->age();
-  else return obj->mark()->age();
+  return ShenandoahHeap::getMark(obj)->age();
 }
 
 
