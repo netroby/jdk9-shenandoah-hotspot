@@ -351,8 +351,9 @@ void ShenandoahHeap::update_current_region() {
       _current_region = _free_regions->get_next();
     } else {
       if (ShenandoahGCVerbose) {
-        PrintHeapRegionsClosure pc;
-        heap_region_iterate(&pc);
+        print_heap_regions();
+        tty->print_cr("free regions:");
+        _free_regions->print();
       }
       assert(false, "No GC implemented");
     }
@@ -449,7 +450,10 @@ HeapWord* ShenandoahHeap::mem_allocate_locked(size_t size,
     return result;
   } else {
     tty->print_cr("Out of memory. Requested number of words: %x", size);
-    print_heap_regions();    
+    print_heap_regions();
+    tty->print("Printing %d free regions:\n", _free_regions->available_regions());
+    _free_regions->print();
+
     assert(false, "Out of memory");
     return NULL;
   }
@@ -928,6 +932,8 @@ void ShenandoahHeap::parallel_evacuate() {
   _regions->choose_empty_regions(_free_regions);
   update_current_region();
   if (ShenandoahGCVerbose) {
+    tty->print("Printing all available regions");
+    print_heap_regions();
     tty->print("Printing collection set which contains %d regions:\n", _collection_set->available_regions());
     _collection_set->print();
 
