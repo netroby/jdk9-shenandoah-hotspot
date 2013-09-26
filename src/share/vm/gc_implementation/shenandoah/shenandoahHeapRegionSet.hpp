@@ -37,12 +37,11 @@ public:
 
   void choose_collection_set(ShenandoahHeapRegionSet* region_set, int max_regions);
   void choose_collection_set(ShenandoahHeapRegionSet* region_set);
-  void choose_empty_regions(ShenandoahHeapRegionSet* region_set, int max_regions);
   void choose_empty_regions(ShenandoahHeapRegionSet* region_set);
 
   //  ShenandoahHeapRegion** regions() { return _regions;}
-  // Sort from least garbage to most garbage.
-  void sortAscendingGarbage();
+  // Sort from most free to least free.
+  void sortDescendingFree();
 
   // Sort from most garbage to least garbage.
   void sortDescendingGarbage();

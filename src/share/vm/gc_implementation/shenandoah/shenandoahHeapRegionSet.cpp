@@ -2,7 +2,7 @@
 #include "gc_implementation/shenandoah/shenandoahHeapRegionSet.hpp"
 #include "memory/resourceArea.hpp"
 
-int compareHeapRegions(ShenandoahHeapRegion** a, ShenandoahHeapRegion** b) {
+int compareHeapRegionsByGarbage(ShenandoahHeapRegion** a, ShenandoahHeapRegion** b) {
   if (*a == NULL) {
     if (*b == NULL) {
       return 0;
@@ -19,6 +19,27 @@ int compareHeapRegions(ShenandoahHeapRegion** a, ShenandoahHeapRegion** b) {
   if (garbage_a > garbage_b) 
     return -1;
   else if (garbage_a < garbage_b)
+    return 1;
+  else return 0;
+}
+
+int compareHeapRegionsByFree(ShenandoahHeapRegion** a, ShenandoahHeapRegion** b) {
+  if (*a == NULL) {
+    if (*b == NULL) {
+      return 0;
+    } else {
+      return 1;
+    }
+  } else if (*b == NULL) {
+    return -1;
+  }
+
+  size_t free_a = (*a)->free();
+  size_t free_b = (*b)->free();
+  
+  if (free_a > free_b) 
+    return -1;
+  else if (free_a < free_b)
     return 1;
   else return 0;
 }
@@ -50,7 +71,7 @@ bool ShenandoahHeapRegionSet::has_next() {
   return _index < _inserted;
 }
 
-void ShenandoahHeapRegionSet::sortAscendingGarbage() {
+void ShenandoahHeapRegionSet::sortDescendingFree() {
   ResourceMark rm;
 
   GrowableArray<ShenandoahHeapRegion*>* rs = 
@@ -58,11 +79,10 @@ void ShenandoahHeapRegionSet::sortAscendingGarbage() {
   for (int i = 0; i < _inserted; i++)
     rs->append(_regions[i]);
 
-  rs->sort(compareHeapRegions);
+  rs->sort(compareHeapRegionsByFree);
 
-  int j = _inserted;
   for (int i = 0; i < _inserted; i++) 
-    _regions[--j] = rs->at(i);
+    _regions[i] = rs->at(i);
 }
    
 void ShenandoahHeapRegionSet::sortDescendingGarbage() {
@@ -74,7 +94,7 @@ void ShenandoahHeapRegionSet::sortDescendingGarbage() {
   for (int i = 0; i < _inserted; i++)
     rs->append(_regions[i]);
 
-  rs->sort(compareHeapRegions);
+  rs->sort(compareHeapRegionsByGarbage);
 
   for (int i = 0; i < _inserted; i++) 
     _regions[i] = rs->at(i);
@@ -107,19 +127,10 @@ choose_collection_set(ShenandoahHeapRegionSet* region_set,
     region_set->_regions[i]->print();
 }
 
-void ShenandoahHeapRegionSet::choose_empty_regions(ShenandoahHeapRegionSet* region_set, int max_regions) {
-  sortAscendingGarbage();
-  region_set->_inserted = 0;
-  region_set->_index = 0;
-
-  for (int i = 0; i < max_regions; i++)
-      region_set->_regions[region_set->_inserted++] = _regions[i];
-}
-
 void ShenandoahHeapRegionSet::choose_collection_set(ShenandoahHeapRegionSet* region_set) {
   sortDescendingGarbage();
   int r = 0;
-  while (_regions[r]->garbage() > _garbage_threshold) {
+  while (r < _numRegions && _regions[r]->garbage() > _garbage_threshold) {
     region_set->_regions[r] = _regions[r];
     r++;
   }
@@ -131,9 +142,9 @@ void ShenandoahHeapRegionSet::choose_collection_set(ShenandoahHeapRegionSet* reg
 }
 
 void ShenandoahHeapRegionSet::choose_empty_regions(ShenandoahHeapRegionSet* region_set) {
-  sortAscendingGarbage();
+  sortDescendingFree();
   int r = 0;
-  while(_regions[r]->free() > _free_threshold) {
+  while(r < _numRegions && _regions[r]->free() > _free_threshold) {
     region_set->_regions[r] = _regions[r];
     r++;
   }
