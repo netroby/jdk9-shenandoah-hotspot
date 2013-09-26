@@ -1,6 +1,8 @@
 #ifndef SHARE_VM_GC_IMPLEMENTATION_SHENANDOAH_SHENANDOAHHEAP_HPP
 #define SHARE_VM_GC_IMPLEMENTATION_SHENANDOAH_SHENANDOAHHEAP_HPP
 
+#include "gc_implementation/shared/concurrentGCThread.hpp"
+
 #include "gc_implementation/shenandoah/shenandoahAllocRegion.hpp"
 #include "gc_implementation/shenandoah/shenandoahCollectorPolicy.hpp"
 #include "gc_implementation/shenandoah/shenandoahConcurrentMark.hpp"
@@ -33,6 +35,17 @@ public:
   bool complete() { return _complete;}
 };
 
+class ShenandoahConcurrentGCThread: public ConcurrentGCThread {
+ public:
+  void run();
+
+  void start();
+  void yield();
+};
+
+
+
+
 // A "ShenandoahHeap" is an implementation of a java heap for HotSpot.
 // It uses a new pauseless GC algorithm based on Brooks pointers.
 // Derived from G1
@@ -56,16 +69,19 @@ private:
   ShenandoahHeapRegion* _currentAllocationRegion;
   ShenandoahConcurrentMark* _scm;
 
+  ShenandoahConcurrentGCThread* _concurrent_gc_thread;
+
   size_t _numRegions;
   size_t _initialSize;
 #ifndef NDEBUG
   uint _numAllocs;
 #endif
   uint _epoch;
-  size_t _bytesAllocSinceCM;
   size_t _default_gclab_size;
   WorkGangBarrierSync barrierSync;
   int _max_workers;
+public:
+  size_t _bytesAllocSinceCM;
 
 public:
   ShenandoahHeap(ShenandoahCollectorPolicy* policy);
@@ -218,7 +234,6 @@ private:
   bool concurrent_mark_in_progress();
   void verify_live();
   void verify_liveness_after_concurrent_mark();
-  void mark();
 
   
 };

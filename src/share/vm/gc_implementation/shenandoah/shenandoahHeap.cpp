@@ -162,6 +162,9 @@ jint ShenandoahHeap::initialize() {
                                                SATB_Q_FL_lock,
                                                20 /*G1SATBProcessCompletedThreshold */,
                                                Shared_SATB_Q_lock);
+
+  _concurrent_gc_thread = new ShenandoahConcurrentGCThread();
+  _concurrent_gc_thread->start();
   return JNI_OK;
 }
 
@@ -437,7 +440,7 @@ HeapWord* ShenandoahHeap::mem_allocate_locked(size_t size,
   HeapWord* result = filler + BROOKS_POINTER_OBJ_SIZE;
   if (filler != NULL) {
     initialize_brooks_ptr(filler, result);
-    _bytesAllocSinceCM+= size;
+    _bytesAllocSinceCM += size;
     _current_region->setLiveData(_current_region->used());
     if (ShenandoahGCVerbose)
       tty->print("mem_allocate_locked object of size %d at addr %p in epoch %d\n", size, result, _epoch);
@@ -483,37 +486,51 @@ HeapWord*  ShenandoahHeap::mem_allocate(size_t size,
 #endif
 
 
-  // These are just arbitrary numbers for now.  CHF
-  size_t targetStartMarking = capacity() / 64;
-  size_t targetBytesAllocated = ShenandoahHeapRegion::RegionSizeBytes;
-
-  if (used() > targetStartMarking && _bytesAllocSinceCM > targetBytesAllocated && should_start_concurrent_marking()) {
-    _bytesAllocSinceCM = 0;
-    if (ShenandoahGCVerbose) 
-      tty->print("Capacity = "SIZE_FORMAT" Used = "SIZE_FORMAT" Target = "SIZE_FORMAT" doing initMark\n", capacity(), used(), targetStartMarking);
-    mark();
-
-  }
-  
   MutexLocker ml(Heap_lock);
    HeapWord* result = mem_allocate_locked(size, gc_overhead_limit_was_exceeded);
   return result;
 }
 
-void ShenandoahHeap::mark() {
+void ShenandoahConcurrentGCThread::run() {
+  initialize_in_thread();
+  wait_for_universe_init();
 
-  if (ShenandoahGCVerbose) tty->print("Starting a mark");
+  ShenandoahHeap* heap = ShenandoahHeap::heap();
+  // These are just arbitrary numbers for now.  CHF
+  size_t targetStartMarking = heap->capacity() / 64;
+  size_t targetBytesAllocated = ShenandoahHeapRegion::RegionSizeBytes;
 
-    VM_ShenandoahInitMark initMark;
-    VMThread::execute(&initMark);
+  while (true) {
     
-    concurrentMark()->markFromRoots();
+    if (heap->used() > targetStartMarking && heap->_bytesAllocSinceCM > targetBytesAllocated) {
+      heap->_bytesAllocSinceCM = 0;
+      if (ShenandoahGCVerbose) 
+        tty->print("Capacity = "SIZE_FORMAT" Used = "SIZE_FORMAT" Target = "SIZE_FORMAT" doing initMark\n", heap->capacity(), heap->used(), targetStartMarking);
+ 
+      if (ShenandoahGCVerbose) tty->print("Starting a mark");
 
-    VM_ShenandoahFinishMark finishMark;
-    VMThread::execute(&finishMark);
+      VM_ShenandoahInitMark initMark;
+      VMThread::execute(&initMark);
 
+      ShenandoahHeap::heap()->concurrentMark()->markFromRoots();
+
+      VM_ShenandoahFinishMark finishMark;
+      VMThread::execute(&finishMark);
+
+    } else {
+      yield();
+    }
+
+  }
 }
 
+void ShenandoahConcurrentGCThread::yield() {
+  _sts.yield("Concurrent Mark");
+}
+
+void ShenandoahConcurrentGCThread::start() {
+  create_and_start();
+}
 
 class ParallelEvacuateRegionObjectClosure : public ObjectClosure {
 private:
