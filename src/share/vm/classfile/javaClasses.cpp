@@ -1001,7 +1001,7 @@ oop java_lang_Thread::park_blocker(oop java_thread) {
          _park_blocker_offset != 0, "Must support parkBlocker field");
 
   if (_park_blocker_offset > 0) {
-    return java_thread->obj_field(_park_blocker_offset);
+    return oopDesc::bs()->resolve_oop(java_thread->obj_field(_park_blocker_offset));
   }
 
   return NULL;
