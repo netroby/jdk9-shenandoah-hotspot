@@ -134,7 +134,7 @@ public:
   inline oopDesc* get_shenandoah_forwardee_helper(oopDesc* p) {
     assert(UseShenandoahGC, "must only be called when Shenandoah is used.");
     assert(Universe::heap()->is_in(p), "We shouldn't be calling this on objects not in the heap");
-    assert(! is_brooks_ptr(p), err_msg("oop must not be a brooks pointer itself. oop's mark word: %p", p->mark()));
+    assert(! is_brooks_ptr(p), err_msg("oop must not be a brooks pointer itself. oop's mark word: %p", ShenandoahHeap::getMark(p)));
     HeapWord* oopWord = (HeapWord*) p;
     HeapWord* brooksPOop = oopWord - BROOKS_POINTER_OBJ_SIZE;
     if (!is_brooks_ptr(oop(brooksPOop))) {
@@ -160,9 +160,8 @@ public:
   }
 
   static bool is_brooks_ptr(oopDesc* p) {
-    if (p->has_displaced_mark())
-      return false;
-    return p->mark()->age() == 15;
+    markOop mark = ShenandoahHeap::getMark(p);
+    return mark->age() == 15;
   }
 
   static bool has_brooks_ptr(oopDesc* p) {
