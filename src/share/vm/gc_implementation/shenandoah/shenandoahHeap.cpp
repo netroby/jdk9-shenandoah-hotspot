@@ -438,7 +438,10 @@ HeapWord* ShenandoahHeap::allocate_memory(size_t size) {
 HeapWord* ShenandoahHeap::mem_allocate_locked(size_t size,
 					      bool* gc_overhead_limit_was_exceeded) {
 
-  HeapWord* filler = allocate_memory(BROOKS_POINTER_OBJ_SIZE + size);
+  // This was used for allocation while holding the Heap_lock.
+  // HeapWord* filler = allocate_memory(BROOKS_POINTER_OBJ_SIZE + size);
+  HeapWord* filler = allocate_memory_gclab(BROOKS_POINTER_OBJ_SIZE + size);
+
   HeapWord* result = filler + BROOKS_POINTER_OBJ_SIZE;
   if (filler != NULL) {
     initialize_brooks_ptr(filler, result);
@@ -490,9 +493,8 @@ HeapWord*  ShenandoahHeap::mem_allocate(size_t size,
   _numAllocs++;
 #endif
 
-
-  MutexLocker ml(Heap_lock);
-   HeapWord* result = mem_allocate_locked(size, gc_overhead_limit_was_exceeded);
+  // MutexLocker ml(Heap_lock);
+  HeapWord* result = mem_allocate_locked(size, gc_overhead_limit_was_exceeded);
   return result;
 }
 
