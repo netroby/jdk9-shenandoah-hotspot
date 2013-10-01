@@ -289,7 +289,7 @@ HeapWord* ShenandoahHeap::allocate_new_gclab(size_t word_size) {
   HeapWord* result = allocate_memory_gclab(word_size);
   assert(! heap_region_containing(result)->is_dirty(), "Never allocate in dirty region");
   if (result != NULL) {
-    _current_region->increase_live_data((jlong)word_size);
+    _current_region->increase_live_data(((jlong)word_size) * HeapWordSize);
     if (ShenandoahGCVerbose)
       tty->print("allocating new gclab of size %d at addr %p\n", word_size, result);
   }
@@ -443,7 +443,7 @@ HeapWord* ShenandoahHeap::mem_allocate_locked(size_t size,
   if (filler != NULL) {
     initialize_brooks_ptr(filler, result);
     _bytesAllocSinceCM += size;
-    _current_region->setLiveData(_current_region->used());
+    _current_region->increase_live_data((size + BROOKS_POINTER_OBJ_SIZE) * HeapWordSize);
     if (ShenandoahGCVerbose)
       tty->print("mem_allocate_locked object of size %d at addr %p in epoch %d\n", size, result, _epoch);
 
@@ -1422,7 +1422,7 @@ void ShenandoahMarkObjsClosure::do_object(oop obj) {
 
       // Calculate liveness of heap region containing object.
       ShenandoahHeapRegion* region = sh->heap_region_containing(obj);
-      region->increase_live_data(obj->size() + BROOKS_POINTER_OBJ_SIZE);
+      region->increase_live_data((obj->size() + BROOKS_POINTER_OBJ_SIZE) * HeapWordSize);
 
       sh->concurrentMark()->addTask(obj, _worker_id);
     }
