@@ -466,7 +466,7 @@ static SharedGlobals GVars ;
 static int MonitorScavengeThreshold = 1000000 ;
 static volatile int ForceMonitorScavenge = 0 ; // Scavenge required and pending
 
-static markOop ReadStableMark (oop obj) {
+markOop ObjectSynchronizer::ReadStableMark (oop obj) {
   markOop mark = obj->mark() ;
   if (!mark->is_being_inflated()) {
     return mark ;       // normal fast-path return

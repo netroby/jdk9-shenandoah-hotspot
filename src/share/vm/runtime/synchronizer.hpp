@@ -126,6 +126,8 @@ class ObjectSynchronizer : AllStatic {
 
   static void RegisterSpinCallback (int (*)(intptr_t, int), intptr_t) ;
 
+  static markOop ReadStableMark(oop obj);
+
  private:
   enum { _BLOCKSIZE = 128 };
   static ObjectMonitor* gBlockList;

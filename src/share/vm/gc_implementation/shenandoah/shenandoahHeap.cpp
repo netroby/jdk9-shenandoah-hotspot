@@ -12,11 +12,12 @@
 ShenandoahHeap* ShenandoahHeap::_pgc = NULL;
 
 markOop ShenandoahHeap::getMark(oop obj) {
-  markOop mark = obj->mark();
-  if (mark->has_displaced_mark_helper())
-    return mark->displaced_mark_helper();
-  else
-    return mark;
+  markOop mark = ObjectSynchronizer::ReadStableMark(obj);
+  assert(mark != markOopDesc::INFLATING(), "Must not get an inflating mark");
+  if (mark->has_displaced_mark_helper()) {
+    mark = mark->displaced_mark_helper();
+  }
+  return mark;
 }
 
 void ShenandoahHeap::setMark(oop obj, markOop mark) {
