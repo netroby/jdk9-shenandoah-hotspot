@@ -477,7 +477,7 @@ HeapWord*  ShenandoahHeap::mem_allocate(size_t size,
 					bool*  gc_overhead_limit_was_exceeded) {
 
 #ifdef ASSERT
-  if (_numAllocs > 1000000) {
+  if (ShenandoahVerify && _numAllocs > 1000000) {
     _numAllocs = 0;
     VM_ShenandoahVerifyHeap op(0, 0, GCCause::_allocation_failure);
     if (Thread::current()->is_VM_thread()) {
@@ -603,7 +603,11 @@ private:
     if (ShenandoahGCVerbose) {
       tty->print_cr("copy object from %p to: %p epoch: %d, age: %d", p, copy, ShenandoahHeap::heap()->getEpoch(), ShenandoahHeap::getMark(p)->age());
     }
-    verify_copy(p, oop(copy));
+#ifdef ASSERT
+    if (ShenandoahVerify) {
+      verify_copy(p, oop(copy));
+    }
+#endif
     if (p->has_displaced_mark())
       p->set_mark(p->displaced_mark());
   }    
@@ -694,7 +698,11 @@ void ShenandoahHeap::parallel_evacuate_region(ShenandoahHeapRegion* from_region,
     tty->print("parallel_evacuate_region starting from_region %d: free_regions = %d\n",  from_region->regionNumber, _free_regions->available_regions());
   from_region->object_iterate(&evacuate_region);
   from_region->set_dirty(true);
-  verify_evacuated_region(from_region);
+#ifdef ASSERT
+  if (ShenandoahVerify) {
+    verify_evacuated_region(from_region);
+  }
+#endif
   if (ShenandoahGCVerbose)
     tty->print("parallel_evacuate_region after from_region = %d: Wasted %d bytes free_regions = %d\n", from_region->regionNumber, evacuate_region.wasted(), _free_regions->available_regions());
 }
@@ -922,7 +930,9 @@ void ShenandoahHeap::parallel_evacuate() {
   }
 
 #ifdef ASSERT
-  verify_heap_after_marking();
+  if (ShenandoahVerify) {
+    verify_heap_after_marking();
+  }
 #endif
 
   RecycleDirtyRegionsClosure cl;
@@ -962,7 +972,9 @@ void ShenandoahHeap::parallel_evacuate() {
   }
 
 #ifdef ASSERT
-  verify_heap_after_evacuation();
+  if (ShenandoahVerify) {
+    verify_heap_after_evacuation();
+  }
 #endif
 
 }
