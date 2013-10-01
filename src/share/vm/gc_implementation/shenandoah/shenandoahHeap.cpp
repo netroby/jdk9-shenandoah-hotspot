@@ -1110,7 +1110,6 @@ bool ShenandoahHeap::block_is_obj(const HeapWord* addr) const {
 }
 
 jlong ShenandoahHeap::millis_since_last_gc() {
-  Unimplemented();
   return 0;
 }
 
