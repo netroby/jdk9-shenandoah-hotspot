@@ -1631,8 +1631,9 @@ void ShenandoahHeap::mark_current(oop obj) const {
 
 void ShenandoahHeap::mark_current_no_checks(oop obj) const {
   bool success = false;
-  while (! success) {
-    markOop mark = getMark(obj);
+  markOop mark;
+  while ((! success) || mark == markOopDesc::INFLATING() || mark == markOopDesc::DISPLACED_DEFLATING()) {
+    mark = getMark(obj);
     markOop new_mark = mark->set_age(_epoch);
     success = cas_setMark(obj, new_mark, mark);
   }

@@ -233,6 +233,7 @@ class markOopDesc: public oopDesc {
   // other thread.  (They should spin or block instead.  The 0 value
   // is transient and *should* be short-lived).
   static markOop INFLATING() { return (markOop) 0; }    // inflate-in-progress
+  static markOop DISPLACED_DEFLATING() { return (markOop) 0; }    // defflate-in-progress
 
   // Should this header be preserved during GC?
   inline bool must_be_preserved(oop obj_containing_mark) const;
