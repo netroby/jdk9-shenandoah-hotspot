@@ -1433,17 +1433,6 @@ bool ObjectSynchronizer::deflate_monitor(ObjectMonitor* mid, oop obj,
      if (ClearResponsibleAtSTW) mid->_Responsible = NULL ;
      deflated = false;
   } else {
-
-    bool success = false;
-    markOop header;
-    while (! success) {
-      header = mid->header();
-      success = header == Atomic::cmpxchg_ptr(markOopDesc::DISPLACED_DEFLATING(), mid->header_addr(), header);
-      // Only continue deflating if no other thread messed with displaced header while we're doing this.
-      // Competing threads need to check for DISPLACED_DEFLATING.
-    }
-    assert(header != NULL, "Must not end up with a 0 header");
-
      // Deflate the monitor if it is no longer being used
      // It's idle - scavenge and return to the global free list
      // plain old deflation ...
@@ -1457,7 +1446,7 @@ bool ObjectSynchronizer::deflate_monitor(ObjectMonitor* mid, oop obj,
      }
 
      // Restore the header back to obj
-     obj->release_set_mark(header);
+     obj->release_set_mark(mid->header());
      mid->clear();
 
      assert (mid->object() == NULL, "invariant") ;
