@@ -110,8 +110,6 @@ class ObjectMonitor {
  public:
   markOop   header() const;
   void      set_header(markOop hdr);
-  void      release_set_header(markOop hdr);
-  volatile markOop*  header_addr();
 
   intptr_t is_busy() const {
     // TODO-FIXME: merge _count and _waiters.
