@@ -16,7 +16,7 @@
 #include "oops/oop.hpp"
 #include "oops/markOop.hpp"
 
-#define MAX_EPOCH 14
+#define MAX_EPOCH 7
 #define BROOKS_POINTER_OBJ_SIZE 4
 
 
@@ -94,10 +94,6 @@ public:
   }
 
   uint getEpoch() {return _epoch;}
-
-  static markOop getMark(oop obj);
-  static void setMark(oop obj, markOop mark);
-  static bool cas_setMark(oop obj, markOop mark, markOop old_mark);
 
   // For now we are ignoring eden.
   inline bool should_alloc_in_eden(size_t size) { return false;}
@@ -207,7 +203,6 @@ public:
   void parallel_evacuate();
 
   void initialize_brooks_ptr(HeapWord* brooks_ptr, HeapWord* object);
-  void set_brooks_ptr(HeapWord* brooks_ptr, HeapWord* object);
 
   oop maybe_update_oop_ref(oop* p);
   void evacuate_region(ShenandoahHeapRegion* from_region, ShenandoahHeapRegion* to_region);

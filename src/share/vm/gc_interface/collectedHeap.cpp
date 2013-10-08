@@ -418,7 +418,7 @@ void CollectedHeap::zap_filler_array(HeapWord* start, size_t words, bool zap)
 #endif // ASSERT
 
 void
-CollectedHeap::fill_with_array(HeapWord* start, size_t words, bool zap)
+CollectedHeap::fill_with_array(HeapWord* start, size_t words, bool zap, bool gc_init)
 {
   assert(words >= filler_array_min_size(), "too small for an array");
   assert(words <= filler_array_max_size(), "too big for a single object");
@@ -429,7 +429,7 @@ CollectedHeap::fill_with_array(HeapWord* start, size_t words, bool zap)
 
   // Set the length first for concurrent GC.
   ((arrayOop)start)->set_length((int)len);
-  post_allocation_setup_common(Universe::intArrayKlassObj(), start);
+  post_allocation_setup_common(Universe::intArrayKlassObj(), start, gc_init);
   DEBUG_ONLY(zap_filler_array(start, words, zap);)
 }
 

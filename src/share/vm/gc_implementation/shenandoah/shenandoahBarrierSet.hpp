@@ -6,6 +6,7 @@
 #include "memory/barrierSet.hpp"
 #include "memory/universe.hpp"
 #include "gc_implementation/g1/g1SATBCardTableModRefBS.hpp"
+#include "gc_implementation/shenandoah/brooksPointer.hpp"
 
 #define __ masm->
 
@@ -134,21 +135,8 @@ public:
   inline oopDesc* get_shenandoah_forwardee_helper(oopDesc* p) {
     assert(UseShenandoahGC, "must only be called when Shenandoah is used.");
     assert(Universe::heap()->is_in(p), "We shouldn't be calling this on objects not in the heap");
-    assert(! is_brooks_ptr(p), err_msg("oop must not be a brooks pointer itself. oop's mark word: %p", ShenandoahHeap::getMark(p)));
-    HeapWord* oopWord = (HeapWord*) p;
-    HeapWord* brooksPOop = oopWord - BROOKS_POINTER_OBJ_SIZE;
-    if (!is_brooks_ptr(oop(brooksPOop))) {
-      oopDesc* b = (oopDesc*) oop(brooksPOop);
-      if (b->has_displaced_mark())
-	tty->print("OOPSIE: displaced mark p = %p brooksPOop = %p mark = %p\n", oopWord, brooksPOop, b->mark());
-      else
-	tty->print("OOPSIE: oop = %p brooksPOop = %p age = %d   \n",
-		   oopWord, brooksPOop, b->mark()->age());
-    }
-    assert(is_brooks_ptr(oop(brooksPOop)), err_msg("brooks pointer must be a brooks pointer %p", brooksPOop));
-    HeapWord** brooksP = (HeapWord**) (brooksPOop + BROOKS_POINTER_OBJ_SIZE - 1);
-    HeapWord* forwarded = *brooksP;
-    return (oopDesc*) forwarded;
+    assert(! is_brooks_ptr(p), err_msg("oop must not be a brooks pointer itself. oop's mark word: %p", BrooksPointer::get(p).get_age()));
+    return BrooksPointer::get(p).get_forwardee();
   }
 
 
@@ -160,8 +148,12 @@ public:
   }
 
   static bool is_brooks_ptr(oopDesc* p) {
-    markOop mark = ShenandoahHeap::getMark(p);
-    return mark->age() == 15;
+    markOop mark = p->mark();
+    if (mark->has_displaced_mark_helper()) {
+      return false;
+    } else {
+      return mark->age() == 15;
+    }
   }
 
   static bool has_brooks_ptr(oopDesc* p) {
@@ -199,6 +191,7 @@ public:
 
   virtual void compile_resolve_oop_not_null(MacroAssembler* masm, Register dst) {
     __ movptr(dst, Address(dst, -8));
+    __ andq(dst, ~0x7);
   }
 #endif
 };

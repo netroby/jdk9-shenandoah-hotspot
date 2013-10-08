@@ -24,6 +24,7 @@
 
 #include "gc_implementation/shenandoah/shenandoahConcurrentMark.hpp"
 #include "gc_implementation/shenandoah/shenandoahHeap.hpp"
+#include "gc_implementation/shenandoah/brooksPointer.hpp"
 
 
 SCMRootRegionScanTask::SCMRootRegionScanTask(ShenandoahConcurrentMark* cm) :
@@ -236,17 +237,10 @@ void ShenandoahConcurrentMark::checkpointRootsFinal() {
   markingTask.work(0);
 }
 
-int getAge(oop obj) {
-  ShenandoahHeap* sh = (ShenandoahHeap*) Universe::heap();
-  assert(sh->is_in((HeapWord*) obj), "We are only interested in heap objects");
-  return ShenandoahHeap::getMark(obj)->age();
-}
-
-
 void ShenandoahConcurrentMark::addTask(oop obj, int q) {
   ShenandoahHeap* sh = (ShenandoahHeap*) Universe::heap();
   int epoch = sh->getEpoch();
-  int age = getAge(obj);
+  int age = BrooksPointer::get(obj).get_age();
 
   assert(obj->is_oop(), "Oops, not an oop");
 

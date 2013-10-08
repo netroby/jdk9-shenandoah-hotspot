@@ -148,7 +148,7 @@ class CollectedHeap : public CHeapObj<mtInternal> {
   inline static HeapWord* common_mem_allocate_init(KlassHandle klass, size_t size, TRAPS);
 
   // Helper functions for (VM) allocation.
-  inline static void post_allocation_setup_common(KlassHandle klass, HeapWord* obj);
+  inline static void post_allocation_setup_common(KlassHandle klass, HeapWord* obj, bool gc_init = true);
   inline static void post_allocation_setup_no_klass_install(KlassHandle klass,
                                                             HeapWord* objPtr);
 
@@ -169,7 +169,7 @@ class CollectedHeap : public CHeapObj<mtInternal> {
 
   // Fill with a single array; caller must ensure filler_array_min_size() <=
   // words <= filler_array_max_size().
-  static void fill_with_array(HeapWord* start, size_t words, bool zap = true);
+  static void fill_with_array(HeapWord* start, size_t words, bool zap = true, bool gc_init = true);
 
   // Fill with a single object (either an int array or a java.lang.Object).
   static inline void fill_with_object_impl(HeapWord* start, size_t words, bool zap = true);
