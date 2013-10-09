@@ -636,7 +636,7 @@ public:
   VerifyEvacuatedObjectClosure(uint epoch) : _epoch(epoch) {}
   
   void do_object(oop p) {
-    if (BrooksPointer::get(p).get_age() == _epoch) {
+    if ((! ShenandoahBarrierSet::is_brooks_ptr(p)) && BrooksPointer::get(p).get_age() == _epoch) {
       oop p_prime = oopDesc::bs()->resolve_oop(p);
       assert(p != p_prime, "Should point to evacuated copy");
       assert(p->klass() == p_prime->klass(), "Should have the same class");
@@ -856,7 +856,7 @@ public:
     _heap(ShenandoahHeap::heap()), _cl(cl) {};
 
   void do_object(oop p) {
-    if (_heap->isMarkedCurrent(p)) {
+    if ((!ShenandoahBarrierSet::is_brooks_ptr(p)) && _heap->isMarkedCurrent(p)) {
       p->oop_iterate(_cl);
     }
   }
@@ -872,7 +872,7 @@ public:
     _heap(ShenandoahHeap::heap()), _cl(cl) {};
 
   void do_object(oop p) {
-    if (_heap->isMarked(p)) {
+    if ((!ShenandoahBarrierSet::is_brooks_ptr(p)) && _heap->isMarked(p)) {
       p->oop_iterate(_cl);
     }
   }
