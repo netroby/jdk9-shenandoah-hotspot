@@ -1461,8 +1461,10 @@ void ShenandoahHeap::start_concurrent_marking() {
   }
 
 #ifdef ASSERT
-  BumpObjectAgeClosure boc(this);
-  object_iterate(&boc);
+  if (ShenandoahVerify) {
+    BumpObjectAgeClosure boc(this);
+    object_iterate(&boc);
+  }
 #endif
   
   ClearLivenessClosure clc(this);
