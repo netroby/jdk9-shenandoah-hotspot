@@ -545,6 +545,7 @@ private:
 
   void assign_brooks_pointer(oop p, HeapWord* filler, HeapWord* copy) {
     _heap->initialize_brooks_ptr(filler, copy);
+    BrooksPointer::get(oop(copy)).set_age(BrooksPointer::get(p).get_age());
     BrooksPointer::get(p).set_forwardee(oop(copy));
     if (ShenandoahGCVerbose) {
       tty->print_cr("evacuating object: %p, of size %d with age %d, epoch %d to %p of size %d", 
