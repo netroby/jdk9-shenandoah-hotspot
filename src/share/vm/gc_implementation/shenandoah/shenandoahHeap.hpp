@@ -1,9 +1,8 @@
 #ifndef SHARE_VM_GC_IMPLEMENTATION_SHENANDOAH_SHENANDOAHHEAP_HPP
 #define SHARE_VM_GC_IMPLEMENTATION_SHENANDOAH_SHENANDOAHHEAP_HPP
 
-#include "gc_implementation/shared/concurrentGCThread.hpp"
-
 #include "gc_implementation/shenandoah/shenandoahAllocRegion.hpp"
+#include "gc_implementation/shenandoah/shenandoahConcurrentGCThread.hpp"
 #include "gc_implementation/shenandoah/shenandoahCollectorPolicy.hpp"
 #include "gc_implementation/shenandoah/shenandoahConcurrentMark.hpp"
 #include "gc_implementation/shenandoah/shenandoahHeapRegion.hpp"
@@ -33,17 +32,6 @@ public:
   virtual bool doHeapRegion(ShenandoahHeapRegion* r) = 0;
 
   bool complete() { return _complete;}
-};
-
-class ShenandoahConcurrentGCThread: public ConcurrentGCThread {
- public:
-  ShenandoahConcurrentGCThread();
-  ~ShenandoahConcurrentGCThread();
-
-  void run();
-
-  void start();
-  void yield();
 };
 
 
