@@ -37,6 +37,9 @@ public:
 
 class ShenandoahConcurrentGCThread: public ConcurrentGCThread {
  public:
+  ShenandoahConcurrentGCThread();
+  ~ShenandoahConcurrentGCThread();
+
   void run();
 
   void start();

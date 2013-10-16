@@ -473,6 +473,13 @@ HeapWord*  ShenandoahHeap::mem_allocate(size_t size,
   return result;
 }
 
+ShenandoahConcurrentGCThread::ShenandoahConcurrentGCThread() :
+  ConcurrentGCThread() {
+}
+
+ShenandoahConcurrentGCThread::~ShenandoahConcurrentGCThread() {
+}
+
 void ShenandoahConcurrentGCThread::run() {
   initialize_in_thread();
   wait_for_universe_init();
