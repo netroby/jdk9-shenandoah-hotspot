@@ -264,7 +264,7 @@ class MonitorInfo : public ResourceObj {
   // Accessors
   oop        owner() const {
     assert(!_owner_is_scalar_replaced, "should not be called for scalar replaced object");
-    return _owner;
+    return oopDesc::bs()->resolve_oop(_owner);
   }
   oop   owner_klass() const {
     assert(_owner_is_scalar_replaced, "should not be called for not scalar replaced object");
