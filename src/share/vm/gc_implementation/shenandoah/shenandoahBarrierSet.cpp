@@ -283,7 +283,7 @@ void ShenandoahBarrierSet::compile_resolve_oop(MacroAssembler* masm, Register ds
   __ bind(is_null);
 }
 
-void compile_resolve_oop_not_null(MacroAssembler* masm, Register dst) {
+void ShenandoahBarrierSet::compile_resolve_oop_not_null(MacroAssembler* masm, Register dst) {
   __ movptr(dst, Address(dst, -8));
   __ andq(dst, ~0x7);
 }
