@@ -222,14 +222,16 @@ void ObjectSynchronizer::fast_exit(oop object, BasicLock* lock, TRAPS) {
 // We don't need to use fast path here, because it must have been
 // failed in the interpreter/compiler code.
 void ObjectSynchronizer::slow_enter(Handle obj, BasicLock* lock, TRAPS) {
-  markOop mark = obj->mark();
+  Handle n_obj(THREAD,
+	       oopDesc::bs()->resolve_and_maybe_copy_oop(obj()));
+  markOop mark = n_obj->mark();
   assert(!mark->has_bias_pattern(), "should not see bias pattern here");
 
   if (mark->is_neutral()) {
     // Anticipate successful CAS -- the ST of the displaced mark must
     // be visible <= the ST performed by the CAS.
     lock->set_displaced_header(mark);
-    if (mark == (markOop) Atomic::cmpxchg_ptr(lock, obj()->mark_addr(), mark)) {
+    if (mark == (markOop) Atomic::cmpxchg_ptr(lock, n_obj()->mark_addr(), mark)) {
       TEVENT (slow_enter: release stacklock) ;
       return ;
     }
@@ -237,7 +239,7 @@ void ObjectSynchronizer::slow_enter(Handle obj, BasicLock* lock, TRAPS) {
   } else
   if (mark->has_locker() && THREAD->is_lock_owned((address)mark->locker())) {
     assert(lock != mark->locker(), "must not re-lock the same lock");
-    assert(lock != (BasicLock*)obj->mark(), "don't relock with same BasicLock");
+    assert(lock != (BasicLock*)n_obj->mark(), "don't relock with same BasicLock");
     lock->set_displaced_header(NULL);
     return;
   }
@@ -255,7 +257,7 @@ void ObjectSynchronizer::slow_enter(Handle obj, BasicLock* lock, TRAPS) {
   // must be non-zero to avoid looking like a re-entrant lock,
   // and must not look locked either.
   lock->set_displaced_header(markOopDesc::unused_mark());
-  ObjectSynchronizer::inflate(THREAD, obj())->enter(THREAD);
+  ObjectSynchronizer::inflate(THREAD, n_obj())->enter(THREAD);
 }
 
 // This routine is used to handle interpreter/compiler slow case

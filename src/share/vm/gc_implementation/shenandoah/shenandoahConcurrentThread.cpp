@@ -12,7 +12,7 @@ ShenandoahConcurrentThread::ShenandoahConcurrentThread() :
   _concurrent_mark_started(false),
   _concurrent_mark_in_progress(false)
 {
-  create_and_start();
+  //  create_and_start();
 }
 
 class SCMCheckpointRootsFinalClosure : public VoidClosure {
@@ -29,46 +29,37 @@ void ShenandoahConcurrentThread::run() {
   initialize_in_thread();
   tty->print("Starting to run %s with number %ld YAY!!!, %s\n", name(), os::current_thread_id());
   wait_for_universe_init();
-  ShenandoahHeap* sh = ShenandoahHeap::heap();
-  ShenandoahCollectorPolicy* sh_policy = sh->collector_policy();
-  ShenandoahConcurrentMark* scm = sh->concurrentMark();
-  Thread* current_thread = Thread::current();
-  clear_cm_aborted();
+  ShenandoahHeap* heap = ShenandoahHeap::heap();
+
+  size_t targetStartMarking = heap->capacity() / 64;
+  size_t targetBytesAllocated = ShenandoahHeapRegion::RegionSizeBytes;
+
 
   while (!_should_terminate) {
-    sleepBeforeNextCycle();
-    {
-      ResourceMark rm;
-      HandleMark hm;
-      
-      if (!cm_has_aborted()) {
-	scm->scanRootRegions();
-      }
+    if (heap->used() > targetStartMarking && heap->_bytesAllocSinceCM > targetBytesAllocated) {
+      heap->_bytesAllocSinceCM = 0;
+      if (ShenandoahGCVerbose) 
+        tty->print("Capacity = "SIZE_FORMAT" Used = "SIZE_FORMAT" Target = "SIZE_FORMAT" doing initMark\n", heap->capacity(), heap->used(), targetStartMarking);
+ 
+      if (ShenandoahGCVerbose) tty->print("Starting a mark");
 
-      if (!cm_has_aborted()) {
-         scm->markFromRoots();
-      } 
-      SCMCheckpointRootsFinalClosure final_cl(scm);
-      /*
-      VM_ShenandoahFinal op;
-      VMThread::execute(&op);
-      */
-      }
-   }
+      VM_ShenandoahInitMark initMark;
+      VMThread::execute(&initMark);
+
+      ShenandoahHeap::heap()->concurrentMark()->markFromRoots();
+
+      VM_ShenandoahFinishMark finishMark;
+      VMThread::execute(&finishMark);
+
+      ShenandoahHeap::heap()->parallel_evacuate();
+
+    } else {
+      yield();
+    }
+  }
 }
 
-ShenandoahConcurrentThread* ShenandoahConcurrentThread::start() {
-  ShenandoahConcurrentThread* th = new ShenandoahConcurrentThread();
-  return th;
-}
 
-void ShenandoahConcurrentThread::stop() {
-  tty->print("Attempt to stop concurrentThread");
-}
-
-void ShenandoahConcurrentThread::create_and_start() {
-}
-    
 void ShenandoahConcurrentThread::print() const {
   print_on(tty);
 }
@@ -111,3 +102,10 @@ bool ShenandoahConcurrentThread::cm_in_progress() {
   return _concurrent_mark_in_progress;  
 }
 
+void ShenandoahConcurrentThread::start() {
+  create_and_start();
+}
+
+void ShenandoahConcurrentThread::yield() {
+  _sts.yield("Concurrent Mark");
+}

@@ -170,6 +170,14 @@ void ShenandoahBarrierSet::write_ref_array_pre(narrowOop* dst, int count, bool d
 template <class T>
 void ShenandoahBarrierSet::write_ref_field_pre_static(T* field, oop newVal) {
   T heap_oop = oopDesc::load_heap_oop(field);
+    ShenandoahHeap *sh = (ShenandoahHeap*) Universe::heap();
+    if (sh->is_in(field) && 
+	sh->heap_region_containing((HeapWord*)field)->is_in_collection_set()){
+      tty->print("field = %p\n", field);
+      sh->heap_region_containing((HeapWord*)field)->print();
+      assert(false, "We should have fixed this earlier");   
+    }   
+
   if (!oopDesc::is_null(heap_oop)) {
     G1SATBCardTableModRefBS::enqueue(oopDesc::decode_heap_oop(heap_oop));
     // tty->print("write_ref_field_pre_static: v = "PTR_FORMAT" o = "PTR_FORMAT" old: %p\n", field, newVal, heap_oop);
@@ -236,9 +244,22 @@ oopDesc* ShenandoahBarrierSet::get_shenandoah_forwardee_helper(oopDesc* p) {
 
 oopDesc* ShenandoahBarrierSet::get_shenandoah_forwardee(oopDesc* p) {
   oop result = get_shenandoah_forwardee_helper(p);
-  // We should never be forwarded more than once.
-  assert(get_shenandoah_forwardee_helper(result) == result, "Only one fowarding per customer");  
-  return result;
+    if (result != p) {
+      oop second_forwarding = get_shenandoah_forwardee_helper(result);
+
+      // We should never be forwarded more than once.
+      if (result != second_forwarding) {
+	ShenandoahHeap* sh = (ShenandoahHeap*) Universe::heap();
+	tty->print("first reference %p is in heap region:\n", p);
+	sh->heap_region_containing(p)->print();
+	tty->print("first_forwarding %p is in heap region:\n", result);
+	sh->heap_region_containing(result)->print();
+	tty->print("final reference %p is in heap region:\n", second_forwarding);
+	sh->heap_region_containing(second_forwarding)->print();
+	assert(get_shenandoah_forwardee_helper(result) == result, "Only one fowarding per customer");  
+      }
+    }
+    return result;
 }
 
 
@@ -271,6 +292,35 @@ oopDesc* ShenandoahBarrierSet::maybe_resolve_oop(oopDesc* src) {
     return src;
   }
 }
+
+oopDesc* ShenandoahBarrierSet::resolve_and_maybe_copy_oopHelper(oopDesc* src) {
+    if (src != NULL) {
+      oopDesc* tmp = get_shenandoah_forwardee(src);
+      ShenandoahHeap *sh = (ShenandoahHeap*) Universe::heap();      
+      if (sh->heap_region_containing(tmp)->is_in_collection_set()) {
+	oopDesc* dst = sh->evacuate_object(tmp);
+	tty->print("src = %p dst = %p tmp = %p src-2 = %p\n",
+		   src, dst, tmp, src-2);
+	assert(sh->is_in(dst), "result should be in the heap");
+	return dst;
+      } else {
+	return src;
+      }
+    } else {
+      return NULL;
+    }
+}
+
+oopDesc* ShenandoahBarrierSet::resolve_and_maybe_copy_oop(oopDesc* src) {
+    ShenandoahHeap *sh = (ShenandoahHeap*) Universe::heap();      
+    if (src != NULL && sh->is_in(src)) {
+      oopDesc* result = resolve_and_maybe_copy_oopHelper(src);
+      assert(sh->is_in(result), "result should be in the heap");
+      return result;
+    } else {
+      return src;
+    }
+  }
 
 
 #ifndef CC_INTERP

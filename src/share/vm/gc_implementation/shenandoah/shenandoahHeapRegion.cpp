@@ -19,8 +19,25 @@ bool ShenandoahHeapRegion::rollback_allocation(uint size) {
 }
 
 void ShenandoahHeapRegion::print() {
-  tty->print("ShenandoahHeapRegion: %d live = %u garbage = %u claimed = %d bottom = %p end = %p top = %p\n", 
-	     regionNumber, liveData, garbage(), claimed, bottom(), end(), top());
+  tty->print("ShenandoahHeapRegion: %d ", regionNumber);
+
+  if (is_current_allocation_region()) 
+    tty->print("A");
+  else
+    tty->print(" ");
+
+  if (is_in_collection_set())
+    tty->print("C");
+  else
+    tty->print(" ");
+
+  if (is_dirty())
+    tty->print("D");
+  else
+    tty->print(" ");
+
+  tty->print("live = %u garbage = %u claimed = %d bottom = %p end = %p top = %p\n", 
+	      liveData, garbage(), claimed, bottom(), end(), top());
 }
 
 
