@@ -35,12 +35,6 @@ public:
   bool complete() { return _complete;}
 };
 
-<<<<<<< local
-=======
-
-
-
->>>>>>> other
 // A "ShenandoahHeap" is an implementation of a java heap for HotSpot.
 // It uses a new pauseless GC algorithm based on Brooks pointers.
 // Derived from G1
@@ -202,13 +196,8 @@ public:
 
   void parallel_evacuate();
 
-<<<<<<< local
-  void initialize_brooks_ptr(HeapWord* brooks_ptr, HeapWord* obj);
-  void set_brooks_ptr(HeapWord* brooks_ptr, HeapWord* object);
-  HeapWord* cas_brooks_ptr(HeapWord* old,  HeapWord* obj);
-=======
+
   void initialize_brooks_ptr(HeapWord* brooks_ptr, HeapWord* object);
->>>>>>> other
 
   oop maybe_update_oop_ref(oop* p);
   void evacuate_region(ShenandoahHeapRegion* from_region, ShenandoahHeapRegion* to_region);
@@ -232,7 +221,7 @@ public:
   
   void copy_object(oop p, HeapWord* s);
   void verify_copy(oop p, oop c);
-  void assign_brooks_pointer(oop p, HeapWord* filler, HeapWord* copy);
+  //  void assign_brooks_pointer(oop p, HeapWord* filler, HeapWord* copy);
   void verify_heap_after_marking();
   void verify_heap_after_evacuation();
 
