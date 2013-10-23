@@ -118,7 +118,7 @@ choose_collection_set(ShenandoahHeapRegionSet* region_set,
   region_set->_index = 0;
 
   for (int i = 0; i < max_regions; i++)
-    if (_regions[i]->garbage() > _garbage_threshold) 
+    if (_regions[i]->garbage() > _garbage_threshold && ! _regions[i]->has_active_tlabs()) 
       region_set->_regions[region_set->_inserted++] = _regions[i];
 
 
@@ -130,14 +130,18 @@ choose_collection_set(ShenandoahHeapRegionSet* region_set,
 void ShenandoahHeapRegionSet::choose_collection_set(ShenandoahHeapRegionSet* region_set) {
   sortDescendingGarbage();
   int r = 0;
+  int s = 0;
   while (r < _numRegions && _regions[r]->garbage() > _garbage_threshold) {
-    region_set->_regions[r] = _regions[r];
+    if (! _regions[r]->has_active_tlabs()) {
+      region_set->_regions[s] = _regions[r];
+      s++;
+    }
     r++;
   }
 
-  region_set->_inserted = r;
+  region_set->_inserted = s;
   region_set->_index = 0;
-  region_set->_numRegions = r;
+  region_set->_numRegions = s;
 
 }
 

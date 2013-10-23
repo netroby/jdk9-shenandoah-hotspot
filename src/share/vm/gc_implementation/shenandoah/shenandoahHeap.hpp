@@ -77,6 +77,7 @@ public:
 public:
   ShenandoahHeap(ShenandoahCollectorPolicy* policy);
   HeapWord* allocate_new_tlab(size_t word_size);
+  void retire_tlab_at(HeapWord* start);
   HeapWord* allocate_new_gclab(size_t word_size);
   HeapWord* allocate_memory(size_t word_size);
   HeapWord* allocate_memory_gclab(size_t word_size);
@@ -138,12 +139,20 @@ public:
   void gc_threads_do(ThreadClosure* tcl) const;
   void print_tracing_info() const;
   void verify(bool silent,  VerifyOption vo);
-  virtual bool supports_tlab_allocation() const {return false;}
+  bool supports_tlab_allocation() const;
   virtual size_t tlab_capacity(Thread *thr) const;
   void oop_iterate(MemRegion mr, ExtendedOopClosure* ecl);
   void object_iterate_since_last_GC(ObjectClosure* cl);
   void space_iterate(SpaceClosure* scl);
   virtual size_t unsafe_max_tlab_alloc(Thread *thread) const;
+
+  HeapWord* tlab_post_allocation_setup(HeapWord* obj, bool new_obj);
+
+  uint oop_extra_words();
+
+#ifndef CC_INTERP
+  void compile_prepare_oop(MacroAssembler* masm);
+#endif
 
   Space* space_containing(const void* oop) const;
   void gc_prologue(bool b);
@@ -193,7 +202,7 @@ public:
 
   void parallel_evacuate();
 
-  void initialize_brooks_ptr(HeapWord* brooks_ptr, HeapWord* object);
+  void initialize_brooks_ptr(HeapWord* brooks_ptr, HeapWord* object, bool new_obj = true);
 
   oop maybe_update_oop_ref(oop* p);
   void evacuate_region(ShenandoahHeapRegion* from_region, ShenandoahHeapRegion* to_region);

@@ -197,6 +197,12 @@ class CollectedHeap : public CHeapObj<mtInternal> {
     return _filler_array_max_size;
   }
 
+  // Signals the GC that a TLAB is full and about to be retired.
+  virtual void retire_tlab_at(HeapWord* start);
+
+  // TLAB Post-allocation setup, specific to GC.
+  virtual HeapWord* tlab_post_allocation_setup(HeapWord* obj, bool new_obj = true);
+
   // Collector specific initialization.
   virtual void post_allocation_collector_specific_setup(HeapWord* obj) { }
 
@@ -327,6 +333,12 @@ class CollectedHeap : public CHeapObj<mtInternal> {
 
   inline static void post_allocation_install_obj_klass(KlassHandle klass,
                                                        oop obj);
+
+  virtual uint oop_extra_words();
+
+#ifndef CC_INTERP
+  virtual void compile_prepare_oop(MacroAssembler* masm);
+#endif
 
   // Raw memory allocation facilities
   // The obj and array allocate methods are covers for these methods.

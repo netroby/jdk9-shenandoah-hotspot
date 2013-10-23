@@ -14,6 +14,9 @@ public:
 
 private:
   bool _dirty;
+
+  volatile jint active_tlab_count;
+
 public:
    jint initialize(HeapWord* start, size_t regionSize);
 
@@ -32,7 +35,7 @@ public:
 
   size_t getLiveData() { return liveData;}
 
-  void print();
+  void print(outputStream* st = tty);
 
   size_t garbage() {
     size_t result = used() - liveData;
@@ -71,7 +74,10 @@ public:
 
   // Just before GC we need to fill the current region.
   void fill_region();
-  
+
+  void increase_active_tlab_count();
+  void decrease_active_tlab_count();
+  bool has_active_tlabs();
 };
 
 

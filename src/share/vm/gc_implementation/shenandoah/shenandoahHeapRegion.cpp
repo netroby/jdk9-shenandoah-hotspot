@@ -18,9 +18,9 @@ bool ShenandoahHeapRegion::rollback_allocation(uint size) {
   return true;
 }
 
-void ShenandoahHeapRegion::print() {
-  tty->print("ShenandoahHeapRegion: %d live = %u garbage = %u claimed = %d bottom = %p end = %p top = %p\n", 
-	     regionNumber, liveData, garbage(), claimed, bottom(), end(), top());
+void ShenandoahHeapRegion::print(outputStream* st) {
+  st->print("ShenandoahHeapRegion: %d live = %u garbage = %u claimed = %d bottom = %p end = %p top = %p dirty: %d active_tlabs: %d\n", 
+	     regionNumber, liveData, garbage(), claimed, bottom(), end(), top(), _dirty, active_tlab_count);
 }
 
 
@@ -61,3 +61,15 @@ void ShenandoahHeapRegion::fill_region() {
   } 
 }
 
+void ShenandoahHeapRegion::increase_active_tlab_count() {
+  Atomic::inc(&active_tlab_count);
+}
+
+void ShenandoahHeapRegion::decrease_active_tlab_count() {
+  Atomic::dec(&active_tlab_count);
+}
+
+bool ShenandoahHeapRegion::has_active_tlabs() {
+  assert(active_tlab_count >= 0, "never have negative tlab count");
+  return active_tlab_count != 0;
+}
