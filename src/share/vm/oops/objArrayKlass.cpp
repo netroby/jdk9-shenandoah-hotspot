@@ -213,7 +213,6 @@ oop ObjArrayKlass::multi_allocate(int rank, jint* sizes, TRAPS) {
       for (int index = 0; index < length; index++) {
         ArrayKlass* ak = ArrayKlass::cast(h_lower_dimension());
         oop sub_array = ak->multi_allocate(rank-1, &sizes[1], CHECK_NULL);
-	h_array = objArrayHandle(THREAD, (objArrayOop)oopDesc::bs()->resolve_and_maybe_copy_oop(h_array()));
         h_array->obj_at_put(index, sub_array);
       }
     } else {

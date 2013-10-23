@@ -276,7 +276,7 @@ UNSAFE_END
 UNSAFE_ENTRY(void, Unsafe_SetObject(JNIEnv *env, jobject unsafe, jobject obj, jlong offset, jobject x_h))
   UnsafeWrapper("Unsafe_SetObject");
   oop x = JNIHandles::resolve(x_h);
-  oop p = oopDesc::bs()->resolve_and_maybe_copy_oop(JNIHandles::resolve(obj));
+  oop p = JNIHandles::resolve(obj);
   if (UseCompressedOops) {
     oop_store((narrowOop*)index_oop_from_field_offset_long(p, offset), x);
   } else {
@@ -304,7 +304,6 @@ UNSAFE_ENTRY(void, Unsafe_SetObjectVolatile(JNIEnv *env, jobject unsafe, jobject
   oop x = JNIHandles::resolve(x_h);
   oop p = JNIHandles::resolve(obj);
   void* addr = index_oop_from_field_offset_long(p, offset);
-  
   OrderAccess::release();
   if (UseCompressedOops) {
     oop_store((narrowOop*)addr, x);
@@ -1173,8 +1172,7 @@ UNSAFE_ENTRY(jboolean, Unsafe_CompareAndSwapObject(JNIEnv *env, jobject unsafe, 
   UnsafeWrapper("Unsafe_CompareAndSwapObject");
   oop x = JNIHandles::resolve(x_h);
   oop e = JNIHandles::resolve(e_h);
-  // We are about to write to this entry so check to see if we need to copy it.
-  oop p = oopDesc::bs()->resolve_and_maybe_copy_oop(JNIHandles::resolve(obj));
+  oop p = JNIHandles::resolve(obj);
   HeapWord* addr = (HeapWord *)index_oop_from_field_offset_long(p, offset);
   oop res = oopDesc::atomic_compare_exchange_oop(x, addr, e, true);
   jboolean success  = (oopDesc::bs()->resolve_oop(res) == e);

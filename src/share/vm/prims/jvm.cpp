@@ -307,10 +307,7 @@ JVM_ENTRY(void, JVM_ArrayCopy(JNIEnv *env, jclass ignored, jobject src, jint src
   assert(s->is_oop(), "JVM_ArrayCopy: src not an oop");
   assert(d->is_oop(), "JVM_ArrayCopy: dst not an oop");
   // Do copy
-  s->klass()->copy_array(s, src_pos, 
-			 (arrayOop(oopDesc::bs()->resolve_and_maybe_copy_oop(d))), 
-			  dst_pos,
-			 length, thread);
+  s->klass()->copy_array(s, src_pos, d, dst_pos, length, thread);
 JVM_END
 
 

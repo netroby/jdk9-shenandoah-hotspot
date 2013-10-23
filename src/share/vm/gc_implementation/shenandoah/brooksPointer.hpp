@@ -23,7 +23,6 @@ public:
 
   oop get_forwardee();
   void set_forwardee(oop forwardee);
-  HeapWord* cas_forwardee(HeapWord* old, HeapWord* forwardee);
 
   static BrooksPointer get(oop obj);
 };

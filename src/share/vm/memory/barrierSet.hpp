@@ -193,9 +193,6 @@ public:
   virtual oopDesc* maybe_resolve_oop(oopDesc* src) {
     return src;
   }
-  virtual oopDesc* resolve_and_maybe_copy_oop(oopDesc* src) {
-    return src;
-  }
 
   virtual void compile_resolve_oop(MacroAssembler* masm, Register dst) {
     // Default implementation does nothing.

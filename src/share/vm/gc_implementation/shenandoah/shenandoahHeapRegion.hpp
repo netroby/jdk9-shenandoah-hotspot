@@ -14,9 +14,6 @@ public:
 
 private:
   bool _dirty;
-  bool _is_in_collection_set;
-  bool _is_current_allocation_region;
-
 public:
    jint initialize(HeapWord* start, size_t regionSize);
 
@@ -74,22 +71,6 @@ public:
 
   // Just before GC we need to fill the current region.
   void fill_region();
-
-  bool is_in_collection_set() {
-    return _is_in_collection_set;
-  }
-
-  void set_is_in_collection_set(bool b) {
-    _is_in_collection_set = b;
-  }
-
-  bool is_current_allocation_region() {
-    return _is_current_allocation_region;
-  }
-
-  void set_is_current_allocation_region(bool b) {
-    _is_current_allocation_region = b;
-  }
   
 };
 

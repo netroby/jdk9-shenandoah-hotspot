@@ -13,7 +13,6 @@ void VM_ShenandoahFinishMark::doit() {
   sh->concurrentMark()->finishMarkFromRoots();
   sh->stop_concurrent_marking();
 
-  sh->verify_heap_after_marking();
-  //  sh->parallel_evacuate();
+  sh->parallel_evacuate();
 }
   

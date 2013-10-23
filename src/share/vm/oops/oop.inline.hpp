@@ -326,10 +326,6 @@ inline volatile oop oopDesc::obj_field_volatile(int offset) const {
   return value;
 }
 inline void oopDesc::obj_field_put(int offset, oop value) {
-  oopDesc* forwarded_copy = oopDesc::bs()->resolve_and_maybe_copy_oop(this);
-  if (forwarded_copy != this)
-    return forwarded_copy->obj_field_put(offset, value);
-
   UseCompressedOops ? oop_store(obj_field_addr<narrowOop>(offset), value) :
                       oop_store(obj_field_addr<oop>(offset),       value);
 }
@@ -388,11 +384,6 @@ inline oop oopDesc::obj_field_acquire(int offset) const {
                OrderAccess::load_ptr_acquire(obj_field_addr<oop>(offset)));
 }
 inline void oopDesc::release_obj_field_put(int offset, oop value) {
-  oopDesc* forwarded_copy =
-    (oopDesc*) oopDesc::bs()->resolve_and_maybe_copy_oop(this);
-  if (forwarded_copy != this)
-    return forwarded_copy->release_obj_field_put(offset, value);
-
   UseCompressedOops ?
     oop_store((volatile narrowOop*)obj_field_addr<narrowOop>(offset), value) :
     oop_store((volatile oop*)      obj_field_addr<oop>(offset),       value);
@@ -570,10 +561,7 @@ inline oop oopDesc::atomic_compare_exchange_oop(oop exchange_value,
     if (prebarrier) {
       update_barrier_set_pre((oop*)dest, exchange_value);
     }
-
-    return (oop)Atomic::cmpxchg_ptr(exchange_value, 
-				    dest,
-				    compare_value);
+    return (oop)Atomic::cmpxchg_ptr(exchange_value, (oop*)dest, compare_value);
   }
 }
 

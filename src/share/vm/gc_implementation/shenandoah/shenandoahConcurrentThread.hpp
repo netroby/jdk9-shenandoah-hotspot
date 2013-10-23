@@ -54,8 +54,12 @@ class ShenandoahConcurrentThread: public ConcurrentGCThread {
   bool during_cycle()      { return cm_started() || cm_in_progress(); }
 
   char* name() const { return (char*)"ShenandoahConcurrentThread";}
-  void start();
-  void yield();
+
+  // shutdown
+  void stop();
+  void create_and_start();
+  ShenandoahConcurrentThread* start();
+  
 };
 
 #endif // SHARE_VM_GC_IMPLEMENTATION_SHENANDOAH_SHENANDOAHCONCURRENTTHREAD_HPP
