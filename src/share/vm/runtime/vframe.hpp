@@ -268,7 +268,7 @@ class MonitorInfo : public ResourceObj {
   }
   oop   owner_klass() const {
     assert(_owner_is_scalar_replaced, "should not be called for not scalar replaced object");
-    return _owner_klass;
+    return oopDesc::bs()->resolve_oop(_owner_klass);
   }
   BasicLock* lock()  const { return _lock;  }
   bool eliminated()  const { return _eliminated; }

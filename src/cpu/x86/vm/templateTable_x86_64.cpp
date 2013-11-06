@@ -2329,7 +2329,6 @@ void TemplateTable::getfield_or_static(int byte_no, bool is_static) {
   __ jcc(Assembler::notEqual, notObj);
   // atos
   __ load_heap_oop(rax, field);
-  oopDesc::bs()->compile_resolve_oop(_masm, rax);
   __ push(atos);
   if (!is_static) {
     patch_bytecode(Bytecodes::_fast_agetfield, bc, rbx);
@@ -2749,7 +2748,6 @@ void TemplateTable::fast_storefield(TosState state) {
 
   // Get object from stack
   pop_and_check_object(rcx);
-  oopDesc::bs()->compile_resolve_oop_not_null(_masm, rcx);
 
   // field address
   const Address field(rcx, rbx, Address::times_1);
