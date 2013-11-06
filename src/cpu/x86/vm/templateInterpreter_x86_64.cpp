@@ -547,7 +547,6 @@ void InterpreterGenerator::lock_method(void) {
 #endif // ASSERT
 
     __ bind(done);
-    oopDesc::bs()->compile_resolve_oop(_masm, rax);
   }
 
   // add space for monitor & lock
@@ -635,11 +634,11 @@ address InterpreterGenerator::generate_accessor_entry(void) {
     __ jcc(Assembler::notEqual, slow_path);
     // rbx: method
     __ movptr(rax, Address(rsp, wordSize));
-    oopDesc::bs()->compile_resolve_oop(_masm, rax);
 
     // check if local 0 != NULL and read field
     __ testptr(rax, rax);
     __ jcc(Assembler::zero, slow_path);
+    oopDesc::bs()->compile_resolve_oop_not_null(_masm, rax);
 
     // read first instruction word and extract bytecode @ 1 and index @ 2
     __ movptr(rdx, Address(rbx, Method::const_offset()));
@@ -798,10 +797,10 @@ address InterpreterGenerator::generate_Reference_get_entry(void) {
     // If the receiver is null then it is OK to jump to the slow path.
     __ movptr(rax, Address(rsp, wordSize));
 
-    oopDesc::bs()->compile_resolve_oop(_masm, rax);
-
     __ testptr(rax, rax);
     __ jcc(Assembler::zero, slow_path);
+
+    oopDesc::bs()->compile_resolve_oop_not_null(_masm, rax);
 
     // rax: local 0
     // rbx: method (but can be used as scratch now)
