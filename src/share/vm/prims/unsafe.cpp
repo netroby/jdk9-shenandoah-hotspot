@@ -1174,6 +1174,18 @@ UNSAFE_ENTRY(jboolean, Unsafe_CompareAndSwapObject(JNIEnv *env, jobject unsafe, 
   oop e = JNIHandles::resolve(e_h);
   oop p = JNIHandles::resolve(obj);
   HeapWord* addr = (HeapWord *)index_oop_from_field_offset_long(p, offset);
+  if (UseShenandoahGC) {
+    // We need to update the field so that the old value points to to-space, otherwise
+    // the comparison could fail even though it should not. I.e. when the old value
+    // points to from-space and the expected points to to-space, but they are the same
+    // object, we would fail the comparison, but it should succeed.
+    oop old_val = oopDesc::load_heap_oop((oop*) addr);
+    oop resolved_old_val = oopDesc::bs()->resolve_oop(old_val);
+    // We need to CAS the resolved oop here to avoid race condition with other threads
+    // that might have CASed another value in there. If it fails, we can ignore it,
+    // it would make our update stale anyway.
+    oopDesc::atomic_compare_exchange_oop(resolved_old_val, addr, old_val);
+  }
   oop res = oopDesc::atomic_compare_exchange_oop(x, addr, e, true);
   jboolean success  = (oopDesc::bs()->resolve_oop(res) == e);
   if (success)
