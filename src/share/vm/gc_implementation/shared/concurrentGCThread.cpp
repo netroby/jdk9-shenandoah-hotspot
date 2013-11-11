@@ -150,8 +150,9 @@ void SuspendibleThreadSet::suspend_all() {
     _suspend_all_start = os::elapsedTime();
   }
   MutexLockerEx x(_m, Mutex::_no_safepoint_check_flag);
-  assert(!_async_stop, "Only one at a time.");
-  _async_stop = true;
+  //  assert(!_async_stop, "Only one at a time.");
+  //  _async_stop = true;
+  tty->print("suspend_all: Thread::current() = %p async = %d _async_stop = %d\n", Thread::current(), _async, _async_stop);
   while (_async_stopped < _async) _m->wait(Mutex::_no_safepoint_check_flag);
 }
 

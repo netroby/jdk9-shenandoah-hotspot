@@ -426,8 +426,11 @@ HeapWord* ShenandoahHeap::mem_allocate_locked(size_t size,
     initialize_brooks_ptr(filler, result);
     _bytesAllocSinceCM += size;
     _current_region->increase_live_data((size + BROOKS_POINTER_OBJ_SIZE) * HeapWordSize);
-    if (ShenandoahGCVerbose)
+    if (ShenandoahGCVerbose) {
+      if (*gc_overhead_limit_was_exceeded)
+	tty->print("gc_overhead_limit_was_exceeded");
       tty->print("mem_allocate_locked object of size %d at addr %p in epoch %d\n", size, result, _epoch);
+    }
 
     assert(! heap_region_containing(result)->is_dirty(), "never allocate in dirty region");
     return result;
@@ -461,13 +464,13 @@ HeapWord*  ShenandoahHeap::mem_allocate(size_t size,
 #ifdef ASSERT
   if (ShenandoahVerify && _numAllocs > 1000000) {
     _numAllocs = 0;
-    VM_ShenandoahVerifyHeap op(0, 0, GCCause::_allocation_failure);
-    if (Thread::current()->is_VM_thread()) {
-      op.doit();
-    } else {
-      // ...and get the VM thread to execute it.
-      VMThread::execute(&op);
-    }
+  //   VM_ShenandoahVerifyHeap op(0, 0, GCCause::_allocation_failure);
+  //   if (Thread::current()->is_VM_thread()) {
+  //     op.doit();
+  //   } else {
+  //     // ...and get the VM thread to execute it.
+  //     VMThread::execute(&op);
+  //   }
   }
   _numAllocs++;
 #endif
@@ -1069,14 +1072,14 @@ public:
     if (*p != NULL && ! ShenandoahBarrierSet::is_brooks_ptr(*p)) {
       oop heap_oop = oopDesc::load_heap_oop(p);
       oop obj = oopDesc::decode_heap_oop_not_null(heap_oop);
-      guarantee(obj->is_oop(), "is_oop");
-      /*
+      if (!obj->is_oop()) {
         { // Just for debugging.
-        gclog_or_tty->print_cr("Root location "PTR_FORMAT" "
-        "verified "PTR_FORMAT, p, (void*) obj);
-        obj->print_on(gclog_or_tty);
+	  gclog_or_tty->print_cr("Root location "PTR_FORMAT" "
+				 "verified "PTR_FORMAT, p, (void*) obj);
+	  obj->print_on(gclog_or_tty);
         }
-      */
+      }
+      guarantee(obj->is_oop(), "is_oop");
     }
   }
 

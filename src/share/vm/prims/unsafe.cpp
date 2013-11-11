@@ -1176,6 +1176,14 @@ UNSAFE_ENTRY(jboolean, Unsafe_CompareAndSwapObject(JNIEnv *env, jobject unsafe, 
   // We are about to write to this entry so check to see if we need to copy it.
   oop p = oopDesc::bs()->resolve_and_maybe_copy_oop(JNIHandles::resolve(obj));
   HeapWord* addr = (HeapWord *)index_oop_from_field_offset_long(p, offset);
+  if (UseShenandoahGC) {
+    oop old_val = oopDesc::load_heap_oop((oop*) addr);
+    oop resolved_old_val = oopDesc::bs()->resolve_oop(old_val);
+    // We need to CAS the resolved oop here to avoid race condition with other threads
+    // that might have CASed another value in there. If it fails, we can ignore it,
+    // it would make our update stale anyway.
+    oopDesc::atomic_compare_exchange_oop(resolved_old_val, addr, old_val, true);
+  }
   oop res = oopDesc::atomic_compare_exchange_oop(x, addr, e, true);
   jboolean success  = (oopDesc::bs()->resolve_oop(res) == e);
   if (success)

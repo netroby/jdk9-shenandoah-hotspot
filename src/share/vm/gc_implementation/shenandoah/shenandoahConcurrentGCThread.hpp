@@ -13,6 +13,10 @@ class ShenandoahConcurrentGCThread: public ConcurrentGCThread {
 
   void start();
   void yield();
+  
+  static void safepoint_synchronize();
+  static void safepoint_desynchronize();
+
 };
 
 #endif // SHARE_VM_GC_IMPLEMENTATION_SHENANDOAH_SHENANDOAHCONCURRENTGCTHREAD_HPP

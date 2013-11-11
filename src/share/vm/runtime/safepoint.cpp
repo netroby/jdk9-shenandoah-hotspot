@@ -76,6 +76,7 @@
 #if INCLUDE_ALL_GCS
 #include "gc_implementation/concurrentMarkSweep/concurrentMarkSweepThread.hpp"
 #include "gc_implementation/shared/concurrentGCThread.hpp"
+#include "gc_implementation/shenandoah/shenandoahConcurrentGCThread.hpp"
 #endif // INCLUDE_ALL_GCS
 #ifdef COMPILER1
 #include "c1/c1_globals.hpp"
@@ -111,7 +112,10 @@ void SafepointSynchronize::begin() {
     ConcurrentMarkSweepThread::synchronize(false);
   } else if (UseG1GC) {
     ConcurrentGCThread::safepoint_synchronize();
+  } else if (UseShenandoahGC) {
+    ShenandoahConcurrentGCThread::safepoint_synchronize();
   }
+    
 #endif // INCLUDE_ALL_GCS
 
   // By getting the Threads_lock, we assure that no threads are about to start or

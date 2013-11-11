@@ -52,3 +52,13 @@ void ShenandoahConcurrentGCThread::start() {
   create_and_start();
 }
 
+void ShenandoahConcurrentGCThread::safepoint_synchronize() {
+  assert(UseShenandoahGC, "just checking");
+  _sts.suspend_all();
+}
+
+void ShenandoahConcurrentGCThread::safepoint_desynchronize() {
+  assert(UseShenandoahGC, "just checking");
+  _sts.resume_all();
+}
+
