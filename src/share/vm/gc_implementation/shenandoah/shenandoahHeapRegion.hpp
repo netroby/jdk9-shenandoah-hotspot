@@ -16,6 +16,7 @@ private:
   bool _dirty;
   bool _is_in_collection_set;
   bool _is_current_allocation_region;
+  volatile jint active_tlab_count;
 
 public:
    jint initialize(HeapWord* start, size_t regionSize);
@@ -35,7 +36,7 @@ public:
 
   size_t getLiveData() { return liveData;}
 
-  void print();
+  void print(outputStream* st = tty);
 
   size_t garbage() {
     size_t result = used() - liveData;
@@ -91,6 +92,9 @@ public:
     _is_current_allocation_region = b;
   }
   
+  void increase_active_tlab_count();
+  void decrease_active_tlab_count();
+  bool has_active_tlabs();
 };
 
 

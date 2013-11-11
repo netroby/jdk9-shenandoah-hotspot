@@ -23,6 +23,7 @@
  */
 
 #include "precompiled.hpp"
+#include "gc_interface/collectedHeap.hpp"
 #include "memory/genCollectedHeap.hpp"
 #include "memory/resourceArea.hpp"
 #include "memory/threadLocalAllocBuffer.inline.hpp"
@@ -111,7 +112,12 @@ void ThreadLocalAllocBuffer::make_parsable(bool retire) {
       myThread()->incr_allocated_bytes(used_bytes());
     }
 
-    CollectedHeap::fill_with_object(top(), hard_end(), retire);
+    HeapWord* obj = Universe::heap()->tlab_post_allocation_setup(top(), false);
+    CollectedHeap::fill_with_object(obj, hard_end(), retire);
+
+    if (retire) {
+      Universe::heap()->retire_tlab_at(start());
+    }
 
     if (retire || ZeroTLAB) {  // "Reset" the TLAB
       set_start(NULL);
@@ -307,6 +313,10 @@ Thread* ThreadLocalAllocBuffer::myThread() {
                    in_bytes(Thread::tlab_start_offset()));
 }
 
+size_t ThreadLocalAllocBuffer::end_reserve() {
+  int reserve_size = typeArrayOopDesc::header_size(T_INT) + Universe::heap()->oop_extra_words();
+  return MAX2(reserve_size, VM_Version::reserve_for_allocation_prefetch());
+}
 
 GlobalTLABStats::GlobalTLABStats() :
   _allocating_threads_avg(TLABAllocationWeight) {

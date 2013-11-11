@@ -300,6 +300,7 @@ HeapWord* CollectedHeap::allocate_from_tlab_slow(KlassHandle klass, Thread* thre
 #endif // ASSERT
   }
   thread->tlab().fill(obj, obj + size, new_tlab_size);
+  obj = Universe::heap()->tlab_post_allocation_setup(obj);
   return obj;
 }
 
@@ -480,6 +481,10 @@ HeapWord* CollectedHeap::allocate_new_tlab(size_t size) {
   return NULL;
 }
 
+void CollectedHeap::retire_tlab_at(HeapWord* start) {
+  // Default impl does nothing.
+}
+
 void CollectedHeap::ensure_parsability(bool retire_tlabs) {
   // The second disjunct in the assertion below makes a concession
   // for the start-up verification done while the VM is being
@@ -615,5 +620,20 @@ void CollectedHeap::test_is_in() {
   void* after_heap = (void*)(heap_end + epsilon);
   assert(!heap->is_in(after_heap),
       err_msg("after_heap: " PTR_FORMAT " is unexpectedly in the heap", after_heap));
+}
+#endif
+
+HeapWord* CollectedHeap::tlab_post_allocation_setup(HeapWord* obj, bool new_obj) {
+  return obj;
+}
+
+uint CollectedHeap::oop_extra_words() {
+  // Default implementation doesn't need extra space for oops.
+  return 0;
+}
+
+#ifndef CC_INTERP
+void CollectedHeap::compile_prepare_oop(MacroAssembler* masm) {
+  // Default implementation does nothing.
 }
 #endif

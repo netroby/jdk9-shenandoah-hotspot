@@ -1,3 +1,6 @@
+#include "precompiled.hpp"
+#include "asm/macroAssembler.hpp"
+
 #include "gc_implementation/shenandoah/brooksPointer.hpp"
 #include "gc_implementation/shenandoah/shenandoahHeap.hpp"
 #include "gc_implementation/shenandoah/shenandoahBarrierSet.hpp"
@@ -10,12 +13,14 @@
 #include "gc_implementation/shared/vmGCOperations.hpp"
 #include "runtime/atomic.inline.hpp"
 
+#define __ masm->
+
 ShenandoahHeap* ShenandoahHeap::_pgc = NULL;
 
 void printHeapLocations(HeapWord* start, HeapWord* end) {
   HeapWord* cur = NULL;
   for (cur = start; cur < end; cur++) {
-    tty->print("%p : %p \n", cur, *cur);
+    //    tty->print("%p : %p \n", cur);
   }
 }
 
@@ -35,9 +40,7 @@ public:
   PrintHeapRegionsClosure(outputStream* st) : _st(st) {}
 
   bool doHeapRegion(ShenandoahHeapRegion* r) {
-    //  _st->print("Region %d bottom = "PTR_FORMAT" end = "PTR_FORMAT" top = "PTR_FORMAT" used = %x free = %x live = %x dirty: %d\n", 
-    //	       r->regionNumber, r->bottom(), r->end(), r->top(), r->used(), r->free(), r->getLiveData(), r->is_dirty());
-    r->print();
+    r->print(_st);
     return false;
   }
 };
@@ -253,9 +256,22 @@ bool  ShenandoahHeap::is_scavengable(const void* p) {
 }
 
 HeapWord* ShenandoahHeap::allocate_new_tlab(size_t word_size) {
-  Unimplemented();
-  bool* limit_exceeded;
-  return mem_allocate(word_size, limit_exceeded);
+  HeapWord* result = allocate_memory_gclab(word_size);
+  assert(! heap_region_containing(result)->is_dirty(), "Never allocate in dirty region");
+  if (result != NULL) {
+    _bytesAllocSinceCM += word_size;
+    _current_region->increase_live_data(((jlong)word_size) * HeapWordSize);
+    heap_region_containing(result)->increase_active_tlab_count();
+    if (ShenandoahGCVerbose)
+      tty->print("allocating new tlab of size %d at addr %p\n", word_size, result);
+  }
+  return result;
+}
+
+void ShenandoahHeap::retire_tlab_at(HeapWord* start) {
+  if (ShenandoahGCVerbose)
+    tty->print_cr("retiring tlab at: %p", start);
+  heap_region_containing(start)->decrease_active_tlab_count();
 }
 
 
@@ -358,6 +374,8 @@ ShenandoahHeapRegion* ShenandoahHeap::cas_update_current_region(ShenandoahHeapRe
     return _current_region;
   } else {
     print_heap_regions();
+    tty->print_cr("free regions:");
+    _free_regions->print();
     assert(false, "No GC implemented");
   }
 
@@ -557,13 +575,18 @@ private:
 };
       
 
-
-void ShenandoahHeap::initialize_brooks_ptr(HeapWord* filler, HeapWord* obj) {
+void ShenandoahHeap::initialize_brooks_ptr(HeapWord* filler, HeapWord* obj, bool new_obj) {
   CollectedHeap::fill_with_array(filler, BROOKS_POINTER_OBJ_SIZE, false, false);
   markOop mark = oop(filler)->mark();
   oop(filler)->set_mark(mark->set_age(15));
   assert(ShenandoahBarrierSet::is_brooks_ptr(oop(filler)), "brooks pointer must be brooks pointer");
-  BrooksPointer::get(oop(obj)).set_forwardee(oop(obj));
+  BrooksPointer brooks_ptr = BrooksPointer::get(oop(obj));
+  brooks_ptr.set_forwardee(oop(obj));
+  if (new_obj) {
+    brooks_ptr.set_age(_epoch);
+  } else {
+    brooks_ptr.set_age(0);
+  }
 }
 
 class VerifyEvacuatedObjectClosure : public ObjectClosure {
@@ -968,8 +991,13 @@ oop ShenandoahHeap::maybe_update_oop_ref(oop* p) {
   return NULL;
 }
 
+bool ShenandoahHeap::supports_tlab_allocation() const {
+  return true;
+}
+
 size_t  ShenandoahHeap::unsafe_max_tlab_alloc(Thread *thread) const {
-  return 0;
+  ShenandoahHeapRegion* my_current_region = _current_region;
+  return MIN2(my_current_region->free(), (size_t) MinTLABSize);
 }
 
 bool  ShenandoahHeap::can_elide_tlab_store_barriers() const {
@@ -1145,7 +1173,7 @@ void ShenandoahHeap::verify(bool silent , VerifyOption vo) {
   }
 }
 size_t ShenandoahHeap::tlab_capacity(Thread *thr) const {
-  return 0;
+  return ShenandoahHeapRegion::RegionSizeBytes;
 }
 
 class ShenandoahIterateObjectClosureRegionClosure: public ShenandoahHeapRegionClosure {
@@ -1629,3 +1657,37 @@ oopDesc* ShenandoahHeap::evacuate_object(oopDesc* obj) {
     return (oopDesc*) result;
   }
 }
+
+HeapWord* ShenandoahHeap::tlab_post_allocation_setup(HeapWord* obj, bool new_obj) {
+  HeapWord* result = obj + BROOKS_POINTER_OBJ_SIZE;
+  initialize_brooks_ptr(obj, result, new_obj);
+  return result;
+}
+
+uint ShenandoahHeap::oop_extra_words() {
+  return BROOKS_POINTER_OBJ_SIZE;
+}
+
+#ifndef CC_INTERP
+void ShenandoahHeap::compile_prepare_oop(MacroAssembler* masm) {
+  // Initialize brooks pointer.
+  __ movptr(Address(rax, oopDesc::mark_offset_in_bytes()),
+            (intptr_t) markOopDesc::prototype()); // header (address 0x1)
+  // Mark oop as brooks ptr.
+  __ orl(Address(rax, oopDesc::mark_offset_in_bytes()), 15 << 3);
+  // Set klass to intArray.
+  __ movptr(rscratch1, ExternalAddress((address)Universe::intArrayKlassObj_addr()));
+  __ movptr(Address(rax, oopDesc::klass_offset_in_bytes()), rscratch1);
+
+  // Array size.
+  __ movptr(Address(rax, arrayOopDesc::length_offset_in_bytes()), (intptr_t) 2);
+
+  // Write brooks pointer address.
+  // Move rax pointer to the actual oop.
+  __ incrementq(rax, BROOKS_POINTER_OBJ_SIZE * HeapWordSize);
+  __ movptr(rscratch1, ExternalAddress((address) &_epoch));
+  __ orq(rscratch1, rax);
+  __ movptr(Address(rax, -1 * HeapWordSize), rscratch1);
+  __ os_breakpoint();
+}
+#endif

@@ -118,7 +118,7 @@ choose_collection_set(ShenandoahHeapRegionSet* region_set,
   region_set->_index = 0;
 
   for (int i = 0; i < max_regions; i++)
-    if (_regions[i]->garbage() > _garbage_threshold) 
+    if (_regions[i]->garbage() > _garbage_threshold && ! _regions[i]->has_active_tlabs()) 
       region_set->_regions[region_set->_inserted++] = _regions[i];
 
 
@@ -135,13 +135,12 @@ void ShenandoahHeapRegionSet::choose_collection_set(ShenandoahHeapRegionSet* reg
   // We don't want the current allocation region in the collection set because a) it is still being allocated into and b) This is where the write barriers will allocate their copies.
 
   while (r < _numRegions && _regions[r]->garbage() > _garbage_threshold) {
-    if (_regions[r]->is_current_allocation_region()) {
-      r++;
-    } else {
-      region_set->_regions[cs_index++] = _regions[r];
+    if (! ( _regions[r]->has_active_tlabs() && _regions[r]->is_current_allocation_region())) {
+      region_set->_regions[cs_index] = _regions[r];
       _regions[r]->set_is_in_collection_set(true);
-      r++;
+      cs_index++;
     }
+    r++;
   }
 
   region_set->_inserted = cs_index;
