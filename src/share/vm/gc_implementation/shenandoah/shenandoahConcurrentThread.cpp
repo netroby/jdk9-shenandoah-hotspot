@@ -27,7 +27,11 @@ public:
 
 void ShenandoahConcurrentThread::run() {
   initialize_in_thread();
-  tty->print("Starting to run %s with number %ld YAY!!!, %s\n", name(), os::current_thread_id());
+
+  if (ShenandoahGCVerbose) {
+    tty->print("Starting to run %s with number %ld YAY!!!, %s\n", name(), os::current_thread_id());
+  }
+
   wait_for_universe_init();
   ShenandoahHeap* heap = ShenandoahHeap::heap();
 

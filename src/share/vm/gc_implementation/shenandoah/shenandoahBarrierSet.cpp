@@ -301,8 +301,12 @@ oopDesc* ShenandoahBarrierSet::resolve_and_maybe_copy_oopHelper(oopDesc* src) {
       ShenandoahHeap *sh = (ShenandoahHeap*) Universe::heap();      
       if (sh->heap_region_containing(tmp)->is_in_collection_set()) {
 	oopDesc* dst = sh->evacuate_object(tmp, &_allocator);
-	tty->print("src = %p dst = %p tmp = %p src-2 = %p\n",
-		   src, dst, tmp, src-2);
+#ifdef ASSERT
+        if (ShenandoahGCVerbose) {
+          tty->print("src = %p dst = %p tmp = %p src-2 = %p\n",
+                     src, dst, tmp, src-2);
+        }
+#endif
 	assert(sh->is_in(dst), "result should be in the heap");
 	return dst;
       } else {

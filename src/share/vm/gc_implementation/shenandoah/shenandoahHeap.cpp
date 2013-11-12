@@ -515,7 +515,13 @@ private:
   }
 
   void do_object(oop p) {
-    tty->print("Calling ParallelEvacuateRegionObjectClosure on %p \n", p);
+
+#ifdef ASSERT
+    if (ShenandoahGCVerbose) {
+      tty->print("Calling ParallelEvacuateRegionObjectClosure on %p \n", p);
+    }
+#endif
+
     if ((! ShenandoahBarrierSet::is_brooks_ptr(p)) && BrooksPointer::get(p).get_age() == _epoch) {
       _heap->evacuate_object(p, &_allocator);
     }
@@ -572,8 +578,13 @@ void ShenandoahHeap::verify_evacuated_region(ShenandoahHeapRegion* from_region) 
 void ShenandoahHeap::parallel_evacuate_region(ShenandoahHeapRegion* from_region, 
 					      ShenandoahAllocRegion *alloc_region) {
   ParallelEvacuateRegionObjectClosure evacuate_region(_epoch, this, alloc_region);
-  //  if (ShenandoahGCVerbose) 
-  tty->print("parallel_evacuate_region starting from_region %d: free_regions = %d\n",  from_region->regionNumber, _free_regions->available_regions());
+  
+#ifdef ASSERT
+  if (ShenandoahGCVerbose) {
+    tty->print("parallel_evacuate_region starting from_region %d: free_regions = %d\n",  from_region->regionNumber, _free_regions->available_regions());
+  }
+#endif
+
   from_region->object_iterate(&evacuate_region);
   from_region->set_dirty(true);
 
@@ -582,10 +593,11 @@ void ShenandoahHeap::parallel_evacuate_region(ShenandoahHeapRegion* from_region,
   //  if (ShenandoahVerify) {
     verify_evacuated_region(from_region);
     //  }
-#endif
 
-    //  if (ShenandoahGCVerbose)
-    tty->print("parallel_evacuate_region after from_region = %d: Wasted %d bytes free_regions = %d\n", from_region->regionNumber, evacuate_region.wasted(), _free_regions->available_regions());
+    if (ShenandoahGCVerbose) {
+      tty->print("parallel_evacuate_region after from_region = %d: Wasted %d bytes free_regions = %d\n", from_region->regionNumber, evacuate_region.wasted(), _free_regions->available_regions());
+    }
+#endif
 }
 
 class ParallelEvacuationTask : public AbstractGangTask {
@@ -609,12 +621,12 @@ public:
     ShenandoahAllocRegion allocRegion = ShenandoahAllocRegion();
 
     while (from_hr != NULL) {
-      //      if (ShenandoahGCVerbose) {
+      if (ShenandoahGCVerbose) {
      	tty->print("Thread %d claimed Heap Region %d\n",
      		   worker_id,
      		   from_hr->regionNumber);
 	from_hr->print();
-	//      }
+      }
 
       // Not sure if the check is worth it or not.
       if (from_hr->getLiveData() != 0) {
@@ -797,9 +809,13 @@ public:
 };
 
 void ShenandoahHeap::verify_heap_after_marking() {
-  tty->print("verifying heap after marking\n");
+  if (ShenandoahGCVerbose) {
+    tty->print("verifying heap after marking\n");
+  }
   prepare_for_verify();
-  print_all_refs("post-mark");
+  if (ShenandoahGCVerbose) {
+    print_all_refs("post-mark");
+  }
   VerifyAfterMarkingOopClosure cl;
   roots_iterate(&cl);
 
@@ -808,11 +824,11 @@ void ShenandoahHeap::verify_heap_after_marking() {
 }
 
 void ShenandoahHeap::parallel_evacuate() {
-  //  if (ShenandoahGCVerbose) {
+  if (ShenandoahGCVerbose) {
     tty->print_cr("starting parallel_evacuate");
     //    PrintHeapRegionsClosure pc1;
     //    heap_region_iterate(&pc1);
-    //  }
+  }
 
 #ifdef ASSERT
   if (ShenandoahVerify) {
@@ -827,7 +843,7 @@ void ShenandoahHeap::parallel_evacuate() {
   _regions->choose_collection_set(_collection_set);
   _regions->choose_empty_regions(_free_regions);
   update_current_region();
-  //  if (ShenandoahGCVerbose) {
+  if (ShenandoahGCVerbose) {
     tty->print("Printing all available regions");
     print_heap_regions();
     tty->print("Printing collection set which contains %d regions:\n", _collection_set->available_regions());
@@ -835,7 +851,7 @@ void ShenandoahHeap::parallel_evacuate() {
 
     tty->print("Printing %d free regions:\n", _free_regions->available_regions());
     _free_regions->print();
-    //  }
+  }
 
   barrierSync.set_n_workers(_max_workers);
   
@@ -1599,7 +1615,9 @@ oopDesc* ShenandoahHeap::evacuate_object(oop p, EvacuationAllocator* allocator) 
   HeapWord* result = BrooksPointer::get(p).cas_forwardee((HeapWord*) p, copy);
 
   if (result == (HeapWord*) p) {
-    tty->print("Copy of %p to %p at epoch %d succeeded \n", p, copy, getEpoch());
+    if (ShenandoahGCVerbose) {
+      tty->print("Copy of %p to %p at epoch %d succeeded \n", p, copy, getEpoch());
+    }
     return (oopDesc*) copy;
   }  else {
     allocator->rollback(filler, required);
