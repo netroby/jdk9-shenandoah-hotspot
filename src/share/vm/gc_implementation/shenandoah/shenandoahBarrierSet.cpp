@@ -310,7 +310,7 @@ oopDesc* ShenandoahBarrierSet::resolve_and_maybe_copy_oopHelper(oopDesc* src) {
 	assert(sh->is_in(dst), "result should be in the heap");
 	return dst;
       } else {
-	return src;
+	return tmp;
       }
     } else {
       return NULL;
