@@ -846,6 +846,7 @@ public:
 
 void ShenandoahHeap::verify_heap_after_marking() {
   tty->print("verifying heap after marking\n");
+  prepare_for_verify();
   print_all_refs("post-mark");
   VerifyAfterMarkingOopClosure cl;
   roots_iterate(&cl);
