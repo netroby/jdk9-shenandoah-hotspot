@@ -4,6 +4,7 @@
 #include "gc_implementation/shenandoah/brooksPointer.hpp"
 #include "gc_implementation/shenandoah/shenandoahHeap.hpp"
 #include "gc_implementation/shenandoah/shenandoahBarrierSet.hpp"
+#include "gc_implementation/shenandoah/shenandoahEvacuation.hpp"
 #include "gc_implementation/shenandoah/vm_operations_shenandoah.hpp"
 #include "runtime/vmThread.hpp"
 #include "memory/iterator.hpp"
@@ -502,8 +503,7 @@ class ParallelEvacuateRegionObjectClosure : public ObjectClosure {
 private:
   uint _epoch;
   ShenandoahHeap* _heap;
-  ShenandoahAllocRegion* _region;
-  size_t _waste;
+  GCLABAllocator _allocator;
 
   public:
   ParallelEvacuateRegionObjectClosure(uint epoch, 
@@ -511,67 +511,19 @@ private:
 				      ShenandoahAllocRegion* allocRegion) :
     _epoch(epoch),
     _heap(heap),
-    _region(allocRegion),
-    _waste(0) { 
-  }
-
-  // Call this if you know we have enough space.
-  HeapWord* copy_object(oop p) {
-    HeapWord* filler = _region->allocate(BROOKS_POINTER_OBJ_SIZE + p->size());
-    HeapWord* copy = filler + BROOKS_POINTER_OBJ_SIZE;
-    _heap->copy_object(p, filler);
-    return copy;
+    _allocator(GCLABAllocator(allocRegion)) { 
   }
 
   void do_object(oop p) {
     tty->print("Calling ParallelEvacuateRegionObjectClosure on %p \n", p);
     if ((! ShenandoahBarrierSet::is_brooks_ptr(p)) && BrooksPointer::get(p).get_age() == _epoch) {
-      size_t required = BROOKS_POINTER_OBJ_SIZE + p->size();
-      HeapWord* copy = NULL;
-      tty->print("PEROC: %p region_size = %d required = %d\n", p, _region->region_size(), required);
-
-      if (required < _region->space_available()) {
-	//	if (ShenandoahGCVerbose) 
-	tty->print("PEROC: %p required < _region->space_available() = %d\n", 
-		   p, _region->space_available());
-	copy = copy_object(p);
-      } else if (required < _region->region_size()) {
-	//	if (ShenandoahGCVerbose) 
-	tty->print("PEROC: %p required < _region->region_size = %d\n ", p, _region->region_size());
-	_waste += _region->space_available();
-	_region->fill_region();
-	_region->allocate_new_region();
-	copy = copy_object(p);
-      } else if (required < ShenandoahHeapRegion::RegionSizeBytes) {
-	//	if (ShenandoahGCVerbose) 
-	tty->print("PEROC: %p required < ShenandoahHeapRegion::RegionSizeBytes = %d\n ", 
-		   p, ShenandoahHeapRegion::RegionSizeBytes);
-	_waste += _region->space_available();
-        _region->fill_region();
-	HeapWord* s = _heap->allocate_memory_gclab(required);
-	copy = s + BROOKS_POINTER_OBJ_SIZE;
-	tty->print("PEROC: p = %p s = %p\n", p, s);
-	_heap->copy_object(p, s);
-	tty->print("PEROC: post _heap->copy_object = %p s = %p\n", p, copy);
-      } else {
-	tty->print("PEROC:%p don't handle humongous objects\n", p);
-	assert(false, "Don't handle humongous objects yet");
-      }
-
-      HeapWord* result = BrooksPointer::get(p).cas_forwardee((HeapWord*) p, copy);
-
-      if (result == (HeapWord*) p) {
-	tty->print("Copy of %p to %p at epoch %d succeeded \n", p, copy, _heap->getEpoch());
-      }  else {
-	// Later we should undo the allocation of the copy and the brooks object.
-	// For now replace the copy with a bogus object.
-	tty->print("Copy of  %p to %p at epoch %d failed because object already copied to %p\n", 
-		   p, copy, _heap->getEpoch(), result);
-	_heap->fill_with_object(copy, p->size(), true);
-      }
+      _heap->evacuate_object(p, &_allocator);
     }
   }
-  size_t wasted() { return _waste;}
+
+  size_t wasted() {
+    return _allocator.waste();
+  }
 };
       
 
@@ -1637,26 +1589,27 @@ void ShenandoahHeap::copy_object(oop p, HeapWord* s) {
   }
 }
 
-oopDesc* ShenandoahHeap::evacuate_object(oopDesc* obj) {
-  oop p = oop(obj);
-  HeapWord* filler = allocate_new_gclab(BROOKS_POINTER_OBJ_SIZE + 
-				     p->size());
-  HeapWord* copy = filler + BROOKS_POINTER_OBJ_SIZE;
-  copy_object(obj, filler);
+oopDesc* ShenandoahHeap::evacuate_object(oop p, EvacuationAllocator* allocator) {
 
-  HeapWord* result = BrooksPointer::get(p).cas_forwardee((HeapWord*) obj, copy);
-  
-  if (result == (HeapWord*) obj) {
-    tty->print("Evacuate_Object Copy of %p to %p at epoch %d succeeded \n", obj, copy, getEpoch());
+  size_t required = BROOKS_POINTER_OBJ_SIZE + p->size();
+  HeapWord* filler = allocator->allocate(required);
+  HeapWord* copy = filler + BROOKS_POINTER_OBJ_SIZE;
+  copy_object(p, filler);
+
+  HeapWord* result = BrooksPointer::get(p).cas_forwardee((HeapWord*) p, copy);
+
+  if (result == (HeapWord*) p) {
+    tty->print("Copy of %p to %p at epoch %d succeeded \n", p, copy, getEpoch());
     return (oopDesc*) copy;
   }  else {
-    // Later we should undo the allocation of the copy and the brooks object.
-    // For now replace the copy with a bogus object.
-    tty->print("Evacuate_Object Copy of  %p to %p at epoch %d failed because object already copied to %p\n", 
-	       obj, copy, getEpoch(), result);
-    fill_with_object(copy, p->size(), true);
+    allocator->rollback(filler, required);
     return (oopDesc*) result;
   }
+
+}
+
+HeapWord* ShenandoahHeap::allocate_from_tlab_work(Thread* thread, size_t size) {
+  return CollectedHeap::allocate_from_tlab_work(SystemDictionary::Object_klass(), thread, size);
 }
 
 HeapWord* ShenandoahHeap::tlab_post_allocation_setup(HeapWord* obj, bool new_obj) {

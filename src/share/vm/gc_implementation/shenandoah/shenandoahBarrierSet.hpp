@@ -2,9 +2,12 @@
 #define SHARE_VM_GC_IMPLEMENTATION_SHENANDOAH_SHENANDOAHBARRIERSET_HPP
 
 #include "memory/barrierSet.hpp"
+#include "gc_implementation/shenandoah/shenandoahEvacuation.hpp"
 
 class ShenandoahBarrierSet: public BarrierSet {
 private:
+  TLABAllocator _allocator;
+
   oopDesc* get_shenandoah_forwardee_helper(oopDesc* p);
 
 

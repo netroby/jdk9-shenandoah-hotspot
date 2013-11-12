@@ -3,6 +3,7 @@
 #include "asm/macroAssembler.hpp"
 #include "gc_implementation/g1/g1SATBCardTableModRefBS.hpp"
 #include "gc_implementation/shenandoah/brooksPointer.hpp"
+#include "gc_implementation/shenandoah/shenandoahEvacuation.hpp"
 #include "gc_implementation/shenandoah/shenandoahHeap.hpp"
 #include "gc_implementation/shenandoah/shenandoahBarrierSet.hpp"
 #include "memory/universe.hpp"
@@ -30,6 +31,7 @@ public:
 
 ShenandoahBarrierSet::ShenandoahBarrierSet() {
   _kind = BarrierSet::ShenandoahBarrierSet;
+  _allocator = TLABAllocator();
 }
 
 void ShenandoahBarrierSet::print_on(outputStream* st) const {
@@ -298,7 +300,7 @@ oopDesc* ShenandoahBarrierSet::resolve_and_maybe_copy_oopHelper(oopDesc* src) {
       oopDesc* tmp = get_shenandoah_forwardee(src);
       ShenandoahHeap *sh = (ShenandoahHeap*) Universe::heap();      
       if (sh->heap_region_containing(tmp)->is_in_collection_set()) {
-	oopDesc* dst = sh->evacuate_object(tmp);
+	oopDesc* dst = sh->evacuate_object(tmp, &_allocator);
 	tty->print("src = %p dst = %p tmp = %p src-2 = %p\n",
 		   src, dst, tmp, src-2);
 	assert(sh->is_in(dst), "result should be in the heap");

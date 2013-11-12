@@ -21,6 +21,7 @@
 
 
 class SpaceClosure;
+class EvacuationAllocator;
 
 class ShenandoahHeapRegionClosure : public StackObj {
   bool _complete;
@@ -222,7 +223,7 @@ public:
 
   void print_all_refs(const char* prefix);
 
-  oopDesc*  evacuate_object(oopDesc* src);
+  oopDesc*  evacuate_object(oopDesc* src, EvacuationAllocator* allocator);
   bool is_in_collection_set(oop* p) {
     return heap_region_containing(p)->is_in_collection_set();
   }
@@ -232,6 +233,9 @@ public:
   //  void assign_brooks_pointer(oop p, HeapWord* filler, HeapWord* copy);
   void verify_heap_after_marking();
   void verify_heap_after_evacuation();
+
+  // This is here to get access to the otherwise protected method in CollectedHeap.
+  static HeapWord* allocate_from_tlab_work(Thread* thread, size_t size);
 
 private:
 

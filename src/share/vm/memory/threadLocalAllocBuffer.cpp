@@ -318,6 +318,10 @@ size_t ThreadLocalAllocBuffer::end_reserve() {
   return MAX2(reserve_size, VM_Version::reserve_for_allocation_prefetch());
 }
 
+void ThreadLocalAllocBuffer::rollback(size_t size) {
+  set_start(start() - size);
+}
+
 GlobalTLABStats::GlobalTLABStats() :
   _allocating_threads_avg(TLABAllocationWeight) {
 

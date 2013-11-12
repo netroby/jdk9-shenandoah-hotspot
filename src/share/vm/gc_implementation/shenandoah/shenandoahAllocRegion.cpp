@@ -32,6 +32,10 @@ HeapWord* ShenandoahAllocRegion::allocate(size_t word_size) {
   }
 }
 
+void ShenandoahAllocRegion::rollback(size_t word_size) {
+  _start = _start - word_size;
+}
+
 void ShenandoahAllocRegion::print() {
   tty->print("AllocRegion: "PTR_FORMAT"_start = "PTR_FORMAT" end = "PTR_FORMAT"\n",
 	     this, _start, _end);

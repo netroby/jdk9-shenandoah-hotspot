@@ -15,6 +15,7 @@ private:
 
 public:
   HeapWord* allocate(size_t word_size);
+  void rollback(size_t word_size);
   void allocate_new_region();
   void fill_region();
   void print();
