@@ -183,6 +183,8 @@ void ObjectSynchronizer::fast_enter(Handle obj, BasicLock* lock, bool attempt_re
 void ObjectSynchronizer::fast_exit(oop object, BasicLock* lock, TRAPS) {
   assert(!object->mark()->has_bias_pattern(), "should not see bias pattern here");
   // if displaced header is null, the previous enter is recursive enter, no-op
+  object = oopDesc::bs()->resolve_and_maybe_copy_oop(object);
+
   markOop dhw = lock->displaced_header();
   markOop mark ;
   if (dhw == NULL) {
@@ -1195,7 +1197,7 @@ ObjectMonitor* ObjectSynchronizer::inflate_helper(oop obj) {
 ObjectMonitor * ATTR ObjectSynchronizer::inflate (Thread * Self, oop object) {
   // Inflate mutates the heap ...
   // Relaxing assertion for bug 6320749.
-  object = oopDesc::bs()->resolve_oop(object);
+  object = oopDesc::bs()->resolve_and_maybe_copy_oop(object);
   assert (Universe::verify_in_progress() ||
           !SafepointSynchronize::is_at_safepoint(), "invariant") ;
 
