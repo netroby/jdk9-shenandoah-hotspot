@@ -7,6 +7,7 @@
 #include "gc_implementation/shenandoah/shenandoahHeap.hpp"
 #include "gc_implementation/shenandoah/shenandoahBarrierSet.hpp"
 #include "memory/universe.hpp"
+#include "utilities/array.hpp"
 
 #define __ masm->
 
@@ -317,6 +318,12 @@ oopDesc* ShenandoahBarrierSet::resolve_and_maybe_copy_oopHelper(oopDesc* src) {
     }
 }
 
+IRT_LEAF(oopDesc*, ShenandoahBarrierSet::resolve_and_maybe_copy_oop_static(oopDesc* src))
+  oop result = oopDesc::bs()->resolve_and_maybe_copy_oop(src);
+  // tty->print_cr("called write barrier with: %p result: %p", src, result);
+  return result;
+IRT_END
+
 oopDesc* ShenandoahBarrierSet::resolve_and_maybe_copy_oop(oopDesc* src) {
     ShenandoahHeap *sh = (ShenandoahHeap*) Universe::heap();      
     if (src != NULL && sh->is_in(src)) {
@@ -327,7 +334,6 @@ oopDesc* ShenandoahBarrierSet::resolve_and_maybe_copy_oop(oopDesc* src) {
       return src;
     }
   }
-
 
 #ifndef CC_INTERP
 // TODO: The following should really live in an X86 specific subclass.
@@ -343,4 +349,176 @@ void ShenandoahBarrierSet::compile_resolve_oop_not_null(MacroAssembler* masm, Re
   __ movptr(dst, Address(dst, -8));
   __ andq(dst, ~0x7);
 }
+
+void ShenandoahBarrierSet::compile_resolve_oop_for_write(MacroAssembler* masm, Register dst, int num_state_save, ...) {
+  assert(dst != rscratch1, "Need rscratch1");
+  assert(dst != rscratch2, "Need rscratch2");
+
+  intArray save_states = intArray(num_state_save);
+  va_list vl;
+  va_start(vl, num_state_save);
+  for (int i = 0; i < num_state_save; i++) {
+    save_states.at_put(i, va_arg(vl, int /* SaveState */));
+  }
+  va_end(vl);
+
+  for (int i = 0; i < num_state_save; i++) {
+    switch (save_states[i]) {
+    case ss_rax:
+      __ push(rax);
+      break;
+    case ss_rbx:
+      __ push(rbx);
+      break;
+    case ss_rcx:
+      __ push(rcx);
+      break;
+    case ss_rdx:
+      __ push(rdx);
+      break;
+    case ss_rsi:
+      __ push(rsi);
+      break;
+    case ss_rdi:
+      __ push(rdi);
+      break;
+    case ss_ftos:
+      __ subptr(rsp, wordSize);
+      __ movflt(Address(rsp, 0), xmm0);
+      break;
+    case ss_dtos:
+      __ subptr(rsp, 2 * wordSize);
+      __ movdbl(Address(rsp, 0), xmm0);
+      break;
+    case ss_c_rarg1:
+      __ push(c_rarg1);
+      break;
+    case ss_c_rarg2:
+      __ push(c_rarg2);
+      break;
+    case ss_c_rarg3:
+      __ push(c_rarg3);
+      break;
+    default:
+      ShouldNotReachHere();
+    }
+  }
+
+  /*
+  Label done;
+
+  // Resolve oop.
+  __ movptr(dst, Address(dst, -8));
+  __ andq(dst, ~0x7);
+
+  __ os_breakpoint();
+
+  // Check if the heap region containing the oop is in the collection set.
+  ExternalAddress heap_address = ExternalAddress((address) Universe::heap_addr());
+  __ movptr(rscratch1, heap_address);
+
+  // Compute index into regions array.
+  __ movq(rscratch2, dst);
+  __ andq(rscratch2, ~(ShenandoahHeapRegion::RegionSizeBytes - 1));
+  Address first_region_bottom_addr = Address(rscratch1, ShenandoahHeap::first_region_bottom_offset());
+  __ subq(rscratch2, first_region_bottom_addr);
+  __ shrq(rscratch2, ShenandoahHeapRegion::RegionSizeShift);
+
+  Address regions_address = Address(rscratch1, ShenandoahHeap::ordered_regions_offset());
+  __ movptr(rscratch1, regions_address);
+
+  Address heap_region_containing_addr = Address(rscratch1, rscratch2, Address::times_ptr);
+  __ movptr(rscratch1, heap_region_containing_addr);
+
+  Address is_in_coll_set_addr = Address(rscratch1, ShenandoahHeapRegion::is_in_collection_set_offset());
+
+  __ movb(rscratch1, is_in_coll_set_addr);
+  __ testb(rscratch1, 0x1);
+  __ jcc(Assembler::zero, done);
+
+  __ movptr(c_rarg1, dst);
+  // __ push_callee_saved_registers();
+  __ push(rsi);
+  __ push(rdi);
+  __ push(rdx);
+  __ push(rcx);
+  __ push(rbx);
+  __ push(rax);
+
+  __ call_VM(c_rarg1, CAST_FROM_FN_PTR(address, ShenandoahHeap::allocate_memory_static), c_rarg1);
+  // __ pop_callee_saved_registers();
+  __ pop(rax);
+  __ pop(rbx);
+  __ pop(rcx);
+  __ pop(rdx);
+  __ pop(rdi);
+  __ pop(rsi);
+  __ movptr(dst, c_rarg1);
+
+  // __ stop("CAS not yet implemented");
+  __ bind(done);
+*/
+
+  __ mov(c_rarg1, dst);
+  __ call_VM_leaf(CAST_FROM_FN_PTR(address, ShenandoahBarrierSet::resolve_and_maybe_copy_oop_static), c_rarg1);
+  __ mov(rscratch1, rax);
+
+  for (int i = num_state_save - 1; i >= 0; i--) {
+    switch (save_states[i]) {
+    case ss_rax:
+      __ pop(rax);
+      break;
+    case ss_rbx:
+      __ pop(rbx);
+      break;
+    case ss_rcx:
+      __ pop(rcx);
+      break;
+    case ss_rdx:
+      __ pop(rdx);
+      break;
+    case ss_rsi:
+      __ pop(rsi);
+      break;
+    case ss_rdi:
+      __ pop(rdi);
+      break;
+    case ss_ftos:
+      __ movflt(xmm0, Address(rsp, 0));
+      __ addptr(rsp, wordSize);
+      break;
+    case ss_dtos:
+      __ movdbl(xmm0, Address(rsp, 0));
+      __ addptr(rsp, 2 * Interpreter::stackElementSize);
+      break;
+    case ss_c_rarg1:
+      __ pop(c_rarg1);
+      break;
+    case ss_c_rarg2:
+      __ pop(c_rarg2);
+      break;
+    case ss_c_rarg3:
+      __ pop(c_rarg3);
+      break;
+    default:
+      ShouldNotReachHere();
+    }
+  }
+
+  __ mov(dst, rscratch1);
+  __ os_breakpoint();
+
+}
+
+/*
+void ShenandoahBarrierSet::compile_resolve_oop_for_write(MacroAssembler* masm, Register dst) {
+
+  Label is_null;
+  __ testptr(dst, dst);
+  __ jcc(Assembler::zero, is_null);
+  compile_resolve_oop_for_write_not_null(masm, dst);
+  __ bind(is_null);
+
+}
+*/
 #endif

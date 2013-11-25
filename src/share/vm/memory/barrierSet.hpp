@@ -52,6 +52,21 @@ public:
     None                = 0,
     TargetUninitialized = 1
   };
+
+  enum SaveState {
+    ss_rax,
+    ss_rbx,
+    ss_rcx,
+    ss_rdx,
+    ss_rsi,
+    ss_rdi,
+    ss_ftos,
+    ss_dtos,
+    ss_c_rarg1,
+    ss_c_rarg2,
+    ss_c_rarg3
+  };
+
 protected:
   int _max_covered_regions;
   Name _kind;
@@ -202,6 +217,10 @@ public:
   }
 
   virtual void compile_resolve_oop_not_null(MacroAssembler* masm, Register dst) {
+    // Default implementation does nothing.
+  }
+
+  virtual void compile_resolve_oop_for_write(MacroAssembler* masm, Register dst, int num_save_state = 0, ...) {
     // Default implementation does nothing.
   }
 };

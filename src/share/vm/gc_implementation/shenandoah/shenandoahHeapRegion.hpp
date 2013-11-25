@@ -3,11 +3,13 @@
 
 #include "memory/space.inline.hpp"
 #include "memory/universe.hpp"
+#include "utilities/sizes.hpp"
 
 class ShenandoahHeapRegion : public ContiguousSpace {
 public:
    int regionNumber;
    static size_t RegionSizeBytes;
+   static size_t RegionSizeShift;
    volatile jlong liveData;
    MemRegion reserved;
    volatile unsigned int claimed;
@@ -95,6 +97,8 @@ public:
   void increase_active_tlab_count();
   void decrease_active_tlab_count();
   bool has_active_tlabs();
+
+  static ByteSize is_in_collection_set_offset() { return byte_offset_of(ShenandoahHeapRegion, _is_in_collection_set); }
 };
 
 

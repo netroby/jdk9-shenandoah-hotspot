@@ -113,6 +113,8 @@ jint ShenandoahHeap::initialize() {
   }
   _last_region = current;
 
+  _first_region_bottom = _first_region->bottom();
+
   size_t last_region = _numRegions - 1;
   current->initialize((HeapWord*) pgc_rs.base() + regionSizeWords * (last_region), 
 		      regionSizeWords);
@@ -121,9 +123,9 @@ jint ShenandoahHeap::initialize() {
   _regions->put(last_region, current);
   _free_regions->put(last_region, current);
   _numAllocs = 0;
-  if (ShenandoahGCVerbose) {
     tty->print("All Regions\n");
     _regions->print();
+  if (ShenandoahGCVerbose) {
     tty->print("Free Regions\n");
     _free_regions->print();
   }
@@ -274,7 +276,6 @@ void ShenandoahHeap::retire_tlab_at(HeapWord* start) {
     tty->print_cr("retiring tlab at: %p", start);
   heap_region_containing(start)->decrease_active_tlab_count();
 }
-
 
 HeapWord* ShenandoahHeap::allocate_new_gclab(size_t word_size) {
   HeapWord* result = allocate_memory_gclab(word_size);

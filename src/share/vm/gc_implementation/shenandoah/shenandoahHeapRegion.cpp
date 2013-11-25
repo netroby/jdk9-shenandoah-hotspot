@@ -2,7 +2,8 @@
 #include "gc_implementation/shenandoah/shenandoahHeap.hpp"
 #include "memory/universe.hpp"
 
-size_t ShenandoahHeapRegion::RegionSizeBytes = 1024 * 1024 * 8;
+size_t ShenandoahHeapRegion::RegionSizeShift = 23;
+size_t ShenandoahHeapRegion::RegionSizeBytes = 1 << ShenandoahHeapRegion::RegionSizeShift; // 1024 * 1024 * 8;
 
 jint ShenandoahHeapRegion::initialize(HeapWord* start, 
 				      size_t regionSizeWords) {
@@ -19,7 +20,7 @@ bool ShenandoahHeapRegion::rollback_allocation(uint size) {
 }
 
 void ShenandoahHeapRegion::print(outputStream* st) {
-  st->print("ShenandoahHeapRegion: %d ", regionNumber);
+  st->print("ShenandoahHeapRegion: %p/%d ", this, regionNumber);
 
   if (is_current_allocation_region()) 
     st->print("A");
@@ -36,7 +37,7 @@ void ShenandoahHeapRegion::print(outputStream* st) {
   else
     st->print(" ");
   st->print("live = %u garbage = %u claimed = %d bottom = %p end = %p top = %p dirty: %d active_tlabs: %d\n", 
-	     regionNumber, liveData, garbage(), claimed, bottom(), end(), top(), _dirty, active_tlab_count);
+	     liveData, garbage(), claimed, bottom(), end(), top(), _dirty, active_tlab_count);
 }
 
 

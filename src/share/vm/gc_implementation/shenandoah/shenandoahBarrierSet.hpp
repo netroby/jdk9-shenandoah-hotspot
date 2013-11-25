@@ -79,6 +79,7 @@ public:
   virtual oopDesc* maybe_resolve_oop(oopDesc* src);
   virtual oopDesc* resolve_and_maybe_copy_oopHelper(oopDesc* src);
   virtual oopDesc* resolve_and_maybe_copy_oop(oopDesc* src);
+  static oopDesc* resolve_and_maybe_copy_oop_static(oopDesc* src);
 
   void enqueue_update_ref(oop* ref);
 
@@ -86,6 +87,7 @@ public:
   // TODO: The following should really live in an X86 specific subclass.
   virtual void compile_resolve_oop(MacroAssembler* masm, Register dst);
   virtual void compile_resolve_oop_not_null(MacroAssembler* masm, Register dst);
+  void compile_resolve_oop_for_write(MacroAssembler* masm, Register dst, int num_save_state = 0, ...);
 #endif
 };
 

@@ -53,6 +53,7 @@ private:
   VirtualSpace _storage;
   ShenandoahHeapRegion* _current_region;
   ShenandoahHeapRegion* _first_region;
+  HeapWord* _first_region_bottom;
   ShenandoahHeapRegion* _last_region;
   // Ordered array of regions  (name confusing with _regions)
   ShenandoahHeapRegion** _ordered_regions;
@@ -84,6 +85,7 @@ public:
   void retire_tlab_at(HeapWord* start);
   HeapWord* allocate_new_gclab(size_t word_size);
   HeapWord* allocate_memory(size_t word_size);
+
   HeapWord* allocate_memory_gclab(size_t word_size);
   HeapWord* allocate_new_gclab() { 
     return allocate_new_gclab(_default_gclab_size);
@@ -236,6 +238,9 @@ public:
 
   // This is here to get access to the otherwise protected method in CollectedHeap.
   static HeapWord* allocate_from_tlab_work(Thread* thread, size_t size);
+
+  static ByteSize ordered_regions_offset() { return byte_offset_of(ShenandoahHeap, _ordered_regions); }
+  static ByteSize first_region_bottom_offset() { return byte_offset_of(ShenandoahHeap, _first_region_bottom); }
 
 private:
 

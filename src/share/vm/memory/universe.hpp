@@ -337,6 +337,7 @@ class Universe: AllStatic {
 
   // The particular choice of collected heap.
   static CollectedHeap* heap() { return _collectedHeap; }
+  static CollectedHeap** heap_addr() { return &_collectedHeap; }
 
   // For UseCompressedOops
   // Narrow Oop encoding mode:
