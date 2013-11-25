@@ -999,7 +999,9 @@ JNI_QUICK_ENTRY(jboolean, jni_IsSameObject(JNIEnv *env, jobject r1, jobject r2))
                                  env, r1, r2);
 #endif /* USDT2 */
   oop a = JNIHandles::resolve(r1);
+  a = oopDesc::bs()->resolve_and_maybe_copy_oop(a);
   oop b = JNIHandles::resolve(r2);
+  b = oopDesc::bs()->resolve_and_maybe_copy_oop(b);
   jboolean ret = (a == b) ? JNI_TRUE : JNI_FALSE;
 #ifndef USDT2
   DTRACE_PROBE1(hotspot_jni, IsSameObject__return, ret);
@@ -2768,6 +2770,7 @@ JNI_QUICK_ENTRY(void, jni_SetObjectField(JNIEnv *env, jobject obj, jfieldID fiel
                                    env, obj, (uintptr_t) fieldID, value);
 #endif /* USDT2 */
   oop o = JNIHandles::resolve_non_null(obj);
+  o = oopDesc::bs()->resolve_and_maybe_copy_oop(o);
   Klass* k = o->klass();
   int offset = jfieldIDWorkaround::from_instance_jfieldID(k, fieldID);
   // Keep JVMTI addition small and only check enabled flag here.
@@ -2798,6 +2801,7 @@ JNI_QUICK_ENTRY(void, jni_Set##Result##Field(JNIEnv *env, jobject obj, jfieldID 
     DTRACE_PROBE3(hotspot_jni, Set##Result##Field__entry, env, obj, fieldID)); \
 \
   oop o = JNIHandles::resolve_non_null(obj); \
+  o = oopDesc::bs()->resolve_and_maybe_copy_oop(o); \
   Klass* k = o->klass(); \
   int offset = jfieldIDWorkaround::from_instance_jfieldID(k, fieldID);  \
   /* Keep JVMTI addition small and only check enabled flag here.       */ \
@@ -2832,6 +2836,7 @@ JNI_QUICK_ENTRY(void, jni_Set##Result##Field(JNIEnv *env, jobject obj, jfieldID 
   EntryProbe; \
 \
   oop o = JNIHandles::resolve_non_null(obj); \
+  o = oopDesc::bs()->resolve_and_maybe_copy_oop(o); \
   Klass* k = o->klass(); \
   int offset = jfieldIDWorkaround::from_instance_jfieldID(k, fieldID);  \
   /* Keep JVMTI addition small and only check enabled flag here.       */ \
@@ -3115,7 +3120,9 @@ JNI_ENTRY(void, jni_SetStatic##Result##Field(JNIEnv *env, jclass clazz, jfieldID
     field_value.unionType = value; \
     JvmtiExport::jni_SetField_probe(thread, NULL, NULL, id->holder(), fieldID, true, SigType, (jvalue *)&field_value); \
   } \
-  id->holder()->java_mirror()-> Fieldname##_field_put (id->offset(), value); \
+  oop o = id->holder()->java_mirror(); \
+  oopDesc::bs()->resolve_and_maybe_copy_oop(o); \
+  o-> Fieldname##_field_put (id->offset(), value); \
   DTRACE_PROBE(hotspot_jni, SetStatic##Result##Field__return);\
 JNI_END
 
@@ -3146,7 +3153,9 @@ JNI_ENTRY(void, jni_SetStatic##Result##Field(JNIEnv *env, jclass clazz, jfieldID
     field_value.unionType = value; \
     JvmtiExport::jni_SetField_probe(thread, NULL, NULL, id->holder(), fieldID, true, SigType, (jvalue *)&field_value); \
   } \
-  id->holder()->java_mirror()-> Fieldname##_field_put (id->offset(), value); \
+  oop o = id->holder()->java_mirror(); \
+  oopDesc::bs()->resolve_and_maybe_copy_oop(o); \
+  o-> Fieldname##_field_put (id->offset(), value); \
   ReturnProbe;\
 JNI_END
 
@@ -3479,6 +3488,7 @@ JNI_ENTRY(void, jni_SetObjectArrayElement(JNIEnv *env, jobjectArray array, jsize
   DT_VOID_RETURN_MARK(SetObjectArrayElement);
 
   objArrayOop a = objArrayOop(JNIHandles::resolve_non_null(array));
+  a = objArrayOop(oopDesc::bs()->resolve_and_maybe_copy_oop(a));
   oop v = JNIHandles::resolve(value);
   if (a->is_within_bounds(index)) {
     if (v == NULL || v->is_a(ObjArrayKlass::cast(a->klass())->element_klass())) {
@@ -3691,6 +3701,7 @@ JNI_QUICK_ENTRY(void, \
   JNIWrapper("Release" XSTR(Result) "ArrayElements"); \
   DTRACE_PROBE4(hotspot_jni, Release##Result##ArrayElements__entry, env, array, buf, mode);\
   typeArrayOop a = typeArrayOop(JNIHandles::resolve_non_null(array)); \
+  a = typeArrayOop(oopDesc::bs()->resolve_and_maybe_copy_oop(a)); \
   int len = a->length(); \
   if (len != 0) {   /* Empty array:  nothing to free or copy. */  \
     if ((mode == 0) || (mode == JNI_COMMIT)) { \
@@ -3723,6 +3734,7 @@ JNI_QUICK_ENTRY(void, \
   JNIWrapper("Release" XSTR(Result) "ArrayElements"); \
   EntryProbe; \
   typeArrayOop a = typeArrayOop(JNIHandles::resolve_non_null(array)); \
+  a = typeArrayOop(oopDesc::bs()->resolve_and_maybe_copy_oop(a)); \
   int len = a->length(); \
   if (len != 0) {   /* Empty array:  nothing to free or copy. */  \
     if ((mode == 0) || (mode == JNI_COMMIT)) { \
@@ -3856,6 +3868,7 @@ jni_Set##Result##ArrayRegion(JNIEnv *env, ElementType##Array array, jsize start,
   DTRACE_PROBE5(hotspot_jni, Set##Result##ArrayRegion__entry, env, array, start, len, buf);\
   DT_VOID_RETURN_MARK(Set##Result##ArrayRegion); \
   typeArrayOop dst = typeArrayOop(JNIHandles::resolve_non_null(array)); \
+  dst = typeArrayOop(oopDesc::bs()->resolve_and_maybe_copy_oop(dst)); \
   if (start < 0 || len < 0 || ((unsigned int)start + (unsigned int)len > (unsigned int)dst->length())) { \
     THROW(vmSymbols::java_lang_ArrayIndexOutOfBoundsException()); \
   } else { \
@@ -3891,6 +3904,7 @@ jni_Set##Result##ArrayRegion(JNIEnv *env, ElementType##Array array, jsize start,
   EntryProbe; \
   DT_VOID_RETURN_MARK(Set##Result##ArrayRegion); \
   typeArrayOop dst = typeArrayOop(JNIHandles::resolve_non_null(array)); \
+  dst = typeArrayOop(oopDesc::bs()->resolve_and_maybe_copy_oop(dst)); \
   if (start < 0 || len < 0 || ((unsigned int)start + (unsigned int)len > (unsigned int)dst->length())) { \
     THROW(vmSymbols::java_lang_ArrayIndexOutOfBoundsException()); \
   } else { \
@@ -4237,6 +4251,7 @@ JNI_ENTRY(void*, jni_GetPrimitiveArrayCritical(JNIEnv *env, jarray array, jboole
     *isCopy = JNI_FALSE;
   }
   oop a = JNIHandles::resolve_non_null(array);
+  a = oopDesc::bs()->resolve_and_maybe_copy_oop(a);
   assert(a->is_array(), "just checking");
   BasicType type;
   if (a->is_objArray()) {
@@ -4263,6 +4278,19 @@ JNI_ENTRY(void, jni_ReleasePrimitiveArrayCritical(JNIEnv *env, jarray array, voi
   HOTSPOT_JNI_RELEASEPRIMITIVEARRAYCRITICAL_ENTRY(
                                                   env, array, carray, mode);
 #endif /* USDT2 */
+
+#ifdef ASSERT
+  oop a = JNIHandles::resolve_non_null(array);
+  // a = oopDesc::bs()->resolve_and_maybe_copy_oop(a);
+  BasicType type;
+  if (a->is_objArray()) {
+    type = T_OBJECT;
+  } else {
+    type = TypeArrayKlass::cast(a->klass())->element_type();
+  }
+  assert(arrayOop(a)->base(type) == carray, "Make sure critical array hasn't moved");
+#endif
+
   // The array, carray and mode arguments are ignored
   GC_locker::unlock_critical(thread);
 #ifndef USDT2
