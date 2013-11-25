@@ -13,7 +13,15 @@ void VM_ShenandoahFinishMark::doit() {
   sh->concurrentMark()->finishMarkFromRoots();
   sh->stop_concurrent_marking();
 
-  sh->verify_heap_after_marking();
-  //  sh->parallel_evacuate();
+  if (ShenandoahVerify) {
+    sh->verify_heap_after_marking();
+  }
+
 }
   
+void VM_ShenandoahVerifyHeapAfterEvacuation::doit() {
+
+  ShenandoahHeap *sh = ShenandoahHeap::heap();
+  sh->verify_heap_after_evacuation();
+
+}

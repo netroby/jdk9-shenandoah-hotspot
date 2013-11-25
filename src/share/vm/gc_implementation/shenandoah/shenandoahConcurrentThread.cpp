@@ -57,6 +57,10 @@ void ShenandoahConcurrentThread::run() {
 
       ShenandoahHeap::heap()->parallel_evacuate();
 
+      if (ShenandoahVerify) {
+        VM_ShenandoahVerifyHeapAfterEvacuation verify_after_evacuation;
+        VMThread::execute(&verify_after_evacuation);
+      }
     } else {
       yield();
     }

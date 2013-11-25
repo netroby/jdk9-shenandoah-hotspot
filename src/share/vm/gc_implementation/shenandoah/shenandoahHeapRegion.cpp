@@ -7,6 +7,7 @@ size_t ShenandoahHeapRegion::RegionSizeBytes = 1 << ShenandoahHeapRegion::Region
 
 jint ShenandoahHeapRegion::initialize(HeapWord* start, 
 				      size_t regionSizeWords) {
+
   reserved = MemRegion((HeapWord*) start, regionSizeWords);
   ContiguousSpace::initialize(reserved, true, false);
   liveData = 0;
@@ -24,18 +25,13 @@ void ShenandoahHeapRegion::print(outputStream* st) {
 
   if (is_current_allocation_region()) 
     st->print("A");
-  else
-    st->print(" ");
-
-  if (is_in_collection_set())
+  else if (is_in_collection_set())
     st->print("C");
-  else
-    st->print(" ");
-
-  if (is_dirty())
+  else if (is_dirty())
     st->print("D");
   else
     st->print(" ");
+
   st->print("live = %u garbage = %u claimed = %d bottom = %p end = %p top = %p dirty: %d active_tlabs: %d\n", 
 	     liveData, garbage(), claimed, bottom(), end(), top(), _dirty, active_tlab_count);
 }
@@ -90,3 +86,4 @@ bool ShenandoahHeapRegion::has_active_tlabs() {
   assert(active_tlab_count >= 0, "never have negative tlab count");
   return active_tlab_count != 0;
 }
+

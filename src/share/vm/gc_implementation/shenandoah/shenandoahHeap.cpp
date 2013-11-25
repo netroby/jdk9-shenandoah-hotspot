@@ -750,9 +750,12 @@ public:
 	  tty->print("Referrer starts at addr %p\n", referrer);
 	  referrer->print();
 	}
+        tty->print_cr("heap region containing object:");
 	_heap->heap_region_containing(o)->print();
+        tty->print_cr("heap region containing referrer:");
 	_heap->heap_region_containing(p)->print();
-	
+        tty->print_cr("heap region containing forwardee:");
+	_heap->heap_region_containing(oopDesc::bs()->resolve_oop(o))->print();
       }
       assert(o->is_oop(), "oop must be an oop");
       assert(Metaspace::contains(o->klass()), "klass pointer must go to metaspace");
@@ -871,13 +874,10 @@ void ShenandoahHeap::parallel_evacuate() {
     tty->print_cr("finished parallel_evacuate");
     PrintHeapRegionsClosure pc2;
     heap_region_iterate(&pc2);
-  }
 
-#ifdef ASSERT
-  if (ShenandoahVerify) {
-    //    verify_heap_after_evacuation();
+    tty->print_cr("all regions after evacuation:");
+    print_heap_regions();
   }
-#endif
 
 }
 
@@ -1408,6 +1408,9 @@ void ShenandoahHeap::start_concurrent_marking() {
 
 #ifdef ASSERT
   if (ShenandoahVerify) {
+    // We need to make the heap parsable otherwise we access garbage in TLABs when
+    // bumping objects.
+    prepare_for_verify();
     BumpObjectAgeClosure boc(this);
     object_iterate(&boc);
   }
@@ -1506,6 +1509,8 @@ public:
 };
 
 void ShenandoahHeap::verify_heap_after_evacuation() {
+
+  prepare_for_verify();
 
   VerifyAfterEvacuationClosure cl;
   roots_iterate(&cl);
@@ -1615,16 +1620,17 @@ oopDesc* ShenandoahHeap::evacuate_object(oop p, EvacuationAllocator* allocator) 
 
   HeapWord* result = BrooksPointer::get(p).cas_forwardee((HeapWord*) p, copy);
 
+  oopDesc* return_val;
   if (result == (HeapWord*) p) {
     if (ShenandoahGCVerbose) {
       tty->print("Copy of %p to %p at epoch %d succeeded \n", p, copy, getEpoch());
     }
-    return (oopDesc*) copy;
+    return_val = (oopDesc*) copy;
   }  else {
     allocator->rollback(filler, required);
-    return (oopDesc*) result;
+    return_val = (oopDesc*) result;
   }
-
+  return return_val;
 }
 
 HeapWord* ShenandoahHeap::allocate_from_tlab_work(Thread* thread, size_t size) {
