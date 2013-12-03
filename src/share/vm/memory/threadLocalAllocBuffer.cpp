@@ -319,7 +319,10 @@ size_t ThreadLocalAllocBuffer::end_reserve() {
 }
 
 void ThreadLocalAllocBuffer::rollback(size_t size) {
-  set_start(start() - size);
+  HeapWord* old_top = top();
+  if (old_top != NULL) { // Pathological case: we accept that we can't rollback.
+    set_top(old_top - size);
+  }
 }
 
 GlobalTLABStats::GlobalTLABStats() :
