@@ -1001,7 +1001,6 @@ JNI_QUICK_ENTRY(jboolean, jni_IsSameObject(JNIEnv *env, jobject r1, jobject r2))
   oop a = JNIHandles::resolve(r1);
   a = oopDesc::bs()->resolve_and_maybe_copy_oop(a);
   oop b = JNIHandles::resolve(r2);
-  b = oopDesc::bs()->resolve_and_maybe_copy_oop(b);
   jboolean ret = (a == b) ? JNI_TRUE : JNI_FALSE;
 #ifndef USDT2
   DTRACE_PROBE1(hotspot_jni, IsSameObject__return, ret);

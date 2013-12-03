@@ -157,6 +157,7 @@ jint Unsafe_invocation_key_to_method_slot(jint key) {
 
 #define SET_FIELD(obj, offset, type_name, x) \
   oop p = JNIHandles::resolve(obj); \
+  p = oopDesc::bs()->resolve_and_maybe_copy_oop(p); \
   *(type_name*)index_oop_from_field_offset_long(p, offset) = x
 
 #define GET_FIELD_VOLATILE(obj, offset, type_name, v) \
@@ -165,6 +166,7 @@ jint Unsafe_invocation_key_to_method_slot(jint key) {
 
 #define SET_FIELD_VOLATILE(obj, offset, type_name, x) \
   oop p = JNIHandles::resolve(obj); \
+  p = oopDesc::bs()->resolve_and_maybe_copy_oop(p); \
   OrderAccess::release_store_fence((volatile type_name*)index_oop_from_field_offset_long(p, offset), x);
 
 // Macros for oops that check UseCompressedOops
@@ -221,6 +223,7 @@ UNSAFE_ENTRY(void, Unsafe_SetObject140(JNIEnv *env, jobject unsafe, jobject obj,
   oop x = JNIHandles::resolve(x_h);
   //SET_FIELD(obj, offset, oop, x);
   oop p = JNIHandles::resolve(obj);
+  p = oopDesc::bs()->resolve_and_maybe_copy_oop(p);
   if (UseCompressedOops) {
     if (x != NULL) {
       // If there is a heap base pointer, we are obliged to emit a store barrier.
@@ -303,6 +306,7 @@ UNSAFE_ENTRY(void, Unsafe_SetObjectVolatile(JNIEnv *env, jobject unsafe, jobject
   UnsafeWrapper("Unsafe_SetObjectVolatile");
   oop x = JNIHandles::resolve(x_h);
   oop p = JNIHandles::resolve(obj);
+  p = oopDesc::bs()->resolve_and_maybe_copy_oop(p);
   void* addr = index_oop_from_field_offset_long(p, offset);
   
   OrderAccess::release();
@@ -344,7 +348,7 @@ UNSAFE_ENTRY(void, Unsafe_SetLongVolatile(JNIEnv *env, jobject unsafe, jobject o
       SET_FIELD_VOLATILE(obj, offset, jlong, x);
     }
     else {
-      Handle p (THREAD, JNIHandles::resolve(obj));
+      Handle p (THREAD, oopDesc::bs()->resolve_and_maybe_copy_oop(JNIHandles::resolve(obj)));
       jlong* addr = (jlong*)(index_oop_from_field_offset_long(p(), offset));
       ObjectLocker ol(p, THREAD);
       *addr = x;
@@ -433,6 +437,7 @@ UNSAFE_ENTRY(void, Unsafe_SetOrderedObject(JNIEnv *env, jobject unsafe, jobject 
   UnsafeWrapper("Unsafe_SetOrderedObject");
   oop x = JNIHandles::resolve(x_h);
   oop p = JNIHandles::resolve(obj);
+  p = oopDesc::bs()->resolve_and_maybe_copy_oop(p);
   void* addr = index_oop_from_field_offset_long(p, offset);
   OrderAccess::release();
   if (UseCompressedOops) {
@@ -454,7 +459,7 @@ UNSAFE_ENTRY(void, Unsafe_SetOrderedLong(JNIEnv *env, jobject unsafe, jobject ob
       SET_FIELD_VOLATILE(obj, offset, jlong, x);
     }
     else {
-      Handle p (THREAD, JNIHandles::resolve(obj));
+      Handle p (THREAD, oopDesc::bs()->resolve_and_maybe_copy_oop(JNIHandles::resolve(obj)));
       jlong* addr = (jlong*)(index_oop_from_field_offset_long(p(), offset));
       ObjectLocker ol(p, THREAD);
       *addr = x;
@@ -1178,7 +1183,7 @@ UNSAFE_ENTRY(jboolean, Unsafe_CompareAndSwapObject(JNIEnv *env, jobject unsafe, 
   HeapWord* addr = (HeapWord *)index_oop_from_field_offset_long(p, offset);
   if (UseShenandoahGC) {
     oop old_val = oopDesc::load_heap_oop((oop*) addr);
-    oop resolved_old_val = oopDesc::bs()->resolve_oop(old_val);
+    oop resolved_old_val = oopDesc::bs()->resolve_and_maybe_copy_oop(old_val);
     // We need to CAS the resolved oop here to avoid race condition with other threads
     // that might have CASed another value in there. If it fails, we can ignore it,
     // it would make our update stale anyway.

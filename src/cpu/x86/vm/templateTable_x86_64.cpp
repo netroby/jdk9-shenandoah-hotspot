@@ -1853,10 +1853,8 @@ void TemplateTable::if_acmp(Condition cc) {
   // NOTE: We need to preemptively evacuate the oops here (for Shenandoah GC), because
   // we might get false negatives if both operands are the same, but another
   // thread evacuates between the load of the 1st and 2nd operand.
-  // TODO: Preemptively copying the 1st operand should be good enough for avoiding
-  // the above scenario. Consider making the 2nd operand load a normal read barrier.
   oopDesc::bs()->compile_resolve_oop_for_write(_masm, rdx, 1, BarrierSet::ss_rax);
-  oopDesc::bs()->compile_resolve_oop_for_write(_masm, rax, 1, BarrierSet::ss_rdx);
+  oopDesc::bs()->compile_resolve_oop(_masm, rax);
   __ cmpptr(rdx, rax);
   __ jcc(j_not(cc), not_taken);
   branch(false, false);
@@ -2761,7 +2759,6 @@ void TemplateTable::fast_storefield(TosState state) {
 
   // Get object from stack
   pop_and_check_object(rcx);
-  oopDesc::bs()->compile_resolve_oop_for_write(_masm, rcx, 3, BarrierSet::ss_rax, BarrierSet::ss_rbx, BarrierSet::ss_rdx);
 
   // field address
   const Address field(rcx, rbx, Address::times_1);
@@ -2769,26 +2766,33 @@ void TemplateTable::fast_storefield(TosState state) {
   // access field
   switch (bytecode()) {
   case Bytecodes::_fast_aputfield:
+    oopDesc::bs()->compile_resolve_oop_for_write(_masm, rcx, 3, BarrierSet::ss_rax, BarrierSet::ss_rbx, BarrierSet::ss_rdx);
     do_oop_store(_masm, field, rax, _bs->kind(), false);
     break;
   case Bytecodes::_fast_lputfield:
+    oopDesc::bs()->compile_resolve_oop_for_write(_masm, rcx, 3, BarrierSet::ss_rax, BarrierSet::ss_rbx, BarrierSet::ss_rdx);
     __ movq(field, rax);
     break;
   case Bytecodes::_fast_iputfield:
+    oopDesc::bs()->compile_resolve_oop_for_write(_masm, rcx, 3, BarrierSet::ss_rax, BarrierSet::ss_rbx, BarrierSet::ss_rdx);
     __ movl(field, rax);
     break;
   case Bytecodes::_fast_bputfield:
+    oopDesc::bs()->compile_resolve_oop_for_write(_masm, rcx, 3, BarrierSet::ss_rax, BarrierSet::ss_rbx, BarrierSet::ss_rdx);
     __ movb(field, rax);
     break;
   case Bytecodes::_fast_sputfield:
     // fall through
   case Bytecodes::_fast_cputfield:
+    oopDesc::bs()->compile_resolve_oop_for_write(_masm, rcx, 3, BarrierSet::ss_rax, BarrierSet::ss_rbx, BarrierSet::ss_rdx);
     __ movw(field, rax);
     break;
   case Bytecodes::_fast_fputfield:
+    oopDesc::bs()->compile_resolve_oop_for_write(_masm, rcx, 3, BarrierSet::ss_rbx, BarrierSet::ss_rdx, BarrierSet::ss_ftos);
     __ movflt(field, xmm0);
     break;
   case Bytecodes::_fast_dputfield:
+    oopDesc::bs()->compile_resolve_oop_for_write(_masm, rcx, 3, BarrierSet::ss_rbx, BarrierSet::ss_rdx, BarrierSet::ss_dtos);
     __ movdbl(field, xmm0);
     break;
   default:
@@ -3632,7 +3636,10 @@ void TemplateTable::monitorenter() {
   // check for NULL object
   __ null_check(rax);
 
-  oopDesc::bs()->compile_resolve_oop_not_null(_masm, rax);
+  // We need to preemptively evacuate the object, because we later compare
+  // it to objects in the BasicObjectLock list, and we might get false negatives
+  // if another thread evacuates the object in the meantime. See acmp.
+  oopDesc::bs()->compile_resolve_oop_for_write(_masm, rax);
 
   const Address monitor_block_top(
         rbp, frame::interpreter_frame_monitor_block_top_offset * wordSize);
@@ -3730,7 +3737,10 @@ void TemplateTable::monitorexit() {
   // check for NULL object
   __ null_check(rax);
 
-  oopDesc::bs()->compile_resolve_oop_not_null(_masm, rax);
+  // We need to preemptively evacuate the object, because we later compare
+  // it to objects in the BasicObjectLock list, and we might get false negatives
+  // if another thread evacuates the object in the meantime. See acmp.
+  oopDesc::bs()->compile_resolve_oop_for_write(_masm, rax);
 
   const Address monitor_block_top(
         rbp, frame::interpreter_frame_monitor_block_top_offset * wordSize);
