@@ -827,6 +827,26 @@ void ShenandoahHeap::verify_heap_after_marking() {
   object_iterate(&marked_oops);
 }
 
+void ShenandoahHeap::prepare_for_concurrent_evacuation() {
+
+  RecycleDirtyRegionsClosure cl;
+  heap_region_iterate(&cl);
+
+  // _current_region->fill_region();
+
+  // NOTE: This needs to be done during a stop the world pause, because
+  // putting regions into the collection set concurrently with Java threads
+  // will create a race. In particular, acmp could fail because when we
+  // resolve the first operand, the containing region might not yet be in
+  // the collection set, and thus return the original oop. When the 2nd
+  // operand gets resolved, the region could be in the collection set
+  // and the oop gets evacuated. If both operands have originally been
+  // the same, we get false negatives.
+  _regions->choose_collection_set(_collection_set);
+  _regions->choose_empty_regions(_free_regions);
+  update_current_region();
+}
+
 void ShenandoahHeap::parallel_evacuate() {
   if (ShenandoahGCVerbose) {
     tty->print_cr("starting parallel_evacuate");
@@ -834,19 +854,6 @@ void ShenandoahHeap::parallel_evacuate() {
     //    heap_region_iterate(&pc1);
   }
 
-#ifdef ASSERT
-  if (ShenandoahVerify) {
-    //    verify_heap_after_marking();
-  }
-#endif
-
-  RecycleDirtyRegionsClosure cl;
-  heap_region_iterate(&cl);
-
-  // _current_region->fill_region();
-  _regions->choose_collection_set(_collection_set);
-  _regions->choose_empty_regions(_free_regions);
-  update_current_region();
   if (ShenandoahGCVerbose) {
     tty->print("Printing all available regions");
     print_heap_regions();
@@ -1528,6 +1535,12 @@ void ShenandoahHeap::stop_concurrent_marking() {
     PrintHeapRegionsClosure pc;
     heap_region_iterate(&pc);
   }
+
+#ifdef ASSERT
+  if (ShenandoahVerify) {
+    verify_heap_after_marking();
+  }
+#endif
 }
 
 bool ShenandoahHeap::should_start_concurrent_marking() {
