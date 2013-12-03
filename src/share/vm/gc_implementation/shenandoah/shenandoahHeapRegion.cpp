@@ -75,11 +75,13 @@ void ShenandoahHeapRegion::fill_region() {
 }
 
 void ShenandoahHeapRegion::increase_active_tlab_count() {
+  assert(active_tlab_count >= 0, "never have negative tlab count");
   Atomic::inc(&active_tlab_count);
 }
 
 void ShenandoahHeapRegion::decrease_active_tlab_count() {
   Atomic::dec(&active_tlab_count);
+  assert(active_tlab_count >= 0, err_msg("never have negative tlab count %d", active_tlab_count));
 }
 
 bool ShenandoahHeapRegion::has_active_tlabs() {

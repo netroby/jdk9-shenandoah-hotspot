@@ -146,6 +146,14 @@ void ShenandoahBarrierSet::write_ref_array_work(MemRegion mr) {
 
 template <class T>
 void ShenandoahBarrierSet::write_ref_array_pre_work(T* dst, int count) {
+    ShenandoahHeap *sh = (ShenandoahHeap*) Universe::heap();
+    if (sh->is_in(dst) && 
+	sh->heap_region_containing((HeapWord*) dst)->is_in_collection_set()){
+      tty->print("dst = %p\n", dst);
+      sh->heap_region_containing((HeapWord*) dst)->print();
+      assert(false, "We should have fixed this earlier");   
+    }   
+
   if (! JavaThread::satb_mark_queue_set().is_active()) return;
   // tty->print_cr("write_ref_array_pre_work: %p, %d", dst, count);
   T* elem_ptr = dst;
@@ -282,7 +290,9 @@ bool ShenandoahBarrierSet::has_brooks_ptr(oopDesc* p) {
 oopDesc* ShenandoahBarrierSet::resolve_oop(oopDesc* src) {
 
   if (src != NULL) {
-    return get_shenandoah_forwardee(src);
+    oopDesc* result = get_shenandoah_forwardee(src);
+    assert(ShenandoahHeap::heap()->is_in(result) && result->is_oop(), "resolved oop must be a valid oop in the heap");
+    return result;
   } else {
     return NULL;
   }
@@ -326,13 +336,15 @@ IRT_END
 
 oopDesc* ShenandoahBarrierSet::resolve_and_maybe_copy_oop(oopDesc* src) {
     ShenandoahHeap *sh = (ShenandoahHeap*) Universe::heap();      
+    oopDesc* result;
     if (src != NULL && sh->is_in(src)) {
-      oopDesc* result = resolve_and_maybe_copy_oopHelper(src);
+      result = resolve_and_maybe_copy_oopHelper(src);
       assert(sh->is_in(result), "result should be in the heap");
-      return result;
     } else {
-      return src;
+      result = src;
     }
+    assert(result == NULL || (sh->is_in(result) && result->is_oop()), "resolved oop must be NULL, or a valid oop in the heap");
+    return result;
   }
 
 #ifndef CC_INTERP
