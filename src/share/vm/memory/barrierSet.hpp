@@ -62,6 +62,7 @@ public:
     ss_rdi,
     ss_ftos,
     ss_dtos,
+    ss_r13,
     ss_c_rarg0,
     ss_c_rarg1,
     ss_c_rarg2,

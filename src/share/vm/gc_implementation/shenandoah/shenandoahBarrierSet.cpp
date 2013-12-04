@@ -394,6 +394,9 @@ void ShenandoahBarrierSet::compile_resolve_oop_for_write(MacroAssembler* masm, R
     case ss_rdi:
       __ push(rdi);
       break;
+    case ss_r13:
+      __ push(r13);
+      break;
     case ss_ftos:
       __ subptr(rsp, wordSize);
       __ movflt(Address(rsp, 0), xmm0);
@@ -478,7 +481,7 @@ void ShenandoahBarrierSet::compile_resolve_oop_for_write(MacroAssembler* masm, R
 */
 
   __ mov(c_rarg1, dst);
-  __ call_VM_leaf(CAST_FROM_FN_PTR(address, ShenandoahBarrierSet::resolve_and_maybe_copy_oop_static), c_rarg1);
+  __ super_call_VM_leaf(CAST_FROM_FN_PTR(address, ShenandoahBarrierSet::resolve_and_maybe_copy_oop_static), c_rarg1);
   __ mov(rscratch1, rax);
 
   for (int i = num_state_save - 1; i >= 0; i--) {
@@ -500,6 +503,9 @@ void ShenandoahBarrierSet::compile_resolve_oop_for_write(MacroAssembler* masm, R
       break;
     case ss_rdi:
       __ pop(rdi);
+      break;
+    case ss_r13:
+      __ pop(r13);
       break;
     case ss_ftos:
       __ movflt(xmm0, Address(rsp, 0));
