@@ -402,6 +402,9 @@ void ShenandoahBarrierSet::compile_resolve_oop_for_write(MacroAssembler* masm, R
       __ subptr(rsp, 2 * wordSize);
       __ movdbl(Address(rsp, 0), xmm0);
       break;
+    case ss_c_rarg0:
+      __ push(c_rarg0);
+      break;
     case ss_c_rarg1:
       __ push(c_rarg1);
       break;
@@ -410,6 +413,9 @@ void ShenandoahBarrierSet::compile_resolve_oop_for_write(MacroAssembler* masm, R
       break;
     case ss_c_rarg3:
       __ push(c_rarg3);
+      break;
+    case ss_c_rarg4:
+      __ push(c_rarg4);
       break;
     default:
       ShouldNotReachHere();
@@ -503,6 +509,9 @@ void ShenandoahBarrierSet::compile_resolve_oop_for_write(MacroAssembler* masm, R
       __ movdbl(xmm0, Address(rsp, 0));
       __ addptr(rsp, 2 * Interpreter::stackElementSize);
       break;
+    case ss_c_rarg0:
+      __ pop(c_rarg0);
+      break;
     case ss_c_rarg1:
       __ pop(c_rarg1);
       break;
@@ -511,6 +520,9 @@ void ShenandoahBarrierSet::compile_resolve_oop_for_write(MacroAssembler* masm, R
       break;
     case ss_c_rarg3:
       __ pop(c_rarg3);
+      break;
+    case ss_c_rarg4:
+      __ pop(c_rarg4);
       break;
     default:
       ShouldNotReachHere();
