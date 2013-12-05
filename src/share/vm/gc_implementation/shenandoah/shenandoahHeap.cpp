@@ -197,11 +197,17 @@ public:
 
   
 size_t ShenandoahHeap::used() const {
-  CalculateUsedRegionClosure calc;
-  heap_region_iterate(&calc);
-  return calc.getResult();
+  return _used;
 }
 
+void ShenandoahHeap::increase_used(size_t bytes) {
+  Atomic::inc_ptr(&_used);
+}
+
+void ShenandoahHeap::decrease_used(size_t bytes) {
+  assert(_used - bytes >= 0, "never decrease heap size by more than we've left");
+  Atomic::dec_ptr(&_used);
+}
 
 size_t ShenandoahHeap::capacity() const {
   return _numRegions * ShenandoahHeapRegion::RegionSizeBytes;
@@ -404,6 +410,7 @@ HeapWord* ShenandoahHeap::allocate_memory_gclab(size_t size) {
     assert(my_current_region == NULL, "This can only happen if we run out of regions");
     assert(false, "Failed to allocate object");
   } else {
+    increase_used(size * HeapWordSize);
     assert(! heap_region_containing(result)->is_dirty(), "never allocate in dirty region");
   }
   return result;
@@ -662,6 +669,7 @@ public:
       // tty->print_cr("recycling region %d:", r->regionNumber);
       // r->print_on(tty);
       // tty->print_cr("");
+      ShenandoahHeap::heap()->decrease_used(r->used());
       r->recycle();
       r->set_dirty(false);
     }

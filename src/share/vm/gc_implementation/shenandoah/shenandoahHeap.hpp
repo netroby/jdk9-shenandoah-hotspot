@@ -76,6 +76,8 @@ private:
   size_t _default_gclab_size;
   WorkGangBarrierSync barrierSync;
   int _max_workers;
+  volatile size_t _used;
+
 public:
   size_t _bytesAllocSinceCM;
 
@@ -243,6 +245,10 @@ public:
   static ByteSize ordered_regions_offset() { return byte_offset_of(ShenandoahHeap, _ordered_regions); }
   static ByteSize first_region_bottom_offset() { return byte_offset_of(ShenandoahHeap, _first_region_bottom); }
 
+  void increase_used(size_t bytes);
+  void decrease_used(size_t bytes);
+
+
 private:
 
 
@@ -252,7 +258,6 @@ private:
   void verify_live();
   void verify_liveness_after_concurrent_mark();
 
-  
 };
 
 class ShenandoahMarkRefsClosure : public OopsInGenClosure {
