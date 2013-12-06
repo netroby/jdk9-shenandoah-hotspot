@@ -67,7 +67,8 @@ private:
 
   ShenandoahConcurrentThread* _concurrent_gc_thread;
 
-  size_t _numRegions;
+  size_t _num_regions;
+  size_t _max_regions;
   size_t _initialSize;
 #ifndef NDEBUG
   uint _numAllocs;
@@ -248,9 +249,11 @@ public:
   void increase_used(size_t bytes);
   void decrease_used(size_t bytes);
 
+  void grow_heap_by_impl();
 
 private:
 
+  void grow_heap_by();
 
   void verify_evacuation(ShenandoahHeapRegion* from_region);
   bool set_concurrent_mark_in_progress(bool in_progress);

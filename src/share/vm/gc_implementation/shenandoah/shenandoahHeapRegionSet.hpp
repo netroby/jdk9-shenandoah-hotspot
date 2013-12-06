@@ -25,6 +25,8 @@ public:
     _free_threshold(ShenandoahHeapRegion::RegionSizeBytes / 2) {}
 
   void put(size_t i, ShenandoahHeapRegion* region);
+  void append(ShenandoahHeapRegion* region);
+
   ShenandoahHeapRegion* at(uint i) { return _regions[i];}
   size_t length() { return _numRegions;}
   size_t available_regions() { return _inserted - _index;}

@@ -81,27 +81,28 @@ jint ShenandoahHeap::initialize() {
 
   set_barrier_set(new ShenandoahBarrierSet());
   ReservedSpace pgc_rs = heap_rs.first_part(max_byte_size);
-  _storage.initialize(pgc_rs, max_byte_size);
+  _storage.initialize(pgc_rs, init_byte_size);
   if (ShenandoahGCVerbose) {
     tty->print("Calling initialize on reserved space base = %p end = %p\n", 
 	       pgc_rs.base(), pgc_rs.base() + pgc_rs.size());
   }
 
-  _numRegions = init_byte_size / ShenandoahHeapRegion::RegionSizeBytes;
-  _ordered_regions = NEW_C_HEAP_ARRAY(ShenandoahHeapRegion*, _numRegions, mtGC); 
+  _num_regions = init_byte_size / ShenandoahHeapRegion::RegionSizeBytes;
+  _max_regions = max_byte_size / ShenandoahHeapRegion::RegionSizeBytes;
+  _ordered_regions = NEW_C_HEAP_ARRAY(ShenandoahHeapRegion*, _max_regions, mtGC); 
 
   ShenandoahHeapRegion* current = new ShenandoahHeapRegion();
   _first_region = current;
-  _initialSize = _numRegions * ShenandoahHeapRegion::RegionSizeBytes;
+  _initialSize = _num_regions * ShenandoahHeapRegion::RegionSizeBytes;
   size_t regionSizeWords = ShenandoahHeapRegion::RegionSizeBytes / HeapWordSize;
   assert(init_byte_size == _initialSize, "tautology");
-  _regions = new ShenandoahHeapRegionSet(_numRegions);
-  _free_regions = new ShenandoahHeapRegionSet(_numRegions);
-  _collection_set = new ShenandoahHeapRegionSet(_numRegions);
+  _regions = new ShenandoahHeapRegionSet(_max_regions);
+  _free_regions = new ShenandoahHeapRegionSet(_max_regions);
+  _collection_set = new ShenandoahHeapRegionSet(_max_regions);
 
   _ordered_regions[0] = current;
 
-  for (size_t i = 0; i < _numRegions - 1; i++) {
+  for (size_t i = 0; i < _num_regions - 1; i++) {
     ShenandoahHeapRegion* next = new ShenandoahHeapRegion();
     current->initialize((HeapWord*) pgc_rs.base() + 
 			regionSizeWords * i, regionSizeWords);
@@ -115,7 +116,7 @@ jint ShenandoahHeap::initialize() {
 
   _first_region_bottom = _first_region->bottom();
 
-  size_t last_region = _numRegions - 1;
+  size_t last_region = _num_regions - 1;
   current->initialize((HeapWord*) pgc_rs.base() + regionSizeWords * (last_region), 
 		      regionSizeWords);
 
@@ -210,7 +211,7 @@ void ShenandoahHeap::decrease_used(size_t bytes) {
 }
 
 size_t ShenandoahHeap::capacity() const {
-  return _numRegions * ShenandoahHeapRegion::RegionSizeBytes;
+  return _num_regions * ShenandoahHeapRegion::RegionSizeBytes;
 
 }
 
@@ -220,7 +221,7 @@ bool ShenandoahHeap::is_maximal_no_gc() const {
 }
 
 size_t ShenandoahHeap::max_capacity() const {
-  return _numRegions * ShenandoahHeapRegion::RegionSizeBytes;
+  return _max_regions * ShenandoahHeapRegion::RegionSizeBytes;
 }
 
 class IsInRegionClosure : public ShenandoahHeapRegionClosure {
@@ -381,10 +382,7 @@ ShenandoahHeapRegion* ShenandoahHeap::cas_update_current_region(ShenandoahHeapRe
     _current_region->set_is_current_allocation_region(true);
     return _current_region;
   } else {
-    print_heap_regions();
-    tty->print_cr("free regions:");
-    _free_regions->print();
-    assert(false, "No GC implemented");
+    return NULL;
   }
 
 }
@@ -407,8 +405,18 @@ HeapWord* ShenandoahHeap::allocate_memory_gclab(size_t size) {
   } while (result == NULL && my_current_region != NULL);
 
   if (result == NULL) {
-    assert(my_current_region == NULL, "This can only happen if we run out of regions");
-    assert(false, "Failed to allocate object");
+    // Check if we ran out of regions and try to grow heap.
+    if (my_current_region == NULL && _num_regions < _max_regions) {
+      grow_heap_by();
+      result = allocate_memory_gclab(size);
+    }
+    /*
+    else {
+      // We reached the maximum number of regions we can allocate. Throw OOM. (We don't need this code, result
+      // already is NULL.
+      result = NULL;
+    }
+    */
   } else {
     increase_used(size * HeapWordSize);
     assert(! heap_region_containing(result)->is_dirty(), "never allocate in dirty region");
@@ -1250,7 +1258,7 @@ void  ShenandoahHeap::gc_epilogue(bool b) {
 // Apply blk->doHeapRegion() on all committed regions in address order,
 // terminating the iteration early if doHeapRegion() returns true.
 void ShenandoahHeap::heap_region_iterate(ShenandoahHeapRegionClosure* blk, bool skip_dirty_regions) const {
-  for (size_t i = 0; i < _numRegions; i++) {
+  for (size_t i = 0; i < _num_regions; i++) {
     ShenandoahHeapRegion* current  = _ordered_regions[i];
     if ( !(skip_dirty_regions && current->is_dirty()) && blk->doHeapRegion(current)) 
       return;
@@ -1668,6 +1676,30 @@ HeapWord* ShenandoahHeap::tlab_post_allocation_setup(HeapWord* obj, bool new_obj
 
 uint ShenandoahHeap::oop_extra_words() {
   return BROOKS_POINTER_OBJ_SIZE;
+}
+
+void ShenandoahHeap::grow_heap_by() {
+  VM_ShenandoahGrowHeap grow_heap = VM_ShenandoahGrowHeap();
+  VMThread::execute(&grow_heap);
+}
+
+void ShenandoahHeap::grow_heap_by_impl() {
+  // Need to check this, otherwise competing threads would allocate more regions than possible.
+  if (_num_regions < _max_regions) {
+    _storage.expand_by(ShenandoahHeapRegion::RegionSizeBytes);
+    ShenandoahHeapRegion* new_region = new ShenandoahHeapRegion();
+    HeapWord* start = _last_region->end();
+    new_region->initialize(start, ShenandoahHeapRegion::RegionSizeBytes / HeapWordSize);
+    if (ShenandoahGCVerbose) {
+      tty->print_cr("allocating new region at index: %d", _num_regions);
+      new_region->print();
+    }
+    _ordered_regions[_num_regions] = new_region;
+    _regions->append(new_region);
+    _free_regions->append(new_region);
+    _last_region = new_region;
+    _num_regions++;
+  }
 }
 
 #ifndef CC_INTERP

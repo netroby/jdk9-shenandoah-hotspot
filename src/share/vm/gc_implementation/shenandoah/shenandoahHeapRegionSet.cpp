@@ -49,6 +49,10 @@ void ShenandoahHeapRegionSet::put(size_t index, ShenandoahHeapRegion* region) {
   _inserted++;
 }
 
+void ShenandoahHeapRegionSet::append(ShenandoahHeapRegion* region) {
+  put(_inserted, region);
+}
+
 ShenandoahHeapRegion* ShenandoahHeapRegionSet::get_next() {
   ShenandoahHeapRegion* result = NULL;
 
