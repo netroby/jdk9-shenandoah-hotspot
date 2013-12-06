@@ -300,7 +300,6 @@ HeapWord* CollectedHeap::allocate_from_tlab_slow(KlassHandle klass, Thread* thre
 #endif // ASSERT
   }
   thread->tlab().fill(obj, obj + size, new_tlab_size);
-  obj = Universe::heap()->tlab_post_allocation_setup(obj);
   return obj;
 }
 

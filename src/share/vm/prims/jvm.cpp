@@ -307,7 +307,10 @@ JVM_ENTRY(void, JVM_ArrayCopy(JNIEnv *env, jclass ignored, jobject src, jint src
   assert(s->is_oop(), "JVM_ArrayCopy: src not an oop");
   assert(d->is_oop(), "JVM_ArrayCopy: dst not an oop");
   // Do copy
-  s->klass()->copy_array(s, src_pos, d, dst_pos, length, thread);
+  s->klass()->copy_array(s, src_pos, 
+			 (arrayOop(oopDesc::bs()->resolve_and_maybe_copy_oop(d))), 
+			  dst_pos,
+			 length, thread);
 JVM_END
 
 
@@ -3637,6 +3640,7 @@ JVM_END
 JVM_ENTRY(void, JVM_SetArrayElement(JNIEnv *env, jobject arr, jint index, jobject val))
   JVMWrapper("JVM_SetArrayElement");
   arrayOop a = check_array(env, arr, false, CHECK);
+  a = arrayOop(oopDesc::bs()->resolve_and_maybe_copy_oop(a));
   oop box = JNIHandles::resolve(val);
   jvalue value;
   value.i = 0; // to initialize value before getting used in CHECK
@@ -3654,6 +3658,7 @@ JVM_END
 JVM_ENTRY(void, JVM_SetPrimitiveArrayElement(JNIEnv *env, jobject arr, jint index, jvalue v, unsigned char vCode))
   JVMWrapper("JVM_SetPrimitiveArrayElement");
   arrayOop a = check_array(env, arr, true, CHECK);
+  a = arrayOop(oopDesc::bs()->resolve_and_maybe_copy_oop(a));
   assert(a->is_typeArray(), "just checking");
   BasicType value_type = (BasicType) vCode;
   Reflection::array_set(&v, a, index, value_type, CHECK);

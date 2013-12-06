@@ -318,6 +318,13 @@ size_t ThreadLocalAllocBuffer::end_reserve() {
   return MAX2(reserve_size, VM_Version::reserve_for_allocation_prefetch());
 }
 
+void ThreadLocalAllocBuffer::rollback(size_t size) {
+  HeapWord* old_top = top();
+  if (old_top != NULL) { // Pathological case: we accept that we can't rollback.
+    set_top(old_top - size);
+  }
+}
+
 GlobalTLABStats::GlobalTLABStats() :
   _allocating_threads_avg(TLABAllocationWeight) {
 

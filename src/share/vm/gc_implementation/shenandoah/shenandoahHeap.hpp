@@ -5,6 +5,7 @@
 #include "gc_implementation/shenandoah/shenandoahConcurrentGCThread.hpp"
 #include "gc_implementation/shenandoah/shenandoahCollectorPolicy.hpp"
 #include "gc_implementation/shenandoah/shenandoahConcurrentMark.hpp"
+#include "gc_implementation/shenandoah/shenandoahConcurrentThread.hpp"
 #include "gc_implementation/shenandoah/shenandoahHeapRegion.hpp"
 #include "gc_implementation/shenandoah/shenandoahHeapRegionSet.hpp"
 
@@ -20,6 +21,7 @@
 
 
 class SpaceClosure;
+class EvacuationAllocator;
 
 class ShenandoahHeapRegionClosure : public StackObj {
   bool _complete;
@@ -34,12 +36,14 @@ public:
   bool complete() { return _complete;}
 };
 
-
-
-
 // A "ShenandoahHeap" is an implementation of a java heap for HotSpot.
 // It uses a new pauseless GC algorithm based on Brooks pointers.
 // Derived from G1
+
+// 
+// CollectedHeap  
+//    SharedHeap
+//      ShenandoahHeap
 
 class ShenandoahHeap : public SharedHeap {
 
@@ -49,6 +53,7 @@ private:
   VirtualSpace _storage;
   ShenandoahHeapRegion* _current_region;
   ShenandoahHeapRegion* _first_region;
+  HeapWord* _first_region_bottom;
   ShenandoahHeapRegion* _last_region;
   // Ordered array of regions  (name confusing with _regions)
   ShenandoahHeapRegion** _ordered_regions;
@@ -60,7 +65,7 @@ private:
   ShenandoahHeapRegion* _currentAllocationRegion;
   ShenandoahConcurrentMark* _scm;
 
-  ShenandoahConcurrentGCThread* _concurrent_gc_thread;
+  ShenandoahConcurrentThread* _concurrent_gc_thread;
 
   size_t _numRegions;
   size_t _initialSize;
@@ -71,6 +76,8 @@ private:
   size_t _default_gclab_size;
   WorkGangBarrierSync barrierSync;
   int _max_workers;
+  volatile size_t _used;
+
 public:
   size_t _bytesAllocSinceCM;
 
@@ -80,6 +87,7 @@ public:
   void retire_tlab_at(HeapWord* start);
   HeapWord* allocate_new_gclab(size_t word_size);
   HeapWord* allocate_memory(size_t word_size);
+
   HeapWord* allocate_memory_gclab(size_t word_size);
   HeapWord* allocate_new_gclab() { 
     return allocate_new_gclab(_default_gclab_size);
@@ -200,6 +208,7 @@ public:
   // them into the marking task queue.
   void prepare_unmarked_root_objs();
 
+  void prepare_for_concurrent_evacuation();
   void parallel_evacuate();
 
   void initialize_brooks_ptr(HeapWord* brooks_ptr, HeapWord* object, bool new_obj = true);
@@ -219,10 +228,29 @@ public:
 
   void print_all_refs(const char* prefix);
 
-private:
-
+  oopDesc*  evacuate_object(oopDesc* src, EvacuationAllocator* allocator);
+  bool is_in_collection_set(oop* p) {
+    return heap_region_containing(p)->is_in_collection_set();
+  }
+  
+  void copy_object(oop p, HeapWord* s);
+  void verify_copy(oop p, oop c);
+  //  void assign_brooks_pointer(oop p, HeapWord* filler, HeapWord* copy);
   void verify_heap_after_marking();
   void verify_heap_after_evacuation();
+
+  // This is here to get access to the otherwise protected method in CollectedHeap.
+  static HeapWord* allocate_from_tlab_work(Thread* thread, size_t size);
+
+  static ByteSize ordered_regions_offset() { return byte_offset_of(ShenandoahHeap, _ordered_regions); }
+  static ByteSize first_region_bottom_offset() { return byte_offset_of(ShenandoahHeap, _first_region_bottom); }
+
+  void increase_used(size_t bytes);
+  void decrease_used(size_t bytes);
+
+
+private:
+
 
   void verify_evacuation(ShenandoahHeapRegion* from_region);
   bool set_concurrent_mark_in_progress(bool in_progress);
@@ -230,7 +258,6 @@ private:
   void verify_live();
   void verify_liveness_after_concurrent_mark();
 
-  
 };
 
 class ShenandoahMarkRefsClosure : public OopsInGenClosure {

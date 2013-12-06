@@ -3,18 +3,21 @@
 
 #include "memory/space.inline.hpp"
 #include "memory/universe.hpp"
+#include "utilities/sizes.hpp"
 
 class ShenandoahHeapRegion : public ContiguousSpace {
 public:
    int regionNumber;
    static size_t RegionSizeBytes;
+   static size_t RegionSizeShift;
    volatile jlong liveData;
    MemRegion reserved;
    volatile unsigned int claimed;
 
 private:
   bool _dirty;
-
+  bool _is_in_collection_set;
+  bool _is_current_allocation_region;
   volatile jint active_tlab_count;
 
 public:
@@ -75,9 +78,27 @@ public:
   // Just before GC we need to fill the current region.
   void fill_region();
 
+  bool is_in_collection_set() {
+    return _is_in_collection_set;
+  }
+
+  void set_is_in_collection_set(bool b) {
+    _is_in_collection_set = b;
+  }
+
+  bool is_current_allocation_region() {
+    return _is_current_allocation_region;
+  }
+
+  void set_is_current_allocation_region(bool b) {
+    _is_current_allocation_region = b;
+  }
+  
   void increase_active_tlab_count();
   void decrease_active_tlab_count();
   bool has_active_tlabs();
+
+  static ByteSize is_in_collection_set_offset() { return byte_offset_of(ShenandoahHeapRegion, _is_in_collection_set); }
 };
 
 

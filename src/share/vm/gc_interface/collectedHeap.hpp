@@ -137,6 +137,7 @@ class CollectedHeap : public CHeapObj<mtInternal> {
 
   // Allocate from the current thread's TLAB, with broken-out slow path.
   inline static HeapWord* allocate_from_tlab(KlassHandle klass, Thread* thread, size_t size);
+  inline static HeapWord* allocate_from_tlab_work(KlassHandle klass, Thread* thread, size_t size);
   static HeapWord* allocate_from_tlab_slow(KlassHandle klass, Thread* thread, size_t size);
 
   // Allocate an uninitialized block of the given size, or returns NULL if

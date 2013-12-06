@@ -12,7 +12,13 @@ void VM_ShenandoahFinishMark::doit() {
   ShenandoahHeap *sh = (ShenandoahHeap*) Universe::heap();
   sh->concurrentMark()->finishMarkFromRoots();
   sh->stop_concurrent_marking();
+  sh->prepare_for_concurrent_evacuation();
 
-  sh->parallel_evacuate();
 }
   
+void VM_ShenandoahVerifyHeapAfterEvacuation::doit() {
+
+  ShenandoahHeap *sh = ShenandoahHeap::heap();
+  sh->verify_heap_after_evacuation();
+
+}

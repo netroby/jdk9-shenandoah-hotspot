@@ -1314,13 +1314,13 @@ class CommandLineFlags {
           "Use the Garbage-First garbage collector")                        \
                                                                             \
   product(bool, UseShenandoahGC, false,                                     \
-          "Use the Shenandoah pauseless garbage collector")                 \
+          "Use the Shenandoah garbage collector")                           \
                                                                             \
   develop(bool, ShenandoahGCVerbose, false,                                 \
-          "Use the Shenandoah pauseless garbage collector")                 \
+          "Verbose information about the Shenandoah garbage collector")     \
                                                                             \
   develop(bool, ShenandoahVerify, false,                                    \
-          "Use the Shenandoah pauseless garbage collector")                 \
+          "Verify the  Shenandoah garbage collector")                       \
                                                                             \
   product(bool, UseParallelGC, false,                                       \
           "Use the Parallel Scavenge garbage collector")                    \

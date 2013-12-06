@@ -81,6 +81,7 @@ private:
   oop obj_at(int index) const {
     // With UseCompressedOops decode the narrow oop in the objArray to an
     // uncompressed oop.  Otherwise this is simply a "*" operator.
+
     if (UseCompressedOops) {
       return load_decode_heap_oop(obj_at_addr<narrowOop>(index));
     } else {
@@ -89,6 +90,11 @@ private:
   }
 
   void obj_at_put(int index, oop value) {
+    objArrayOopDesc* forwarded_copy = 
+      (objArrayOopDesc*) oopDesc::bs()->resolve_and_maybe_copy_oop(this);
+    if (forwarded_copy != this)
+      return forwarded_copy->obj_at_put(index, value);
+
     if (UseCompressedOops) {
       oop_store(obj_at_addr<narrowOop>(index), value);
     } else {

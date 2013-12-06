@@ -95,6 +95,7 @@
   template(JFRCheckpoint)                         \
   template(ShenandoahInitMark)                    \
   template(ShenandoahFinishMark)                  \
+  template(ShenandoahVerifyHeapAfterEvacuation)   \
   template(Exit)                                  \
   template(LinuxDllLoad)                          \
 
