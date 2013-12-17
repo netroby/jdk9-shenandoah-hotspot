@@ -119,8 +119,13 @@ inline void* index_oop_from_field_offset_long(oop p, jlong field_offset) {
   if (p != NULL) {
     assert(byte_offset >= 0 && byte_offset <= (jlong)MAX_OBJECT_SIZE, "sane offset");
     if (byte_offset == (jint)byte_offset) {
+      // We need to preemptively evacuate the object here to make the comparison
+      // in the assert below not give false negatives in case the object
+      // gets moved by concurrent threads while executing this code.
+      p = oopDesc::bs()->resolve_and_maybe_copy_oop(p);
       void* ptr_plus_disp = (address)p + byte_offset;
-      assert((void*)p->obj_field_addr<oop>((jint)byte_offset) == ptr_plus_disp,
+      void* obj_field_addr = (void*)p->obj_field_addr<oop>((jint)byte_offset); 
+      assert(obj_field_addr == ptr_plus_disp,
              "raw [ptr+disp] must be consistent with oop::field_base");
     }
     jlong p_size = HeapWordSize * (jlong)(p->size());

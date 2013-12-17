@@ -1,6 +1,33 @@
+#include "gc_implementation/shenandoah/shenandoahHeap.hpp"
 #include "gc_implementation/shenandoah/shenandoahHeapRegion.hpp"
 #include "gc_implementation/shenandoah/shenandoahHeapRegionSet.hpp"
 #include "memory/resourceArea.hpp"
+
+ShenandoahHeapRegionSet::ShenandoahHeapRegionSet(size_t num_regions) :
+  _index(0),
+  _inserted(0),
+  _numRegions(num_regions),
+  _regions(NEW_C_HEAP_ARRAY(ShenandoahHeapRegion*, num_regions, mtGC)),
+  _garbage_threshold(ShenandoahHeapRegion::RegionSizeBytes / 2),
+  _free_threshold(ShenandoahHeapRegion::RegionSizeBytes / 2) {
+}
+
+ShenandoahHeapRegionSet::ShenandoahHeapRegionSet(size_t num_regions, ShenandoahHeapRegion** regions) :
+  _index(0),
+  _inserted(num_regions),
+  _numRegions(num_regions),
+  _regions(NEW_C_HEAP_ARRAY(ShenandoahHeapRegion*, num_regions, mtGC)),
+  _garbage_threshold(ShenandoahHeapRegion::RegionSizeBytes / 2),
+  _free_threshold(ShenandoahHeapRegion::RegionSizeBytes / 2) {
+
+  // Make copy of the regions array so that we can sort without destroying the original.
+  memcpy(_regions, regions, sizeof(ShenandoahHeapRegion*) * num_regions);
+
+}
+
+ShenandoahHeapRegionSet::~ShenandoahHeapRegionSet() {
+  FREE_C_HEAP_ARRAY(ShenandoahHeapRegion*, _regions, mtGC);
+}
 
 int compareHeapRegionsByGarbage(ShenandoahHeapRegion** a, ShenandoahHeapRegion** b) {
   if (*a == NULL) {
@@ -46,7 +73,18 @@ int compareHeapRegionsByFree(ShenandoahHeapRegion** a, ShenandoahHeapRegion** b)
 
 void ShenandoahHeapRegionSet::put(size_t index, ShenandoahHeapRegion* region) {
   _regions[index] = region;
+
+  // We need a memory barrier here, to make sure concurrent threads see the update
+  // into the array _before_ the index gets updated. We concurrently insert
+  // regions into the free-region list when creating new regions.
+  OrderAccess::storestore();
+
   _inserted++;
+
+  // This is not strictly necessary, but it seems good to make sure concurrent
+  // threads also see the update to the index right away.
+  OrderAccess::storeload();
+
 }
 
 void ShenandoahHeapRegionSet::append(ShenandoahHeapRegion* region) {
@@ -56,7 +94,7 @@ void ShenandoahHeapRegionSet::append(ShenandoahHeapRegion* region) {
 ShenandoahHeapRegion* ShenandoahHeapRegionSet::get_next() {
   ShenandoahHeapRegion* result = NULL;
 
-  if (_index <= _inserted) 
+  if (_index < _inserted) 
     result = _regions[_index++];
 
   return result;
@@ -65,14 +103,28 @@ ShenandoahHeapRegion* ShenandoahHeapRegionSet::get_next() {
 ShenandoahHeapRegion* ShenandoahHeapRegionSet::peek_next() {
   ShenandoahHeapRegion* result = NULL;
 
-  if (_index <= _inserted) 
-    result = _regions[_index];
-
+  int index = _index;
+  while (index < _inserted) {
+    result = _regions[index];
+    // We need to claim regions otherwise we could return regions that are used
+    // for humonguous objects.
+    if (result->claim()) {
+      if (! result->is_humonguous()) {
+        _index = index;
+        break;
+      } else {
+        result->clearClaim();
+        index++;
+      }
+    } else {
+      index++;
+    }
+  }
   return result;
 }
 
 bool ShenandoahHeapRegionSet::has_next() {
-  return _index < _inserted;
+  return _index < _inserted - 1;
 }
 
 void ShenandoahHeapRegionSet::sortDescendingFree() {
@@ -122,7 +174,8 @@ choose_collection_set(ShenandoahHeapRegionSet* region_set,
   region_set->_index = 0;
 
   for (int i = 0; i < max_regions; i++)
-    if (_regions[i]->garbage() > _garbage_threshold && ! _regions[i]->has_active_tlabs()) 
+    if (_regions[i]->garbage() > _garbage_threshold && ! _regions[i]->has_active_tlabs()
+        && ! _regions[i]->is_humonguous()) 
       region_set->_regions[region_set->_inserted++] = _regions[i];
 
 
@@ -139,7 +192,8 @@ void ShenandoahHeapRegionSet::choose_collection_set(ShenandoahHeapRegionSet* reg
   // We don't want the current allocation region in the collection set because a) it is still being allocated into and b) This is where the write barriers will allocate their copies.
 
   while (r < _numRegions && _regions[r]->garbage() > _garbage_threshold) {
-    if (! ( _regions[r]->has_active_tlabs() || _regions[r]->is_current_allocation_region())) {
+    if (! ( _regions[r]->has_active_tlabs() || _regions[r]->is_current_allocation_region()
+            || _regions[r]->is_humonguous())) {
       region_set->_regions[cs_index] = _regions[r];
       _regions[r]->set_is_in_collection_set(true);
       cs_index++;
@@ -157,7 +211,9 @@ void ShenandoahHeapRegionSet::choose_empty_regions(ShenandoahHeapRegionSet* regi
   sortDescendingFree();
   int r = 0;
   while(r < _numRegions && _regions[r]->free() > _free_threshold) {
-    region_set->_regions[r] = _regions[r];
+    ShenandoahHeapRegion* region = _regions[r];
+    assert(! region->is_humonguous(), "don't reuse occupied humonguous regions");
+    region_set->_regions[r] = region;
     r++;
   }
 
@@ -165,7 +221,43 @@ void ShenandoahHeapRegionSet::choose_empty_regions(ShenandoahHeapRegionSet* regi
   region_set->_index = 0;
   region_set->_numRegions = r;
 }  
-  
+
+void ShenandoahHeapRegionSet::reclaim_humonguous_regions() {
+
+  ShenandoahHeap* heap = ShenandoahHeap::heap();
+  for (int r = 0; r < _numRegions; r++) {
+    // We can immediately reclaim humonguous objects/regions that are no longer reachable.
+    ShenandoahHeapRegion* region = _regions[r];
+    assert(r == region->regionNumber, "we need the regions in original order, not sorted");
+    if (region->is_humonguous_start()) {
+      oop humonguous_obj = oop(region->bottom() + BROOKS_POINTER_OBJ_SIZE);
+      if (! heap->isMarkedCurrent(humonguous_obj)) {
+        reclaim_humonguous_region_at(r);
+      }
+    }
+  }
+
+}
+
+void ShenandoahHeapRegionSet::reclaim_humonguous_region_at(int r) {
+  assert(_regions[r]->is_humonguous_start(), "reclaim regions starting with the first one");
+  if (ShenandoahGCVerbose) {
+    tty->print_cr("recycling humonguous region:");
+    _regions[r]->print();
+  }
+  _regions[r]->recycle();
+  for (int i = r + 1; i < _numRegions; i++) {
+    if (_regions[i]->is_humonguous_continuation()) {
+      if (ShenandoahGCVerbose) {
+        tty->print_cr("recycling humonguous region:");
+        _regions[i]->print();
+      }
+      _regions[i]->recycle();
+    } else {
+      break;
+    }
+  }
+}
 
  ShenandoahHeapRegion* ShenandoahHeapRegionSet::claim_next() {
    while (_index < _inserted) {

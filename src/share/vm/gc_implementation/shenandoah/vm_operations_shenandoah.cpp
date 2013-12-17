@@ -23,8 +23,3 @@ void VM_ShenandoahVerifyHeapAfterEvacuation::doit() {
 
 }
 
-void VM_ShenandoahGrowHeap::doit() {
-
-  ShenandoahHeap *sh = ShenandoahHeap::heap();
-  sh->grow_heap_by_impl();
-}

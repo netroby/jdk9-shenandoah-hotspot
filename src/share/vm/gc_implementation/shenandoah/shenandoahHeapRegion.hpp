@@ -20,8 +20,11 @@ private:
   bool _is_current_allocation_region;
   volatile jint active_tlab_count;
 
+  bool _humonguous_start;
+  bool _humonguous_continuation;
+
 public:
-   jint initialize(HeapWord* start, size_t regionSize);
+  jint initialize(HeapWord* start, size_t regionSize, int index);
 
 
   // Roll back the previous allocation of an object with specified size.
@@ -59,10 +62,7 @@ public:
 	       regionNumber,top(), used(), free(), getLiveData());
   }
 
-  void recycle() {
-    Space::initialize(reserved, true, false);
-    clearLiveData();
-  }
+  void recycle();
 
   bool claim() {
     bool previous = Atomic::cmpxchg(true, &claimed, false);
@@ -93,7 +93,14 @@ public:
   void set_is_current_allocation_region(bool b) {
     _is_current_allocation_region = b;
   }
-  
+
+  void set_humonguous_start(bool start);
+  void set_humonguous_continuation(bool continuation);
+
+  bool is_humonguous();
+  bool is_humonguous_start();
+  bool is_humonguous_continuation();
+
   void increase_active_tlab_count();
   void decrease_active_tlab_count();
   bool has_active_tlabs();

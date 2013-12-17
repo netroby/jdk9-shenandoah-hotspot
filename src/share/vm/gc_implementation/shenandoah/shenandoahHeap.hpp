@@ -54,12 +54,10 @@ private:
   ShenandoahHeapRegion* _current_region;
   ShenandoahHeapRegion* _first_region;
   HeapWord* _first_region_bottom;
-  ShenandoahHeapRegion* _last_region;
   // Ordered array of regions  (name confusing with _regions)
   ShenandoahHeapRegion** _ordered_regions;
 
   // Sortable array of regions
-  ShenandoahHeapRegionSet* _regions;
   ShenandoahHeapRegionSet* _free_regions;
   ShenandoahHeapRegionSet* _collection_set;
   ShenandoahHeapRegion* _currentAllocationRegion;
@@ -87,9 +85,13 @@ public:
   HeapWord* allocate_new_tlab(size_t word_size);
   void retire_tlab_at(HeapWord* start);
   HeapWord* allocate_new_gclab(size_t word_size);
-  HeapWord* allocate_memory(size_t word_size);
 
   HeapWord* allocate_memory_gclab(size_t word_size);
+  HeapWord* allocate_large_memory(size_t word_size);
+
+  bool find_contiguous_free_regions(uint num_free_regions, ShenandoahHeapRegion** free_regions);
+  bool allocate_contiguous_free_regions(uint num_free_regions, ShenandoahHeapRegion** free_regions);
+
   HeapWord* allocate_new_gclab() { 
     return allocate_new_gclab(_default_gclab_size);
   }
@@ -220,7 +222,6 @@ public:
 				ShenandoahAllocRegion *alloc_region);
   void verify_evacuated_region(ShenandoahHeapRegion* from_region);
 
-  void update_current_region();
   ShenandoahHeapRegion* cas_update_current_region(ShenandoahHeapRegion* expected);
 
   ShenandoahHeapRegion* current_region() { return _current_region;}
@@ -249,7 +250,7 @@ public:
   void increase_used(size_t bytes);
   void decrease_used(size_t bytes);
 
-  void grow_heap_by_impl();
+  int ensure_new_regions(int num_new_regions);
 
 private:
 

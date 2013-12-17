@@ -16,13 +16,11 @@ private:
   size_t _garbage_threshold;
   size_t _free_threshold;
 public:
-  ShenandoahHeapRegionSet(size_t numRegions) :  
-    _index(0),
-    _inserted(0),
-    _numRegions(numRegions),
-    _regions(NEW_C_HEAP_ARRAY(ShenandoahHeapRegion*, numRegions, mtGC)),
-    _garbage_threshold(ShenandoahHeapRegion::RegionSizeBytes / 2),
-    _free_threshold(ShenandoahHeapRegion::RegionSizeBytes / 2) {}
+  ShenandoahHeapRegionSet(size_t numRegions);
+
+  ShenandoahHeapRegionSet(size_t num_regions, ShenandoahHeapRegion** regions);
+
+  ~ShenandoahHeapRegionSet();
 
   void put(size_t i, ShenandoahHeapRegion* region);
   void append(ShenandoahHeapRegion* region);
@@ -48,6 +46,11 @@ public:
   // Sort from most garbage to least garbage.
   void sortDescendingGarbage();
 
+  // Check for unreachable humonguous regions and reclaim them.
+  void reclaim_humonguous_regions();
+
+private:
+  void reclaim_humonguous_region_at(int r);
 
 };
 

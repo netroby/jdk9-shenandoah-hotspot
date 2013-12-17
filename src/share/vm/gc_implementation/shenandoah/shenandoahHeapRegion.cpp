@@ -6,12 +6,13 @@ size_t ShenandoahHeapRegion::RegionSizeShift = 23;
 size_t ShenandoahHeapRegion::RegionSizeBytes = 1 << ShenandoahHeapRegion::RegionSizeShift; // 1024 * 1024 * 8;
 
 jint ShenandoahHeapRegion::initialize(HeapWord* start, 
-				      size_t regionSizeWords) {
+				      size_t regionSizeWords, int index) {
 
   reserved = MemRegion((HeapWord*) start, regionSizeWords);
   ContiguousSpace::initialize(reserved, true, false);
   liveData = 0;
   _dirty = false;
+  regionNumber = index;
   return JNI_OK;
 }
 
@@ -89,3 +90,30 @@ bool ShenandoahHeapRegion::has_active_tlabs() {
   return active_tlab_count != 0;
 }
 
+void ShenandoahHeapRegion::set_humonguous_start(bool start) {
+  _humonguous_start = start;
+}
+
+void ShenandoahHeapRegion::set_humonguous_continuation(bool continuation) {
+  _humonguous_continuation = continuation;
+}
+
+bool ShenandoahHeapRegion::is_humonguous() {
+  return _humonguous_start || _humonguous_continuation;
+}
+
+bool ShenandoahHeapRegion::is_humonguous_start() {
+  return _humonguous_start;
+}
+
+bool ShenandoahHeapRegion::is_humonguous_continuation() {
+  return _humonguous_continuation;
+}
+
+void ShenandoahHeapRegion::recycle() {
+  Space::initialize(reserved, true, false);
+  clearLiveData();
+  set_dirty(false);
+  _humonguous_start = false;
+  _humonguous_continuation = false;
+}
