@@ -470,12 +470,6 @@ bool Reflection::verify_class_access(Klass* current_class, Klass* new_class, boo
     return true;
   }
 
-  // Also allow all accesses from
-  // java/lang/invoke/MagicLambdaImpl subclasses to succeed trivially.
-  if (current_class->is_subclass_of(SystemDictionary::lambda_MagicLambdaImpl_klass())) {
-    return true;
-  }
-
   return can_relax_access_check_for(current_class, new_class, classloader_only);
 }
 
@@ -567,12 +561,6 @@ bool Reflection::verify_field_access(Klass* current_class,
   if (   JDK_Version::is_gte_jdk14x_version()
       && UseNewReflection
       && current_class->is_subclass_of(SystemDictionary::reflect_MagicAccessorImpl_klass())) {
-    return true;
-  }
-
-  // Also allow all accesses from
-  // java/lang/invoke/MagicLambdaImpl subclasses to succeed trivially.
-  if (current_class->is_subclass_of(SystemDictionary::lambda_MagicLambdaImpl_klass())) {
     return true;
   }
 
@@ -952,7 +940,8 @@ oop Reflection::invoke(instanceKlassHandle klass, methodHandle reflected_method,
         }
       }  else {
         // if the method can be overridden, we resolve using the vtable index.
-        int index  = reflected_method->vtable_index();
+        assert(!reflected_method->has_itable_index(), "");
+        int index = reflected_method->vtable_index();
         method = reflected_method;
         if (index != Method::nonvirtual_vtable_index) {
           // target_klass might be an arrayKlassOop but all vtables start at

@@ -2,6 +2,7 @@
 #define SHARE_VM_GC_IMPLEMENTATION_SHENANDOAH_SHENANDOAH_COLLECTOR_POLICY_HPP
 
 #include "memory/collectorPolicy.hpp"
+#include "runtime/arguments.hpp"
 #include "gc_implementation/shenandoah/shenandoahHeapRegion.hpp"
 
 class ShenandoahHeap;
@@ -40,16 +41,14 @@ public:
   return NULL;
   }
 
-  void initialize_flags() {
-    set_min_alignment(ShenandoahHeapRegion::RegionSizeBytes);
-    set_max_alignment(ShenandoahHeapRegion::RegionSizeBytes);
+  void initialize_alignments() {
+    _space_alignment = Arguments::conservative_max_heap_alignment();
+    _heap_alignment = Arguments::conservative_max_heap_alignment();
   }
 
-  void initialize_all() {
-    initialize_flags();
-    initialize_size_info();
+  void post_heap_initialize() {
+    // Nothing to do here (yet).
   }
-
 };
 
 

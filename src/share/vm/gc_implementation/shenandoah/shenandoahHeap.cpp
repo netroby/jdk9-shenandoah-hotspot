@@ -74,7 +74,7 @@ jint ShenandoahHeap::initialize() {
 			    "shenandoah heap");
 
   ReservedSpace heap_rs = Universe::reserve_heap(max_byte_size,
-						 ShenandoahHeapRegion::RegionSizeBytes);
+						 Arguments::conservative_max_heap_alignment());
   _reserved.set_word_size(0);
   _reserved.set_start((HeapWord*)heap_rs.base());
   _reserved.set_end((HeapWord*) (heap_rs.base() + heap_rs.size()));
