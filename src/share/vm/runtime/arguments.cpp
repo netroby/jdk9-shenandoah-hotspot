@@ -1432,6 +1432,11 @@ void Arguments::set_use_compressed_oops() {
   // the only value that can override MaxHeapSize if we are
   // to use UseCompressedOops is InitialHeapSize.
   size_t max_heap_size = MAX2(MaxHeapSize, InitialHeapSize);
+  if (UseShenandoahGC && FLAG_IS_DEFAULT(UseCompressedOops)) {
+    warning("Compressed Oops not supported with ShenandoahGC");
+    FLAG_SET_ERGO(bool, UseCompressedOops, false);
+    FLAG_SET_ERGO(bool, UseCompressedClassPointers, false);
+  }
 
   if (max_heap_size <= max_heap_for_compressed_oops()) {
 #if !defined(COMPILER1) || defined(TIERED)
