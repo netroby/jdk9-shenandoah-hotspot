@@ -188,6 +188,8 @@ public:
 
   volatile unsigned int _concurrent_mark_in_progress;
 
+  volatile unsigned int _evacuation_in_progress;
+
   bool should_start_concurrent_marking();
   void start_concurrent_marking();
   void stop_concurrent_marking();
@@ -246,18 +248,27 @@ public:
 
   static ByteSize ordered_regions_offset() { return byte_offset_of(ShenandoahHeap, _ordered_regions); }
   static ByteSize first_region_bottom_offset() { return byte_offset_of(ShenandoahHeap, _first_region_bottom); }
+  static address evacuation_in_progress_addr() {
+    return (address) (& ShenandoahHeap::heap()->_evacuation_in_progress);
+  }
 
   void increase_used(size_t bytes);
   void decrease_used(size_t bytes);
 
   int ensure_new_regions(int num_new_regions);
 
+  void set_evacuation_in_progress(bool in_progress);
+  bool is_evacuation_in_progress();
+
 private:
 
   void grow_heap_by();
 
   void verify_evacuation(ShenandoahHeapRegion* from_region);
-  bool set_concurrent_mark_in_progress(bool in_progress);
+  void set_concurrent_mark_in_progress(bool in_progress);
+
+
+private:
   bool concurrent_mark_in_progress();
   void verify_live();
   void verify_liveness_after_concurrent_mark();

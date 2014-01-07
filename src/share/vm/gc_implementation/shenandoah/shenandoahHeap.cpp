@@ -1628,9 +1628,18 @@ bool ShenandoahHeap::concurrent_mark_in_progress() {
   return _concurrent_mark_in_progress;
 }
 
-bool ShenandoahHeap::set_concurrent_mark_in_progress(bool in_progress) {
+void ShenandoahHeap::set_concurrent_mark_in_progress(bool in_progress) {
   _concurrent_mark_in_progress = in_progress;
   JavaThread::satb_mark_queue_set().set_active_all_threads(in_progress, ! in_progress);
+}
+
+void ShenandoahHeap::set_evacuation_in_progress(bool in_progress) {
+  _evacuation_in_progress = in_progress;
+  OrderAccess::storeload();
+}
+
+bool ShenandoahHeap::is_evacuation_in_progress() {
+  return _evacuation_in_progress;
 }
 
 void ShenandoahHeap::post_allocation_collector_specific_setup(HeapWord* hw) {

@@ -294,8 +294,11 @@ oopDesc* ShenandoahBarrierSet::maybe_resolve_oop(oopDesc* src) {
 
 oopDesc* ShenandoahBarrierSet::resolve_and_maybe_copy_oopHelper(oopDesc* src) {
     if (src != NULL) {
+      ShenandoahHeap *sh = (ShenandoahHeap*) Universe::heap();
       oopDesc* tmp = get_shenandoah_forwardee(src);
-      ShenandoahHeap *sh = (ShenandoahHeap*) Universe::heap();      
+      if (! sh->is_evacuation_in_progress()) {
+        return tmp;
+      }
       if (sh->heap_region_containing(tmp)->is_in_collection_set()) {
 	oopDesc* dst = sh->evacuate_object(tmp, &_allocator);
 #ifdef ASSERT
@@ -351,6 +354,17 @@ void ShenandoahBarrierSet::compile_resolve_oop_not_null(MacroAssembler* masm, Re
 void ShenandoahBarrierSet::compile_resolve_oop_for_write(MacroAssembler* masm, Register dst, int num_state_save, ...) {
   assert(dst != rscratch1, "Need rscratch1");
   assert(dst != rscratch2, "Need rscratch2");
+
+  Label done;
+
+  // Resolve oop first.
+  compile_resolve_oop(masm, dst);
+
+  // Now check if evacuation is in progress.
+  ExternalAddress evacuation_in_progress = ExternalAddress(ShenandoahHeap::evacuation_in_progress_addr());
+  __ movptr(rscratch1, evacuation_in_progress);
+  __ cmpl(rscratch1, 0);
+  __ jcc(Assembler::equal, done);
 
   intArray save_states = intArray(num_state_save);
   va_list vl;
@@ -522,7 +536,8 @@ void ShenandoahBarrierSet::compile_resolve_oop_for_write(MacroAssembler* masm, R
   }
 
   __ mov(dst, rscratch1);
-  __ os_breakpoint();
+
+  __ bind(done);
 
 }
 
