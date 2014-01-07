@@ -52,6 +52,7 @@ Monitor* JNICritical_lock             = NULL;
 Mutex*   JvmtiThreadState_lock        = NULL;
 Monitor* JvmtiPendingEvent_lock       = NULL;
 Monitor* Heap_lock                    = NULL;
+Monitor* ShenandoahHeap_lock          = NULL;
 Mutex*   ExpandHeap_lock              = NULL;
 Mutex*   AdapterHandlerLibrary_lock   = NULL;
 Mutex*   SignatureHandlerLibrary_lock = NULL;
@@ -201,6 +202,7 @@ void mutex_init() {
     def(SATB_Q_FL_lock             , Mutex  , special,     true );
     def(SATB_Q_CBL_mon             , Monitor, nonleaf,     true );
     def(Shared_SATB_Q_lock         , Mutex,   nonleaf,     true );
+    def(ShenandoahHeap_lock        , Monitor, special,     false);
   }
   def(ParGCRareEvent_lock          , Mutex  , leaf     ,   true );
   def(DerivedPointerTableGC_lock   , Mutex,   leaf,        true );

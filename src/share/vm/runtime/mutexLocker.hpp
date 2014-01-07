@@ -57,6 +57,7 @@ extern Monitor* JNICritical_lock;                // a lock used while entering a
 extern Mutex*   JvmtiThreadState_lock;           // a lock on modification of JVMTI thread data
 extern Monitor* JvmtiPendingEvent_lock;          // a lock on the JVMTI pending events list
 extern Monitor* Heap_lock;                       // a lock on the heap
+extern Monitor* ShenandoahHeap_lock;             // a lock on the heap, used by ShenandoahGC when growing the heap
 extern Mutex*   ExpandHeap_lock;                 // a lock on expanding the heap
 extern Mutex*   AdapterHandlerLibrary_lock;      // a lock on the AdapterHandlerLibrary
 extern Mutex*   SignatureHandlerLibrary_lock;    // a lock on the SignatureHandlerLibrary

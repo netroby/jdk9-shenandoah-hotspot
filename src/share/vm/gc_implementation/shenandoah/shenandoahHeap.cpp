@@ -1761,7 +1761,32 @@ void ShenandoahHeap::grow_heap_by() {
 }
 
 int ShenandoahHeap::ensure_new_regions(int new_regions) {
-  MutexLocker ml(Heap_lock);
+  /*
+  while (true) {
+
+    jlong num_regions = _num_regions;
+    jlong new_num_regions = num_regions + new_regions;
+    if (new_num_regions >= _max_regions) {
+      // Not enough regions left.
+      return -1;
+    }
+
+    jlong old = Atomic::cmpxchg(new_num_regions, &_num_regions, num_regions);
+    if (old == num_regions) {
+      // CAS Successful. Expand virtual memory and return the index.
+      size_t expand_size = new_regions * ShenandoahHeapRegion::RegionSizeBytes;
+      // if (ShenandoahGCVerbose) {
+        tty->print_cr("expanding storage by %x bytes, for %d new regions", expand_size, new_regions);
+        // }
+      bool success = _storage.expand_by(expand_size);
+      assert(success, "should always be able to expand by requested size");
+
+      return num_regions;
+    }
+  }
+  */
+
+  MutexLockerEx ml(ShenandoahHeap_lock, true);
   {
     size_t num_regions = _num_regions;
     size_t new_num_regions = num_regions + new_regions;
