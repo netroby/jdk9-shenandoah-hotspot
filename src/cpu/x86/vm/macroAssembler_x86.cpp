@@ -3270,7 +3270,7 @@ void MacroAssembler::g1_write_barrier_pre(Register obj,
   if (obj != noreg) {
     load_heap_oop(pre_val, Address(obj, 0));
   }
-  /*
+
   // Is the previous value null?
   cmpptr(pre_val, (int32_t) NULL_WORD);
   jcc(Assembler::equal, done);
@@ -3290,7 +3290,7 @@ void MacroAssembler::g1_write_barrier_pre(Register obj,
   // Record the previous value
   movptr(Address(tmp, 0), pre_val);
   jmp(done);
-  */
+
   bind(runtime);
   // save the live input values
   if(tosca_live) push(rax);
@@ -3346,88 +3346,85 @@ void MacroAssembler::g1_write_barrier_post(Register store_addr,
   assert(thread == r15_thread, "must be");
 #endif // _LP64
 
-  Register addr;
-
-  Label done;
-
-  // TODO: Factor out GC specific code into the respective GCs.
   if (UseShenandoahGC) {
-    addr = tmp;
-    movq(addr, store_addr);
-  } else {
-    assert(UseG1GC, "expect G1");
-    Address queue_index(thread, in_bytes(JavaThread::dirty_card_queue_offset() +
-                                         PtrQueue::byte_offset_of_index()));
-    Address buffer(thread, in_bytes(JavaThread::dirty_card_queue_offset() +
-                                    PtrQueue::byte_offset_of_buf()));
-    BarrierSet* bs = Universe::heap()->barrier_set();
-    CardTableModRefBS* ct = (CardTableModRefBS*)bs;
-    assert(sizeof(*ct->byte_map_base) == sizeof(jbyte), "adjust this code");
-
-    Label runtime;
-
-    // Does store cross heap regions?
-
-    movptr(tmp, store_addr);
-    xorptr(tmp, new_val);
-    shrptr(tmp, HeapRegion::LogOfHRGrainBytes);
-    jcc(Assembler::equal, done);
-
-    // crosses regions, storing NULL?
-
-    cmpptr(new_val, (int32_t) NULL_WORD);
-    jcc(Assembler::equal, done);
-
-    // storing region crossing non-NULL, is card already dirty?
-
-    const Register card_addr = tmp;
-    const Register cardtable = tmp2;
-
-    movptr(card_addr, store_addr);
-    shrptr(card_addr, CardTableModRefBS::card_shift);
-    // Do not use ExternalAddress to load 'byte_map_base', since 'byte_map_base' is NOT
-    // a valid address and therefore is not properly handled by the relocation code.
-    movptr(cardtable, (intptr_t)ct->byte_map_base);
-    addptr(card_addr, cardtable);
-
-    cmpb(Address(card_addr, 0), (int)G1SATBCardTableModRefBS::g1_young_card_val());
-    jcc(Assembler::equal, done);
-
-    membar(Assembler::Membar_mask_bits(Assembler::StoreLoad));
-    cmpb(Address(card_addr, 0), (int)CardTableModRefBS::dirty_card_val());
-    jcc(Assembler::equal, done);
-
-
-    // storing a region crossing, non-NULL oop, card is clean.
-    // dirty card and log.
-
-    movb(Address(card_addr, 0), (int)CardTableModRefBS::dirty_card_val());
-
-    cmpl(queue_index, 0);
-    jcc(Assembler::equal, runtime);
-    subl(queue_index, wordSize);
-    movptr(tmp2, buffer);
-#ifdef _LP64
-    movslq(rscratch1, queue_index);
-    addq(tmp2, rscratch1);
-    movq(Address(tmp2, 0), card_addr);
-#else
-    addl(tmp2, queue_index);
-    movl(Address(tmp2, 0), card_addr);
-#endif
-    jmp(done);
-
-    bind(runtime);
+    // No need for this in Shenandoah.
+    return;
   }
 
+  assert(UseG1GC, "expect G1 GC");
+
+  Address queue_index(thread, in_bytes(JavaThread::dirty_card_queue_offset() +
+                                       PtrQueue::byte_offset_of_index()));
+  Address buffer(thread, in_bytes(JavaThread::dirty_card_queue_offset() +
+                                       PtrQueue::byte_offset_of_buf()));
+
+  BarrierSet* bs = Universe::heap()->barrier_set();
+  CardTableModRefBS* ct = (CardTableModRefBS*)bs;
+  assert(sizeof(*ct->byte_map_base) == sizeof(jbyte), "adjust this code");
+
+  Label done;
+  Label runtime;
+
+  // Does store cross heap regions?
+
+  movptr(tmp, store_addr);
+  xorptr(tmp, new_val);
+  shrptr(tmp, HeapRegion::LogOfHRGrainBytes);
+  jcc(Assembler::equal, done);
+
+  // crosses regions, storing NULL?
+
+  cmpptr(new_val, (int32_t) NULL_WORD);
+  jcc(Assembler::equal, done);
+
+  // storing region crossing non-NULL, is card already dirty?
+
+  const Register card_addr = tmp;
+  const Register cardtable = tmp2;
+
+  movptr(card_addr, store_addr);
+  shrptr(card_addr, CardTableModRefBS::card_shift);
+  // Do not use ExternalAddress to load 'byte_map_base', since 'byte_map_base' is NOT
+  // a valid address and therefore is not properly handled by the relocation code.
+  movptr(cardtable, (intptr_t)ct->byte_map_base);
+  addptr(card_addr, cardtable);
+
+  cmpb(Address(card_addr, 0), (int)G1SATBCardTableModRefBS::g1_young_card_val());
+  jcc(Assembler::equal, done);
+
+  membar(Assembler::Membar_mask_bits(Assembler::StoreLoad));
+  cmpb(Address(card_addr, 0), (int)CardTableModRefBS::dirty_card_val());
+  jcc(Assembler::equal, done);
+
+
+  // storing a region crossing, non-NULL oop, card is clean.
+  // dirty card and log.
+
+  movb(Address(card_addr, 0), (int)CardTableModRefBS::dirty_card_val());
+
+  cmpl(queue_index, 0);
+  jcc(Assembler::equal, runtime);
+  subl(queue_index, wordSize);
+  movptr(tmp2, buffer);
+#ifdef _LP64
+  movslq(rscratch1, queue_index);
+  addq(tmp2, rscratch1);
+  movq(Address(tmp2, 0), card_addr);
+#else
+  addl(tmp2, queue_index);
+  movl(Address(tmp2, 0), card_addr);
+#endif
+  jmp(done);
+
+  bind(runtime);
   // save the live input values
   push(store_addr);
   push(new_val);
 #ifdef _LP64
-  call_VM_leaf(CAST_FROM_FN_PTR(address, SharedRuntime::g1_wb_post), addr, new_val, thread);
+  call_VM_leaf(CAST_FROM_FN_PTR(address, SharedRuntime::g1_wb_post), card_addr, r15_thread);
 #else
   push(thread);
-  call_VM_leaf(CAST_FROM_FN_PTR(address, SharedRuntime::g1_wb_post), addr, new_val, thread);
+  call_VM_leaf(CAST_FROM_FN_PTR(address, SharedRuntime::g1_wb_post), card_addr, thread);
   pop(thread);
 #endif
   pop(new_val);

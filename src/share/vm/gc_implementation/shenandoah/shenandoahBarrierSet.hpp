@@ -81,8 +81,6 @@ public:
   virtual oopDesc* resolve_and_maybe_copy_oop(oopDesc* src);
   static oopDesc* resolve_and_maybe_copy_oop_static(oopDesc* src);
 
-  void enqueue_update_ref(oop* ref);
-
 #ifndef CC_INTERP
   // TODO: The following should really live in an X86 specific subclass.
   virtual void compile_resolve_oop(MacroAssembler* masm, Register dst);

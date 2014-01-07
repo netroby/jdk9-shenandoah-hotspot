@@ -14,14 +14,14 @@
 class UpdateRefsForOopClosure: public ExtendedOopClosure {
 
 private:
-  ShenandoahBarrierSet* _bs;
-
+  ShenandoahHeap* _heap;
 public:
-  UpdateRefsForOopClosure(ShenandoahBarrierSet* bs) : _bs(bs)
-    { }
+  UpdateRefsForOopClosure() {
+    _heap = ShenandoahHeap::heap();
+  }
 
   void do_oop(oop* p)       {
-    _bs->enqueue_update_ref(p);
+    _heap->maybe_update_oop_ref(p);
   }
 
   void do_oop(narrowOop* p) {
@@ -138,9 +138,10 @@ bool ShenandoahBarrierSet::write_prim_needs_barrier(HeapWord* hw, size_t s, juin
 
 void ShenandoahBarrierSet::write_ref_array_work(MemRegion mr) {
   if (!JavaThread::satb_mark_queue_set().is_active()) return;
+  ShenandoahHeap* heap = ShenandoahHeap::heap();
   for (HeapWord* word = mr.start(); word < mr.end(); word++) {
     oop* oop_ptr = (oop*) word;
-    enqueue_update_ref(oop_ptr);
+    heap->maybe_update_oop_ref(oop_ptr);
   }
 }
 
@@ -211,24 +212,9 @@ void ShenandoahBarrierSet::write_ref_field_pre_work(void* field, oop new_val) {
 void ShenandoahBarrierSet::write_ref_field_work(void* v, oop o) {
   if (! JavaThread::satb_mark_queue_set().is_active()) return;
   assert (! UseCompressedOops, "compressed oops not supported yet");
-  enqueue_update_ref((oop*) v);
+  ShenandoahHeap::heap()->maybe_update_oop_ref((oop*) v);
   // tty->print("write_ref_field_work: v = "PTR_FORMAT" o = "PTR_FORMAT"\n", v, o);
 }
-
-void ShenandoahBarrierSet::enqueue_update_ref(oop* ref) {
-
-  if (!JavaThread::update_refs_queue_set().is_active()) return;
-  // tty->print_cr("enqueueing update-ref: %p", ref);
-  Thread* thr = Thread::current();
-  if (thr->is_Java_thread()) {
-    JavaThread* jt = (JavaThread*)thr;
-    jt->update_refs_queue().enqueue((oop) ref);
-  } else {
-    MutexLocker x(Shared_SATB_Q_lock);
-    JavaThread::update_refs_queue_set().shared_oop_queue()->enqueue((oop) ref);
-  }
-}
-
 
 void ShenandoahBarrierSet::write_region_work(MemRegion mr) {
 
@@ -241,7 +227,7 @@ void ShenandoahBarrierSet::write_region_work(MemRegion mr) {
   oop obj = oop(mr.start());
   assert(obj->is_oop(), "must be an oop");
   assert(ShenandoahBarrierSet::has_brooks_ptr(obj), "must have brooks pointer");
-  UpdateRefsForOopClosure cl(this);
+  UpdateRefsForOopClosure cl;
   obj->oop_iterate(&cl);
 }
 

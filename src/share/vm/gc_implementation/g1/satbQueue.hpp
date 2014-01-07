@@ -104,7 +104,6 @@ public:
   // SATB queues of all threads it visits, as well as the SATB queue
   // set itself, has an active value same as expected_active.
   void set_active_all_threads(bool b, bool expected_active);
-  void set_update_refs_queues_active_all_threads(bool b, bool expected_active);
 
   // Filter all the currently-active SATB buffers.
   void filter_thread_buffers();

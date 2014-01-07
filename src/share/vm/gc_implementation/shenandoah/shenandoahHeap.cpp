@@ -131,11 +131,6 @@ jint ShenandoahHeap::initialize() {
                                                Shared_SATB_Q_lock);
 
 
-  JavaThread::update_refs_queue_set().initialize(SATB_Q_CBL_mon,
-                                               SATB_Q_FL_lock,
-                                               20 /*G1SATBProcessCompletedThreshold */,
-                                               Shared_SATB_Q_lock);
-
   _concurrent_gc_thread = new ShenandoahConcurrentThread();
   _concurrent_gc_thread->start();
   return JNI_OK;
@@ -1636,7 +1631,6 @@ bool ShenandoahHeap::concurrent_mark_in_progress() {
 bool ShenandoahHeap::set_concurrent_mark_in_progress(bool in_progress) {
   _concurrent_mark_in_progress = in_progress;
   JavaThread::satb_mark_queue_set().set_active_all_threads(in_progress, ! in_progress);
-  JavaThread::update_refs_queue_set().set_active_all_threads(in_progress, ! in_progress);
 }
 
 void ShenandoahHeap::post_allocation_collector_specific_setup(HeapWord* hw) {

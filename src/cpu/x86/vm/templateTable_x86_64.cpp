@@ -165,6 +165,9 @@ static void do_oop_store(InterpreterMacroAssembler* _masm,
             new_val = rbx;
             __ movptr(new_val, val);
           }
+          // For Shenandoah, make sure we only store refs into to-space.
+          oopDesc::bs()->compile_resolve_oop(_masm, val);
+
           __ store_heap_oop(Address(rdx, 0), val);
           __ g1_write_barrier_post(rdx /* store_adr */,
                                    new_val /* new_val */,

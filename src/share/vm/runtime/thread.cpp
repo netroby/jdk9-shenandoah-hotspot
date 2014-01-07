@@ -1494,7 +1494,6 @@ void JavaThread::initialize() {
 
 #if INCLUDE_ALL_GCS
 SATBMarkQueueSet JavaThread::_satb_mark_queue_set;
-OopQueueSet JavaThread::_update_refs_queue_set;
 DirtyCardQueueSet JavaThread::_dirty_card_queue_set;
 #endif // INCLUDE_ALL_GCS
 
@@ -1502,7 +1501,6 @@ JavaThread::JavaThread(bool is_attaching_via_jni) :
   Thread()
 #if INCLUDE_ALL_GCS
   , _satb_mark_queue(&_satb_mark_queue_set),
-  _update_refs_queue(&_update_refs_queue_set),
   _dirty_card_queue(&_dirty_card_queue_set)
 #endif // INCLUDE_ALL_GCS
 {
@@ -1561,7 +1559,6 @@ JavaThread::JavaThread(ThreadFunction entry_point, size_t stack_sz) :
   Thread()
 #if INCLUDE_ALL_GCS
   , _satb_mark_queue(&_satb_mark_queue_set),
-  _update_refs_queue(&_update_refs_queue_set),
   _dirty_card_queue(&_dirty_card_queue_set)
 #endif // INCLUDE_ALL_GCS
 {
@@ -1936,7 +1933,6 @@ void JavaThread::exit(bool destroy_vm, ExitType exit_type) {
 // Flush G1-related queues.
 void JavaThread::flush_barrier_queues() {
   satb_mark_queue().flush();
-  update_refs_queue().flush();
   dirty_card_queue().flush();
 }
 
@@ -1954,18 +1950,6 @@ void JavaThread::initialize_queues() {
   // set the active field of the SATB queue to true.
   if (satb_queue_set.is_active()) {
     satb_queue.set_active(true);
-  }
-
-  OopQueue& update_queue = update_refs_queue();
-  OopQueueSet& update_queue_set = update_refs_queue_set();
-  // The SATB queue should have been constructed with its active
-  // field set to false.
-  assert(!update_queue.is_active(), "SATB queue should not be active");
-  assert(update_queue.is_empty(), "SATB queue should be empty");
-  // If we are creating the thread during a marking cycle, we should
-  // set the active field of the SATB queue to true.
-  if (update_queue_set.is_active()) {
-    update_queue.set_active(true);
   }
 
   DirtyCardQueue& dirty_queue = dirty_card_queue();

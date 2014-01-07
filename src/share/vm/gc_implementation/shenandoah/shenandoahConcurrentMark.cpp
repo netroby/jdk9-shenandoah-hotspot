@@ -89,7 +89,6 @@ void ShenandoahConcurrentMark::initialize(FlexibleWorkGang* workers) {
     _task_queues->register_queue(i, task_queue);
   }
   JavaThread::satb_mark_queue_set().set_buffer_size(1014 /* G1SATBBufferSize */);
-  JavaThread::update_refs_queue_set().set_buffer_size(1014 /* G1SATBBufferSize */);
 }
 
 void ShenandoahConcurrentMark::scanRootRegions() {
@@ -186,28 +185,6 @@ void ShenandoahConcurrentMark::finishMarkFromRoots() {
   }
 }
 
-class UpdateRefsClosure: public ExtendedOopClosure {
-
-private:
-  ShenandoahHeap* _heap;
-
-public:
-  UpdateRefsClosure() : _heap(ShenandoahHeap::heap())
-    { }
-
-  void do_oop(oop* p)       {
-    if (ShenandoahGCVerbose) 
-      tty->print_cr("updating queued ref: %p", p);
-    oop result = _heap->maybe_update_oop_ref((oop*) p);
-    assert(result != NULL || *p == NULL, "CAS-Updating refs must not fail when draining buffers because we do not run concurrently with Java threads");
-  }
-
-  void do_oop(narrowOop* p)       {
-    Unimplemented();
-  }
-
-};
-
 void ShenandoahConcurrentMark::drain_satb_buffers() {
   // tty->print_cr("start draining SATB buffers");
   ShenandoahHeap* sh = (ShenandoahHeap*) Universe::heap();
@@ -219,15 +196,6 @@ void ShenandoahConcurrentMark::drain_satb_buffers() {
   while (satb_mq_set.apply_closure_to_completed_buffer());
   satb_mq_set.iterate_closure_all_threads();
   satb_mq_set.set_closure(NULL);
-  // tty->print_cr("end draining SATB buffers");
-
-  // This can be parallelized. See g1/concurrentMark.cpp
-  UpdateRefsClosure cl2;
-  OopQueueSet& update_refs_set = JavaThread::update_refs_queue_set();
-  update_refs_set.set_closure(&cl2);
-  while (update_refs_set.apply_closure_to_completed_buffer());
-  update_refs_set.iterate_closure_all_threads();
-  update_refs_set.set_closure(NULL);
   // tty->print_cr("end draining SATB buffers");
 
 }

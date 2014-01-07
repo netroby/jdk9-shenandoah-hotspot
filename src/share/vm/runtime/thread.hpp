@@ -54,7 +54,6 @@
 #if INCLUDE_ALL_GCS
 #include "gc_implementation/g1/dirtyCardQueue.hpp"
 #include "gc_implementation/g1/satbQueue.hpp"
-#include "gc_implementation/g1/oopQueue.hpp"
 #endif // INCLUDE_ALL_GCS
 #ifdef ZERO
 #ifdef TARGET_ARCH_zero
@@ -952,10 +951,6 @@ class JavaThread: public Thread {
   // Set of all such queues.
   static SATBMarkQueueSet _satb_mark_queue_set;
 
-  OopQueue _update_refs_queue;          // Thread-local log for SATB barrier.
-  // Set of all such queues.
-  static OopQueueSet _update_refs_queue_set;
-
   DirtyCardQueue _dirty_card_queue;      // Thread-local log for dirty cards.
   // Set of all such queues.
   static DirtyCardQueueSet _dirty_card_queue_set;
@@ -1664,11 +1659,6 @@ public:
   ObjPtrQueue& satb_mark_queue() { return _satb_mark_queue; }
   static SATBMarkQueueSet& satb_mark_queue_set() {
     return _satb_mark_queue_set;
-  }
-
-  OopQueue& update_refs_queue() { return _update_refs_queue; }
-  static OopQueueSet& update_refs_queue_set() {
-    return _update_refs_queue_set;
   }
 
   // Dirty card queue support

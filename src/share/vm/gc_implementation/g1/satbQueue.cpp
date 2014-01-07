@@ -272,45 +272,6 @@ void SATBMarkQueueSet::set_active_all_threads(bool b,
   }
 }
 
-void SATBMarkQueueSet::set_update_refs_queues_active_all_threads(bool b,
-                                                                 bool expected_active) {
-  assert(SafepointSynchronize::is_at_safepoint(), "Must be at safepoint.");
-  JavaThread* first = Threads::first();
-
-#ifdef ASSERT
-  if (_all_active != expected_active) {
-    dump_active_values(first, expected_active);
-
-    // I leave this here as a guarantee, instead of an assert, so
-    // that it will still be compiled in if we choose to uncomment
-    // the #ifdef ASSERT in a product build. The whole block is
-    // within an #ifdef ASSERT so the guarantee will not be compiled
-    // in a product build anyway.
-    guarantee(false,
-              "SATB queue set has an unexpected active value");
-  }
-#endif // ASSERT
-  _all_active = b;
-
-  for (JavaThread* t = first; t; t = t->next()) {
-#ifdef ASSERT
-    bool active = t->update_refs_queue().is_active();
-    if (active != expected_active) {
-      dump_active_values(first, expected_active);
-
-      // I leave this here as a guarantee, instead of an assert, so
-      // that it will still be compiled in if we choose to uncomment
-      // the #ifdef ASSERT in a product build. The whole block is
-      // within an #ifdef ASSERT so the guarantee will not be compiled
-      // in a product build anyway.
-      guarantee(false,
-                "thread has an unexpected active value in its SATB queue");
-    }
-#endif // ASSERT
-    t->update_refs_queue().set_active(b);
-  }
-}
-
 void SATBMarkQueueSet::filter_thread_buffers() {
   for(JavaThread* t = Threads::first(); t; t = t->next()) {
     t->satb_mark_queue().filter();
