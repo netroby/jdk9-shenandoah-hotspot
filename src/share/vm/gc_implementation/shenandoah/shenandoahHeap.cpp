@@ -260,7 +260,7 @@ HeapWord* ShenandoahHeap::allocate_new_tlab(size_t word_size) {
   HeapWord* result = allocate_memory_gclab(word_size);
   assert(! heap_region_containing(result)->is_dirty(), "Never allocate in dirty region");
   if (result != NULL) {
-    _bytesAllocSinceCM += word_size;
+    _bytesAllocSinceCM += word_size * HeapWordSize;
     _current_region->increase_live_data(((jlong)word_size) * HeapWordSize);
     heap_region_containing(result)->increase_active_tlab_count();
     if (ShenandoahGCVerbose)
@@ -511,7 +511,7 @@ HeapWord* ShenandoahHeap::mem_allocate_locked(size_t size,
   HeapWord* result = filler + BROOKS_POINTER_OBJ_SIZE;
   if (filler != NULL) {
     initialize_brooks_ptr(filler, result);
-    _bytesAllocSinceCM += size;
+    _bytesAllocSinceCM += size * HeapWordSize;
     _current_region->increase_live_data((size + BROOKS_POINTER_OBJ_SIZE) * HeapWordSize);
     if (ShenandoahGCVerbose) {
       if (*gc_overhead_limit_was_exceeded)
