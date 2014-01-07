@@ -1002,11 +1002,13 @@ oop ShenandoahHeap::maybe_update_oop_ref(oop* p) {
   oop heap_oop = *p; // read p
   if (! oopDesc::is_null(heap_oop)) {
 
+#ifdef ASSERT
     if (! is_in(heap_oop)) {
       print_heap_regions();
       tty->print_cr("object not in heap: %p, referenced by: %p", heap_oop, p);
       assert(is_in(heap_oop), "object must be in heap");
     }
+#endif
     assert(is_in(heap_oop), "only ever call this on objects in the heap");
     assert(! (is_in(p) && heap_region_containing(p)->is_dirty()), "we don't want to update references in from-space");
     oop forwarded_oop = oopDesc::bs()->resolve_oop(heap_oop); // read brooks ptr
@@ -1395,12 +1397,13 @@ void ShenandoahMarkObjsClosure::do_object(oop obj) {
     // Wrap this closure to avoid this call in usual marking.
     obj = oopDesc::bs()->resolve_oop(obj);
 
+#ifdef ASSERT
     if (sh->heap_region_containing(obj)->is_dirty()) {
       tty->print_cr("trying to mark obj: %p (%d) in dirty region: ", obj, sh->isMarkedCurrent(obj));
       sh->heap_region_containing(obj)->print();
       sh->print_heap_regions();
     }
-
+#endif
     assert(! sh->heap_region_containing(obj)->is_dirty(), "we don't want to mark objects in from-space");
     assert(sh->is_in(obj), "referenced objects must be in the heap. No?");
     if (! sh->isMarkedCurrent(obj)) {
