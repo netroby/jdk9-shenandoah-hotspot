@@ -196,6 +196,11 @@ void ShenandoahBarrierSet::write_ref_field_pre_static(T* field, oop newVal) {
   }
 }
 
+template <class T>
+inline void ShenandoahBarrierSet::inline_write_ref_field_pre(T* field, oop newVal) {
+  write_ref_field_pre_static(field, newVal);
+}
+
 // These are the more general virtual versions.
 void ShenandoahBarrierSet::write_ref_field_pre_work(oop* field, oop new_val) {
   write_ref_field_pre_static(field, new_val);
@@ -270,7 +275,7 @@ bool ShenandoahBarrierSet::is_brooks_ptr(oopDesc* p) {
 }
 
 bool ShenandoahBarrierSet::has_brooks_ptr(oopDesc* p) {
-  return is_brooks_ptr(oop(((HeapWord*) p) - BROOKS_POINTER_OBJ_SIZE));
+  return is_brooks_ptr(oop(((HeapWord*) p) - BrooksPointer::BROOKS_POINTER_OBJ_SIZE));
 }
 
 oopDesc* ShenandoahBarrierSet::resolve_oop(oopDesc* src) {

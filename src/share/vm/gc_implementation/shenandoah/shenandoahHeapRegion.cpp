@@ -1,3 +1,4 @@
+#include "gc_implementation/shenandoah/brooksPointer.hpp"
 #include "gc_implementation/shenandoah/shenandoahHeapRegion.hpp"
 #include "gc_implementation/shenandoah/shenandoahHeap.hpp"
 #include "memory/universe.hpp"
@@ -12,8 +13,12 @@ jint ShenandoahHeapRegion::initialize(HeapWord* start,
   ContiguousSpace::initialize(reserved, true, false);
   liveData = 0;
   _dirty = false;
-  regionNumber = index;
+  _region_number = index;
   return JNI_OK;
+}
+
+int ShenandoahHeapRegion::region_number() {
+  return _region_number;
 }
 
 bool ShenandoahHeapRegion::rollback_allocation(uint size) {
@@ -21,8 +26,67 @@ bool ShenandoahHeapRegion::rollback_allocation(uint size) {
   return true;
 }
 
+void ShenandoahHeapRegion::clearLiveData() {
+  setLiveData(0);
+}
+
+void ShenandoahHeapRegion::setLiveData(jlong s) {
+  Atomic::store(s, &liveData);
+}
+
+void ShenandoahHeapRegion::increase_live_data(jlong s) {
+  Atomic::add(s, &liveData);
+}
+
+size_t ShenandoahHeapRegion::getLiveData() {
+  return liveData;
+}
+
+size_t ShenandoahHeapRegion::garbage() {
+  size_t result = used() - liveData;
+  assert(result >= 0, "Live Data must be a subset of used()");
+  return result;
+}
+
+void ShenandoahHeapRegion::set_dirty(bool dirty) {
+  _dirty = dirty;
+}
+
+bool ShenandoahHeapRegion::is_dirty() {
+  return _dirty;
+}
+
+bool ShenandoahHeapRegion::claim() {
+  bool previous = Atomic::cmpxchg(true, &claimed, false);
+  return !previous;
+}
+
+void ShenandoahHeapRegion::clearClaim() {
+  claimed = false;
+}
+
+bool ShenandoahHeapRegion::is_in_collection_set() {
+  return _is_in_collection_set;
+}
+
+void ShenandoahHeapRegion::set_is_in_collection_set(bool b) {
+  _is_in_collection_set = b;
+}
+
+bool ShenandoahHeapRegion::is_current_allocation_region() {
+  return _is_current_allocation_region;
+}
+
+void ShenandoahHeapRegion::set_is_current_allocation_region(bool b) {
+  _is_current_allocation_region = b;
+}
+
+ByteSize ShenandoahHeapRegion::is_in_collection_set_offset() {
+  return byte_offset_of(ShenandoahHeapRegion, _is_in_collection_set);
+}
+
 void ShenandoahHeapRegion::print(outputStream* st) {
-  st->print("ShenandoahHeapRegion: %p/%d ", this, regionNumber);
+  st->print("ShenandoahHeapRegion: %p/%d ", this, _region_number);
 
   if (is_current_allocation_region()) 
     st->print("A");
@@ -67,8 +131,8 @@ void ShenandoahHeapRegion::oop_iterate(ExtendedOopClosure* cl, bool skip_unreach
 void ShenandoahHeapRegion::fill_region() {
   ShenandoahHeap* sh = (ShenandoahHeap*) Universe::heap();
   
-  if (free() > (BROOKS_POINTER_OBJ_SIZE + CollectedHeap::min_fill_size())) {
-    HeapWord* filler = allocate(BROOKS_POINTER_OBJ_SIZE);
+  if (free() > (BrooksPointer::BROOKS_POINTER_OBJ_SIZE + CollectedHeap::min_fill_size())) {
+    HeapWord* filler = allocate(BrooksPointer::BROOKS_POINTER_OBJ_SIZE);
     HeapWord* obj = allocate(end() - top());
     sh->fill_with_object(obj, end() - obj);
     sh->initialize_brooks_ptr(filler, obj);

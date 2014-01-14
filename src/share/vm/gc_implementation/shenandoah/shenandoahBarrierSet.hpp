@@ -58,10 +58,7 @@ public:
 
   // We export this to make it available in cases where the static
   // type of the barrier set is known.  Note that it is non-virtual.
-  template <class T> inline void inline_write_ref_field_pre(T* field, oop newVal) {
-    write_ref_field_pre_static(field, newVal);
-    
-  }
+  template <class T> inline void inline_write_ref_field_pre(T* field, oop newVal);
 
   // These are the more general virtual versions.
   void write_ref_field_pre_work(oop* field, oop new_val);

@@ -15,6 +15,10 @@ ShenandoahConcurrentThread::ShenandoahConcurrentThread() :
   //  create_and_start();
 }
 
+ShenandoahConcurrentThread::~ShenandoahConcurrentThread() {
+  // This is here so that super is called.
+}
+
 class SCMCheckpointRootsFinalClosure : public VoidClosure {
   ShenandoahConcurrentMark* _scm;
 public:
@@ -119,4 +123,14 @@ void ShenandoahConcurrentThread::start() {
 
 void ShenandoahConcurrentThread::yield() {
   _sts.yield("Concurrent Mark");
+}
+
+void ShenandoahConcurrentThread::safepoint_synchronize() {
+  assert(UseShenandoahGC, "just checking");
+  _sts.suspend_all();
+}
+
+void ShenandoahConcurrentThread::safepoint_desynchronize() {
+  assert(UseShenandoahGC, "just checking");
+  _sts.resume_all();
 }

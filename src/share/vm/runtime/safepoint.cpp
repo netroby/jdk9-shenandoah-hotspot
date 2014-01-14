@@ -76,7 +76,7 @@
 #if INCLUDE_ALL_GCS
 #include "gc_implementation/concurrentMarkSweep/concurrentMarkSweepThread.hpp"
 #include "gc_implementation/shared/concurrentGCThread.hpp"
-#include "gc_implementation/shenandoah/shenandoahConcurrentGCThread.hpp"
+#include "gc_implementation/shenandoah/shenandoahConcurrentThread.hpp"
 #endif // INCLUDE_ALL_GCS
 #ifdef COMPILER1
 #include "c1/c1_globals.hpp"
@@ -113,7 +113,7 @@ void SafepointSynchronize::begin() {
   } else if (UseG1GC) {
     ConcurrentGCThread::safepoint_synchronize();
   } else if (UseShenandoahGC) {
-    ShenandoahConcurrentGCThread::safepoint_synchronize();
+    ShenandoahConcurrentThread::safepoint_synchronize();
   }
     
 #endif // INCLUDE_ALL_GCS
@@ -491,6 +491,8 @@ void SafepointSynchronize::end() {
     ConcurrentMarkSweepThread::desynchronize(false);
   } else if (UseG1GC) {
     ConcurrentGCThread::safepoint_desynchronize();
+  } else if (UseShenandoahGC) {
+    ShenandoahConcurrentThread::safepoint_desynchronize();
   }
 #endif // INCLUDE_ALL_GCS
   // record this time so VMThread can keep track how much time has elasped

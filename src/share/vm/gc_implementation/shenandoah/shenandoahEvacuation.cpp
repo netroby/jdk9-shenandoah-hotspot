@@ -1,3 +1,4 @@
+#include "gc_implementation/shenandoah/brooksPointer.hpp"
 #include "gc_implementation/shenandoah/shenandoahEvacuation.hpp"
 #include "gc_implementation/shenandoah/shenandoahAllocRegion.hpp"
 #include "gc_implementation/shenandoah/shenandoahHeap.hpp"
@@ -67,9 +68,9 @@ HeapWord* HeapAllocator::allocate(size_t size) {
 }
 
 void HeapAllocator::rollback(HeapWord* filler, size_t size) {
-  HeapWord* obj = filler + BROOKS_POINTER_OBJ_SIZE;
+  HeapWord* obj = filler + BrooksPointer::BROOKS_POINTER_OBJ_SIZE;
   _heap->initialize_brooks_ptr(filler, obj);
-  _heap->fill_with_object(obj, size - BROOKS_POINTER_OBJ_SIZE, true);
+  _heap->fill_with_object(obj, size - BrooksPointer::BROOKS_POINTER_OBJ_SIZE, true);
 }
 
 TLABAllocator::TLABAllocator() :

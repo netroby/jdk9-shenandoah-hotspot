@@ -50,7 +50,7 @@ class PrintHeapObjectsClosure : public ShenandoahHeapRegionClosure {
 public:
   bool doHeapRegion(ShenandoahHeapRegion* r) {
     tty->print("Region %d top = "PTR_FORMAT" used = %x free = %x\n", 
-	       r->regionNumber, r->top(), r->used(), r->free());
+	       r->region_number(), r->top(), r->used(), r->free());
     
     printHeapObjects(r->bottom(), r->top());
     return false;
@@ -500,14 +500,14 @@ HeapWord* ShenandoahHeap::mem_allocate_locked(size_t size,
 					      bool* gc_overhead_limit_was_exceeded) {
 
   // This was used for allocation while holding the Heap_lock.
-  // HeapWord* filler = allocate_memory(BROOKS_POINTER_OBJ_SIZE + size);
+  // HeapWord* filler = allocate_memory(BrooksPointer::BROOKS_POINTER_OBJ_SIZE + size);
 
-  HeapWord* filler = allocate_memory_gclab(BROOKS_POINTER_OBJ_SIZE + size);
-  HeapWord* result = filler + BROOKS_POINTER_OBJ_SIZE;
+  HeapWord* filler = allocate_memory_gclab(BrooksPointer::BROOKS_POINTER_OBJ_SIZE + size);
+  HeapWord* result = filler + BrooksPointer::BROOKS_POINTER_OBJ_SIZE;
   if (filler != NULL) {
     initialize_brooks_ptr(filler, result);
     _bytesAllocSinceCM += size * HeapWordSize;
-    _current_region->increase_live_data((size + BROOKS_POINTER_OBJ_SIZE) * HeapWordSize);
+    _current_region->increase_live_data((size + BrooksPointer::BROOKS_POINTER_OBJ_SIZE) * HeapWordSize);
     if (ShenandoahGCVerbose) {
       if (*gc_overhead_limit_was_exceeded)
 	tty->print("gc_overhead_limit_was_exceeded");
@@ -597,7 +597,7 @@ private:
       
 
 void ShenandoahHeap::initialize_brooks_ptr(HeapWord* filler, HeapWord* obj, bool new_obj) {
-  CollectedHeap::fill_with_array(filler, BROOKS_POINTER_OBJ_SIZE, false, false);
+  CollectedHeap::fill_with_array(filler, BrooksPointer::BROOKS_POINTER_OBJ_SIZE, false, false);
   markOop mark = oop(filler)->mark();
   oop(filler)->set_mark(mark->set_age(15));
   assert(ShenandoahBarrierSet::is_brooks_ptr(oop(filler)), "brooks pointer must be brooks pointer");
@@ -644,7 +644,7 @@ void ShenandoahHeap::parallel_evacuate_region(ShenandoahHeapRegion* from_region,
   
 #ifdef ASSERT
   if (ShenandoahGCVerbose) {
-    tty->print("parallel_evacuate_region starting from_region %d: free_regions = %d\n",  from_region->regionNumber, _free_regions->available_regions());
+    tty->print("parallel_evacuate_region starting from_region %d: free_regions = %d\n",  from_region->region_number(), _free_regions->available_regions());
   }
 #endif
 
@@ -658,7 +658,7 @@ void ShenandoahHeap::parallel_evacuate_region(ShenandoahHeapRegion* from_region,
     //  }
 
     if (ShenandoahGCVerbose) {
-      tty->print("parallel_evacuate_region after from_region = %d: Wasted %d bytes free_regions = %d\n", from_region->regionNumber, evacuate_region.wasted(), _free_regions->available_regions());
+      tty->print("parallel_evacuate_region after from_region = %d: Wasted %d bytes free_regions = %d\n", from_region->region_number(), evacuate_region.wasted(), _free_regions->available_regions());
     }
 #endif
 }
@@ -687,7 +687,7 @@ public:
       if (ShenandoahGCVerbose) {
      	tty->print("Thread %d claimed Heap Region %d\n",
      		   worker_id,
-     		   from_hr->regionNumber);
+     		   from_hr->region_number());
 	from_hr->print();
       }
 
@@ -721,7 +721,7 @@ public:
   bool doHeapRegion(ShenandoahHeapRegion* r) {
 
     if (r->is_dirty()) {
-      // tty->print_cr("recycling region %d:", r->regionNumber);
+      // tty->print_cr("recycling region %d:", r->region_number());
       // r->print_on(tty);
       // tty->print_cr("");
       ShenandoahHeap::heap()->decrease_used(r->used());
@@ -1175,7 +1175,7 @@ public:
     if (ShenandoahBarrierSet::is_brooks_ptr(oop(oopWord))) { // Brooks pointer
       guarantee(arrayOop(oopWord)->length() == 2, "brooks ptr objects must have length == 2");
     } else {
-      HeapWord* brooksPOop = (oopWord - BROOKS_POINTER_OBJ_SIZE);
+      HeapWord* brooksPOop = (oopWord - BrooksPointer::BROOKS_POINTER_OBJ_SIZE);
       guarantee(ShenandoahBarrierSet::is_brooks_ptr(oop(brooksPOop)), "age in mark word of brooks obj must be 15");
     }
   }
@@ -1350,7 +1350,7 @@ oop ShenandoahHeap::oop_containing_oop_ptr(oop* p) {
   assert (from_space_obj != NULL, "must not happen");
   oop from_space_oop = (oop) from_space_obj;
   assert (from_space_oop->is_oop(), "must be oop");
-  assert(ShenandoahBarrierSet::is_brooks_ptr(oop(((HeapWord*) from_space_oop) - BROOKS_POINTER_OBJ_SIZE)), "oop must have a brooks ptr");
+  assert(ShenandoahBarrierSet::is_brooks_ptr(oop(((HeapWord*) from_space_oop) - BrooksPointer::BROOKS_POINTER_OBJ_SIZE)), "oop must have a brooks ptr");
   return from_space_oop;
 }
  */
@@ -1416,7 +1416,7 @@ void ShenandoahMarkObjsClosure::do_object(oop obj) {
 
       // Calculate liveness of heap region containing object.
       ShenandoahHeapRegion* region = sh->heap_region_containing(obj);
-      region->increase_live_data((obj->size() + BROOKS_POINTER_OBJ_SIZE) * HeapWordSize);
+      region->increase_live_data((obj->size() + BrooksPointer::BROOKS_POINTER_OBJ_SIZE) * HeapWordSize);
 
       sh->concurrentMark()->addTask(obj, _worker_id);
     }
@@ -1702,7 +1702,7 @@ void ShenandoahHeap::verify_copy(oop p,oop c){
 void ShenandoahHeap::copy_object(oop p, HeapWord* s) {
   HeapWord* filler = s;
   assert(s != NULL, "allocation of brooks pointer must not fail");
-  HeapWord* copy = s + BROOKS_POINTER_OBJ_SIZE;
+  HeapWord* copy = s + BrooksPointer::BROOKS_POINTER_OBJ_SIZE;
   assert(copy != NULL, "allocation of copy object must not fail");
   Copy::aligned_disjoint_words((HeapWord*) p, copy, p->size());
   initialize_brooks_ptr(filler, copy);
@@ -1714,9 +1714,9 @@ void ShenandoahHeap::copy_object(oop p, HeapWord* s) {
 
 oopDesc* ShenandoahHeap::evacuate_object(oop p, EvacuationAllocator* allocator) {
 
-  size_t required = BROOKS_POINTER_OBJ_SIZE + p->size();
+  size_t required = BrooksPointer::BROOKS_POINTER_OBJ_SIZE + p->size();
   HeapWord* filler = allocator->allocate(required);
-  HeapWord* copy = filler + BROOKS_POINTER_OBJ_SIZE;
+  HeapWord* copy = filler + BrooksPointer::BROOKS_POINTER_OBJ_SIZE;
   copy_object(p, filler);
 
   HeapWord* result = BrooksPointer::get(p).cas_forwardee((HeapWord*) p, copy);
@@ -1739,13 +1739,13 @@ HeapWord* ShenandoahHeap::allocate_from_tlab_work(Thread* thread, size_t size) {
 }
 
 HeapWord* ShenandoahHeap::tlab_post_allocation_setup(HeapWord* obj, bool new_obj) {
-  HeapWord* result = obj + BROOKS_POINTER_OBJ_SIZE;
+  HeapWord* result = obj + BrooksPointer::BROOKS_POINTER_OBJ_SIZE;
   initialize_brooks_ptr(obj, result, new_obj);
   return result;
 }
 
 uint ShenandoahHeap::oop_extra_words() {
-  return BROOKS_POINTER_OBJ_SIZE;
+  return BrooksPointer::BROOKS_POINTER_OBJ_SIZE;
 }
 
 void ShenandoahHeap::grow_heap_by() {
@@ -1832,7 +1832,7 @@ void ShenandoahHeap::compile_prepare_oop(MacroAssembler* masm) {
 
   // Write brooks pointer address.
   // Move rax pointer to the actual oop.
-  __ incrementq(rax, BROOKS_POINTER_OBJ_SIZE * HeapWordSize);
+  __ incrementq(rax, BrooksPointer::BROOKS_POINTER_OBJ_SIZE * HeapWordSize);
   __ movptr(rscratch1, ExternalAddress((address) &_epoch));
   __ orq(rscratch1, rax);
   __ movptr(Address(rax, -1 * HeapWordSize), rscratch1);

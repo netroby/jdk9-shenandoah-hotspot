@@ -1,3 +1,4 @@
+#include "gc_implementation/shenandoah/brooksPointer.hpp"
 #include "gc_implementation/shenandoah/shenandoahHeap.hpp"
 #include "gc_implementation/shenandoah/shenandoahHeapRegion.hpp"
 #include "gc_implementation/shenandoah/shenandoahHeapRegionSet.hpp"
@@ -27,6 +28,18 @@ ShenandoahHeapRegionSet::ShenandoahHeapRegionSet(size_t num_regions, ShenandoahH
 
 ShenandoahHeapRegionSet::~ShenandoahHeapRegionSet() {
   FREE_C_HEAP_ARRAY(ShenandoahHeapRegion*, _regions, mtGC);
+}
+
+ShenandoahHeapRegion* ShenandoahHeapRegionSet::at(uint i) {
+  return _regions[i];
+}
+
+size_t ShenandoahHeapRegionSet::length() {
+  return _numRegions;
+}
+
+size_t ShenandoahHeapRegionSet::available_regions() {
+  return _inserted - _index;
 }
 
 int compareHeapRegionsByGarbage(ShenandoahHeapRegion** a, ShenandoahHeapRegion** b) {
@@ -228,9 +241,9 @@ void ShenandoahHeapRegionSet::reclaim_humonguous_regions() {
   for (int r = 0; r < _numRegions; r++) {
     // We can immediately reclaim humonguous objects/regions that are no longer reachable.
     ShenandoahHeapRegion* region = _regions[r];
-    assert(r == region->regionNumber, "we need the regions in original order, not sorted");
+    assert(r == region->region_number(), "we need the regions in original order, not sorted");
     if (region->is_humonguous_start()) {
-      oop humonguous_obj = oop(region->bottom() + BROOKS_POINTER_OBJ_SIZE);
+      oop humonguous_obj = oop(region->bottom() + BrooksPointer::BROOKS_POINTER_OBJ_SIZE);
       if (! heap->isMarkedCurrent(humonguous_obj)) {
         reclaim_humonguous_region_at(r);
       }

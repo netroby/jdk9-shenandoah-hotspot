@@ -2,7 +2,6 @@
 #define SHARE_VM_GC_IMPLEMENTATION_SHENANDOAH_SHENANDOAHHEAP_HPP
 
 #include "gc_implementation/shenandoah/shenandoahAllocRegion.hpp"
-#include "gc_implementation/shenandoah/shenandoahConcurrentGCThread.hpp"
 #include "gc_implementation/shenandoah/shenandoahCollectorPolicy.hpp"
 #include "gc_implementation/shenandoah/shenandoahConcurrentMark.hpp"
 #include "gc_implementation/shenandoah/shenandoahConcurrentThread.hpp"
@@ -15,9 +14,6 @@
 #include "memory/space.inline.hpp"
 #include "oops/oop.hpp"
 #include "oops/markOop.hpp"
-
-#define MAX_EPOCH 7
-#define BROOKS_POINTER_OBJ_SIZE 4
 
 
 class SpaceClosure;
@@ -48,6 +44,9 @@ public:
 class ShenandoahHeap : public SharedHeap {
 
 private:
+
+  static const uint MAX_EPOCH = 7;
+
   static ShenandoahHeap* _pgc;
   ShenandoahCollectorPolicy* _pgc_policy;
   VirtualSpace _storage;

@@ -12,36 +12,29 @@
 class VM_ShenandoahInitMark: public VM_Operation {
   
 public:
-  virtual VMOp_Type type() const { return VMOp_ShenandoahInitMark;}
+  virtual VMOp_Type type() const;
   virtual void doit();
-  //  bool evaluate_concurrently() { return false;}
 
-  virtual const char* name() const {
-    return "Shenandoah Initial Marking";
-  }
+  virtual const char* name() const;
 };
 
 class VM_ShenandoahFinishMark: public VM_Operation {
 
  public:
-  virtual VMOp_Type type() const { return VMOp_ShenandoahFinishMark;}
+  virtual VMOp_Type type() const;
   virtual void doit();
 
-  virtual const char* name() const {
-    return "Shenandoah Finish Mark";
-  }
+  virtual const char* name() const;
 
 };
 
 class VM_ShenandoahVerifyHeapAfterEvacuation: public VM_Operation {
 
  public:
-  virtual VMOp_Type type() const { return VMOp_ShenandoahVerifyHeapAfterEvacuation;}
+  virtual VMOp_Type type() const;
   virtual void doit();
 
-  virtual const char* name() const {
-    return "Shenandoah verify heap after evacuation";
-  }
+  virtual const char* name() const;
 
 };
 

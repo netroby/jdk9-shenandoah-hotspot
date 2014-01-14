@@ -25,6 +25,7 @@ class ShenandoahConcurrentThread: public ConcurrentGCThread {
  public:
   // Constructor
   ShenandoahConcurrentThread();
+  ~ShenandoahConcurrentThread();
 
   // Printing
   void print_on(outputStream* st) const;
@@ -56,6 +57,10 @@ class ShenandoahConcurrentThread: public ConcurrentGCThread {
   char* name() const { return (char*)"ShenandoahConcurrentThread";}
   void start();
   void yield();
+
+  static void safepoint_synchronize();
+  static void safepoint_desynchronize();
+
 };
 
 #endif // SHARE_VM_GC_IMPLEMENTATION_SHENANDOAH_SHENANDOAHCONCURRENTTHREAD_HPP

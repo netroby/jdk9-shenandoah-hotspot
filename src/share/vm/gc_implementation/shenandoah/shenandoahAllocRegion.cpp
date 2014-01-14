@@ -1,4 +1,5 @@
 
+#include "gc_implementation/shenandoah/brooksPointer.hpp"
 #include "gc_implementation/shenandoah/shenandoahAllocRegion.hpp"
 #include "gc_implementation/shenandoah/shenandoahHeap.hpp"
 #include "gc_implementation/shenandoah/shenandoahHeapRegion.hpp"
@@ -8,7 +9,7 @@ ShenandoahAllocRegion::ShenandoahAllocRegion() {
   // arbitrary for now
   _start = 0;
   _end = 0;
-  _alignment_reserve = BROOKS_POINTER_OBJ_SIZE + CollectedHeap::min_fill_size();
+  _alignment_reserve = BrooksPointer::BROOKS_POINTER_OBJ_SIZE + CollectedHeap::min_fill_size();
   _hard_end = 0;
   allocRegionSize = 1024 * 4;
 }
@@ -53,9 +54,9 @@ void ShenandoahAllocRegion::fill_region() {
   if (_start != 0) {
     if (ShenandoahGCVerbose) 
       tty->print("fill allocation region _start = %p _hard_end = %p\n", _start, _hard_end);
-    if ((size_t)(_hard_end - _start) > (BROOKS_POINTER_OBJ_SIZE + CollectedHeap::min_fill_size())) {
+    if ((size_t)(_hard_end - _start) > (BrooksPointer::BROOKS_POINTER_OBJ_SIZE + CollectedHeap::min_fill_size())) {
       HeapWord* filler = _start;
-      _start = _start + BROOKS_POINTER_OBJ_SIZE;
+      _start = _start + BrooksPointer::BROOKS_POINTER_OBJ_SIZE;
       CollectedHeap::fill_with_object(_start, _hard_end - _start);
       sh->initialize_brooks_ptr(filler, _start, false);
       // tty->print_cr("fill region object at: %p", _start);

@@ -7,9 +7,12 @@
 
 class BrooksPointer {
 
+public:
+  static const uint BROOKS_POINTER_OBJ_SIZE = 4;
+
 private:
 
-  uintptr_t* heap_word;
+  uintptr_t* _heap_word;
 
   BrooksPointer(uintptr_t* heap_word);
 

@@ -26,12 +26,45 @@
 #include "gc_implementation/shenandoah/shenandoahHeap.hpp"
 #include "gc_implementation/shenandoah/brooksPointer.hpp"
 
+class SCMConcurrentMarkingTask : public AbstractGangTask {
+private:
+  ShenandoahConcurrentMark* _cm;
+  ParallelTaskTerminator* _terminator;
+public:
+  SCMConcurrentMarkingTask(ShenandoahConcurrentMark* cm, ParallelTaskTerminator* terminator) :
+    AbstractGangTask("Root Region Scan"), _cm(cm), _terminator(terminator) {
+  }
 
-SCMRootRegionScanTask::SCMRootRegionScanTask(ShenandoahConcurrentMark* cm) :
-  AbstractGangTask("Root Region Scan"), _cm(cm) { }
+  void work(uint worker_id) {
+    int seed = 17;
+    ShenandoahHeap* sh = (ShenandoahHeap*) Universe::heap();
+    ShenandoahMarkRefsClosure cl(sh->getEpoch(), worker_id);
 
-void SCMRootRegionScanTask::work(uint worker_id) {
-}
+    while (true) {
+      oop obj;
+    
+      if (!_cm->task_queues()->queue(worker_id)->pop_local(obj)) {
+        if (!_cm->task_queues()->steal(worker_id, &seed, obj)) {
+          obj = _cm->overflow_queue()->pop();
+          if (obj == NULL) {
+            if (_terminator->offer_termination())
+              break;  
+            else 
+              continue;
+          }
+        }
+      }
+      // We got one.
+
+      assert(obj->is_oop(), "Oops, not an oop");
+      if (ShenandoahGCVerbose) {
+        tty->print("popping object: "PTR_FORMAT"\n", obj);
+      }
+      assert(! sh->heap_region_containing(obj)->is_dirty(), "we don't want to mark objects in from-space");
+      obj->oop_iterate(&cl);
+    }
+  }
+};
 
 // We need to revisit this  CHF
 // class SCMTerminatorTerminator : public TerminatorTerminator  { // So good we named it twice
@@ -39,40 +72,6 @@ void SCMRootRegionScanTask::work(uint worker_id) {
 //     return true;
 //   }
 // };
-
-SCMConcurrentMarkingTask::SCMConcurrentMarkingTask(ShenandoahConcurrentMark* cm, 
-						   ParallelTaskTerminator* terminator) :
-  AbstractGangTask("Root Region Scan"), _cm(cm), _terminator(terminator) { }
-
-void SCMConcurrentMarkingTask::work(uint worker_id) {
-  int seed = 17;
-  ShenandoahHeap* sh = (ShenandoahHeap*) Universe::heap();
-  ShenandoahMarkRefsClosure cl(sh->getEpoch(), worker_id);
-
-  while (true) {
-    oop obj;
-    
-    if (!_cm->task_queues()->queue(worker_id)->pop_local(obj)) {
-      if (!_cm->task_queues()->steal(worker_id, &seed, obj)) {
-        obj = _cm->overflow_queue()->pop();
-        if (obj == NULL) {
-          if (_terminator->offer_termination())
-            break;  
-          else 
-            continue;
-        }
-      }
-    }
-    // We got one.
-    
-    assert(obj->is_oop(), "Oops, not an oop");
-    if (ShenandoahGCVerbose) {
-      tty->print("popping object: "PTR_FORMAT"\n", obj);
-    }
-    assert(! sh->heap_region_containing(obj)->is_dirty(), "we don't want to mark objects in from-space");
-    obj->oop_iterate(&cl);
-  }
-}
 
 void ShenandoahConcurrentMark::initialize(FlexibleWorkGang* workers) {
   if (ShenandoahGCVerbose) 
@@ -89,11 +88,6 @@ void ShenandoahConcurrentMark::initialize(FlexibleWorkGang* workers) {
     _task_queues->register_queue(i, task_queue);
   }
   JavaThread::satb_mark_queue_set().set_buffer_size(1014 /* G1SATBBufferSize */);
-}
-
-void ShenandoahConcurrentMark::scanRootRegions() {
-  SCMRootRegionScanTask task(this);
-  task.work(0);
 }
 
 void ShenandoahConcurrentMark::markFromRoots() {
@@ -231,35 +225,6 @@ SharedOverflowMarkQueue* ShenandoahConcurrentMark::overflow_queue() {
   return _overflow_queue;
 }
 
-// // This queue implementation is wonky
-// oop ShenandoahConcurrentMark::popTask(int q) {
-//   oop obj;
-
-//   while (true) {
-//     bool result = _task_queues->queue(q)->pop_local(obj);
-
-//     if (result) {
-//       tty->print("popTask:q = %d obj = "PTR_FORMAT"\n", q, obj);
-
-//       ShenandoahHeap* sh = (ShenandoahHeap*) Universe::heap();
-//       int epoch = sh->getEpoch();
-//       int age = getAge(obj);
-
-//       assert(age == epoch, "Only marked objects on the queue");
-
-//       tty->print("popTask: q = %d obj = "PTR_FORMAT" epoch  = %d objects mark = %d\n", q, obj, epoch, age);
-
-//       return obj;
-//     } else {
-//       int seed = 17;
-//     result = _task_queues->steal(q, &seed, obj);
-//     if (result) {
-//       tty->print("stealTask:q = %d obj = "PTR_FORMAT"\n", q, obj);
-//       return obj;
-//     } else 
-//       return NULL;
-//   }
-// }
 #if TASKQUEUE_STATS
 void ShenandoahConcurrentMark::print_taskqueue_stats_hdr(outputStream* const st) {
   st->print_raw_cr("GC Task Stats");
