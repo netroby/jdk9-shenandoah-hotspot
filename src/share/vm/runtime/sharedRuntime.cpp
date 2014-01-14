@@ -187,7 +187,7 @@ int SharedRuntime::_rethrow_ctr=0;
 int     SharedRuntime::_ICmiss_index                    = 0;
 int     SharedRuntime::_ICmiss_count[SharedRuntime::maxICmiss_count];
 address SharedRuntime::_ICmiss_at[SharedRuntime::maxICmiss_count];
-// int SharedRuntime::_indentation=0;
+
 
 void SharedRuntime::trace_ic_miss(address at) {
   for (int i = 0; i < _ICmiss_index; i++) {
@@ -979,12 +979,6 @@ JRT_LEAF(int, SharedRuntime::dtrace_method_entry(
   Symbol* kname = method->klass_name();
   Symbol* name = method->name();
   Symbol* sig = method->signature();
-  // char temp[200];
-  // _indentation += 1;
-  // int i = 0;
-  // while (i++ < _indentation) tty->print(" ");
-  // tty->print("enter %s\n", method->name_and_sig_as_C_string(temp, 200));
-
 #ifndef USDT2
   HS_DTRACE_PROBE7(hotspot, method__entry, get_java_tid(thread),
       kname->bytes(), kname->utf8_length(),
@@ -1006,12 +1000,6 @@ JRT_LEAF(int, SharedRuntime::dtrace_method_exit(
   Symbol* kname = method->klass_name();
   Symbol* name = method->name();
   Symbol* sig = method->signature();
-  // char temp[200];
-  // _indentation -= 1;
-  // int i = 0;
-  // while (i++ < _indentation) tty->print(" ");
-  // tty->print("exit %s\n", method->name_and_sig_as_C_string(temp, 200));
-
 #ifndef USDT2
   HS_DTRACE_PROBE7(hotspot, method__return, get_java_tid(thread),
       kname->bytes(), kname->utf8_length(),

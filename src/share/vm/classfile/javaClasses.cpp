@@ -50,9 +50,6 @@
 #include "runtime/thread.inline.hpp"
 #include "runtime/vframe.hpp"
 #include "utilities/preserveException.hpp"
-#if INCLUDE_ALL_GCS
-#include "gc_implementation/g1/g1SATBCardTableModRefBS.hpp"
-#endif // INCLUDE_ALL_GCS
 
 #define INJECTED_FIELD_COMPUTE_OFFSET(klass, name, signature, may_be_java)    \
   klass::_##name##_offset = JavaClasses::compute_injected_offset(JavaClasses::klass##_##name##_enum);
@@ -1162,19 +1159,7 @@ oop java_lang_Throwable::backtrace(oop throwable) {
 
 
 void java_lang_Throwable::set_backtrace(oop throwable, oop value) {
-  // tty->print_cr("Throwable::set_backtrace: throwable: %p, value: %p", throwable, value);
-#if INCLUDE_ALL_GCS
-
-
-  // We need to enqueue the value here, because it hasn't been constructed the 'normal' way
-  // by which it would end up marked.
-  // TODO: Refactor G1-specific call into a call on the BarrierSet interface.
-  value = oopDesc::bs()->resolve_oop(value);
-  if (! oopDesc::is_null(value)) {
-    G1SATBCardTableModRefBS::enqueue(value);
-  }
   throwable->release_obj_field_put(backtrace_offset, value);
-#endif
 }
 
 

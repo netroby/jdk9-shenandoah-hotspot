@@ -57,7 +57,6 @@
 # include "bytes_ppc.hpp"
 #endif
 
-
 // Implementation of all inlined member functions defined in oop.hpp
 // We need a separate file to avoid circular references
 
@@ -223,11 +222,7 @@ inline oop oopDesc::decode_heap_oop(oop v)  { return v; }
 
 // Load an oop out of the Java heap as is without decoding.
 // Called by GC to check for null before decoding.
-inline oop       oopDesc::load_heap_oop(oop* p)          {
-  oop heap_oop = *p;
-  return heap_oop;
-}
-
+inline oop       oopDesc::load_heap_oop(oop* p)          { return *p; }
 inline narrowOop oopDesc::load_heap_oop(narrowOop* p)    { return *p; }
 
 // Load and decode an oop out of the Java heap into a wide oop.
@@ -237,35 +232,26 @@ inline oop oopDesc::load_decode_heap_oop_not_null(narrowOop* p) {
 }
 
 // Load and decode an oop out of the heap accepting null
-inline oop oopDesc::load_decode_heap_oop(oop* p) { 
-  //  oopDesc::bs()->read_ref_field(p);
-  return *p;
-}
-
+inline oop oopDesc::load_decode_heap_oop(oop* p) { return *p; }
 inline oop oopDesc::load_decode_heap_oop(narrowOop* p) {
   return decode_heap_oop(*p);
 }
 
 // Store already encoded heap oop into the heap.
-inline void oopDesc::store_heap_oop(oop* p, oop v)                 {
- *p = v;
- }
+inline void oopDesc::store_heap_oop(oop* p, oop v)                 { *p = v; }
 inline void oopDesc::store_heap_oop(narrowOop* p, narrowOop v)     { *p = v; }
 
 // Encode and store a heap oop.
 inline void oopDesc::encode_store_heap_oop_not_null(narrowOop* p, oop v) {
   *p = encode_heap_oop_not_null(v);
 }
-inline void oopDesc::encode_store_heap_oop_not_null(oop* p, oop v) {
- *p = v;
- }
+inline void oopDesc::encode_store_heap_oop_not_null(oop* p, oop v) { *p = v; }
 
 // Encode and store a heap oop allowing for null.
 inline void oopDesc::encode_store_heap_oop(narrowOop* p, oop v) {
   *p = encode_heap_oop(v);
 }
-inline void oopDesc::encode_store_heap_oop(oop* p, oop v) {
- *p = v; }
+inline void oopDesc::encode_store_heap_oop(oop* p, oop v) { *p = v; }
 
 // Store heap oop as is for volatile fields.
 inline void oopDesc::release_store_heap_oop(volatile oop* p, oop v) {
@@ -278,7 +264,6 @@ inline void oopDesc::release_store_heap_oop(volatile narrowOop* p,
 
 inline void oopDesc::release_encode_store_heap_oop_not_null(
                                                 volatile narrowOop* p, oop v) {
-
   // heap oop is not pointer sized.
   OrderAccess::release_store(p, encode_heap_oop_not_null(v));
 }
@@ -301,7 +286,6 @@ inline void oopDesc::release_encode_store_heap_oop(
 // These functions are only used to exchange oop fields in instances,
 // not headers.
 inline oop oopDesc::atomic_exchange_oop(oop exchange_value, volatile HeapWord *dest) {
-
   if (UseCompressedOops) {
     // encode exchange value from oop to T
     narrowOop val = encode_heap_oop(exchange_value);
@@ -571,9 +555,7 @@ inline oop oopDesc::atomic_compare_exchange_oop(oop exchange_value,
       update_barrier_set_pre((oop*)dest, exchange_value);
     }
 
-    return (oop)Atomic::cmpxchg_ptr(exchange_value, 
-				    dest,
-				    compare_value);
+    return (oop)Atomic::cmpxchg_ptr(exchange_value, (oop*)dest, compare_value);
   }
 }
 
@@ -686,10 +668,6 @@ inline markOop oopDesc::displaced_mark() const {
 
 inline void oopDesc::set_displaced_mark(markOop m) {
   mark()->set_displaced_mark_helper(m);
-}
-
-inline markOop oopDesc::cas_set_displaced_mark(markOop m, markOop old) {
-  return mark()->cas_set_displaced_mark_helper(m, old);
 }
 
 // The following method needs to be MT safe.

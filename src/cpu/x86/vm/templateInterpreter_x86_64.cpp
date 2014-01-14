@@ -530,6 +530,7 @@ void InterpreterGenerator::lock_method(void) {
     __ movptr(rax, Address(rax,
                            ConstantPool::pool_holder_offset_in_bytes()));
     __ movptr(rax, Address(rax, mirror_offset));
+
 #ifdef ASSERT
     {
       Label L;

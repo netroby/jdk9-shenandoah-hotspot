@@ -81,7 +81,6 @@ private:
   oop obj_at(int index) const {
     // With UseCompressedOops decode the narrow oop in the objArray to an
     // uncompressed oop.  Otherwise this is simply a "*" operator.
-
     if (UseCompressedOops) {
       return load_decode_heap_oop(obj_at_addr<narrowOop>(index));
     } else {

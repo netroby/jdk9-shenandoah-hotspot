@@ -71,7 +71,7 @@ HS_DTRACE_PROBE_DECL1(hotspot, thread__unpark, uintptr_t);
 
 #define UNSAFE_END JVM_END
 
-#define UnsafeWrapper(arg) 
+#define UnsafeWrapper(arg) /*nothing, for the present*/
 
 inline void* addr_from_java(jlong addr) {
   // This assert fails in a variety of ways on 32-bit systems.
@@ -313,7 +313,6 @@ UNSAFE_ENTRY(void, Unsafe_SetObjectVolatile(JNIEnv *env, jobject unsafe, jobject
   oop p = JNIHandles::resolve(obj);
   p = oopDesc::bs()->resolve_and_maybe_copy_oop(p);
   void* addr = index_oop_from_field_offset_long(p, offset);
-  
   OrderAccess::release();
   if (UseCompressedOops) {
     oop_store((narrowOop*)addr, x);
@@ -1217,9 +1216,9 @@ UNSAFE_ENTRY(jboolean, Unsafe_CompareAndSwapLong(JNIEnv *env, jobject unsafe, jo
   UnsafeWrapper("Unsafe_CompareAndSwapLong");
   Handle p (THREAD, oopDesc::bs()->resolve_and_maybe_copy_oop(JNIHandles::resolve(obj)));
   jlong* addr = (jlong*)(index_oop_from_field_offset_long(p(), offset));
-  if (VM_Version::supports_cx8()) {
+  if (VM_Version::supports_cx8())
     return (jlong)(Atomic::cmpxchg(x, addr, e)) == e;
-  } else {
+  else {
     jboolean success = false;
     ObjectLocker ol(p, THREAD);
     if (*addr == e) { *addr = x; success = true; }

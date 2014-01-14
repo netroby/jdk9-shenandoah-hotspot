@@ -373,13 +373,11 @@ class oopDesc {
   bool     has_displaced_mark() const;
   markOop  displaced_mark() const;
   void     set_displaced_mark(markOop m);
-  markOop  cas_set_displaced_mark(markOop m, markOop old);
 
   // for code generation
   static int mark_offset_in_bytes()    { return offset_of(oopDesc, _mark); }
   static int klass_offset_in_bytes()   { return offset_of(oopDesc, _metadata._klass); }
   static int klass_gap_offset_in_bytes();
-
 };
 
 #endif // SHARE_VM_OOPS_OOP_HPP

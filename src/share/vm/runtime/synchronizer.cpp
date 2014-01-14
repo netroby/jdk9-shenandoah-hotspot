@@ -470,7 +470,7 @@ static SharedGlobals GVars ;
 static int MonitorScavengeThreshold = 1000000 ;
 static volatile int ForceMonitorScavenge = 0 ; // Scavenge required and pending
 
-markOop ObjectSynchronizer::ReadStableMark (oop obj) {
+static markOop ReadStableMark (oop obj) {
   markOop mark = obj->mark() ;
   if (!mark->is_being_inflated()) {
     return mark ;       // normal fast-path return
@@ -1216,7 +1216,7 @@ ObjectMonitor * ATTR ObjectSynchronizer::inflate (Thread * Self, oop object) {
       if (mark->has_monitor()) {
           ObjectMonitor * inf = mark->monitor() ;
           assert (inf->header()->is_neutral(), "invariant");
-	  assert(oopDesc::bs()->resolve_oop((oop) inf->object()) == object, "invariant");
+          assert (oopDesc::bs()->resolve_oop((oop) inf->object()) == object, "invariant");
           assert (ObjectSynchronizer::verify_objmon_isinpool(inf), "monitor is invalid");
           return inf ;
       }

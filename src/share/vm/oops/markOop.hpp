@@ -299,12 +299,6 @@ class markOopDesc: public oopDesc {
     intptr_t ptr = (value() & ~monitor_value);
     *(markOop*)ptr = m;
   }
-  markOop cas_set_displaced_mark_helper(markOop m, markOop old) const {
-    assert(has_displaced_mark_helper(), "check");
-    markOop* ptr = (markOop*) (value() & ~monitor_value);
-    return (markOop) Atomic::cmpxchg_ptr(m, ptr, old);
-  }
-
   markOop copy_set_hash(intptr_t hash) const {
     intptr_t tmp = value() & (~hash_mask_in_place);
     tmp |= ((hash & hash_mask) << hash_shift);

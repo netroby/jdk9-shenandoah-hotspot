@@ -1615,8 +1615,7 @@ void Arguments::set_g1_gc_flags() {
   // Its value will be based upon the number of parallel marking threads.
   // But we do set the maximum mark stack size here.
   if (FLAG_IS_DEFAULT(MarkStackSizeMax)) {
-    //    FLAG_SET_DEFAULT(MarkStackSizeMax, 128 * TASKQUEUE_SIZE);
-    FLAG_SET_DEFAULT(MarkStackSizeMax, TASKQUEUE_SIZE);
+    FLAG_SET_DEFAULT(MarkStackSizeMax, 128 * TASKQUEUE_SIZE);
   }
 
   if (FLAG_IS_DEFAULT(GCTimeRatio) || GCTimeRatio == 0) {

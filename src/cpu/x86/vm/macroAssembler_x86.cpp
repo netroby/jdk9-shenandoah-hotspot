@@ -3314,6 +3314,7 @@ void MacroAssembler::g1_write_barrier_pre(Register obj,
   // expand_call should be passed true.
 
   NOT_LP64( push(thread); )
+
   if (expand_call) {
     LP64_ONLY( assert(pre_val != c_rarg1, "smashed arg"); )
     pass_arg1(this, thread);
@@ -4832,7 +4833,7 @@ void MacroAssembler::load_heap_oop(Register dst, Address src) {
     decode_heap_oop(dst);
   } else
 #endif
-      movptr(dst, src);
+    movptr(dst, src);
 }
 
 // Doesn't do verfication, generates fixed size code

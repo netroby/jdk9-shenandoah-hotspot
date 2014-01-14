@@ -1269,8 +1269,6 @@ class StubGenerator: public StubCodeGenerator {
           __ jcc(Assembler::greaterEqual, L_loop);
         }
         break;
-        break;
-
       default:
         ShouldNotReachHere();
 

@@ -3338,7 +3338,11 @@ void TemplateTable::_new() {
 
   if (UseTLAB) {
 
-    __ addq(rdx, Universe::heap()->oop_extra_words() * HeapWordSize);
+    
+    uint oop_extra_words = Universe::heap()->oop_extra_words();
+    if (oop_extra_words > 0) {
+      __ addq(rdx, oop_extra_words * HeapWordSize);
+    }
 
     __ movptr(rax, Address(r15_thread, in_bytes(JavaThread::tlab_top_offset())));
     __ lea(rbx, Address(rax, rdx, Address::times_1));

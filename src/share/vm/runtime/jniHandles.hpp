@@ -164,6 +164,7 @@ class JNIHandleBlock : public CHeapObj<mtInternal> {
   #endif
 };
 
+
 inline oop JNIHandles::resolve(jobject handle) {
   oop result = (handle == NULL ? (oop)NULL : *(oop*)handle);
   result = oopDesc::bs()->resolve_oop(result);
