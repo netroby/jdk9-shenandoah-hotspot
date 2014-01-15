@@ -1410,9 +1410,9 @@ void LIRGenerator::pre_barrier(LIR_Opr addr_opr, LIR_Opr pre_val,
 #if INCLUDE_ALL_GCS
     case BarrierSet::G1SATBCT:
     case BarrierSet::G1SATBCTLogging:
+    case BarrierSet::ShenandoahBarrierSet:
       G1SATBCardTableModRef_pre_barrier(addr_opr, pre_val, do_load, patch, info);
       break;
-    case BarrierSet::ShenandoahBarrierSet: break;
 
 #endif // INCLUDE_ALL_GCS
     case BarrierSet::CardTableModRef:
@@ -2207,7 +2207,7 @@ void LIRGenerator::do_UnsafeGetObject(UnsafeGetObject* x) {
   //   }
   // }
 
-  if (UseG1GC && type == T_OBJECT) {
+  if ((UseShenandoahGC || UseG1GC) && type == T_OBJECT) {
     bool gen_pre_barrier = true;     // Assume we need to generate pre_barrier.
     bool gen_offset_check = true;    // Assume we need to generate the offset guard.
     bool gen_source_check = true;    // Assume we need to check the src object for null.
