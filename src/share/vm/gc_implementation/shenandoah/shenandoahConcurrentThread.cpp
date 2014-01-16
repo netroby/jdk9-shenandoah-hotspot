@@ -59,9 +59,12 @@ void ShenandoahConcurrentThread::run() {
       VM_ShenandoahFinishMark finishMark;
       VMThread::execute(&finishMark);
 
-      ShenandoahHeap::heap()->set_evacuation_in_progress(true);
-      ShenandoahHeap::heap()->parallel_evacuate();
-      ShenandoahHeap::heap()->set_evacuation_in_progress(false);
+      VM_ShenandoahEvacuation evacuation;
+      if (ShenandoahConcurrentEvacuation) {
+        evacuation.doit();
+      } else {
+        VMThread::execute(&evacuation);
+      }
 
       if (ShenandoahVerify) {
         VM_ShenandoahVerifyHeapAfterEvacuation verify_after_evacuation;

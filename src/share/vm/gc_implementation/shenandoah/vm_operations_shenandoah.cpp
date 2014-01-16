@@ -47,3 +47,20 @@ void VM_ShenandoahVerifyHeapAfterEvacuation::doit() {
 
 }
 
+VM_Operation::VMOp_Type VM_ShenandoahEvacuation::type() const {
+  return VMOp_ShenandoahEvacuation;
+}
+
+const char* VM_ShenandoahEvacuation::name() const {
+  return "Shenandoah evacuation";
+}
+
+void VM_ShenandoahEvacuation::doit() {
+
+  ShenandoahHeap *sh = ShenandoahHeap::heap();
+  sh->set_evacuation_in_progress(true);
+  sh->parallel_evacuate();
+  sh->set_evacuation_in_progress(false);
+
+}
+

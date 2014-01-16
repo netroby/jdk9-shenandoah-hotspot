@@ -1375,6 +1375,9 @@ class CommandLineFlags {
   develop(bool, ShenandoahVerify, false,                                    \
           "Verify the  Shenandoah garbage collector")                       \
                                                                             \
+  develop(bool, ShenandoahConcurrentEvacuation, true,                       \
+          "Turn on/off concurrent evacuation in Shenandoah")                \
+                                                                            \
   product(bool, UseParallelGC, false,                                       \
           "Use the Parallel Scavenge garbage collector")                    \
                                                                             \

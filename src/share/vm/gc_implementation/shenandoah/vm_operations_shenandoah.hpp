@@ -38,4 +38,14 @@ class VM_ShenandoahVerifyHeapAfterEvacuation: public VM_Operation {
 
 };
 
+class VM_ShenandoahEvacuation: public VM_Operation {
+
+ public:
+  virtual VMOp_Type type() const;
+  virtual void doit();
+
+  virtual const char* name() const;
+
+};
+
 #endif //SHARE_VM_GC_IMPLEMENTATION_SHENANDOAH_VM_OPERATIONS_SHENANDOAH_HPP
