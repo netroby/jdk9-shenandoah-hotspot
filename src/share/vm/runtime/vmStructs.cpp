@@ -2213,6 +2213,7 @@ typedef BinaryTreeDictionary<Metablock, FreeList> MetablockTreeDictionary;
   declare_constant(BarrierSet::CardTableExtension)                        \
   declare_constant(BarrierSet::G1SATBCT)                                  \
   declare_constant(BarrierSet::G1SATBCTLogging)                           \
+  declare_constant(BarrierSet::ShenandoahBarrierSet)                      \
   declare_constant(BarrierSet::Other)                                     \
                                                                           \
   declare_constant(BlockOffsetSharedArray::LogN)                          \
