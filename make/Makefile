@@ -190,7 +190,7 @@ $(HOTSPOT_SCRIPT): $(GAMMADIR)/make/hotspot.script
 generic_build1: $(HOTSPOT_SCRIPT)
 	$(MKDIR) -p $(OUTPUTDIR)
 ifeq ($(OSNAME),windows)
-  ifeq ($(ARCH_DATA_MODEL), 32)
+#  ifeq ($(ARCH_DATA_MODEL), 32)
 	$(CD) $(OUTPUTDIR); \
 	    $(NMAKE) -f $(ABS_OS_MAKEFILE) \
 		      Variant=compiler1 \
@@ -198,17 +198,17 @@ ifeq ($(OSNAME),windows)
 		      BootStrapDir=$(ABS_BOOTDIR) \
                       BuildUser=$(USERNAME) \
 		      $(MAKE_ARGS) $(VM_TARGET:%1=%)
-  else
-	@$(ECHO) "No compiler1 ($(VM_TARGET)) for ARCH_DATA_MODEL=$(ARCH_DATA_MODEL)"
-  endif
+#  else
+#	@$(ECHO) "No compiler1 ($(VM_TARGET)) for ARCH_DATA_MODEL=$(ARCH_DATA_MODEL)"
+#  endif
 else
-  ifeq ($(ARCH_DATA_MODEL), 32)
+#  ifeq ($(ARCH_DATA_MODEL), 32)
 	$(CD) $(OUTPUTDIR); \
 	    $(MAKE) -f $(ABS_OS_MAKEFILE) \
 		      $(MAKE_ARGS) $(VM_TARGET)
-  else
-	@$(ECHO) "No compiler1 ($(VM_TARGET)) for ARCH_DATA_MODEL=$(ARCH_DATA_MODEL)"
-  endif
+#  else
+#	@$(ECHO) "No compiler1 ($(VM_TARGET)) for ARCH_DATA_MODEL=$(ARCH_DATA_MODEL)"
+#  endif
 endif
 
 # Build compiler2 (server) rule, different for platforms
@@ -569,11 +569,11 @@ test_product test_optimized test_fastdebug test_debug:
 
 # C1 test targets
 test_product1 test_optimized1 test_fastdebug1 test_debug1:
-  ifeq ($(ARCH_DATA_MODEL), 32)
+#  ifeq ($(ARCH_DATA_MODEL), 32)
 	@$(MAKE) generic_test ALTJVM_DIR="$(C1_DIR)/$(@:test_%1=%)"
-  else
-	@$(ECHO) "No compiler1 ($(@:test_%=%)) for ARCH_DATA_MODEL=$(ARCH_DATA_MODEL)"
-  endif
+#  else
+#	@$(ECHO) "No compiler1 ($(@:test_%=%)) for ARCH_DATA_MODEL=$(ARCH_DATA_MODEL)"
+#  endif
 
 # Zero test targets
 test_productzero test_optimizedzero test_fastdebugzero test_debugzero:
