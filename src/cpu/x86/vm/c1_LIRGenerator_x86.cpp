@@ -301,7 +301,7 @@ void LIRGenerator::do_StoreIndexed(StoreIndexed* x) {
   }
 
   // emit array address setup early so it schedules better
-  LIR_Address* array_addr = emit_array_address(array.result(), index.result(), x->elt_type(), obj_store);
+  LIR_Address* array_addr = emit_array_address(array.result(), index.result(), x->elt_type(), obj_store && ! UseShenandoahGC);
 
   if (GenerateRangeChecks && needs_range_check) {
     if (use_length) {

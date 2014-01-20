@@ -43,6 +43,10 @@
   // method.
   Address as_Address(LIR_Address* addr, Register tmp);
 
+  Address as_Address_resolve_oop(LIR_Address* addr, Register tmp = rscratch1);
+  Address as_Address_lo_resolve_oop(LIR_Address* addr);
+  Address as_Address_hi_resolve_oop(LIR_Address* addr);
+
   // Record the type of the receiver in ReceiverTypeData
   void type_profile_helper(Register mdo,
                            ciMethodData *md, ciProfileData *data,

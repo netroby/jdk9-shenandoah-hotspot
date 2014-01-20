@@ -259,6 +259,13 @@ Address LIR_Assembler::as_Address(LIR_Address* addr, Register tmp) {
   }
 }
 
+Address LIR_Assembler::as_Address_resolve_oop(LIR_Address* addr, Register tmp) {
+  if(addr->base()->type() == T_OBJECT || addr->base()->type() == T_ARRAY) {
+    Register reg = addr->base()->as_pointer_register();
+    oopDesc::bs()->compile_resolve_oop(_masm, reg);
+  }
+  return as_Address(addr, tmp);
+}
 
 Address LIR_Assembler::as_Address_hi(LIR_Address* addr) {
   Address base = as_Address(addr);
@@ -270,6 +277,14 @@ Address LIR_Assembler::as_Address_lo(LIR_Address* addr) {
   return as_Address(addr);
 }
 
+Address LIR_Assembler::as_Address_lo_resolve_oop(LIR_Address* addr) {
+  return as_Address_lo(addr);
+}
+
+Address LIR_Assembler::as_Address_hi_resolve_oop(LIR_Address* addr) {
+  Address base = as_Address_resolve_oop(addr);
+  return Address(base._base, base._index, base._scale, base._disp + BytesPerWord);
+}
 
 void LIR_Assembler::osr_entry() {
   offsets()->set_value(CodeOffsets::OSR_Entry, code_offset());
@@ -787,20 +802,20 @@ void LIR_Assembler::const2mem(LIR_Opr src, LIR_Opr dest, BasicType type, CodeEmi
   switch (type) {
     case T_INT:    // fall through
     case T_FLOAT:
-      __ movl(as_Address(addr), c->as_jint_bits());
+      __ movl(as_Address_resolve_oop(addr), c->as_jint_bits());
       break;
 
     case T_ADDRESS:
-      __ movptr(as_Address(addr), c->as_jint_bits());
+      __ movptr(as_Address_resolve_oop(addr), c->as_jint_bits());
       break;
 
     case T_OBJECT:  // fall through
     case T_ARRAY:
       if (c->as_jobject() == NULL) {
         if (UseCompressedOops && !wide) {
-          __ movl(as_Address(addr), (int32_t)NULL_WORD);
+          __ movl(as_Address_resolve_oop(addr), (int32_t)NULL_WORD);
         } else {
-          __ movptr(as_Address(addr), NULL_WORD);
+          __ movptr(as_Address_resolve_oop(addr), NULL_WORD);
         }
       } else {
         if (is_literal_address(addr)) {
@@ -812,13 +827,13 @@ void LIR_Assembler::const2mem(LIR_Opr src, LIR_Opr dest, BasicType type, CodeEmi
           if (UseCompressedOops && !wide) {
             __ encode_heap_oop(rscratch1);
             null_check_here = code_offset();
-            __ movl(as_Address_lo(addr), rscratch1);
+            __ movl(as_Address_lo_resolve_oop(addr), rscratch1);
           } else {
             null_check_here = code_offset();
-            __ movptr(as_Address_lo(addr), rscratch1);
+            __ movptr(as_Address_lo_resolve_oop(addr), rscratch1);
           }
 #else
-          __ movoop(as_Address(addr), c->as_jobject());
+          __ movoop(as_Address_resolve_oop(addr), c->as_jobject());
 #endif
         }
       }
@@ -833,23 +848,23 @@ void LIR_Assembler::const2mem(LIR_Opr src, LIR_Opr dest, BasicType type, CodeEmi
       } else {
         __ movptr(r10, (intptr_t)c->as_jlong_bits());
         null_check_here = code_offset();
-        __ movptr(as_Address_lo(addr), r10);
+        __ movptr(as_Address_lo_resolve_oop(addr), r10);
       }
 #else
       // Always reachable in 32bit so this doesn't produce useless move literal
-      __ movptr(as_Address_hi(addr), c->as_jint_hi_bits());
-      __ movptr(as_Address_lo(addr), c->as_jint_lo_bits());
+      __ movptr(as_Address_hi_resolve_oop(addr), c->as_jint_hi_bits());
+      __ movptr(as_Address_lo_resolve_oop(addr), c->as_jint_lo_bits());
 #endif // _LP64
       break;
 
     case T_BOOLEAN: // fall through
     case T_BYTE:
-      __ movb(as_Address(addr), c->as_jint() & 0xFF);
+      __ movb(as_Address_resolve_oop(addr), c->as_jint() & 0xFF);
       break;
 
     case T_CHAR:    // fall through
     case T_SHORT:
-      __ movw(as_Address(addr), c->as_jint() & 0xFFFF);
+      __ movw(as_Address_resolve_oop(addr), c->as_jint() & 0xFFFF);
       break;
 
     default:
@@ -1008,11 +1023,16 @@ void LIR_Assembler::reg2mem(LIR_Opr src, LIR_Opr dest, BasicType type, LIR_Patch
       __ encode_heap_oop(compressed_src);
     }
 #endif
+
+    // We need to do this here, to avoid confusion in patching code.
+    oopDesc::bs()->compile_resolve_oop(_masm, src->as_register());
   }
+
+  Address addr = as_Address_resolve_oop(to_addr);
 
   if (patch_code != lir_patch_none) {
     patch = new PatchingStub(_masm, PatchingStub::access_field_id);
-    Address toa = as_Address(to_addr);
+    Address toa = addr;
     assert(toa.disp() != 0, "must have");
   }
 
@@ -1020,24 +1040,24 @@ void LIR_Assembler::reg2mem(LIR_Opr src, LIR_Opr dest, BasicType type, LIR_Patch
   switch (type) {
     case T_FLOAT: {
       if (src->is_single_xmm()) {
-        __ movflt(as_Address(to_addr), src->as_xmm_float_reg());
+        __ movflt(addr, src->as_xmm_float_reg());
       } else {
         assert(src->is_single_fpu(), "must be");
         assert(src->fpu_regnr() == 0, "argument must be on TOS");
-        if (pop_fpu_stack)      __ fstp_s(as_Address(to_addr));
-        else                    __ fst_s (as_Address(to_addr));
+        if (pop_fpu_stack)      __ fstp_s(as_Address_resolve_oop(to_addr));
+        else                    __ fst_s (as_Address_resolve_oop(to_addr));
       }
       break;
     }
 
     case T_DOUBLE: {
       if (src->is_double_xmm()) {
-        __ movdbl(as_Address(to_addr), src->as_xmm_double_reg());
+        __ movdbl(addr, src->as_xmm_double_reg());
       } else {
         assert(src->is_double_fpu(), "must be");
         assert(src->fpu_regnrLo() == 0, "argument must be on TOS");
-        if (pop_fpu_stack)      __ fstp_d(as_Address(to_addr));
-        else                    __ fst_d (as_Address(to_addr));
+        if (pop_fpu_stack)      __ fstp_d(as_Address_resolve_oop(to_addr));
+        else                    __ fst_d (as_Address_resolve_oop(to_addr));
       }
       break;
     }
@@ -1045,9 +1065,9 @@ void LIR_Assembler::reg2mem(LIR_Opr src, LIR_Opr dest, BasicType type, LIR_Patch
     case T_ARRAY:   // fall through
     case T_OBJECT:  // fall through
       if (UseCompressedOops && !wide) {
-        __ movl(as_Address(to_addr), compressed_src);
+        __ movl(addr, compressed_src);
       } else {
-        __ movptr(as_Address(to_addr), src->as_register());
+        __ movptr(addr, src->as_register());
       }
       break;
     case T_METADATA:
@@ -1056,20 +1076,20 @@ void LIR_Assembler::reg2mem(LIR_Opr src, LIR_Opr dest, BasicType type, LIR_Patch
       // compressed klass ptrs: T_METADATA can be a compressed klass
       // ptr or a 64 bit method pointer.
       LP64_ONLY(ShouldNotReachHere());
-      __ movptr(as_Address(to_addr), src->as_register());
+      __ movptr(addr, src->as_register());
       break;
     case T_ADDRESS:
-      __ movptr(as_Address(to_addr), src->as_register());
+      __ movptr(addr, src->as_register());
       break;
     case T_INT:
-      __ movl(as_Address(to_addr), src->as_register());
+      __ movl(addr, src->as_register());
       break;
 
     case T_LONG: {
       Register from_lo = src->as_register_lo();
       Register from_hi = src->as_register_hi();
 #ifdef _LP64
-      __ movptr(as_Address_lo(to_addr), from_lo);
+      __ movptr(addr, from_lo);
 #else
       Register base = to_addr->base()->as_register();
       Register index = noreg;
@@ -1079,22 +1099,22 @@ void LIR_Assembler::reg2mem(LIR_Opr src, LIR_Opr dest, BasicType type, LIR_Patch
       if (base == from_lo || index == from_lo) {
         assert(base != from_hi, "can't be");
         assert(index == noreg || (index != base && index != from_hi), "can't handle this");
-        __ movl(as_Address_hi(to_addr), from_hi);
+        __ movl(as_Address_hi_resolve_oop(to_addr), from_hi);
         if (patch != NULL) {
           patching_epilog(patch, lir_patch_high, base, info);
           patch = new PatchingStub(_masm, PatchingStub::access_field_id);
           patch_code = lir_patch_low;
         }
-        __ movl(as_Address_lo(to_addr), from_lo);
+        __ movl(as_Address_lo_resolve_oop(to_addr), from_lo);
       } else {
         assert(index == noreg || (index != base && index != from_lo), "can't handle this");
-        __ movl(as_Address_lo(to_addr), from_lo);
+        __ movl(as_Address_lo_resolve_oop(to_addr), from_lo);
         if (patch != NULL) {
           patching_epilog(patch, lir_patch_low, base, info);
           patch = new PatchingStub(_masm, PatchingStub::access_field_id);
           patch_code = lir_patch_high;
         }
-        __ movl(as_Address_hi(to_addr), from_hi);
+        __ movl(as_Address_hi_resolve_oop(to_addr), from_hi);
       }
 #endif // _LP64
       break;
@@ -1103,7 +1123,7 @@ void LIR_Assembler::reg2mem(LIR_Opr src, LIR_Opr dest, BasicType type, LIR_Patch
     case T_BYTE:    // fall through
     case T_BOOLEAN: {
       Register src_reg = src->as_register();
-      Address dst_addr = as_Address(to_addr);
+      Address dst_addr = addr;
       assert(VM_Version::is_P6() || src_reg->has_byte_register(), "must use byte registers if not P6");
       __ movb(dst_addr, src_reg);
       break;
@@ -1111,7 +1131,7 @@ void LIR_Assembler::reg2mem(LIR_Opr src, LIR_Opr dest, BasicType type, LIR_Patch
 
     case T_CHAR:    // fall through
     case T_SHORT:
-      __ movw(as_Address(to_addr), src->as_register());
+      __ movw(addr, src->as_register());
       break;
 
     default:
@@ -1210,7 +1230,8 @@ void LIR_Assembler::mem2reg(LIR_Opr src, LIR_Opr dest, BasicType type, LIR_Patch
   assert(dest->is_register(), "should not call otherwise");
 
   LIR_Address* addr = src->as_address_ptr();
-  Address from_addr = as_Address(addr);
+
+  Address from_addr = as_Address_resolve_oop(addr);
 
   if (addr->base()->type() == T_OBJECT) {
     __ verify_oop(addr->base()->as_pointer_register());
@@ -1287,7 +1308,7 @@ void LIR_Assembler::mem2reg(LIR_Opr src, LIR_Opr dest, BasicType type, LIR_Patch
       Register to_lo = dest->as_register_lo();
       Register to_hi = dest->as_register_hi();
 #ifdef _LP64
-      __ movptr(to_lo, as_Address_lo(addr));
+      __ movptr(to_lo, as_Address_lo_resolve_oop(addr));
 #else
       Register base = addr->base()->as_register();
       Register index = noreg;
@@ -1300,28 +1321,28 @@ void LIR_Assembler::mem2reg(LIR_Opr src, LIR_Opr dest, BasicType type, LIR_Patch
         // array access so this code will never have to deal with
         // patches or null checks.
         assert(info == NULL && patch == NULL, "must be");
-        __ lea(to_hi, as_Address(addr));
+        __ lea(to_hi, as_Address_resolve_oop(addr));
         __ movl(to_lo, Address(to_hi, 0));
         __ movl(to_hi, Address(to_hi, BytesPerWord));
       } else if (base == to_lo || index == to_lo) {
         assert(base != to_hi, "can't be");
         assert(index == noreg || (index != base && index != to_hi), "can't handle this");
-        __ movl(to_hi, as_Address_hi(addr));
+        __ movl(to_hi, as_Address_hi_resolve_oop(addr));
         if (patch != NULL) {
           patching_epilog(patch, lir_patch_high, base, info);
           patch = new PatchingStub(_masm, PatchingStub::access_field_id);
           patch_code = lir_patch_low;
         }
-        __ movl(to_lo, as_Address_lo(addr));
+        __ movl(to_lo, as_Address_lo_resolve_oop(addr));
       } else {
         assert(index == noreg || (index != base && index != to_lo), "can't handle this");
-        __ movl(to_lo, as_Address_lo(addr));
+        __ movl(to_lo, as_Address_lo_resolve_oop(addr));
         if (patch != NULL) {
           patching_epilog(patch, lir_patch_low, base, info);
           patch = new PatchingStub(_masm, PatchingStub::access_field_id);
           patch_code = lir_patch_high;
         }
-        __ movl(to_hi, as_Address_hi(addr));
+        __ movl(to_hi, as_Address_hi_resolve_oop(addr));
       }
 #endif // _LP64
       break;
@@ -1977,8 +1998,17 @@ void LIR_Assembler::emit_compare_and_swap(LIR_OpCompareAndSwap* op) {
   } else if (op->code() == lir_cas_int || op->code() == lir_cas_obj ) {
     NOT_LP64(assert(op->addr()->is_single_cpu(), "must be single");)
     Register addr = (op->addr()->is_single_cpu() ? op->addr()->as_register() : op->addr()->as_register_lo());
+    if (op->addr()->type() == T_OBJECT || op->addr()->type() == T_ARRAY) {
+      oopDesc::bs()->compile_resolve_oop(_masm, addr);
+    }
     Register newval = op->new_value()->as_register();
     Register cmpval = op->cmp_value()->as_register();
+    if (op->code() == lir_cas_obj) {
+      oopDesc::bs()->compile_resolve_oop(_masm, cmpval);
+      __ movptr(rscratch1, Address(addr, 0));
+      oopDesc::bs()->compile_resolve_oop(_masm, rscratch1);
+      __ movptr(Address(addr, 0), rscratch1);
+    }
     assert(cmpval == rax, "wrong register");
     assert(newval != NULL, "new val must be register");
     assert(cmpval != newval, "cmp and new values must be in different registers");
@@ -2690,6 +2720,8 @@ void LIR_Assembler::comp_op(LIR_Condition condition, LIR_Opr opr1, LIR_Opr opr2,
     if (opr2->is_single_cpu()) {
       // cpu register - cpu register
       if (opr1->type() == T_OBJECT || opr1->type() == T_ARRAY) {
+        oopDesc::bs()->compile_resolve_oop(_masm, reg1);
+        oopDesc::bs()->compile_resolve_oop(_masm, opr2->as_register());
         __ cmpptr(reg1, opr2->as_register());
       } else {
         assert(opr2->type() != T_OBJECT && opr2->type() != T_ARRAY, "cmp int, oop?");
@@ -2698,7 +2730,10 @@ void LIR_Assembler::comp_op(LIR_Condition condition, LIR_Opr opr1, LIR_Opr opr2,
     } else if (opr2->is_stack()) {
       // cpu register - stack
       if (opr1->type() == T_OBJECT || opr1->type() == T_ARRAY) {
-        __ cmpptr(reg1, frame_map()->address_for_slot(opr2->single_stack_ix()));
+        __ movptr(rscratch1, frame_map()->address_for_slot(opr2->single_stack_ix()));
+        oopDesc::bs()->compile_resolve_oop(_masm, reg1);
+        oopDesc::bs()->compile_resolve_oop(_masm, rscratch1);
+        __ cmpptr(reg1, rscratch1);
       } else {
         __ cmpl(reg1, frame_map()->address_for_slot(opr2->single_stack_ix()));
       }
@@ -2715,6 +2750,8 @@ void LIR_Assembler::comp_op(LIR_Condition condition, LIR_Opr opr1, LIR_Opr opr2,
         } else {
 #ifdef _LP64
           __ movoop(rscratch1, o);
+          oopDesc::bs()->compile_resolve_oop(_masm, reg1);
+          oopDesc::bs()->compile_resolve_oop(_masm, rscratch1);
           __ cmpptr(reg1, rscratch1);
 #else
           __ cmpoop(reg1, c->as_jobject());
@@ -2725,6 +2762,7 @@ void LIR_Assembler::comp_op(LIR_Condition condition, LIR_Opr opr1, LIR_Opr opr2,
       }
       // cpu register - address
     } else if (opr2->is_address()) {
+      assert (opr1->type() != T_OBJECT && opr1->type() != T_ARRAY, "expect non oop cmp");
       if (op->info() != NULL) {
         add_debug_info_for_null_check_here(op->info());
       }
@@ -3375,6 +3413,9 @@ void LIR_Assembler::emit_arraycopy(LIR_OpArrayCopy* op) {
         __ movl(tmp, Address(tmp, Klass::super_check_offset_offset()));
         __ push(tmp);
         __ push(length);
+
+        oopDesc::bs()->compile_resolve_oop_not_null(_masm, src);
+        oopDesc::bs()->compile_resolve_oop_not_null(_masm, dst);
         __ lea(tmp, Address(dst, dst_pos, scale, arrayOopDesc::base_offset_in_bytes(basic_type)));
         __ push(tmp);
         __ lea(tmp, Address(src, src_pos, scale, arrayOopDesc::base_offset_in_bytes(basic_type)));
@@ -3500,6 +3541,8 @@ void LIR_Assembler::emit_arraycopy(LIR_OpArrayCopy* op) {
 
 #ifdef _LP64
   assert_different_registers(c_rarg0, dst, dst_pos, length);
+  oopDesc::bs()->compile_resolve_oop_not_null(_masm, src);
+  oopDesc::bs()->compile_resolve_oop_not_null(_masm, dst);
   __ lea(c_rarg0, Address(src, src_pos, scale, arrayOopDesc::base_offset_in_bytes(basic_type)));
   assert_different_registers(c_rarg1, length);
   __ lea(c_rarg1, Address(dst, dst_pos, scale, arrayOopDesc::base_offset_in_bytes(basic_type)));
@@ -4032,9 +4075,9 @@ void LIR_Assembler::atomic_op(LIR_Code code, LIR_Opr src, LIR_Opr data, LIR_Opr 
       if (os::is_MP()) {
         __ lock();
       }
-      __ xaddl(as_Address(src->as_address_ptr()), data->as_register());
+      __ xaddl(as_Address_resolve_oop(src->as_address_ptr()), data->as_register());
     } else {
-      __ xchgl(data->as_register(), as_Address(src->as_address_ptr()));
+      __ xchgl(data->as_register(), as_Address_resolve_oop(src->as_address_ptr()));
     }
   } else if (data->is_oop()) {
     assert (code == lir_xchg, "xadd for oops");
@@ -4042,13 +4085,13 @@ void LIR_Assembler::atomic_op(LIR_Code code, LIR_Opr src, LIR_Opr data, LIR_Opr 
 #ifdef _LP64
     if (UseCompressedOops) {
       __ encode_heap_oop(obj);
-      __ xchgl(obj, as_Address(src->as_address_ptr()));
+      __ xchgl(obj, as_Address_resolve_oop(src->as_address_ptr()));
       __ decode_heap_oop(obj);
     } else {
-      __ xchgptr(obj, as_Address(src->as_address_ptr()));
+      __ xchgptr(obj, as_Address_resolve_oop(src->as_address_ptr()));
     }
 #else
-    __ xchgl(obj, as_Address(src->as_address_ptr()));
+    __ xchgl(obj, as_Address_resolve_oop(src->as_address_ptr()));
 #endif
   } else if (data->type() == T_LONG) {
 #ifdef _LP64
@@ -4057,7 +4100,7 @@ void LIR_Assembler::atomic_op(LIR_Code code, LIR_Opr src, LIR_Opr data, LIR_Opr 
       if (os::is_MP()) {
         __ lock();
       }
-      __ xaddq(as_Address(src->as_address_ptr()), data->as_register_lo());
+      __ xaddq(as_Address_resolve_oop(src->as_address_ptr()), data->as_register_lo());
     } else {
       __ xchgq(data->as_register_lo(), as_Address(src->as_address_ptr()));
     }
