@@ -278,7 +278,7 @@ Address LIR_Assembler::as_Address_lo(LIR_Address* addr) {
 }
 
 Address LIR_Assembler::as_Address_lo_resolve_oop(LIR_Address* addr) {
-  return as_Address_lo(addr);
+  return as_Address_resolve_oop(addr);
 }
 
 Address LIR_Assembler::as_Address_hi_resolve_oop(LIR_Address* addr) {
@@ -1989,31 +1989,30 @@ void LIR_Assembler::emit_compare_and_swap(LIR_OpCompareAndSwap* op) {
     assert(op->cmp_value()->as_register_hi() == rdx, "wrong register");
     assert(op->new_value()->as_register_lo() == rbx, "wrong register");
     assert(op->new_value()->as_register_hi() == rcx, "wrong register");
-    Register addr = op->addr()->as_register();
+    Address addr = as_Address_resolve_oop(op->addr()->as_address_ptr());
+      //Register addr = op->addr()->as_register();
     if (os::is_MP()) {
       __ lock();
     }
-    NOT_LP64(__ cmpxchg8(Address(addr, 0)));
+    NOT_LP64(__ cmpxchg8(addr));
 
   } else if (op->code() == lir_cas_int || op->code() == lir_cas_obj ) {
-    NOT_LP64(assert(op->addr()->is_single_cpu(), "must be single");)
-    Register addr = (op->addr()->is_single_cpu() ? op->addr()->as_register() : op->addr()->as_register_lo());
-    if (op->addr()->type() == T_OBJECT || op->addr()->type() == T_ARRAY) {
-      oopDesc::bs()->compile_resolve_oop(_masm, addr);
-    }
+    //    NOT_LP64(assert(op->addr()->is_single_cpu(), "must be single");)
+    Address addr = as_Address_resolve_oop(op->addr()->as_address_ptr());
+      //Addressgister addr = (op->addr()->is_single_cpu() ? op->addr()->as_register() : op->addr()->as_register_lo());
     Register newval = op->new_value()->as_register();
     Register cmpval = op->cmp_value()->as_register();
     if (op->code() == lir_cas_obj) {
       oopDesc::bs()->compile_resolve_oop(_masm, cmpval);
-      __ movptr(rscratch1, Address(addr, 0));
+      __ movptr(rscratch1, addr);
       oopDesc::bs()->compile_resolve_oop(_masm, rscratch1);
-      __ movptr(Address(addr, 0), rscratch1);
+      __ movptr(addr, rscratch1);
     }
     assert(cmpval == rax, "wrong register");
     assert(newval != NULL, "new val must be register");
     assert(cmpval != newval, "cmp and new values must be in different registers");
-    assert(cmpval != addr, "cmp and addr must be in different registers");
-    assert(newval != addr, "new value and addr must be in different registers");
+    //    assert(cmpval != addr, "cmp and addr must be in different registers");
+    //assert(newval != addr, "new value and addr must be in different registers");
 
     if ( op->code() == lir_cas_obj) {
 #ifdef _LP64
@@ -2025,36 +2024,37 @@ void LIR_Assembler::emit_compare_and_swap(LIR_OpCompareAndSwap* op) {
           __ lock();
         }
         // cmpval (rax) is implicitly used by this instruction
-        __ cmpxchgl(rscratch1, Address(addr, 0));
+        __ cmpxchgl(rscratch1, addr);
       } else
 #endif
       {
         if (os::is_MP()) {
           __ lock();
         }
-        __ cmpxchgptr(newval, Address(addr, 0));
+        __ cmpxchgptr(newval, addr);
       }
     } else {
       assert(op->code() == lir_cas_int, "lir_cas_int expected");
       if (os::is_MP()) {
         __ lock();
       }
-      __ cmpxchgl(newval, Address(addr, 0));
+      __ cmpxchgl(newval, addr);
     }
 #ifdef _LP64
   } else if (op->code() == lir_cas_long) {
-    Register addr = (op->addr()->is_single_cpu() ? op->addr()->as_register() : op->addr()->as_register_lo());
+    Address addr = as_Address_resolve_oop(op->addr()->as_address_ptr());
+      //Register addr = (op->addr()->is_single_cpu() ? op->addr()->as_register() : op->addr()->as_register_lo());
     Register newval = op->new_value()->as_register_lo();
     Register cmpval = op->cmp_value()->as_register_lo();
     assert(cmpval == rax, "wrong register");
     assert(newval != NULL, "new val must be register");
     assert(cmpval != newval, "cmp and new values must be in different registers");
-    assert(cmpval != addr, "cmp and addr must be in different registers");
-    assert(newval != addr, "new value and addr must be in different registers");
+    //assert(cmpval != addr, "cmp and addr must be in different registers");
+    //assert(newval != addr, "new value and addr must be in different registers");
     if (os::is_MP()) {
       __ lock();
     }
-    __ cmpxchgq(newval, Address(addr, 0));
+    __ cmpxchgq(newval, addr);
 #endif // _LP64
   } else {
     Unimplemented();
@@ -3941,7 +3941,7 @@ void LIR_Assembler::volatile_move_op(LIR_Opr src, LIR_Opr dest, BasicType type, 
     } else if (dest->is_double_stack()) {
       __ movdbl(frame_map()->address_for_slot(dest->double_stack_ix()), src->as_xmm_double_reg());
     } else if (dest->is_address()) {
-      __ movdbl(as_Address(dest->as_address_ptr()), src->as_xmm_double_reg());
+      __ movdbl(as_Address_resolve_oop(dest->as_address_ptr()), src->as_xmm_double_reg());
     } else {
       ShouldNotReachHere();
     }
@@ -3950,7 +3950,7 @@ void LIR_Assembler::volatile_move_op(LIR_Opr src, LIR_Opr dest, BasicType type, 
     if (src->is_double_stack()) {
       __ movdbl(dest->as_xmm_double_reg(), frame_map()->address_for_slot(src->double_stack_ix()));
     } else if (src->is_address()) {
-      __ movdbl(dest->as_xmm_double_reg(), as_Address(src->as_address_ptr()));
+      __ movdbl(dest->as_xmm_double_reg(), as_Address_resolve_oop(src->as_address_ptr()));
     } else {
       ShouldNotReachHere();
     }
@@ -3960,7 +3960,7 @@ void LIR_Assembler::volatile_move_op(LIR_Opr src, LIR_Opr dest, BasicType type, 
     if (dest->is_double_stack()) {
       __ fistp_d(frame_map()->address_for_slot(dest->double_stack_ix()));
     } else if (dest->is_address()) {
-      __ fistp_d(as_Address(dest->as_address_ptr()));
+      __ fistp_d(as_Address_resolve_oop(dest->as_address_ptr()));
     } else {
       ShouldNotReachHere();
     }
@@ -4102,7 +4102,7 @@ void LIR_Assembler::atomic_op(LIR_Code code, LIR_Opr src, LIR_Opr data, LIR_Opr 
       }
       __ xaddq(as_Address_resolve_oop(src->as_address_ptr()), data->as_register_lo());
     } else {
-      __ xchgq(data->as_register_lo(), as_Address(src->as_address_ptr()));
+      __ xchgq(data->as_register_lo(), as_Address_resolve_oop(src->as_address_ptr()));
     }
 #else
     ShouldNotReachHere();

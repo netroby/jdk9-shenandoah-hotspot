@@ -748,7 +748,6 @@ void LIRGenerator::do_CompareAndSwap(Intrinsic* x, ValueType* type) {
     ShouldNotReachHere();
   }
 
-  LIR_Opr addr = new_pointer_register();
   LIR_Address* a;
   if(offset.result()->is_constant()) {
 #ifdef _LP64
@@ -776,7 +775,8 @@ void LIRGenerator::do_CompareAndSwap(Intrinsic* x, ValueType* type) {
                         0,
                         as_BasicType(type));
   }
-  __ leal(LIR_OprFact::address(a), addr);
+  // __ leal(LIR_OprFact::address(a), addr);
+  LIR_Opr addr = LIR_OprFact::address(a);
 
   if (type == objectType) {  // Write-barrier needed for Object fields.
     // Do the pre-write barrier, if any.
