@@ -39,8 +39,8 @@ void ShenandoahConcurrentThread::run() {
   wait_for_universe_init();
   ShenandoahHeap* heap = ShenandoahHeap::heap();
 
-  size_t targetStartMarking = heap->max_capacity() / 4;
-  size_t targetBytesAllocated = heap->max_capacity() / 8;
+  size_t targetStartMarking = heap->max_capacity() / 16;
+  size_t targetBytesAllocated = heap->max_capacity() / 16;
 
 
   while (!_should_terminate) {
