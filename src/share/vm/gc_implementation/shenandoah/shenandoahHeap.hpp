@@ -261,7 +261,7 @@ public:
 
 private:
 
-  void grow_heap_by();
+  bool grow_heap_by();
 
   void verify_evacuation(ShenandoahHeapRegion* from_region);
   void set_concurrent_mark_in_progress(bool in_progress);

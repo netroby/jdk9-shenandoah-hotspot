@@ -376,8 +376,9 @@ HeapWord* ShenandoahHeap::allocate_memory_gclab(size_t word_size) {
   if (result == NULL) {
     // Check if we ran out of regions and try to grow heap.
     if (my_current_region == NULL && _num_regions < _max_regions) {
-      grow_heap_by();
-      result = allocate_memory_gclab(word_size);
+      if (grow_heap_by()) {
+        result = allocate_memory_gclab(word_size);
+      }
     }
     /*
     else {
@@ -1748,7 +1749,7 @@ uint ShenandoahHeap::oop_extra_words() {
   return BrooksPointer::BROOKS_POINTER_OBJ_SIZE;
 }
 
-void ShenandoahHeap::grow_heap_by() {
+bool ShenandoahHeap::grow_heap_by() {
   int new_region_index = ensure_new_regions(1);
   if (new_region_index != -1) {
     ShenandoahHeapRegion* new_region = new ShenandoahHeapRegion();
@@ -1760,6 +1761,9 @@ void ShenandoahHeap::grow_heap_by() {
     }
     _ordered_regions[new_region_index] = new_region;
     _free_regions->append(new_region);
+    return true;
+  } else {
+    return false;
   }
 }
 
