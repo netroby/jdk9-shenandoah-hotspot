@@ -150,6 +150,8 @@ void ShenandoahBarrierSet::write_ref_array_work(MemRegion mr) {
 
 template <class T>
 void ShenandoahBarrierSet::write_ref_array_pre_work(T* dst, int count) {
+
+#ifdef ASSERT
     ShenandoahHeap *sh = (ShenandoahHeap*) Universe::heap();
     if (sh->is_in(dst) && 
 	sh->heap_region_containing((HeapWord*) dst)->is_in_collection_set()){
@@ -157,6 +159,7 @@ void ShenandoahBarrierSet::write_ref_array_pre_work(T* dst, int count) {
       sh->heap_region_containing((HeapWord*) dst)->print();
       assert(false, "We should have fixed this earlier");   
     }   
+#endif
 
   if (! JavaThread::satb_mark_queue_set().is_active()) return;
   // tty->print_cr("write_ref_array_pre_work: %p, %d", dst, count);
@@ -185,6 +188,8 @@ void ShenandoahBarrierSet::write_ref_array_pre(narrowOop* dst, int count, bool d
 template <class T>
 void ShenandoahBarrierSet::write_ref_field_pre_static(T* field, oop newVal) {
   T heap_oop = oopDesc::load_heap_oop(field);
+
+#ifdef ASSERT
     ShenandoahHeap *sh = (ShenandoahHeap*) Universe::heap();
     if (sh->is_in(field) && 
 	sh->heap_region_containing((HeapWord*)field)->is_in_collection_set()){
@@ -192,6 +197,7 @@ void ShenandoahBarrierSet::write_ref_field_pre_static(T* field, oop newVal) {
       sh->heap_region_containing((HeapWord*)field)->print();
       assert(false, "We should have fixed this earlier");   
     }   
+#endif
 
   if (!oopDesc::is_null(heap_oop)) {
     G1SATBCardTableModRefBS::enqueue(oopDesc::decode_heap_oop(heap_oop));
