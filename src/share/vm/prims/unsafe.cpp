@@ -1180,8 +1180,6 @@ UNSAFE_END
 
 UNSAFE_ENTRY(jboolean, Unsafe_CompareAndSwapObject(JNIEnv *env, jobject unsafe, jobject obj, jlong offset, jobject e_h, jobject x_h))
   UnsafeWrapper("Unsafe_CompareAndSwapObject");
-  oop x = JNIHandles::resolve(x_h);
-  oop e = JNIHandles::resolve(e_h);
   // We are about to write to this entry so check to see if we need to copy it.
   oop p = oopDesc::bs()->resolve_and_maybe_copy_oop(JNIHandles::resolve(obj));
   HeapWord* addr = (HeapWord *)index_oop_from_field_offset_long(p, offset);
@@ -1197,6 +1195,8 @@ UNSAFE_ENTRY(jboolean, Unsafe_CompareAndSwapObject(JNIEnv *env, jobject unsafe, 
     // it would make our update stale anyway.
     oopDesc::atomic_compare_exchange_oop(resolved_old_val, addr, old_val);
   }
+  oop x = JNIHandles::resolve(x_h);
+  oop e = JNIHandles::resolve(e_h);
   oop res = oopDesc::atomic_compare_exchange_oop(x, addr, e, true);
   jboolean success  = (oopDesc::bs()->resolve_oop(res) == e);
   if (success)
