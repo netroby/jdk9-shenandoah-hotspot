@@ -1,3 +1,6 @@
+/*
+Copyright 2014 Red Hat, Inc. and/or its affiliates.
+ */
 #include "gc_implementation/shenandoah/brooksPointer.hpp"
 #include "gc_implementation/shenandoah/shenandoahHeapRegion.hpp"
 #include "gc_implementation/shenandoah/shenandoahHeap.hpp"

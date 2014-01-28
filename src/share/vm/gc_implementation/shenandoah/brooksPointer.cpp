@@ -1,3 +1,6 @@
+/*
+Copyright 2014 Red Hat, Inc. and/or its affiliates.
+ */
 
 #include "gc_interface/collectedHeap.hpp"
 #include "memory/universe.hpp"
