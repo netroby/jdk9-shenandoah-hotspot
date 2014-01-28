@@ -1,3 +1,7 @@
+/*
+Copyright 2014 Red Hat, Inc. and/or its affiliates.
+ */
+
 #include "services/shenandoahMemoryPool.hpp"
 
 ShenandoahMemoryPool::ShenandoahMemoryPool(ShenandoahHeap* gen,
