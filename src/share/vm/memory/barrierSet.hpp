@@ -67,7 +67,8 @@ public:
     ss_c_rarg1,
     ss_c_rarg2,
     ss_c_rarg3,
-    ss_c_rarg4
+    ss_c_rarg4,
+    ss_all
   };
 
 protected:

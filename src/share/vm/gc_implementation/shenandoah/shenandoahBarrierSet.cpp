@@ -357,13 +357,16 @@ void ShenandoahBarrierSet::compile_resolve_oop_not_null(MacroAssembler* masm, Re
 }
 
 void ShenandoahBarrierSet::compile_resolve_oop_for_write(MacroAssembler* masm, Register dst, int num_state_save, ...) {
-  assert(dst != rscratch1, "Need rscratch1");
-  assert(dst != rscratch2, "Need rscratch2");
+  assert(dst != rscratch1, "different regs");
+  //assert(dst != rscratch2, "Need rscratch2");
 
   Label done;
 
   // Resolve oop first.
+  // TODO: Make this not-null-checking as soon as we have implicit null checks in c1!
   compile_resolve_oop(masm, dst);
+
+  __ push(rscratch1);
 
   // Now check if evacuation is in progress.
   ExternalAddress evacuation_in_progress = ExternalAddress(ShenandoahHeap::evacuation_in_progress_addr());
@@ -425,6 +428,43 @@ void ShenandoahBarrierSet::compile_resolve_oop_for_write(MacroAssembler* masm, R
     case ss_c_rarg4:
       __ push(c_rarg4);
       break;
+    case ss_all:
+      if (dst != rax) {
+        __ push(rax);
+      }
+      if (dst != rbx) {
+        __ push(rbx);
+      }
+      if (dst != rcx) {
+        __ push(rcx);
+      }
+      if (dst != rdx) {
+        __ push(rdx);
+      }
+      if (dst != rdi) {
+        __ push(rdi);
+      }
+      if (dst != rsi) {
+        __ push(rsi);
+      }
+      if (dst != r8) {
+        __ push(r8);
+      }
+      if (dst != r9) {
+        __ push(r9);
+      }
+      if (dst != r11) {
+        __ push(r11);
+      }
+
+      __ subptr(rsp, 2 * wordSize);
+      __ movdbl(Address(rsp, 0), xmm0);
+
+      __ subptr(rsp, wordSize);
+      __ movflt(Address(rsp, 0), xmm0);
+
+      break;
+
     default:
       ShouldNotReachHere();
     }
@@ -535,6 +575,40 @@ void ShenandoahBarrierSet::compile_resolve_oop_for_write(MacroAssembler* masm, R
     case ss_c_rarg4:
       __ pop(c_rarg4);
       break;
+    case ss_all:
+      __ movflt(xmm0, Address(rsp, 0));
+      __ addptr(rsp, wordSize);
+
+      __ movdbl(xmm0, Address(rsp, 0));
+      __ addptr(rsp, 2 * Interpreter::stackElementSize);
+      if (dst != r11) {
+        __ pop(r11);
+      }
+      if (dst != r9) {
+        __ pop(r9);
+      }
+      if (dst != r8) {
+        __ pop(r8);
+      }
+      if (dst != rsi) {
+        __ pop(rsi);
+      }
+      if (dst != rdi) {
+        __ pop(rdi);
+      }
+      if (dst != rdx) {
+        __ pop(rdx);
+      }
+      if (dst != rcx) {
+        __ pop(rcx);
+      }
+      if (dst != rbx) {
+        __ pop(rbx);
+      }
+      if (dst != rax) {
+        __ pop(rax);
+      }
+      break;
     default:
       ShouldNotReachHere();
     }
@@ -543,7 +617,7 @@ void ShenandoahBarrierSet::compile_resolve_oop_for_write(MacroAssembler* masm, R
   __ mov(dst, rscratch1);
 
   __ bind(done);
-
+  __ pop(r10);
 }
 
 /*
