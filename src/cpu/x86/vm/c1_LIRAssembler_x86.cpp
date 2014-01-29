@@ -842,6 +842,7 @@ void LIR_Assembler::const2mem(LIR_Opr src, LIR_Opr dest, BasicType type, CodeEmi
         } else {
 #ifdef _LP64
           __ movoop(rscratch1, c->as_jobject());
+          oopDesc::bs()->compile_resolve_oop(_masm, rscratch1);
           if (UseCompressedOops && !wide) {
             __ encode_heap_oop(rscratch1);
             null_check_here = code_offset();
@@ -2029,7 +2030,10 @@ void LIR_Assembler::emit_compare_and_swap(LIR_OpCompareAndSwap* op) {
       __ movptr(rax, addr);
       __ movptr(rscratch2, rax);
       oopDesc::bs()->compile_resolve_oop_for_write(_masm, rscratch2, 1, BarrierSet::ss_all);
-      __ cmpxchgl(rscratch2, addr);
+      if (os::is_MP()) {
+        __ lock();
+      }
+      __ cmpxchgptr(rscratch2, addr);
       __ movptr(rax, rscratch1);
       oopDesc::bs()->compile_resolve_oop(_masm, cmpval);
       oopDesc::bs()->compile_resolve_oop(_masm, newval);
@@ -3996,7 +4000,7 @@ void LIR_Assembler::volatile_move_op(LIR_Opr src, LIR_Opr dest, BasicType type, 
     if (src->is_double_stack()) {
       __ fild_d(frame_map()->address_for_slot(src->double_stack_ix()));
     } else if (src->is_address()) {
-      __ fild_d(as_Address_resolve_oop_for_write(src->as_address_ptr()));
+      __ fild_d(as_Address_resolve_oop(src->as_address_ptr()));
     } else {
       ShouldNotReachHere();
     }
