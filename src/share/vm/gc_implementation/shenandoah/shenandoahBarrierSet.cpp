@@ -466,11 +466,23 @@ void ShenandoahBarrierSet::compile_resolve_oop_for_write(MacroAssembler* masm, R
         __ push(r11);
       }
 
-      __ subptr(rsp, 2 * wordSize);
+      __ subptr(rsp, 128);
       __ movdbl(Address(rsp, 0), xmm0);
-
-      __ subptr(rsp, wordSize);
-      __ movflt(Address(rsp, 0), xmm0);
+      __ movdbl(Address(rsp, 8), xmm1);
+      __ movdbl(Address(rsp, 16), xmm2);
+      __ movdbl(Address(rsp, 24), xmm3);
+      __ movdbl(Address(rsp, 32), xmm4);
+      __ movdbl(Address(rsp, 40), xmm5);
+      __ movdbl(Address(rsp, 48), xmm6);
+      __ movdbl(Address(rsp, 56), xmm7);
+      __ movdbl(Address(rsp, 64), xmm8);
+      __ movdbl(Address(rsp, 72), xmm9);
+      __ movdbl(Address(rsp, 80), xmm10);
+      __ movdbl(Address(rsp, 88), xmm11);
+      __ movdbl(Address(rsp, 96), xmm12);
+      __ movdbl(Address(rsp, 104), xmm13);
+      __ movdbl(Address(rsp, 112), xmm14);
+      __ movdbl(Address(rsp, 120), xmm15);
 
       break;
 
@@ -585,11 +597,24 @@ void ShenandoahBarrierSet::compile_resolve_oop_for_write(MacroAssembler* masm, R
       __ pop(c_rarg4);
       break;
     case ss_all:
-      __ movflt(xmm0, Address(rsp, 0));
-      __ addptr(rsp, wordSize);
-
       __ movdbl(xmm0, Address(rsp, 0));
-      __ addptr(rsp, 2 * Interpreter::stackElementSize);
+      __ movdbl(xmm1, Address(rsp, 8));
+      __ movdbl(xmm2, Address(rsp, 16));
+      __ movdbl(xmm3, Address(rsp, 24));
+      __ movdbl(xmm4, Address(rsp, 32));
+      __ movdbl(xmm5, Address(rsp, 40));
+      __ movdbl(xmm6, Address(rsp, 48));
+      __ movdbl(xmm7, Address(rsp, 56));
+      __ movdbl(xmm8, Address(rsp, 64));
+      __ movdbl(xmm9, Address(rsp, 72));
+      __ movdbl(xmm10, Address(rsp, 80));
+      __ movdbl(xmm11, Address(rsp, 88));
+      __ movdbl(xmm12, Address(rsp, 96));
+      __ movdbl(xmm13, Address(rsp, 104));
+      __ movdbl(xmm14, Address(rsp, 112));
+      __ movdbl(xmm15, Address(rsp, 120));
+      __ addptr(rsp, 128);
+
       if (dst != r11) {
         __ pop(r11);
       }
