@@ -16,7 +16,7 @@ public:
 
 private:
   int _region_number;
-  volatile jlong liveData;
+  volatile size_t liveData;
   MemRegion reserved;
   volatile unsigned int claimed;
   bool _dirty;
@@ -38,8 +38,8 @@ public:
   bool rollback_allocation(uint size);
 
   void clearLiveData();
-  void setLiveData(jlong s);
-  void increase_live_data(jlong s);
+  void setLiveData(size_t s);
+  void increase_live_data(size_t s);
 
   size_t getLiveData();
 

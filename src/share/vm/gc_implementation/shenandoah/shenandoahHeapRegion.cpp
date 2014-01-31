@@ -33,12 +33,12 @@ void ShenandoahHeapRegion::clearLiveData() {
   setLiveData(0);
 }
 
-void ShenandoahHeapRegion::setLiveData(jlong s) {
-  Atomic::store(s, &liveData);
+void ShenandoahHeapRegion::setLiveData(size_t s) {
+  Atomic::store_ptr(s, (intptr_t*) &liveData);
 }
 
-void ShenandoahHeapRegion::increase_live_data(jlong s) {
-  Atomic::add(s, &liveData);
+void ShenandoahHeapRegion::increase_live_data(size_t s) {
+  Atomic::add_ptr(s, (intptr_t*) &liveData);
 }
 
 size_t ShenandoahHeapRegion::getLiveData() {
@@ -46,8 +46,8 @@ size_t ShenandoahHeapRegion::getLiveData() {
 }
 
 size_t ShenandoahHeapRegion::garbage() {
+  assert(used() >= liveData, "Live Data must be a subset of used()");
   size_t result = used() - liveData;
-  assert(result >= 0, "Live Data must be a subset of used()");
   return result;
 }
 
