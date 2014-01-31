@@ -38,7 +38,7 @@ ShenandoahHeapRegion* ShenandoahHeapRegionSet::at(uint i) {
 }
 
 size_t ShenandoahHeapRegionSet::length() {
-  return _numRegions;
+  return _inserted;
 }
 
 size_t ShenandoahHeapRegionSet::available_regions() {
