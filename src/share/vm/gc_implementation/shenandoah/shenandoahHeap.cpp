@@ -526,9 +526,11 @@ HeapWord* ShenandoahHeap::mem_allocate_locked(size_t size,
   } else {
     tty->print_cr("Out of memory. Requested number of words: %x used heap: %d, bytes allocated since last CM: %d", size, used(), _bytesAllocSinceCM);
     print_heap_regions();
-    tty->print("Printing %d free regions:\n", _free_regions->available_regions());
-    _free_regions->print();
-
+    MutexLockerEx ml(ShenandoahHeap_lock, true);
+    {
+      tty->print("Printing %d free regions:\n", _free_regions->length());
+      _free_regions->print();
+    }
     assert(false, "Out of memory");
     return NULL;
   }
@@ -739,8 +741,12 @@ public:
 };
 
 void ShenandoahHeap::print_heap_regions()  {
-  PrintHeapRegionsClosure pc1;
-  heap_region_iterate(&pc1);
+  MutexLockerEx ml(ShenandoahHeap_lock, true);
+  {
+
+    PrintHeapRegionsClosure pc1;
+    heap_region_iterate(&pc1);
+  }
 }
 
 class PrintAllRefsOopClosure: public ExtendedOopClosure {
