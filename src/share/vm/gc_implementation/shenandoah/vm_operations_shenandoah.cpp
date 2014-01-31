@@ -33,6 +33,7 @@ void VM_ShenandoahFinishMark::doit() {
   sh->stop_concurrent_marking();
   if (ShenandoahConcurrentEvacuation) {
     sh->prepare_for_concurrent_evacuation();
+    sh->set_evacuation_in_progress(true);
   }
 }
 
@@ -64,9 +65,9 @@ void VM_ShenandoahEvacuation::doit() {
   ShenandoahHeap *sh = ShenandoahHeap::heap();
   if (! ShenandoahConcurrentEvacuation) {
     sh->prepare_for_concurrent_evacuation();
+    sh->set_evacuation_in_progress(true);
   }
 
-  sh->set_evacuation_in_progress(true);
   sh->parallel_evacuate();
   sh->set_evacuation_in_progress(false);
 
