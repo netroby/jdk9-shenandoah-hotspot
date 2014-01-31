@@ -333,16 +333,20 @@ ShenandoahHeapRegion* ShenandoahHeap::cas_update_current_region(ShenandoahHeapRe
     expected->clearClaim();
   }
   if (_free_regions->has_next()) {
-    ShenandoahHeapRegion* previous = (ShenandoahHeapRegion*) Atomic::cmpxchg_ptr(_free_regions->peek_next(), &_current_region, expected);
+    ShenandoahHeapRegion* next = _free_regions->peek_next();
+    ShenandoahHeapRegion* previous = (ShenandoahHeapRegion*) Atomic::cmpxchg_ptr(next, &_current_region, expected);
     assert(! _current_region->is_humonguous(), "never get humonguous allocation region");
     if (previous == expected) {
       // Advance the region set.
       _free_regions->get_next();
+      next->set_is_current_allocation_region(true);
+      return next;
+    } else {
+      next->clearClaim(); // peek_next claimed it, unclaim it here, otherwise it stays forever.
+      // If the above CAS fails, we want the caller to get the _current_region that the other thread
+      // CAS'ed.
+      return previous;
     }
-    // If the above CAS fails, we want the caller to get the _current_region that the other thread
-    // CAS'ed.
-    _current_region->set_is_current_allocation_region(true);
-    return _current_region;
   } else {
     return NULL;
   }
