@@ -662,9 +662,9 @@ void ShenandoahHeap::parallel_evacuate_region(ShenandoahHeapRegion* from_region,
 
   from_region->set_is_in_collection_set(false);
 #ifdef ASSERT
-  //  if (ShenandoahVerify) {
+  if (ShenandoahVerify) {
     verify_evacuated_region(from_region);
-    //  }
+  }
 
     if (ShenandoahGCVerbose) {
       tty->print("parallel_evacuate_region after from_region = %d: Wasted %d bytes free_regions = %d\n", from_region->region_number(), evacuate_region.wasted(), _free_regions->available_regions());
