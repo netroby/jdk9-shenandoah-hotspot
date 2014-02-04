@@ -171,9 +171,6 @@ public:
   void gc_prologue(bool b);
   void gc_epilogue(bool b);
 
-  size_t used_in_bytes() { return used() * HeapWordSize;}
-  size_t capacity_in_bytes() { return capacity() * HeapWordSize;}
-
   void heap_region_iterate(ShenandoahHeapRegionClosure* blk, bool skip_dirty_regions = false) const;
   ShenandoahHeapRegion* heap_region_containing(const void* addr) const;  
 

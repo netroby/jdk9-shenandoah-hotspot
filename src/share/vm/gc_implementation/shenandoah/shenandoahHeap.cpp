@@ -151,6 +151,7 @@ ShenandoahHeap::ShenandoahHeap(ShenandoahCollectorPolicy* policy) :
   _default_gclab_size(1024){
   _pgc = this;
   _scm = new ShenandoahConcurrentMark();
+  _used = 0;
 }
 
 
