@@ -28,7 +28,7 @@ public:
 			  PoolType type,
 			  bool support_usage_threshold);
   MemoryUsage get_memory_usage();
-  size_t used_in_bytes()              { return _gen->used_in_bytes(); }
+  size_t used_in_bytes()              { return _gen->used(); }
   size_t max_size() const             { return _gen->max_capacity(); }
 };
 
