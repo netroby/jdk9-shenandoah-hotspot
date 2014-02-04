@@ -4102,10 +4102,11 @@ void LIR_Assembler::atomic_op(LIR_Code code, LIR_Opr src, LIR_Opr data, LIR_Opr 
 
   if (data->type() == T_INT) {
     if (code == lir_xadd) {
+      Address addr = as_Address_resolve_oop_for_write(src->as_address_ptr());
       if (os::is_MP()) {
         __ lock();
       }
-      __ xaddl(as_Address_resolve_oop_for_write(src->as_address_ptr()), data->as_register());
+      __ xaddl(addr, data->as_register());
     } else {
       __ xchgl(data->as_register(), as_Address_resolve_oop_for_write(src->as_address_ptr()));
     }
@@ -4127,10 +4128,11 @@ void LIR_Assembler::atomic_op(LIR_Code code, LIR_Opr src, LIR_Opr data, LIR_Opr 
 #ifdef _LP64
     assert(data->as_register_lo() == data->as_register_hi(), "should be a single register");
     if (code == lir_xadd) {
+      Address addr = as_Address_resolve_oop_for_write(src->as_address_ptr());
       if (os::is_MP()) {
         __ lock();
       }
-      __ xaddq(as_Address_resolve_oop_for_write(src->as_address_ptr()), data->as_register_lo());
+      __ xaddq(addr, data->as_register_lo());
     } else {
       __ xchgq(data->as_register_lo(), as_Address_resolve_oop_for_write(src->as_address_ptr()));
     }
