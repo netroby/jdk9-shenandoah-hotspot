@@ -42,12 +42,16 @@ void ShenandoahHeapRegion::increase_live_data(size_t s) {
 }
 
 size_t ShenandoahHeapRegion::getLiveData() {
-  return liveData;
+  if (is_humonguous()) {
+    return RegionSizeBytes;
+  } else {
+    return liveData;
+  }
 }
 
 size_t ShenandoahHeapRegion::garbage() {
-  assert(used() >= liveData, "Live Data must be a subset of used()");
-  size_t result = used() - liveData;
+  assert(used() >= getLiveData(), "Live Data must be a subset of used()");
+  size_t result = used() - getLiveData();
   return result;
 }
 
@@ -101,7 +105,7 @@ void ShenandoahHeapRegion::print(outputStream* st) {
     st->print(" ");
 
   st->print("live = %u garbage = %u claimed = %d bottom = %p end = %p top = %p dirty: %d active_tlabs: %d\n", 
-	     liveData, garbage(), claimed, bottom(), end(), top(), _dirty, active_tlab_count);
+            getLiveData(), garbage(), claimed, bottom(), end(), top(), _dirty, active_tlab_count);
 }
 
 
