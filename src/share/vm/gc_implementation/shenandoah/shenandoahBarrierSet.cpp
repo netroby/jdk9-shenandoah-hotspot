@@ -456,6 +456,9 @@ void ShenandoahBarrierSet::compile_resolve_oop_for_write(MacroAssembler* masm, R
       if (dst != rsi) {
         __ push(rsi);
       }
+      if (dst != rbp) {
+        __ push(rbp);
+      }
       if (dst != r8) {
         __ push(r8);
       }
@@ -464,6 +467,18 @@ void ShenandoahBarrierSet::compile_resolve_oop_for_write(MacroAssembler* masm, R
       }
       if (dst != r11) {
         __ push(r11);
+      }
+      if (dst != r12) {
+        __ push(r12);
+      }
+      if (dst != r13) {
+        __ push(r13);
+      }
+      if (dst != r14) {
+        __ push(r14);
+      }
+      if (dst != r15) {
+        __ push(r15);
       }
 
       __ subptr(rsp, 128);
@@ -615,6 +630,18 @@ void ShenandoahBarrierSet::compile_resolve_oop_for_write(MacroAssembler* masm, R
       __ movdbl(xmm15, Address(rsp, 120));
       __ addptr(rsp, 128);
 
+      if (dst != r15) {
+        __ pop(r15);
+      }
+      if (dst != r14) {
+        __ pop(r14);
+      }
+      if (dst != r13) {
+        __ pop(r13);
+      }
+      if (dst != r12) {
+        __ pop(r12);
+      }
       if (dst != r11) {
         __ pop(r11);
       }
@@ -623,6 +650,9 @@ void ShenandoahBarrierSet::compile_resolve_oop_for_write(MacroAssembler* masm, R
       }
       if (dst != r8) {
         __ pop(r8);
+      }
+      if (dst != rbp) {
+        __ pop(rbp);
       }
       if (dst != rsi) {
         __ pop(rsi);
