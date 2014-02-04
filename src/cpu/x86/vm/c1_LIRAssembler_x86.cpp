@@ -1066,8 +1066,8 @@ void LIR_Assembler::reg2mem(LIR_Opr src, LIR_Opr dest, BasicType type, LIR_Patch
       } else {
         assert(src->is_single_fpu(), "must be");
         assert(src->fpu_regnr() == 0, "argument must be on TOS");
-        if (pop_fpu_stack)      __ fstp_s(as_Address_resolve_oop_for_write(to_addr));
-        else                    __ fst_s (as_Address_resolve_oop_for_write(to_addr));
+        if (pop_fpu_stack)      __ fstp_s(addr);
+        else                    __ fst_s (addr);
       }
       break;
     }
@@ -1078,8 +1078,8 @@ void LIR_Assembler::reg2mem(LIR_Opr src, LIR_Opr dest, BasicType type, LIR_Patch
       } else {
         assert(src->is_double_fpu(), "must be");
         assert(src->fpu_regnrLo() == 0, "argument must be on TOS");
-        if (pop_fpu_stack)      __ fstp_d(as_Address_resolve_oop_for_write(to_addr));
-        else                    __ fst_d (as_Address_resolve_oop_for_write(to_addr));
+        if (pop_fpu_stack)      __ fstp_d(addr);
+        else                    __ fst_d (addr);
       }
       break;
     }
@@ -1330,7 +1330,7 @@ void LIR_Assembler::mem2reg(LIR_Opr src, LIR_Opr dest, BasicType type, LIR_Patch
       Register to_lo = dest->as_register_lo();
       Register to_hi = dest->as_register_hi();
 #ifdef _LP64
-      __ movptr(to_lo, as_Address_lo_resolve_oop(addr));
+      __ movptr(to_lo, from_addr);
 #else
       Register base = addr->base()->as_register();
       Register index = noreg;
