@@ -361,11 +361,6 @@ ShenandoahHeapRegion* ShenandoahHeap::cas_update_current_region(ShenandoahHeapRe
 
 HeapWord* ShenandoahHeap::allocate_memory_gclab(size_t word_size) {
   ShenandoahHeapRegion* my_current_region = _current_region;
-  if (my_current_region->is_dirty()) {
-    tty->print_cr("Heap Region %d is dirty", my_current_region->region_number());
-    print_heap_regions();
-  }
-
   assert(! my_current_region->is_dirty(), "never get dirty regions in free-lists");
   assert(! my_current_region->is_humonguous(), "never attempt to allocate from humonguous object regions");
   if (my_current_region == NULL) {
@@ -944,10 +939,11 @@ void ShenandoahHeap::parallel_evacuate() {
   }
 
   _shenandoah_policy->record_concurrent_evacuation_start();
-  
+
+  if (PrintGCDetails) {
     tty->print_cr("all regions before evacuation:");
     print_heap_regions();
-
+  }
 
   if (ShenandoahGCVerbose) {
     tty->print("Printing all available regions");
@@ -980,8 +976,10 @@ void ShenandoahHeap::parallel_evacuate() {
     tty->print_cr("all regions after evacuation:");
     print_heap_regions();
   }
+  if (PrintGCDetails) {
     tty->print_cr("all regions after evacuation:");
     print_heap_regions();
+  }
 
   _shenandoah_policy->record_concurrent_evacuation_end();
 }

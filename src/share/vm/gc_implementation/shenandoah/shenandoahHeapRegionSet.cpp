@@ -184,7 +184,6 @@ void ShenandoahHeapRegionSet::print() {
 void ShenandoahHeapRegionSet::
 choose_collection_set(ShenandoahHeapRegionSet* region_set, 
 		      int max_regions) {
-  tty->print("choose_collection_set started at time %lf\n", os::elapsedTime());
   sortDescendingGarbage();
   int r = 0;
   int cs_index = 0;
@@ -202,8 +201,6 @@ choose_collection_set(ShenandoahHeapRegionSet* region_set,
   region_set->_inserted = cs_index;
   region_set->_index = 0;
   region_set->_numRegions = cs_index;
-  tty->print("choose_collection_set ended at time %lf choose %d regions \n", os::elapsedTime(), cs_index);
-
 }
 
 void ShenandoahHeapRegionSet::choose_collection_set(ShenandoahHeapRegionSet* region_set) {

@@ -168,7 +168,7 @@ public:
 
 ShenandoahCollectorPolicy::ShenandoahCollectorPolicy() {
   initialize_all();
-  _heuristics = new StatusQuoHeuristics();
+  _heuristics = new AggressiveHeuristics();
 }
 
 ShenandoahCollectorPolicy* ShenandoahCollectorPolicy::as_pgc_policy() {
