@@ -229,6 +229,7 @@ void ShenandoahHeapRegionSet::choose_empty_regions(ShenandoahHeapRegionSet* regi
   while(r < _numRegions && _regions[r]->free() > _free_threshold) {
     ShenandoahHeapRegion* region = _regions[r];
     assert(! region->is_humonguous(), "don't reuse occupied humonguous regions");
+    guarantee(! region->is_in_collection_set(), "Never use targetted regions in free list");
     region_set->_regions[r] = region;
     r++;
   }

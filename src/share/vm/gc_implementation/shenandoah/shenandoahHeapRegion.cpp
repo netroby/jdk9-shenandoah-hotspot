@@ -15,7 +15,7 @@ jint ShenandoahHeapRegion::initialize(HeapWord* start,
   reserved = MemRegion((HeapWord*) start, regionSizeWords);
   ContiguousSpace::initialize(reserved, true, false);
   liveData = 0;
-  _dirty = false;
+  _is_in_collection_set = false;
   _region_number = index;
   return JNI_OK;
 }
@@ -55,14 +55,6 @@ size_t ShenandoahHeapRegion::garbage() {
   return result;
 }
 
-void ShenandoahHeapRegion::set_dirty(bool dirty) {
-  _dirty = dirty;
-}
-
-bool ShenandoahHeapRegion::is_dirty() {
-  return _dirty;
-}
-
 bool ShenandoahHeapRegion::claim() {
   bool previous = Atomic::cmpxchg(true, &claimed, false);
   return !previous;
@@ -97,15 +89,13 @@ void ShenandoahHeapRegion::print(outputStream* st) {
 
   if (is_current_allocation_region()) 
     st->print("A");
-  else if (is_in_collection_set())
+  if (is_in_collection_set())
     st->print("C");
-  else if (is_dirty())
-    st->print("D");
-  else
+  //else
     st->print(" ");
 
-  st->print("live = %u garbage = %u claimed = %d bottom = %p end = %p top = %p dirty: %d active_tlabs: %d\n", 
-            getLiveData(), garbage(), claimed, bottom(), end(), top(), _dirty, active_tlab_count);
+  st->print("live = %u garbage = %u claimed = %d bottom = %p end = %p top = %p active_tlabs: %d\n", 
+            getLiveData(), garbage(), claimed, bottom(), end(), top(), active_tlab_count);
 }
 
 
@@ -184,7 +174,7 @@ bool ShenandoahHeapRegion::is_humonguous_continuation() {
 void ShenandoahHeapRegion::recycle() {
   Space::initialize(reserved, true, false);
   clearLiveData();
-  set_dirty(false);
+  set_is_in_collection_set(false);
   _humonguous_start = false;
   _humonguous_continuation = false;
 }

@@ -63,7 +63,7 @@ public:
       if (ShenandoahGCVerbose) {
         tty->print("popping object: "PTR_FORMAT"\n", obj);
       }
-      assert(! sh->heap_region_containing(obj)->is_dirty(), "we don't want to mark objects in from-space");
+      assert(! sh->heap_region_containing(obj)->is_in_collection_set(), "we don't want to mark objects in from-space");
       obj->oop_iterate(&cl);
     }
   }
@@ -209,7 +209,7 @@ void ShenandoahConcurrentMark::addTask(oop obj, int q) {
   int age = BrooksPointer::get(obj).get_age();
 
   assert(obj->is_oop(), "Oops, not an oop");
-  assert(! sh->heap_region_containing(obj)->is_dirty(), "we don't want to mark objects in from-space");
+  assert(! sh->heap_region_containing(obj)->is_in_collection_set(), "we don't want to mark objects in from-space");
 
   // if (ShenandoahGCVerbose) {
   //  tty->print("addTask q = %d: obj = "PTR_FORMAT" epoch = %d object age = %d\n", q, obj, epoch, age);

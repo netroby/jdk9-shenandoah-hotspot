@@ -257,7 +257,7 @@ bool  ShenandoahHeap::is_scavengable(const void* p) {
 
 HeapWord* ShenandoahHeap::allocate_new_tlab(size_t word_size) {
   HeapWord* result = allocate_memory_gclab(word_size);
-  assert(! heap_region_containing(result)->is_dirty(), "Never allocate in dirty region");
+  assert(! heap_region_containing(result)->is_in_collection_set(), "Never allocate in dirty region");
   if (result != NULL) {
     _bytesAllocSinceCM += word_size * HeapWordSize;
     heap_region_containing(result)->increase_active_tlab_count();
@@ -275,7 +275,7 @@ void ShenandoahHeap::retire_tlab_at(HeapWord* start) {
 
 HeapWord* ShenandoahHeap::allocate_new_gclab(size_t word_size) {
   HeapWord* result = allocate_memory_gclab(word_size);
-  assert(! heap_region_containing(result)->is_dirty(), "Never allocate in dirty region");
+  assert(! heap_region_containing(result)->is_in_collection_set(), "Never allocate in dirty region");
   if (result != NULL) {
     if (ShenandoahGCVerbose)
       tty->print("allocating new gclab of size %d at addr %p\n", word_size, result);
@@ -318,7 +318,7 @@ public:
   }
 
   bool doHeapRegion(ShenandoahHeapRegion* r) {
-    if ((! r->is_dirty()) && r->free() >= _required_size) {
+    if ((! r->is_in_collection_set()) && r->free() >= _required_size) {
       _result = r;
       return true;
     }
@@ -337,6 +337,7 @@ ShenandoahHeapRegion* ShenandoahHeap::cas_update_current_region(ShenandoahHeapRe
     ShenandoahHeapRegion* next = _free_regions->peek_next();
     ShenandoahHeapRegion* previous = (ShenandoahHeapRegion*) Atomic::cmpxchg_ptr(next, &_current_region, expected);
     assert(! _current_region->is_humonguous(), "never get humonguous allocation region");
+    guarantee(! _current_region->is_in_collection_set(), "Never use targetted regions for allocations.");
     if (previous == expected) {
       // Advance the region set.
       _free_regions->get_next();
@@ -356,12 +357,12 @@ ShenandoahHeapRegion* ShenandoahHeap::cas_update_current_region(ShenandoahHeapRe
 
 HeapWord* ShenandoahHeap::allocate_memory_gclab(size_t word_size) {
   ShenandoahHeapRegion* my_current_region = _current_region;
-  assert(! my_current_region->is_dirty(), "never get dirty regions in free-lists");
+  assert(! my_current_region->is_in_collection_set(), "never get targetted regions in free-lists");
   assert(! my_current_region->is_humonguous(), "never attempt to allocate from humonguous object regions");
   if (my_current_region == NULL) {
     my_current_region = cas_update_current_region(my_current_region);
   }
-  assert(! my_current_region->is_dirty() && my_current_region != NULL, "Never allocate from dirty or NULL region");
+  assert(! my_current_region->is_in_collection_set() && my_current_region != NULL, "Never allocate from targetted or NULL region");
   assert(! my_current_region->is_humonguous(), "never attempt to allocate from humonguous object regions");
 
   // This isn't necessary when doing mem_allocate_locked but is for gc lab allocation.
@@ -397,7 +398,7 @@ HeapWord* ShenandoahHeap::allocate_memory_gclab(size_t word_size) {
     */
   } else {
     increase_used(word_size * HeapWordSize);
-    assert(! heap_region_containing(result)->is_dirty(), "never allocate in dirty region");
+    assert(! heap_region_containing(result)->is_in_collection_set(), "never allocate in targetted region");
   }
   return result;
 }
@@ -522,7 +523,7 @@ HeapWord* ShenandoahHeap::mem_allocate_locked(size_t size,
       tty->print("mem_allocate_locked object of size %d at addr %p in epoch %d\n", size, result, _epoch);
     }
 
-    assert(! heap_region_containing(result)->is_dirty(), "never allocate in dirty region");
+    assert(! heap_region_containing(result)->is_in_collection_set(), "never allocate in targetted region");
     return result;
   } else {
     tty->print_cr("Out of memory. Requested number of words: %x used heap: %d, bytes allocated since last CM: %d", size, used(), _bytesAllocSinceCM);
@@ -659,9 +660,6 @@ void ShenandoahHeap::parallel_evacuate_region(ShenandoahHeapRegion* from_region,
 #endif
 
   from_region->object_iterate(&evacuate_region);
-  from_region->set_dirty(true);
-
-  from_region->set_is_in_collection_set(false);
 #ifdef ASSERT
   if (ShenandoahVerify) {
     verify_evacuated_region(from_region);
@@ -704,10 +702,6 @@ public:
       // Not sure if the check is worth it or not.
       if (from_hr->getLiveData() != 0) {
 	_sh->parallel_evacuate_region(from_hr, &allocRegion);
-      } else {
-	// We don't need to evacuate anything, but we still need to mark it dirty.
-	from_hr->set_dirty(true);
-	from_hr->set_is_in_collection_set(false);
       }
 
       from_hr = _cs->claim_next();
@@ -730,7 +724,7 @@ public:
 
   bool doHeapRegion(ShenandoahHeapRegion* r) {
 
-    if (r->is_dirty()) {
+    if (r->is_in_collection_set()) {
       // tty->print_cr("recycling region %d:", r->region_number());
       // r->print_on(tty);
       // tty->print_cr("");
@@ -764,7 +758,7 @@ public:
       if (ShenandoahHeap::heap()->is_in(o) && o->is_oop() && !ShenandoahBarrierSet::is_brooks_ptr(o)) {
         tty->print_cr("%s (e%d) %d (%p)-> %p (age: %d) (%s %p)", _prefix, ShenandoahHeap::heap()->getEpoch(), _index, p, o, BrooksPointer::get(o).get_age(), o->klass()->internal_name(), o->klass());
       } else {
-        tty->print_cr("%s (e%d) %d (%p dirty: %d) -> %p (not in heap, possibly corrupted or dirty (%d))", _prefix, ShenandoahHeap::heap()->getEpoch(), _index, p, ShenandoahHeap::heap()->heap_region_containing(p)->is_dirty(), o, ShenandoahHeap::heap()->heap_region_containing(o)->is_dirty());
+        tty->print_cr("%s (e%d) %d (%p dirty: %d) -> %p (not in heap, possibly corrupted or dirty (%d))", _prefix, ShenandoahHeap::heap()->getEpoch(), _index, p, ShenandoahHeap::heap()->heap_region_containing(p)->is_in_collection_set(), o, ShenandoahHeap::heap()->heap_region_containing(o)->is_in_collection_set());
       }
     } else {
       tty->print_cr("%s (e%d) %d (%p) -> %p", _prefix, ShenandoahHeap::heap()->getEpoch(), _index, p, o);
@@ -841,11 +835,11 @@ public:
       }
       assert(ShenandoahBarrierSet::has_brooks_ptr(o), "oop must have a brooks ptr");
       if (! (o == oopDesc::bs()->resolve_oop(o))) {
-        tty->print_cr("oops has forwardee: p: %p (%d), o = %p (%d), new-o: %p (%d)", p, _heap->heap_region_containing(p)->is_dirty(), o,  _heap->heap_region_containing(o)->is_dirty(), oopDesc::bs()->resolve_oop(o),  _heap->heap_region_containing(oopDesc::bs()->resolve_oop(o))->is_dirty());
+        tty->print_cr("oops has forwardee: p: %p (%d), o = %p (%d), new-o: %p (%d)", p, _heap->heap_region_containing(p)->is_in_collection_set(), o,  _heap->heap_region_containing(o)->is_in_collection_set(), oopDesc::bs()->resolve_oop(o),  _heap->heap_region_containing(oopDesc::bs()->resolve_oop(o))->is_in_collection_set());
         tty->print_cr("oop class: %s", o->klass()->internal_name());
       }
       assert(o == oopDesc::bs()->resolve_oop(o), "oops must not be forwarded");
-      assert(! _heap->heap_region_containing(o)->is_dirty(), "references must not point to dirty heap regions");
+      assert(! _heap->heap_region_containing(o)->is_in_collection_set(), "references must not point to dirty heap regions");
       assert(_heap->isMarkedCurrent(o), "live oops must be marked current");
     }
   }
@@ -1011,7 +1005,7 @@ void ShenandoahHeap::verify_evacuation(ShenandoahHeapRegion* from_region) {
 
 oop ShenandoahHeap::maybe_update_oop_ref(oop* p) {
 
-  assert((! is_in(p)) || (! heap_region_containing(p)->is_dirty()), "never update refs in from-space"); 
+  assert((! is_in(p)) || (! heap_region_containing(p)->is_in_collection_set()), "never update refs in from-space"); 
 
   oop heap_oop = *p; // read p
   if (! oopDesc::is_null(heap_oop)) {
@@ -1024,7 +1018,7 @@ oop ShenandoahHeap::maybe_update_oop_ref(oop* p) {
     }
 #endif
     assert(is_in(heap_oop), "only ever call this on objects in the heap");
-    assert(! (is_in(p) && heap_region_containing(p)->is_dirty()), "we don't want to update references in from-space");
+    assert(! (is_in(p) && heap_region_containing(p)->is_in_collection_set()), "we don't want to update references in from-space");
     oop forwarded_oop = oopDesc::bs()->resolve_oop(heap_oop); // read brooks ptr
     if (forwarded_oop != heap_oop) {
       // tty->print_cr("updating old ref: %p pointing to %p to new ref: %p", p, heap_oop, forwarded_oop);
@@ -1328,7 +1322,7 @@ void ShenandoahHeap::heap_region_iterate(ShenandoahHeapRegionClosure* blk, bool 
     if (current->is_humonguous_continuation()) {
       continue;
     }
-    if ( !(skip_dirty_regions && current->is_dirty()) && blk->doHeapRegion(current)) 
+    if ( !(skip_dirty_regions && current->is_in_collection_set()) && blk->doHeapRegion(current)) 
       return;
   }
 }
@@ -1412,13 +1406,13 @@ void ShenandoahMarkObjsClosure::do_object(oop obj) {
     obj = oopDesc::bs()->resolve_oop(obj);
 
 #ifdef ASSERT
-    if (sh->heap_region_containing(obj)->is_dirty()) {
+    if (sh->heap_region_containing(obj)->is_in_collection_set()) {
       tty->print_cr("trying to mark obj: %p (%d) in dirty region: ", obj, sh->isMarkedCurrent(obj));
       sh->heap_region_containing(obj)->print();
       sh->print_heap_regions();
     }
 #endif
-    assert(! sh->heap_region_containing(obj)->is_dirty(), "we don't want to mark objects in from-space");
+    assert(! sh->heap_region_containing(obj)->is_in_collection_set(), "we don't want to mark objects in from-space");
     assert(sh->is_in(obj), "referenced objects must be in the heap. No?");
     if (! sh->isMarkedCurrent(obj)) {
       /*
@@ -1542,13 +1536,13 @@ public:
     T heap_oop = oopDesc::load_heap_oop(p);
     if (!oopDesc::is_null(heap_oop)) {
       oop obj = oopDesc::decode_heap_oop_not_null(heap_oop);
-      guarantee(_sh->heap_region_containing(obj)->is_dirty() == (obj != oopDesc::bs()->resolve_oop(obj)),
+      guarantee(_sh->heap_region_containing(obj)->is_in_collection_set() == (obj != oopDesc::bs()->resolve_oop(obj)),
                 err_msg("forwarded objects can only exist in dirty (from-space) regions is_dirty: %d, is_forwarded: %d",
-                        _sh->heap_region_containing(obj)->is_dirty(),
+                        _sh->heap_region_containing(obj)->is_in_collection_set(),
                         obj != oopDesc::bs()->resolve_oop(obj))
                 );
       obj = oopDesc::bs()->resolve_oop(obj);
-      guarantee(! _sh->heap_region_containing(obj)->is_dirty(), "forwarded oops must not point to dirty regions");
+      guarantee(! _sh->heap_region_containing(obj)->is_in_collection_set(), "forwarded oops must not point to dirty regions");
       guarantee(obj->is_oop(), "is_oop");
       ShenandoahHeap* sh = (ShenandoahHeap*) Universe::heap();
       if (! sh->isMarked(obj)) {
@@ -1585,13 +1579,13 @@ public:
     T heap_oop = oopDesc::load_heap_oop(p);
     if (!oopDesc::is_null(heap_oop)) {
       oop obj = oopDesc::decode_heap_oop_not_null(heap_oop);
-      guarantee(_sh->heap_region_containing(obj)->is_dirty() == (obj != oopDesc::bs()->resolve_oop(obj)),
+      guarantee(_sh->heap_region_containing(obj)->is_in_collection_set() == (obj != oopDesc::bs()->resolve_oop(obj)),
                 err_msg("forwarded objects can only exist in dirty (from-space) regions is_dirty: %d, is_forwarded: %d",
-                        _sh->heap_region_containing(obj)->is_dirty(),
+                        _sh->heap_region_containing(obj)->is_in_collection_set(),
                         obj != oopDesc::bs()->resolve_oop(obj))
                 );
       obj = oopDesc::bs()->resolve_oop(obj);
-      guarantee(! _sh->heap_region_containing(obj)->is_dirty(), "forwarded oops must not point to dirty regions");
+      guarantee(! _sh->heap_region_containing(obj)->is_in_collection_set(), "forwarded oops must not point to dirty regions");
       guarantee(obj->is_oop(), "is_oop");
       guarantee(Metaspace::contains(obj->klass()), "klass pointer must go to metaspace");
 

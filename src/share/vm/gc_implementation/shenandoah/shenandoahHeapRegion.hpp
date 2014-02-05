@@ -19,7 +19,6 @@ private:
   volatile size_t liveData;
   MemRegion reserved;
   volatile unsigned int claimed;
-  bool _dirty;
   bool _is_in_collection_set;
   bool _is_current_allocation_region;
   volatile jint active_tlab_count;
@@ -46,10 +45,6 @@ public:
   void print(outputStream* st = tty);
 
   size_t garbage();
-
-  void set_dirty(bool dirty);
-
-  bool is_dirty();
 
   void recycle();
 
