@@ -31,9 +31,12 @@ void VM_ShenandoahFinishMark::doit() {
   ShenandoahHeap *sh = (ShenandoahHeap*) Universe::heap();
   sh->concurrentMark()->finishMarkFromRoots();
   sh->stop_concurrent_marking();
-  if (ShenandoahConcurrentEvacuation) {
-    sh->prepare_for_concurrent_evacuation();
-    sh->set_evacuation_in_progress(true);
+  sh->prepare_for_concurrent_evacuation();
+  sh->set_evacuation_in_progress(true);
+
+  if (! ShenandoahConcurrentEvacuation) {
+    sh->parallel_evacuate();
+    sh->set_evacuation_in_progress(false);
   }
 }
 
@@ -62,14 +65,10 @@ const char* VM_ShenandoahEvacuation::name() const {
 
 void VM_ShenandoahEvacuation::doit() {
 
-  ShenandoahHeap *sh = ShenandoahHeap::heap();
-  if (! ShenandoahConcurrentEvacuation) {
-    sh->prepare_for_concurrent_evacuation();
-    sh->set_evacuation_in_progress(true);
+  if (ShenandoahConcurrentEvacuation) {
+    ShenandoahHeap *sh = ShenandoahHeap::heap();
+    sh->parallel_evacuate();
+    sh->set_evacuation_in_progress(false);
   }
-
-  sh->parallel_evacuate();
-  sh->set_evacuation_in_progress(false);
-
 }
 
