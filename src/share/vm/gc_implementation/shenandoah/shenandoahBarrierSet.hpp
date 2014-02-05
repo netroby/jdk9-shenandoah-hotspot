@@ -77,7 +77,8 @@ public:
 
   virtual oopDesc* resolve_oop(oopDesc* src);
   virtual oopDesc* maybe_resolve_oop(oopDesc* src);
-  virtual oopDesc* resolve_and_maybe_copy_oopHelper(oopDesc* src);
+  oopDesc* resolve_and_maybe_copy_oopHelper(oopDesc* src);
+  oopDesc* resolve_and_maybe_copy_oop_work(oopDesc* src);
   virtual oopDesc* resolve_and_maybe_copy_oop(oopDesc* src);
   static oopDesc* resolve_and_maybe_copy_oop_static(oopDesc* src);
 

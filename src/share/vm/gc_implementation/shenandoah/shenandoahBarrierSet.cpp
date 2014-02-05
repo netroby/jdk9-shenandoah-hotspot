@@ -313,6 +313,27 @@ oopDesc* ShenandoahBarrierSet::maybe_resolve_oop(oopDesc* src) {
   }
 }
 
+oopDesc* ShenandoahBarrierSet::resolve_and_maybe_copy_oop_work(oopDesc* src) {
+  ShenandoahHeap *sh = (ShenandoahHeap*) Universe::heap();
+  assert(src != NULL, "only evacuated non NULL oops");
+  assert(src == get_shenandoah_forwardee(src), "oop must be resolved");
+
+  if (sh->heap_region_containing(src)->is_in_collection_set()) {
+    assert(sh->is_evacuation_in_progress(), "only attempt evacuation during evacuation");
+    oopDesc* dst = sh->evacuate_object(src, _allocator);
+#ifdef ASSERT
+    if (ShenandoahGCVerbose) {
+      tty->print("src = %p dst = %p src = %p src-2 = %p\n",
+                 src, dst, src, src-2);
+    }
+#endif
+    assert(sh->is_in(dst), "result should be in the heap");
+    return dst;
+  } else {
+    return src;
+  }
+}
+
 oopDesc* ShenandoahBarrierSet::resolve_and_maybe_copy_oopHelper(oopDesc* src) {
     if (src != NULL) {
       ShenandoahHeap *sh = (ShenandoahHeap*) Universe::heap();
@@ -320,26 +341,14 @@ oopDesc* ShenandoahBarrierSet::resolve_and_maybe_copy_oopHelper(oopDesc* src) {
       if (! sh->is_evacuation_in_progress()) {
         return tmp;
       }
-      if (sh->heap_region_containing(tmp)->is_in_collection_set()) {
-	oopDesc* dst = sh->evacuate_object(tmp, &_allocator);
-#ifdef ASSERT
-        if (ShenandoahGCVerbose) {
-          tty->print("src = %p dst = %p tmp = %p src-2 = %p\n",
-                     src, dst, tmp, src-2);
-        }
-#endif
-	assert(sh->is_in(dst), "result should be in the heap");
-	return dst;
-      } else {
-	return tmp;
-      }
+      return resolve_and_maybe_copy_oop_work(src);
     } else {
       return NULL;
     }
 }
 
 IRT_LEAF(oopDesc*, ShenandoahBarrierSet::resolve_and_maybe_copy_oop_static(oopDesc* src))
-  oop result = oopDesc::bs()->resolve_and_maybe_copy_oop(src);
+oop result = ((ShenandoahBarrierSet*)oopDesc::bs())->resolve_and_maybe_copy_oop_work(src);
   // tty->print_cr("called write barrier with: %p result: %p", src, result);
   return result;
 IRT_END
@@ -380,9 +389,11 @@ void ShenandoahBarrierSet::compile_resolve_oop_for_write(MacroAssembler* masm, R
 
   // Resolve oop first.
   // TODO: Make this not-null-checking as soon as we have implicit null checks in c1!
-  compile_resolve_oop(masm, dst);
-
   __ push(rscratch1);
+
+  __ testptr(dst, dst);
+  __ jcc(Assembler::zero, done);
+  compile_resolve_oop_not_null(masm, dst);
 
   // Now check if evacuation is in progress.
   ExternalAddress evacuation_in_progress = ExternalAddress(ShenandoahHeap::evacuation_in_progress_addr());
@@ -688,7 +699,7 @@ void ShenandoahBarrierSet::compile_resolve_oop_for_write(MacroAssembler* masm, R
   __ mov(dst, rscratch1);
 
   __ bind(done);
-  __ pop(r10);
+  __ pop(rscratch1);
 }
 
 /*
