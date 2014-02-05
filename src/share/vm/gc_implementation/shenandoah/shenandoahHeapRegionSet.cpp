@@ -184,20 +184,26 @@ void ShenandoahHeapRegionSet::print() {
 void ShenandoahHeapRegionSet::
 choose_collection_set(ShenandoahHeapRegionSet* region_set, 
 		      int max_regions) {
-
+  tty->print("choose_collection_set started at time %lf\n", os::elapsedTime());
   sortDescendingGarbage();
-  region_set->_inserted = 0;
+  int r = 0;
+  int cs_index = 0;
+
+  while (r < _numRegions && _regions[r]->garbage() > _garbage_threshold && cs_index <= max_regions) {
+    if (! ( _regions[r]->has_active_tlabs() || _regions[r]->is_current_allocation_region()
+            || _regions[r]->is_humonguous())) {
+      region_set->_regions[cs_index] = _regions[r];
+      _regions[r]->set_is_in_collection_set(true);
+      cs_index++;
+    }
+    r++;
+  }
+
+  region_set->_inserted = cs_index;
   region_set->_index = 0;
+  region_set->_numRegions = cs_index;
+  tty->print("choose_collection_set ended at time %lf choose %d regions \n", os::elapsedTime(), cs_index);
 
-  for (int i = 0; i < max_regions; i++)
-    if (_regions[i]->garbage() > _garbage_threshold && ! _regions[i]->has_active_tlabs()
-        && ! _regions[i]->is_humonguous()) 
-      region_set->_regions[region_set->_inserted++] = _regions[i];
-
-
-  tty->print("choose_collection_Set: max_regions = %d regions = %p\n", max_regions);
-  for (int i = 0; i < max_regions; i++)
-    region_set->_regions[i]->print();
 }
 
 void ShenandoahHeapRegionSet::choose_collection_set(ShenandoahHeapRegionSet* region_set) {

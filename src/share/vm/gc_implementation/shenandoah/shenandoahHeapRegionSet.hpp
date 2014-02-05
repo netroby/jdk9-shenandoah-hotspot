@@ -25,8 +25,12 @@ public:
 
   ~ShenandoahHeapRegionSet();
 
+  void set_garbage_threshold(size_t minimum_garbage) { _garbage_threshold = minimum_garbage;}
+  void set_free_threshold(size_t minimum_free) { _free_threshold = minimum_free;}
   void put(size_t i, ShenandoahHeapRegion* region);
   void append(ShenandoahHeapRegion* region);
+
+  int numRegions() { return _numRegions;}
 
   ShenandoahHeapRegion* at(uint i);
   size_t length();
