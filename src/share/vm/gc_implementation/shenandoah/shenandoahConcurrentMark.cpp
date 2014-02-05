@@ -117,7 +117,11 @@ void ShenandoahConcurrentMark::finishMarkFromRoots() {
   if (ShenandoahGCVerbose) {
     tty->print_cr("Starting finishMarkFromRoots");
   }
+
   ShenandoahHeap* sh = (ShenandoahHeap *) Universe::heap();
+
+  sh->shenandoahPolicy()->record_final_mark_start();
+
   //  ParallelTaskTerminator terminator(_max_worker_id, _task_queues);
   // Trace any (new) unmarked root references.
   sh->prepare_unmarked_root_objs();
@@ -180,6 +184,8 @@ void ShenandoahConcurrentMark::finishMarkFromRoots() {
     }
 #endif
   }
+
+  sh->shenandoahPolicy()->record_final_mark_end();
 }
 
 void ShenandoahConcurrentMark::drain_satb_buffers() {

@@ -51,7 +51,7 @@ private:
   static const uint MAX_EPOCH = 7;
 
   static ShenandoahHeap* _pgc;
-  ShenandoahCollectorPolicy* _pgc_policy;
+  ShenandoahCollectorPolicy* _shenandoah_policy;
   VirtualSpace _storage;
   ShenandoahHeapRegion* _current_region;
   ShenandoahHeapRegion* _first_region;
@@ -78,6 +78,7 @@ private:
   WorkGangBarrierSync barrierSync;
   int _max_workers;
   volatile size_t _used;
+
 
 public:
   size_t _bytesAllocSinceCM;
@@ -110,7 +111,8 @@ public:
   
   static ShenandoahHeap* heap();
 
-  ShenandoahCollectorPolicy *shenandoahPolicy() { return _pgc_policy;}
+  ShenandoahCollectorPolicy *shenandoahPolicy() { return _shenandoah_policy;}
+
   jint initialize();
   void post_initialize();
   size_t capacity() const;
