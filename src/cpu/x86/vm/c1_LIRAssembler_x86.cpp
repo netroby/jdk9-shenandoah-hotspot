@@ -1434,7 +1434,7 @@ void LIR_Assembler::mem2reg(LIR_Opr src, LIR_Opr dest, BasicType type, LIR_Patch
 
 void LIR_Assembler::prefetchr(LIR_Opr src) {
   LIR_Address* addr = src->as_address_ptr();
-  Address from_addr = as_Address(addr);
+  Address from_addr = as_Address_resolve_oop(addr);
 
   if (VM_Version::supports_sse()) {
     switch (ReadPrefetchInstr) {
@@ -1455,7 +1455,7 @@ void LIR_Assembler::prefetchr(LIR_Opr src) {
 
 void LIR_Assembler::prefetchw(LIR_Opr src) {
   LIR_Address* addr = src->as_address_ptr();
-  Address from_addr = as_Address(addr);
+  Address from_addr = as_Address_resolve_oop(addr);
 
   if (VM_Version::supports_sse()) {
     switch (AllocatePrefetchInstr) {
@@ -2026,6 +2026,8 @@ void LIR_Assembler::emit_compare_and_swap(LIR_OpCompareAndSwap* op) {
     Register cmpval = op->cmp_value()->as_register();
     if (op->code() == lir_cas_obj && UseShenandoahGC) {
       // See comments in Unsafe_CompareAndSwapObject.
+      __ push(rscratch1);
+      __ push(rscratch2);
       __ movptr(rscratch1, rax);
       __ movptr(rax, addr);
       __ movptr(rscratch2, rax);
@@ -2035,6 +2037,8 @@ void LIR_Assembler::emit_compare_and_swap(LIR_OpCompareAndSwap* op) {
       }
       __ cmpxchgptr(rscratch2, addr);
       __ movptr(rax, rscratch1);
+      __ pop(rscratch2);
+      __ pop(rscratch1);
       oopDesc::bs()->compile_resolve_oop(_masm, cmpval);
       oopDesc::bs()->compile_resolve_oop(_masm, newval);
     }
@@ -2760,8 +2764,8 @@ void LIR_Assembler::comp_op(LIR_Condition condition, LIR_Opr opr1, LIR_Opr opr2,
     } else if (opr2->is_stack()) {
       // cpu register - stack
       if (opr1->type() == T_OBJECT || opr1->type() == T_ARRAY) {
-        __ movptr(rscratch1, frame_map()->address_for_slot(opr2->single_stack_ix()));
         oopDesc::bs()->compile_resolve_oop_for_write(_masm, reg1, 1, BarrierSet::ss_all);
+        __ movptr(rscratch1, frame_map()->address_for_slot(opr2->single_stack_ix()));
         oopDesc::bs()->compile_resolve_oop(_masm, rscratch1);
         __ cmpptr(reg1, rscratch1);
       } else {
@@ -2779,8 +2783,8 @@ void LIR_Assembler::comp_op(LIR_Condition condition, LIR_Opr opr1, LIR_Opr opr2,
           __ cmpptr(reg1, (int32_t)NULL_WORD);
         } else {
 #ifdef _LP64
-          __ movoop(rscratch1, o);
           oopDesc::bs()->compile_resolve_oop_for_write(_masm, reg1, 1, BarrierSet::ss_all);
+          __ movoop(rscratch1, o);
           oopDesc::bs()->compile_resolve_oop(_masm, rscratch1);
           __ cmpptr(reg1, rscratch1);
 #else
@@ -2896,7 +2900,10 @@ void LIR_Assembler::comp_op(LIR_Condition condition, LIR_Opr opr1, LIR_Opr opr2,
 #ifdef _LP64
       // %%% Make this explode if addr isn't reachable until we figure out a
       // better strategy by giving noreg as the temp for as_Address
-      __ cmpptr(rscratch1, as_Address(addr, noreg));
+      oopDesc::bs()->compile_resolve_oop_for_write(_masm, rscratch1, 1, BarrierSet::ss_all);
+      __ movptr(rscratch2, as_Address(addr, noreg));
+      oopDesc::bs()->compile_resolve_oop(_masm, rscratch2);
+      __ cmpptr(rscratch1, rscratch2);
 #else
       __ cmpoop(as_Address(addr), c->as_jobject());
 #endif // _LP64
