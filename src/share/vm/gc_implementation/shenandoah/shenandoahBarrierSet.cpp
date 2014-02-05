@@ -259,6 +259,8 @@ oopDesc* ShenandoahBarrierSet::get_shenandoah_forwardee_helper(oopDesc* p) {
 
 oopDesc* ShenandoahBarrierSet::get_shenandoah_forwardee(oopDesc* p) {
   oop result = get_shenandoah_forwardee_helper(p);
+
+#ifdef ASSERT
     if (result != p) {
       oop second_forwarding = get_shenandoah_forwardee_helper(result);
 
@@ -274,6 +276,7 @@ oopDesc* ShenandoahBarrierSet::get_shenandoah_forwardee(oopDesc* p) {
 	assert(get_shenandoah_forwardee_helper(result) == result, "Only one fowarding per customer");  
       }
     }
+#endif
     return result;
 }
 
