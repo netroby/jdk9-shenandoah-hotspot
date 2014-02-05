@@ -35,7 +35,11 @@ public:
 
 ShenandoahBarrierSet::ShenandoahBarrierSet() {
   _kind = BarrierSet::ShenandoahBarrierSet;
-  _allocator = TLABAllocator();
+  if (UseTLAB) {
+    _allocator = new TLABAllocator();
+  } else {
+    _allocator = new HeapAllocator();
+  }
 }
 
 void ShenandoahBarrierSet::print_on(outputStream* st) const {

@@ -9,7 +9,7 @@ Copyright 2014 Red Hat, Inc. and/or its affiliates.
 
 class ShenandoahBarrierSet: public BarrierSet {
 private:
-  TLABAllocator _allocator;
+  EvacuationAllocator* _allocator;
 
   oopDesc* get_shenandoah_forwardee_helper(oopDesc* p);
 
