@@ -14,7 +14,7 @@ class ShenandoahHeap;
  * The allocator is used for allocating the copies of objects during
  * evacuation.
  */
-class EvacuationAllocator {
+class EvacuationAllocator : public CHeapObj<mtGC> {
 public:
   virtual HeapWord* allocate(size_t size) = 0;
   virtual void rollback(HeapWord* obj, size_t size) = 0;
