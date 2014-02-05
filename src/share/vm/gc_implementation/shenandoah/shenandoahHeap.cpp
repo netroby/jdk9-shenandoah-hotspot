@@ -4,6 +4,12 @@ Copyright 2014 Red Hat, Inc. and/or its affiliates.
 #include "precompiled.hpp"
 #include "asm/macroAssembler.hpp"
 
+#include "gc_implementation/shared/gcHeapSummary.hpp"
+#include "gc_implementation/shared/gcTimer.hpp"
+#include "gc_implementation/shared/gcTrace.hpp"
+#include "gc_implementation/shared/gcTraceTime.hpp"
+#include "gc_implementation/shared/isGCActiveMark.hpp"
+
 #include "gc_implementation/shenandoah/brooksPointer.hpp"
 #include "gc_implementation/shenandoah/shenandoahHeap.hpp"
 #include "gc_implementation/shenandoah/shenandoahBarrierSet.hpp"
@@ -141,7 +147,7 @@ jint ShenandoahHeap::initialize() {
 
 ShenandoahHeap::ShenandoahHeap(ShenandoahCollectorPolicy* policy) : 
   SharedHeap(policy),
-  _pgc_policy(policy), 
+  _shenandoah_policy(policy), 
   _concurrent_mark_in_progress(false),
   _epoch(1),
   _free_regions(NULL),
@@ -355,6 +361,11 @@ ShenandoahHeapRegion* ShenandoahHeap::cas_update_current_region(ShenandoahHeapRe
 
 HeapWord* ShenandoahHeap::allocate_memory_gclab(size_t word_size) {
   ShenandoahHeapRegion* my_current_region = _current_region;
+  if (my_current_region->is_dirty()) {
+    tty->print_cr("Heap Region %d is dirty", my_current_region->region_number());
+    print_heap_regions();
+  }
+
   assert(! my_current_region->is_dirty(), "never get dirty regions in free-lists");
   assert(! my_current_region->is_humonguous(), "never attempt to allocate from humonguous object regions");
   if (my_current_region == NULL) {
@@ -919,7 +930,7 @@ void ShenandoahHeap::prepare_for_concurrent_evacuation() {
   // the same, we get false negatives.
   ShenandoahHeapRegionSet regions = ShenandoahHeapRegionSet(_num_regions, _ordered_regions);
   regions.reclaim_humonguous_regions();
-  regions.choose_collection_set(_collection_set);
+  _shenandoah_policy->choose_collection_set(&regions, _collection_set);
   regions.choose_empty_regions(_free_regions);
 
   cas_update_current_region(_current_region);
@@ -931,6 +942,12 @@ void ShenandoahHeap::parallel_evacuate() {
     //    PrintHeapRegionsClosure pc1;
     //    heap_region_iterate(&pc1);
   }
+
+  _shenandoah_policy->record_concurrent_evacuation_start();
+  
+    tty->print_cr("all regions before evacuation:");
+    print_heap_regions();
+
 
   if (ShenandoahGCVerbose) {
     tty->print("Printing all available regions");
@@ -963,7 +980,10 @@ void ShenandoahHeap::parallel_evacuate() {
     tty->print_cr("all regions after evacuation:");
     print_heap_regions();
   }
+    tty->print_cr("all regions after evacuation:");
+    print_heap_regions();
 
+  _shenandoah_policy->record_concurrent_evacuation_end();
 }
 
 class VerifyEvacuationClosure: public ExtendedOopClosure {
@@ -1092,7 +1112,7 @@ AdaptiveSizePolicy* ShenandoahHeap::size_policy() {
 }
 
 ShenandoahCollectorPolicy* ShenandoahHeap::collector_policy() const {
-  return _pgc_policy;
+  return _shenandoah_policy;
 }
 
 
@@ -1134,6 +1154,7 @@ void ShenandoahHeap::gc_threads_do(ThreadClosure* tcl) const {
 }
 
 void ShenandoahHeap::print_tracing_info() const {
+  
   // Needed to keep going
 }
 
@@ -1489,8 +1510,13 @@ public:
 void ShenandoahHeap::start_concurrent_marking() {
   set_concurrent_mark_in_progress(true);
   
+  
   if (ShenandoahGCVerbose) 
     print_all_refs("pre -mark");
+
+  _shenandoah_policy->record_init_mark_start();
+  _shenandoah_policy->record_bytes_allocated(_bytesAllocSinceCM);
+  _bytesAllocSinceCM = 0;
 
   // Increase and wrap epoch back to 1 (not 0!)
   _epoch = _epoch % MAX_EPOCH + 1;
@@ -1523,6 +1549,7 @@ void ShenandoahHeap::start_concurrent_marking() {
 
   // oopDesc::_debug = true;
   prepare_unmarked_root_objs();
+  _shenandoah_policy->record_init_mark_end();
   // if (getEpoch() < 5) {
   // oopDesc::_debug = false;
     //}

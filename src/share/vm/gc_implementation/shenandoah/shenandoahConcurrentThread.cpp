@@ -35,45 +35,43 @@ public:
 void ShenandoahConcurrentThread::run() {
   initialize_in_thread();
 
-  if (ShenandoahGCVerbose) {
-    tty->print("Starting to run %s with number %ld YAY!!!, %s\n", name(), os::current_thread_id());
-  }
+  //  if (ShenandoahGCVerbose) {
+  tty->print("Starting to run %s with number %ld YAY!!!, %s\n", name(), os::current_thread_id());
+  //  }
 
   wait_for_universe_init();
   ShenandoahHeap* heap = ShenandoahHeap::heap();
 
-  size_t targetStartMarking = heap->max_capacity() / 16;
-  size_t targetBytesAllocated = heap->max_capacity() / 16;
-
-
   while (!_should_terminate) {
-    if (heap->used() > targetStartMarking && heap->_bytesAllocSinceCM > targetBytesAllocated) {
-      heap->_bytesAllocSinceCM = 0;
-      if (ShenandoahGCVerbose) 
-        tty->print("Capacity = "SIZE_FORMAT" Used = "SIZE_FORMAT" Target = "SIZE_FORMAT" doing initMark\n", heap->capacity(), heap->used(), targetStartMarking);
+    if (heap->shenandoahPolicy()->should_start_concurrent_mark(heap->used(),
+							       heap->capacity())) 
+      {
+
+	if (ShenandoahGCVerbose) 
+	  tty->print("Capacity = "SIZE_FORMAT" Used = "SIZE_FORMAT"  doing initMark\n", heap->capacity(), heap->used());
  
-      if (ShenandoahGCVerbose) tty->print("Starting a mark");
+	if (ShenandoahGCVerbose) tty->print("Starting a mark");
 
-      VM_ShenandoahInitMark initMark;
-      VMThread::execute(&initMark);
+	VM_ShenandoahInitMark initMark;
+	VMThread::execute(&initMark);
 
-      ShenandoahHeap::heap()->concurrentMark()->markFromRoots();
+	ShenandoahHeap::heap()->concurrentMark()->markFromRoots();
 
-      VM_ShenandoahFinishMark finishMark;
-      VMThread::execute(&finishMark);
+	VM_ShenandoahFinishMark finishMark;
+	VMThread::execute(&finishMark);
 
-      VM_ShenandoahEvacuation evacuation;
-      if (ShenandoahConcurrentEvacuation) {
-        evacuation.doit();
+	VM_ShenandoahEvacuation evacuation;
+	if (ShenandoahConcurrentEvacuation) {
+	  evacuation.doit();
+	} else {
+	  VMThread::execute(&evacuation);
+	}
+
+	if (ShenandoahVerify) {
+	  VM_ShenandoahVerifyHeapAfterEvacuation verify_after_evacuation;
+	  VMThread::execute(&verify_after_evacuation);
+	}
       } else {
-        VMThread::execute(&evacuation);
-      }
-
-      if (ShenandoahVerify) {
-        VM_ShenandoahVerifyHeapAfterEvacuation verify_after_evacuation;
-        VMThread::execute(&verify_after_evacuation);
-      }
-    } else {
       Thread::current()->_ParkEvent->park(10) ;
       // yield();
     }
