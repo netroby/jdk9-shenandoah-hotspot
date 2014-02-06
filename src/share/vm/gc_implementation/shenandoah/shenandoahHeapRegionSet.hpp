@@ -18,6 +18,10 @@ private:
   int _numRegions;
   size_t _garbage_threshold;
   size_t _free_threshold;
+
+  void choose_collection_set(ShenandoahHeapRegionSet* region_set);
+  void choose_empty_regions(ShenandoahHeapRegionSet* region_set);
+
 public:
   ShenandoahHeapRegionSet(size_t numRegions);
 
@@ -42,9 +46,7 @@ public:
   ShenandoahHeapRegion* peek_next();
   ShenandoahHeapRegion* claim_next();
 
-  void choose_collection_set(ShenandoahHeapRegionSet* region_set, int max_regions);
-  void choose_collection_set(ShenandoahHeapRegionSet* region_set);
-  void choose_empty_regions(ShenandoahHeapRegionSet* region_set);
+  void choose_collection_and_free_sets(ShenandoahHeapRegionSet* col_set, ShenandoahHeapRegionSet* free_set);
 
   //  ShenandoahHeapRegion** regions() { return _regions;}
   // Sort from most free to least free.

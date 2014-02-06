@@ -48,8 +48,9 @@ public:
   void record_bytes_allocated(size_t bytes);
   void record_bytes_reclaimed(size_t bytes);
   bool should_start_concurrent_mark(size_t used, size_t capacity);
-  void choose_collection_set(ShenandoahHeapRegionSet* region_set, 
-			     ShenandoahHeapRegionSet* collection_set);
+  void choose_collection_and_free_sets(ShenandoahHeapRegionSet* region_set, 
+                                       ShenandoahHeapRegionSet* collection_set,
+                                       ShenandoahHeapRegionSet* free_set);
 };
 
 

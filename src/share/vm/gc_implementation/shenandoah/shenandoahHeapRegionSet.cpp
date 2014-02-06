@@ -181,26 +181,9 @@ void ShenandoahHeapRegionSet::print() {
   }
 }
 
-void ShenandoahHeapRegionSet::
-choose_collection_set(ShenandoahHeapRegionSet* region_set, 
-		      int max_regions) {
-  sortDescendingGarbage();
-  int r = 0;
-  int cs_index = 0;
-
-  while (r < _numRegions && _regions[r]->garbage() > _garbage_threshold && cs_index <= max_regions) {
-    if (! ( _regions[r]->has_active_tlabs() || _regions[r]->is_current_allocation_region()
-            || _regions[r]->is_humonguous())) {
-      region_set->_regions[cs_index] = _regions[r];
-      _regions[r]->set_is_in_collection_set(true);
-      cs_index++;
-    }
-    r++;
-  }
-
-  region_set->_inserted = cs_index;
-  region_set->_index = 0;
-  region_set->_numRegions = cs_index;
+void ShenandoahHeapRegionSet::choose_collection_and_free_sets(ShenandoahHeapRegionSet* col_set, ShenandoahHeapRegionSet* free_set) {
+  choose_collection_set(col_set);
+  choose_empty_regions(free_set);
 }
 
 void ShenandoahHeapRegionSet::choose_collection_set(ShenandoahHeapRegionSet* region_set) {
@@ -232,8 +215,9 @@ void ShenandoahHeapRegionSet::choose_empty_regions(ShenandoahHeapRegionSet* regi
   while(r < _numRegions && _regions[r]->free() > _free_threshold) {
     ShenandoahHeapRegion* region = _regions[r];
     assert(! region->is_humonguous(), "don't reuse occupied humonguous regions");
-    guarantee(! region->is_in_collection_set(), "Never use targetted regions in free list");
-    region_set->_regions[r] = region;
+    if (! region->is_in_collection_set()) {
+      region_set->_regions[r] = region;
+    }
     r++;
   }
 

@@ -35,8 +35,9 @@ public:
   void record_bytes_reclaimed(size_t bytes);
 
   virtual bool should_start_concurrent_mark(size_t used, size_t capacity) const=0;
-  virtual void choose_collection_set(ShenandoahHeapRegionSet* region_set, 
-				     ShenandoahHeapRegionSet* collection_set) const=0;
+  virtual void choose_collection_and_free_sets(ShenandoahHeapRegionSet* region_set, 
+                                               ShenandoahHeapRegionSet* collection_set, 
+                                               ShenandoahHeapRegionSet* free_set) const=0;
 };
 
 ShenandoahHeuristics::ShenandoahHeuristics() :
@@ -115,11 +116,11 @@ public:
   virtual bool should_start_concurrent_mark(size_t used, size_t capacity) const {
     return true;
   }
-  virtual void choose_collection_set(ShenandoahHeapRegionSet* region_set,
-				     ShenandoahHeapRegionSet* collection_set) const {
-       region_set->set_garbage_threshold(8);
-       region_set->choose_collection_set(collection_set,
-				     region_set->numRegions());
+  virtual void choose_collection_and_free_sets(ShenandoahHeapRegionSet* region_set,
+                                               ShenandoahHeapRegionSet* collection_set,
+                                               ShenandoahHeapRegionSet* free_set) const {
+    region_set->set_garbage_threshold(8);
+    region_set->choose_collection_and_free_sets(collection_set, free_set);
   }
 };
 
@@ -136,10 +137,11 @@ public:
     else
       return false;
   }
-  void choose_collection_set(ShenandoahHeapRegionSet* region_set,
-			       ShenandoahHeapRegionSet* collection_set) {
-    region_set->choose_collection_set(collection_set, 
-				     region_set->numRegions() / 2);
+  void choose_collection_and_free_sets(ShenandoahHeapRegionSet* region_set,
+                                       ShenandoahHeapRegionSet* collection_set,
+                                       ShenandoahHeapRegionSet* free_set) {
+    region_set->set_garbage_threshold(ShenandoahHeapRegion::RegionSizeBytes / 2);
+    region_set->choose_collection_and_free_sets(collection_set, free_set);
   }
 };
 
@@ -159,9 +161,10 @@ public:
     }
   }
 
-  virtual void choose_collection_set(ShenandoahHeapRegionSet* region_set,
-			       ShenandoahHeapRegionSet* collection_set) const {
-    region_set->choose_collection_set(collection_set);
+  virtual void choose_collection_and_free_sets(ShenandoahHeapRegionSet* region_set,
+                                               ShenandoahHeapRegionSet* collection_set,
+                                               ShenandoahHeapRegionSet* free_set) const {
+    region_set->choose_collection_and_free_sets(collection_set, free_set);
   }
 };
 
@@ -243,10 +246,10 @@ bool ShenandoahCollectorPolicy::should_start_concurrent_mark(size_t used,
   _heuristics->should_start_concurrent_mark(used, capacity);
 }
   
-void ShenandoahCollectorPolicy::choose_collection_set(
+void ShenandoahCollectorPolicy::choose_collection_and_free_sets(
 			     ShenandoahHeapRegionSet* region_set, 
-			     ShenandoahHeapRegionSet* collection_set) {
-    _heuristics->choose_collection_set(region_set,
-				       collection_set);
+			     ShenandoahHeapRegionSet* collection_set,
+                             ShenandoahHeapRegionSet* free_set) {
+  _heuristics->choose_collection_and_free_sets(region_set, collection_set, free_set);
 }
 

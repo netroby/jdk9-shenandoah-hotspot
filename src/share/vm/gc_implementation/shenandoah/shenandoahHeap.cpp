@@ -116,7 +116,6 @@ jint ShenandoahHeap::initialize() {
     _free_regions->put(i, current);
     _ordered_regions[i] = current;
   }
-
   _first_region = _ordered_regions[0];
   _first_region_bottom = _first_region->bottom();
 
@@ -920,8 +919,7 @@ void ShenandoahHeap::prepare_for_concurrent_evacuation() {
   // the same, we get false negatives.
   ShenandoahHeapRegionSet regions = ShenandoahHeapRegionSet(_num_regions, _ordered_regions);
   regions.reclaim_humonguous_regions();
-  _shenandoah_policy->choose_collection_set(&regions, _collection_set);
-  regions.choose_empty_regions(_free_regions);
+  _shenandoah_policy->choose_collection_and_free_sets(&regions, _collection_set, _free_regions);
 
   cas_update_current_region(_current_region);
 }
