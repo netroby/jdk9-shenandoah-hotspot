@@ -316,7 +316,6 @@ oopDesc* ShenandoahBarrierSet::maybe_resolve_oop(oopDesc* src) {
 oopDesc* ShenandoahBarrierSet::resolve_and_maybe_copy_oop_work(oopDesc* src) {
   ShenandoahHeap *sh = (ShenandoahHeap*) Universe::heap();
   assert(src != NULL, "only evacuated non NULL oops");
-  assert(src == get_shenandoah_forwardee(src), "oop must be resolved");
 
   if (sh->heap_region_containing(src)->is_in_collection_set()) {
     assert(sh->is_evacuation_in_progress(), "only attempt evacuation during evacuation");
