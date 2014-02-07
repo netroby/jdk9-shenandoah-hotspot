@@ -215,7 +215,6 @@ void ShenandoahHeapRegionSet::choose_empty_regions(ShenandoahHeapRegionSet* regi
   int fs_index = 0;
   for (int r = 0; r < _numRegions; r++) {
     ShenandoahHeapRegion* region = _regions[r];
-    assert(! region->is_humonguous(), "don't reuse occupied humonguous regions");
     if (! region->is_in_collection_set()) {
       region_set->_regions[r] = region;
       fs_index++;
