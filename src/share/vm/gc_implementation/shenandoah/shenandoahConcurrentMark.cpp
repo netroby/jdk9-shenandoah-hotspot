@@ -141,8 +141,6 @@ void ShenandoahConcurrentMark::finishMarkFromRoots() {
 
   ShenandoahHeap* sh = (ShenandoahHeap *) Universe::heap();
 
-  sh->shenandoahPolicy()->record_final_mark_start();
-
   // Trace any (new) unmarked root references.
   sh->prepare_unmarked_root_objs();
 
@@ -179,7 +177,6 @@ void ShenandoahConcurrentMark::finishMarkFromRoots() {
     }
 #endif
   }
-  sh->shenandoahPolicy()->record_final_mark_end();
 }
 
 void ShenandoahConcurrentMark::drain_satb_buffers(uint worker_id, bool remark) {

@@ -16,6 +16,10 @@ private:
   double _final_mark_start;
   double _concurrent_evacuation_start; 
 
+  int _init_mark_count;
+  int _final_mark_count;
+  int _concurrent_evacuation_count;
+
   size_t _bytes_allocated_since_CM;
   size_t _bytes_reclaimed_this_cycle;
 
@@ -38,6 +42,7 @@ public:
   virtual void choose_collection_and_free_sets(ShenandoahHeapRegionSet* region_set, 
                                                ShenandoahHeapRegionSet* collection_set, 
                                                ShenandoahHeapRegionSet* free_set) const=0;
+  void print_tracing_info();
 };
 
 ShenandoahHeuristics::ShenandoahHeuristics() :
@@ -46,7 +51,10 @@ ShenandoahHeuristics::ShenandoahHeuristics() :
   _final_mark_start(0),
   _concurrent_evacuation_start(0),
   _bytes_allocated_since_CM(0),
-  _bytes_reclaimed_this_cycle(0)
+  _bytes_reclaimed_this_cycle(0),
+  _init_mark_count(0),
+  _final_mark_count(0),
+  _concurrent_evacuation_count(0)
 {
   if (PrintGCDetails)
     tty->print_cr("initializing heuristics");
@@ -54,46 +62,38 @@ ShenandoahHeuristics::ShenandoahHeuristics() :
 
 void ShenandoahHeuristics::record_init_mark_start() { 
   _init_mark_start = os::elapsedTime();
-  if (PrintGCDetails)
-    tty->print_cr("PolicyPrint: InitialMark started time = %lf", _init_mark_start);
 }
 
 void ShenandoahHeuristics::record_init_mark_end()   { 
   double end = os::elapsedTime();
-  if (PrintGCDetails)
-    tty->print_cr("PolicyPrint: InitialMark end time = %lf", end);
 
   double elapsed = (os::elapsedTime() - _init_mark_start); 
-  _init_mark_ms.add(elapsed);
-  if (PrintGCDetails)
-    tty->print_cr("PolicyPrint: InitialMark took %lf ms", elapsed * 1000);
+  _init_mark_ms.add(elapsed * 1000);
+  if (ShenandoahGCVerbose && PrintGCDetails)
+    tty->print_cr("PolicyPrint: InitialMark %d took %lf ms", _init_mark_count++, elapsed * 1000);
 }
 
 void ShenandoahHeuristics::record_final_mark_start() { 
   _final_mark_start = os::elapsedTime();
-  if (PrintGCDetails)
-    tty->print_cr("PolicyPrint: FinalMark started at time %lf", _final_mark_start);
 }
 
 void ShenandoahHeuristics::record_final_mark_end()   { 
   double elapsed = os::elapsedTime() - _final_mark_start;
-  _final_mark_ms.add(elapsed);
-  if (PrintGCDetails)
-    tty->print_cr("PolicyPrint: FinalMark took %lf ms", elapsed * 1000);
+  _final_mark_ms.add(elapsed * 1000);
+  if (ShenandoahGCVerbose && PrintGCDetails)
+    tty->print_cr("PolicyPrint: FinalMark %d took %lf ms", _final_mark_count++, elapsed * 1000);
 }
 
 void ShenandoahHeuristics::record_concurrent_evacuation_start() { 
   _concurrent_evacuation_start = os::elapsedTime();
-  if (PrintGCDetails)
-    tty->print_cr("PolicyPrint: Concurrent Evacuation started at time %lf", 
-		  _concurrent_evacuation_start);
 }
 
 void ShenandoahHeuristics::record_concurrent_evacuation_end()   { 
   double elapsed = os::elapsedTime() - _concurrent_evacuation_start;
-  _concurrent_evacuation_times_ms.add(elapsed);
-  if (PrintGCDetails)
-    tty->print_cr("PolicyPrint: Concurrent Evacuation took %lf ms", elapsed * 1000);
+  _concurrent_evacuation_times_ms.add(elapsed * 1000);
+  if (ShenandoahGCVerbose && PrintGCDetails)
+    tty->print_cr("PolicyPrint: Concurrent Evacuation %d took %lf ms", 
+		  _concurrent_evacuation_count++, elapsed * 1000);
 }
 
 void ShenandoahHeuristics::record_bytes_allocated(size_t bytes) {
@@ -279,3 +279,27 @@ void ShenandoahCollectorPolicy::choose_collection_and_free_sets(
   _heuristics->choose_collection_and_free_sets(region_set, collection_set, free_set);
 }
 
+void ShenandoahCollectorPolicy::print_tracing_info() {
+  _heuristics->print_tracing_info();
+}
+
+void print_summary(const char* str,
+		   const NumberSeq* seq)  {
+  double sum = seq->sum();
+  gclog_or_tty->print_cr("%-27s = %8.2lf s (avg = %8.2lf ms)",
+                str, sum / 1000.0, seq->avg());
+}
+
+void print_summary_sd(const char* str,
+		      const NumberSeq* seq) {
+  print_summary(str, seq);
+  gclog_or_tty->print_cr("%+45s = %5d, std dev = %8.2lf ms, max = %8.2lf ms)",
+                "(num", seq->num(), seq->sd(), seq->maximum());
+}
+
+void ShenandoahHeuristics::print_tracing_info() {
+  print_summary_sd("Initial Mark Pauses", &_init_mark_ms);
+  print_summary_sd("Final Mark Pauses", &_final_mark_ms);
+  print_summary_sd("Concurrent Evacuation Times", 
+		   &_concurrent_evacuation_times_ms);
+}

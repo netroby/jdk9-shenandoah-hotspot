@@ -939,11 +939,6 @@ void ShenandoahHeap::parallel_evacuate() {
 
   _shenandoah_policy->record_concurrent_evacuation_start();
 
-  if (PrintGCDetails) {
-    tty->print_cr("all regions before evacuation:");
-    print_heap_regions();
-  }
-
   if (ShenandoahGCVerbose) {
     tty->print("Printing all available regions");
     print_heap_regions();
@@ -972,10 +967,6 @@ void ShenandoahHeap::parallel_evacuate() {
     PrintHeapRegionsClosure pc2;
     heap_region_iterate(&pc2);
 
-    tty->print_cr("all regions after evacuation:");
-    print_heap_regions();
-  }
-  if (PrintGCDetails) {
     tty->print_cr("all regions after evacuation:");
     print_heap_regions();
   }
@@ -1151,8 +1142,9 @@ void ShenandoahHeap::gc_threads_do(ThreadClosure* tcl) const {
 }
 
 void ShenandoahHeap::print_tracing_info() const {
-  
-  // Needed to keep going
+  if (PrintGCDetails) {
+    _shenandoah_policy->print_tracing_info();
+  }
 }
 
 class ShenandoahVerifyRootsClosure: public ExtendedOopClosure {
@@ -1511,7 +1503,6 @@ void ShenandoahHeap::start_concurrent_marking() {
   if (ShenandoahGCVerbose) 
     print_all_refs("pre -mark");
 
-  _shenandoah_policy->record_init_mark_start();
   _shenandoah_policy->record_bytes_allocated(_bytesAllocSinceCM);
   _bytesAllocSinceCM = 0;
 
@@ -1546,7 +1537,6 @@ void ShenandoahHeap::start_concurrent_marking() {
 
   // oopDesc::_debug = true;
   prepare_unmarked_root_objs();
-  _shenandoah_policy->record_init_mark_end();
   // if (getEpoch() < 5) {
   // oopDesc::_debug = false;
     //}

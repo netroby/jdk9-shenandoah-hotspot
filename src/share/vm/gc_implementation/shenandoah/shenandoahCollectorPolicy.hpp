@@ -51,6 +51,8 @@ public:
   void choose_collection_and_free_sets(ShenandoahHeapRegionSet* region_set, 
                                        ShenandoahHeapRegionSet* collection_set,
                                        ShenandoahHeapRegionSet* free_set);
+
+  void print_tracing_info();
 };
 
 
