@@ -340,6 +340,7 @@ ShenandoahHeapRegion* ShenandoahHeap::cas_update_current_region(ShenandoahHeapRe
   }
   if (_free_regions->has_next()) {
     ShenandoahHeapRegion* next = _free_regions->peek_next();
+    assert(! next->is_in_collection_set(), "Never use targetted regions for allocations.");
     ShenandoahHeapRegion* previous = (ShenandoahHeapRegion*) Atomic::cmpxchg_ptr(next, &_current_region, expected);
     assert(! _current_region->is_humonguous(), "never get humonguous allocation region");
     guarantee(! _current_region->is_in_collection_set(), "Never use targetted regions for allocations.");
@@ -362,6 +363,11 @@ ShenandoahHeapRegion* ShenandoahHeap::cas_update_current_region(ShenandoahHeapRe
 
 HeapWord* ShenandoahHeap::allocate_memory_gclab(size_t word_size) {
   ShenandoahHeapRegion* my_current_region = _current_region;
+#ifdef ASSERT
+  if (my_current_region->is_in_collection_set()) {
+    print_heap_regions();
+  }
+#endif
   assert(! my_current_region->is_in_collection_set(), "never get targetted regions in free-lists");
   assert(! my_current_region->is_humonguous(), "never attempt to allocate from humonguous object regions");
   if (my_current_region == NULL) {
