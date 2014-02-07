@@ -110,7 +110,7 @@ class AggressiveHeuristics : public ShenandoahHeuristics {
 public:
   AggressiveHeuristics() : ShenandoahHeuristics(){
   if (PrintGCDetails)
-    tty->print("Initializing aggressive heuristics");
+    tty->print_cr("Initializing aggressive heuristics");
   }
 
   virtual bool should_start_concurrent_mark(size_t used, size_t capacity) const {
@@ -128,10 +128,10 @@ class HalfwayHeuristics : public ShenandoahHeuristics {
 public:
   HalfwayHeuristics() : ShenandoahHeuristics() {
   if (PrintGCDetails)
-    tty->print("Initializing halfway heuristics");
+    tty->print_cr("Initializing halfway heuristics");
   }
 
-  bool should_start_concurrent_mark(size_t used, size_t capacity) {
+  bool should_start_concurrent_mark(size_t used, size_t capacity) const {
     if (used * 2 > capacity)
       return true;
     else
@@ -139,7 +139,7 @@ public:
   }
   void choose_collection_and_free_sets(ShenandoahHeapRegionSet* region_set,
                                        ShenandoahHeapRegionSet* collection_set,
-                                       ShenandoahHeapRegionSet* free_set) {
+                                       ShenandoahHeapRegionSet* free_set) const {
     region_set->set_garbage_threshold(ShenandoahHeapRegion::RegionSizeBytes / 2);
     region_set->choose_collection_and_free_sets(collection_set, free_set);
   }
@@ -149,7 +149,9 @@ public:
 class StatusQuoHeuristics : public ShenandoahHeuristics {
 public:
   StatusQuoHeuristics() : ShenandoahHeuristics() {
-    tty->print("Initializing status quo heuristics");
+    if (PrintGCDetails) {
+      tty->print_cr("Initializing status quo heuristics");
+    }
   }
 
   virtual bool should_start_concurrent_mark(size_t used, size_t capacity) const {
@@ -171,7 +173,31 @@ public:
 
 ShenandoahCollectorPolicy::ShenandoahCollectorPolicy() {
   initialize_all();
-  _heuristics = new AggressiveHeuristics();
+  if (ShenandoahGCHeuristics != NULL) {
+    if (strcmp(ShenandoahGCHeuristics, "aggressive") == 0) {
+      if (ShenandoahLogConfig) {
+        tty->print_cr("Shenandoah heuristics: aggressive");
+      }
+      _heuristics = new AggressiveHeuristics();
+    } else if (strcmp(ShenandoahGCHeuristics, "statusquo") == 0) {
+      if (ShenandoahLogConfig) {
+        tty->print_cr("Shenandoah heuristics: statusquo");
+      }
+      _heuristics = new StatusQuoHeuristics();
+    } else if (strcmp(ShenandoahGCHeuristics, "halfway") == 0) {
+      if (ShenandoahLogConfig) {
+        tty->print_cr("Shenandoah heuristics: halfway");
+      }
+      _heuristics = new HalfwayHeuristics();
+    } else {
+      fatal("Unknown -XX:ShenandoahGCHeuristics option");
+    }
+  } else {
+      if (ShenandoahLogConfig) {
+        tty->print_cr("Shenandoah heuristics: statusquo (default)");
+      }
+    _heuristics = new StatusQuoHeuristics();
+  }
 }
 
 ShenandoahCollectorPolicy* ShenandoahCollectorPolicy::as_pgc_policy() {

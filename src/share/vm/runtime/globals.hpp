@@ -1372,11 +1372,17 @@ class CommandLineFlags {
   develop(bool, ShenandoahGCVerbose, false,                                 \
           "Verbose information about the Shenandoah garbage collector")     \
                                                                             \
+  develop(bool, ShenandoahLogConfig, false,                                 \
+          "Log information about Shenandoah's configuration settings")      \
+                                                                            \
   develop(bool, ShenandoahVerify, false,                                    \
           "Verify the  Shenandoah garbage collector")                       \
                                                                             \
   develop(bool, ShenandoahConcurrentEvacuation, true,                       \
           "Turn on/off concurrent evacuation in Shenandoah")                \
+                                                                            \
+  product(ccstr, ShenandoahGCHeuristics, NULL,                              \
+          "The heuristics to use in Shenandoah GC; possible values: statusquo, aggressive, halfway") \
                                                                             \
   product(bool, UseParallelGC, false,                                       \
           "Use the Parallel Scavenge garbage collector")                    \
