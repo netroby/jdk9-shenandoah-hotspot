@@ -30,7 +30,7 @@ public:
   void markFromRoots();
   void checkpointRootsFinal();
   void finishMarkFromRoots();
-  void drain_satb_buffers();
+  void drain_satb_buffers(uint worker_id, bool remark = false);
   bool has_aborted() {return _aborted;}
   SharedOverflowMarkQueue* overflow_queue();
 

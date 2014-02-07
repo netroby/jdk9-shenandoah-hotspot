@@ -46,7 +46,14 @@ public:
     while (true) {
       oop obj;
     
-      if (!_cm->task_queues()->queue(worker_id)->pop_local(obj)) {
+      bool success = _cm->task_queues()->queue(worker_id)->pop_local(obj);
+      if (! success) {
+        // If our queue runs empty, drain SATB buffers, then try again.
+        // tty->print_cr("drainig SATB buffers while concurrently marking");
+        _cm->drain_satb_buffers(worker_id);
+        success = _cm->task_queues()->queue(worker_id)->pop_local(obj);
+      }
+      if (! success) {
         if (!_cm->task_queues()->steal(worker_id, &seed, obj)) {
           obj = _cm->overflow_queue()->pop();
           if (obj == NULL) {
@@ -113,6 +120,20 @@ void ShenandoahConcurrentMark::markFromRoots() {
   }
 }
 
+class FinishDrainSATBBuffersTask : public AbstractGangTask {
+private:
+  ShenandoahConcurrentMark* _cm;
+  ParallelTaskTerminator* _terminator;
+public:
+  FinishDrainSATBBuffersTask(ShenandoahConcurrentMark* cm, ParallelTaskTerminator* terminator) :
+    AbstractGangTask("Finish draining SATB buffers"), _cm(cm), _terminator(terminator) {
+  }
+
+  void work(uint worker_id) {
+    _cm->drain_satb_buffers(worker_id, true);
+  }
+};
+
 void ShenandoahConcurrentMark::finishMarkFromRoots() {
   if (ShenandoahGCVerbose) {
     tty->print_cr("Starting finishMarkFromRoots");
@@ -122,55 +143,29 @@ void ShenandoahConcurrentMark::finishMarkFromRoots() {
 
   sh->shenandoahPolicy()->record_final_mark_start();
 
-  //  ParallelTaskTerminator terminator(_max_worker_id, _task_queues);
   // Trace any (new) unmarked root references.
   sh->prepare_unmarked_root_objs();
 
-  drain_satb_buffers();
-
-  // TODO: I think we can parallelize this.
-  //  SCMConcurrentMarkingTask markingTask(this, &terminator);
-  //  markingTask.work(0);
-
-  // For Now doing this sequentially.
-
-  // First make sure queues other than 0 are empty.
-  for (int i = 1; i < (int)_max_worker_id; i++)
-    assert(_task_queues->queue(i)->is_empty(), "Only using task queue 0 for now");
-
-  ShenandoahMarkRefsClosure cl(sh->getEpoch(), 0);
-  oop obj;
-
-  bool found = _task_queues->queue(0)->pop_local(obj);
-
-  while (found) {
-    if (ShenandoahGCVerbose) {
-      tty->print("Pop Task: obj = %p\n", obj);
-    }
-    assert(obj->is_oop(), "Oops, not an oop");
-    obj->oop_iterate(&cl);
-    found = _task_queues->queue(0)->pop_local(obj);
+  ParallelTaskTerminator terminator(_max_worker_id, _task_queues);
+  {
+    ShenandoahHeap::StrongRootsScope srs(sh);
+    // drain_satb_buffers(0, true);
+    FinishDrainSATBBuffersTask drain_satb_buffers(this, &terminator);
+    sh->workers()->run_task(&drain_satb_buffers);
   }
 
   // Also drain our overflow queue.
-  obj = _overflow_queue->pop();
+  ShenandoahMarkRefsClosure cl(sh->getEpoch(), 0);
+  oop obj = _overflow_queue->pop();
   while (obj != NULL) {
     assert(obj->is_oop(), "Oops, not an oop");
     obj->oop_iterate(&cl);
     obj = _overflow_queue->pop();
   }
 
-  found = _task_queues->queue(0)->pop_local(obj);
-
-  while (found) {
-    if (ShenandoahGCVerbose) {
-      tty->print("Pop single threaded Task: obj = "PTR_FORMAT"\n", obj);
-    }
-    assert(obj->is_oop(), "Oops, not an oop");
-    obj->oop_iterate(&cl);
-    found = _task_queues->queue(0)->pop_local(obj);
-  }
-
+  // Finally mark everything else we've got in our queues during the previous steps.
+  SCMConcurrentMarkingTask markingTask = SCMConcurrentMarkingTask(this, &terminator);
+  sh->workers()->run_task(&markingTask);
 
   assert(_task_queues->queue(0)->is_empty(), "Should be empty");
   if (ShenandoahGCVerbose) {
@@ -184,21 +179,27 @@ void ShenandoahConcurrentMark::finishMarkFromRoots() {
     }
 #endif
   }
-
   sh->shenandoahPolicy()->record_final_mark_end();
 }
 
-void ShenandoahConcurrentMark::drain_satb_buffers() {
-  // tty->print_cr("start draining SATB buffers");
-  ShenandoahHeap* sh = (ShenandoahHeap*) Universe::heap();
-  ShenandoahMarkObjsClosure cl(sh->getEpoch(), 0);
+void ShenandoahConcurrentMark::drain_satb_buffers(uint worker_id, bool remark) {
 
-  // This can be parallelized. See g1/concurrentMark.cpp
+  // tty->print_cr("start draining SATB buffers");
+
+  ShenandoahHeap* sh = (ShenandoahHeap*) Universe::heap();
+  ShenandoahMarkObjsClosure cl(sh->getEpoch(), worker_id);
+
   SATBMarkQueueSet& satb_mq_set = JavaThread::satb_mark_queue_set();
-  satb_mq_set.set_closure(&cl);
-  while (satb_mq_set.apply_closure_to_completed_buffer());
-  satb_mq_set.iterate_closure_all_threads();
-  satb_mq_set.set_closure(NULL);
+  satb_mq_set.set_par_closure(worker_id, &cl);
+  while (satb_mq_set.par_apply_closure_to_completed_buffer(worker_id));
+
+  if (remark) {
+    satb_mq_set.par_iterate_closure_all_threads(worker_id);
+  }
+
+  assert(satb_mq_set.completed_buffers_num() == 0, "invariant");
+  satb_mq_set.set_par_closure(worker_id, NULL);
+
   // tty->print_cr("end draining SATB buffers");
 
 }
