@@ -14,9 +14,11 @@ const char* VM_ShenandoahInitMark::name() const {
 
 void VM_ShenandoahInitMark::doit() {
   ShenandoahHeap *sh = (ShenandoahHeap*) Universe::heap();
+  sh->shenandoahPolicy()->record_init_mark_start();
   if (ShenandoahGCVerbose)
     tty->print("vm_ShenandoahInitMark\n");
   sh->start_concurrent_marking();
+  sh->shenandoahPolicy()->record_init_mark_end();
 }
 
 VM_Operation::VMOp_Type VM_ShenandoahFinishMark::type() const {
@@ -29,6 +31,7 @@ const char* VM_ShenandoahFinishMark::name() const {
 
 void VM_ShenandoahFinishMark::doit() {
   ShenandoahHeap *sh = (ShenandoahHeap*) Universe::heap();
+  sh->shenandoahPolicy()->record_final_mark_start();  
   sh->concurrentMark()->finishMarkFromRoots();
   sh->stop_concurrent_marking();
   sh->prepare_for_concurrent_evacuation();
@@ -38,6 +41,7 @@ void VM_ShenandoahFinishMark::doit() {
     sh->parallel_evacuate();
     sh->set_evacuation_in_progress(false);
   }
+  sh->shenandoahPolicy()->record_final_mark_end();    
 }
 
 VM_Operation::VMOp_Type VM_ShenandoahVerifyHeapAfterEvacuation::type() const {
