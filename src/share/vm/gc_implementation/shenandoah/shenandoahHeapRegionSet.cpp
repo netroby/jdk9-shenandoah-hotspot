@@ -212,18 +212,19 @@ void ShenandoahHeapRegionSet::choose_collection_set(ShenandoahHeapRegionSet* reg
 void ShenandoahHeapRegionSet::choose_empty_regions(ShenandoahHeapRegionSet* region_set) {
   sortDescendingFree();
   int r = 0;
-  while(r < _numRegions && _regions[r]->free() > _free_threshold) {
+  int fs_index = 0;
+  for (int r = 0; r < _numRegions; r++) {
     ShenandoahHeapRegion* region = _regions[r];
     assert(! region->is_humonguous(), "don't reuse occupied humonguous regions");
     if (! region->is_in_collection_set()) {
       region_set->_regions[r] = region;
+      fs_index++;
     }
-    r++;
   }
 
-  region_set->_inserted = r;
+  region_set->_inserted = fs_index;
   region_set->_index = 0;
-  region_set->_numRegions = r;
+  region_set->_numRegions = fs_index;
 }  
 
 void ShenandoahHeapRegionSet::reclaim_humonguous_regions() {
