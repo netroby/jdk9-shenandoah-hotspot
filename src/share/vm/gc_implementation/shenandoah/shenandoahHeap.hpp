@@ -166,7 +166,7 @@ public:
   uint oop_extra_words();
 
 #ifndef CC_INTERP
-  void compile_prepare_oop(MacroAssembler* masm);
+  void compile_prepare_oop(MacroAssembler* masm, Register obj = rax);
 #endif
 
   Space* space_containing(const void* oop) const;

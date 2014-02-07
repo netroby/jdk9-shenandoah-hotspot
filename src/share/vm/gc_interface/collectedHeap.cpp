@@ -630,7 +630,7 @@ uint CollectedHeap::oop_extra_words() {
 }
 
 #ifndef CC_INTERP
-void CollectedHeap::compile_prepare_oop(MacroAssembler* masm) {
+void CollectedHeap::compile_prepare_oop(MacroAssembler* masm, Register obj) {
   // Default implementation does nothing.
 }
 #endif

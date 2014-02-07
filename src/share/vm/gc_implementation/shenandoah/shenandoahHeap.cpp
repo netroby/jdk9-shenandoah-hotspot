@@ -1851,25 +1851,26 @@ int ShenandoahHeap::ensure_new_regions(int new_regions) {
 }
 
 #ifndef CC_INTERP
-void ShenandoahHeap::compile_prepare_oop(MacroAssembler* masm) {
+void ShenandoahHeap::compile_prepare_oop(MacroAssembler* masm, Register obj) {
+  assert(obj != rscratch1, "Need rscratch1");
   // Initialize brooks pointer.
-  __ movptr(Address(rax, oopDesc::mark_offset_in_bytes()),
+  __ movptr(Address(obj, oopDesc::mark_offset_in_bytes()),
             (intptr_t) markOopDesc::prototype()); // header (address 0x1)
   // Mark oop as brooks ptr.
-  __ orl(Address(rax, oopDesc::mark_offset_in_bytes()), 15 << 3);
+  __ orl(Address(obj, oopDesc::mark_offset_in_bytes()), 15 << 3);
   // Set klass to intArray.
   __ movptr(rscratch1, ExternalAddress((address)Universe::intArrayKlassObj_addr()));
-  __ movptr(Address(rax, oopDesc::klass_offset_in_bytes()), rscratch1);
+  __ movptr(Address(obj, oopDesc::klass_offset_in_bytes()), rscratch1);
 
   // Array size.
-  __ movptr(Address(rax, arrayOopDesc::length_offset_in_bytes()), (intptr_t) 2);
+  __ movptr(Address(obj, arrayOopDesc::length_offset_in_bytes()), (intptr_t) 2);
 
   // Write brooks pointer address.
-  // Move rax pointer to the actual oop.
-  __ incrementq(rax, BrooksPointer::BROOKS_POINTER_OBJ_SIZE * HeapWordSize);
+  // Move obj pointer to the actual oop.
+  __ incrementq(obj, BrooksPointer::BROOKS_POINTER_OBJ_SIZE * HeapWordSize);
   __ movptr(rscratch1, ExternalAddress((address) &_epoch));
-  __ orq(rscratch1, rax);
-  __ movptr(Address(rax, -1 * HeapWordSize), rscratch1);
+  __ orq(rscratch1, obj);
+  __ movptr(Address(obj, -1 * HeapWordSize), rscratch1);
   __ os_breakpoint();
 }
 #endif

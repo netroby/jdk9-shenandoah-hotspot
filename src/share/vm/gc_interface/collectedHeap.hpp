@@ -338,7 +338,7 @@ class CollectedHeap : public CHeapObj<mtInternal> {
   virtual uint oop_extra_words();
 
 #ifndef CC_INTERP
-  virtual void compile_prepare_oop(MacroAssembler* masm);
+  virtual void compile_prepare_oop(MacroAssembler* masm, Register obj = rax);
 #endif
 
   // Raw memory allocation facilities
