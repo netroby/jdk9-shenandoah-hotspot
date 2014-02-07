@@ -1823,6 +1823,25 @@ void LIRGenerator::do_LoadField(LoadField* x) {
   }
 }
 
+void LIRGenerator::read_barrier(LIR_Opr obj, CodeEmitInfo* info) {
+  if (UseShenandoahGC) {
+
+    LabelObj* done = new LabelObj();
+
+    __ cmp(lir_cond_equal, obj, LIR_OprFact::intConst(0));
+    __ branch(lir_cond_equal, T_LONG, done->label());
+
+    LIR_Address* brooks_ptr_address = generate_address(obj, -8, T_ADDRESS);
+    __ load(brooks_ptr_address, obj, info == NULL ? NULL: new CodeEmitInfo(info), lir_patch_none);
+    LIR_Opr y = new_register(T_LONG);
+    __ move(obj, y);
+    __ logical_and(y, LIR_OprFact::longConst(~0x7), y);
+    __ move(y, obj);
+
+    __ branch_destination(done->label());
+
+  }
+}
 
 //------------------------java.nio.Buffer.checkIndex------------------------
 

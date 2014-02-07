@@ -980,6 +980,10 @@ void LIRGenerator::do_update_CRC32(Intrinsic* x) {
       }
 #endif
 
+      if (is_updateBytes) {
+        read_barrier(base_op, NULL);
+      }
+
       LIR_Address* a = new LIR_Address(base_op,
                                        index,
                                        LIR_Address::times_1,
