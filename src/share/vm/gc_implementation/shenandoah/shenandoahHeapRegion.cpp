@@ -50,7 +50,7 @@ size_t ShenandoahHeapRegion::getLiveData() {
 }
 
 size_t ShenandoahHeapRegion::garbage() {
-  assert(used() >= getLiveData(), "Live Data must be a subset of used()");
+  assert(used() >= getLiveData(), err_msg("Live Data must be a subset of used() live: %d used: %d", getLiveData(), used()));
   size_t result = used() - getLiveData();
   return result;
 }

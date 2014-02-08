@@ -25,7 +25,11 @@ public:
   static const uintptr_t FORWARDEE_MASK = ~AGE_MASK;
 
   uint get_age();
-  void set_age(uint age);
+  /*
+   * Sets the age of the object. Return true if successful, false if another thread
+   * was faster.
+   */
+  bool set_age(uint age);
 
   oop get_forwardee();
   void set_forwardee(oop forwardee);

@@ -1435,13 +1435,14 @@ void ShenandoahMarkObjsClosure::do_object(oop obj) {
         tty->print_cr("marking Throwable object %p, %d, %d", obj, getMark(obj)->age(), sh->getEpoch());
       }
       */
-      sh->mark_current(obj);
+      if (sh->mark_current(obj)) {
 
-      // Calculate liveness of heap region containing object.
-      ShenandoahHeapRegion* region = sh->heap_region_containing(obj);
-      region->increase_live_data((obj->size() + BrooksPointer::BROOKS_POINTER_OBJ_SIZE) * HeapWordSize);
+        // Calculate liveness of heap region containing object.
+        ShenandoahHeapRegion* region = sh->heap_region_containing(obj);
+        region->increase_live_data((obj->size() + BrooksPointer::BROOKS_POINTER_OBJ_SIZE) * HeapWordSize);
 
-      sh->concurrentMark()->addTask(obj, _worker_id);
+        sh->concurrentMark()->addTask(obj, _worker_id);
+      }
     }
     /*
     else {
@@ -1683,14 +1684,14 @@ void ShenandoahHeap::post_allocation_collector_specific_setup(HeapWord* hw) {
 
 }
 
-void ShenandoahHeap::mark_current(oop obj) const {
+bool ShenandoahHeap::mark_current(oop obj) const {
   assert(_epoch > 0 && _epoch <= MAX_EPOCH, err_msg("invalid epoch: %d", _epoch));
   assert(obj == oopDesc::bs()->resolve_oop(obj), "only mark forwarded copy of objects");
-  mark_current_no_checks(obj);
+  return mark_current_no_checks(obj);
 }
 
-void ShenandoahHeap::mark_current_no_checks(oop obj) const {
-  BrooksPointer::get(obj).set_age(_epoch);
+bool ShenandoahHeap::mark_current_no_checks(oop obj) const {
+  return BrooksPointer::get(obj).set_age(_epoch);
 }
 
 bool ShenandoahHeap::isMarkedPrev(oop obj) const {
