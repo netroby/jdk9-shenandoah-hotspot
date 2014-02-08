@@ -192,9 +192,9 @@ void ShenandoahConcurrentMark::drain_satb_buffers(uint worker_id, bool remark) {
 
   if (remark) {
     satb_mq_set.par_iterate_closure_all_threads(worker_id);
+    assert(satb_mq_set.completed_buffers_num() == 0, "invariant");
   }
 
-  assert(satb_mq_set.completed_buffers_num() == 0, "invariant");
   satb_mq_set.set_par_closure(worker_id, NULL);
 
   // tty->print_cr("end draining SATB buffers");
