@@ -29,7 +29,7 @@ public:
    * Sets the age of the object. Return true if successful, false if another thread
    * was faster.
    */
-  inline inline bool set_age(uint age) {
+  inline bool set_age(uint age) {
     uintptr_t old_brooks_ptr = *_heap_word;
     uint old_age = old_brooks_ptr & AGE_MASK;
     if (age == old_age) {
