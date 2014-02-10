@@ -1428,20 +1428,11 @@ void ShenandoahMarkObjsClosure::do_object(oop obj) {
 #endif
     assert(! sh->heap_region_containing(obj)->is_in_collection_set(), "we don't want to mark objects in from-space");
     assert(sh->is_in(obj), "referenced objects must be in the heap. No?");
-    if (! sh->isMarkedCurrent(obj)) {
-      /*
-      if (obj->is_a(SystemDictionary::Throwable_klass())) {
-        tty->print_cr("marking Throwable object %p, %d, %d", obj, getMark(obj)->age(), sh->getEpoch());
-      }
-      */
-      if (sh->mark_current(obj)) {
-
-        // Calculate liveness of heap region containing object.
-        ShenandoahHeapRegion* region = sh->heap_region_containing(obj);
-        region->increase_live_data((obj->size() + BrooksPointer::BROOKS_POINTER_OBJ_SIZE) * HeapWordSize);
-
-        sh->concurrentMark()->addTask(obj, _worker_id);
-      }
+    if (sh->mark_current(obj)) {
+      // Calculate liveness of heap region containing object.
+      ShenandoahHeapRegion* region = sh->heap_region_containing(obj);
+      region->increase_live_data((obj->size() + BrooksPointer::BROOKS_POINTER_OBJ_SIZE) * HeapWordSize);
+      sh->concurrentMark()->addTask(obj, _worker_id);
     }
     /*
     else {
@@ -1683,6 +1674,11 @@ void ShenandoahHeap::post_allocation_collector_specific_setup(HeapWord* hw) {
 
 }
 
+/*
+ * Marks the object. Returns true if the object has not been marked before and has
+ * been marked by this thread. Returns false if the object has already been marked,
+ * or if a competing thread succeeded in marking this object.
+ */
 bool ShenandoahHeap::mark_current(oop obj) const {
   assert(_epoch > 0 && _epoch <= MAX_EPOCH, err_msg("invalid epoch: %d", _epoch));
   assert(obj == oopDesc::bs()->resolve_oop(obj), "only mark forwarded copy of objects");
