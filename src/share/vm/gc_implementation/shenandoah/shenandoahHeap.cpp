@@ -128,8 +128,8 @@ jint ShenandoahHeap::initialize() {
     _free_regions->print();
   }
 
-  _current_region = _free_regions->get_next();
-  _current_region->claim();
+  _current_region = NULL;
+  cas_update_current_region(NULL);
 
   // The call below uses stuff (the SATB* things) that are in G1, but probably
   // belong into a shared location.
@@ -927,7 +927,6 @@ void ShenandoahHeap::prepare_for_concurrent_evacuation() {
   regions.reclaim_humonguous_regions();
   _shenandoah_policy->choose_collection_and_free_sets(&regions, _collection_set, _free_regions);
 
-  cas_update_current_region(_current_region);
 }
 
 void ShenandoahHeap::parallel_evacuate() {

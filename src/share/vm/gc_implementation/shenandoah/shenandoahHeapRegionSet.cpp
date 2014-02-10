@@ -215,7 +215,7 @@ void ShenandoahHeapRegionSet::choose_empty_regions(ShenandoahHeapRegionSet* regi
   int fs_index = 0;
   for (int r = 0; r < _numRegions; r++) {
     ShenandoahHeapRegion* region = _regions[r];
-    if (! region->is_in_collection_set()) {
+    if ((! region->is_in_collection_set()) && (! region->is_current_allocation_region())) {
       region_set->_regions[fs_index] = region;
       fs_index++;
     }
