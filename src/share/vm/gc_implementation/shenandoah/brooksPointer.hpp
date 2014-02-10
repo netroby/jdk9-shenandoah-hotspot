@@ -29,13 +29,24 @@ public:
    * Sets the age of the object. Return true if successful, false if another thread
    * was faster.
    */
-  bool set_age(uint age);
+  inline inline bool set_age(uint age) {
+    uintptr_t old_brooks_ptr = *_heap_word;
+    uint old_age = old_brooks_ptr & AGE_MASK;
+    if (age == old_age) {
+      // Object has already been marked.
+      return false;
+    }
+    uintptr_t new_brooks_ptr = (old_brooks_ptr & FORWARDEE_MASK) | (age & AGE_MASK);
+    uintptr_t other = (uintptr_t) Atomic::xchg_ptr((void*)new_brooks_ptr, (void*) _heap_word);
+    assert(other == new_brooks_ptr || other == old_brooks_ptr, "can only be one of old or new value");
+    return other == old_brooks_ptr;
+  }
 
   inline oop get_forwardee() {
-  oop forwardee = (oop) (*_heap_word & FORWARDEE_MASK);
-  assert(Universe::heap()->is_in(forwardee), "forwardee must be in heap");
-  assert(forwardee->is_oop(), "forwardee must be valid oop");
-  return forwardee;
+    oop forwardee = (oop) (*_heap_word & FORWARDEE_MASK);
+    assert(Universe::heap()->is_in(forwardee), "forwardee must be in heap");
+    assert(forwardee->is_oop(), "forwardee must be valid oop");
+    return forwardee;
   }
 
   void set_forwardee(oop forwardee);
