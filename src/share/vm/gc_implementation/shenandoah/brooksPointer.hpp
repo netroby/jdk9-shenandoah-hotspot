@@ -31,7 +31,13 @@ public:
    */
   bool set_age(uint age);
 
-  oop get_forwardee();
+  inline oop get_forwardee() {
+  oop forwardee = (oop) (*_heap_word & FORWARDEE_MASK);
+  assert(Universe::heap()->is_in(forwardee), "forwardee must be in heap");
+  assert(forwardee->is_oop(), "forwardee must be valid oop");
+  return forwardee;
+  }
+
   void set_forwardee(oop forwardee);
   HeapWord* cas_forwardee(HeapWord* old, HeapWord* forwardee);
 

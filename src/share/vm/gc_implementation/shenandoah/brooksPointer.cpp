@@ -35,13 +35,6 @@ bool BrooksPointer::set_age(uint age) {
   return other == old_brooks_ptr;
 }
 
-oop BrooksPointer::get_forwardee() {
-  oop forwardee = (oop) (*_heap_word & FORWARDEE_MASK);
-  assert(Universe::heap()->is_in(forwardee), "forwardee must be in heap");
-  assert(forwardee->is_oop(), "forwardee must be valid oop");
-  return forwardee;
-}
-
 void BrooksPointer::set_forwardee(oop forwardee) {
   assert(ShenandoahHeap::heap()->is_in(forwardee), "forwardee must be valid oop in the heap");
   *_heap_word = (*_heap_word & AGE_MASK) | ((uintptr_t) forwardee & FORWARDEE_MASK);

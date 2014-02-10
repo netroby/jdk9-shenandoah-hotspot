@@ -1382,7 +1382,7 @@ class CommandLineFlags {
           "Turn on/off concurrent evacuation in Shenandoah")                \
                                                                             \
   product(ccstr, ShenandoahGCHeuristics, NULL,                              \
-          "The heuristics to use in Shenandoah GC; possible values: statusquo, aggressive, halfway") \
+          "The heuristics to use in Shenandoah GC; possible values: statusquo, aggressive, halfway, lazy") \
                                                                             \
   product(bool, UseParallelGC, false,                                       \
           "Use the Parallel Scavenge garbage collector")                    \
