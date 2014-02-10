@@ -5,8 +5,9 @@ Copyright 2014 Red Hat, Inc. and/or its affiliates.
 #ifndef SHARE_VM_GC_IMPLEMENTATION_SHENANDOAH_BROOKSPOINTER_HPP
 #define SHARE_VM_GC_IMPLEMENTATION_SHENANDOAH_BROOKSPOINTER_HPP
 
-#include "utilities/globalDefinitions.hpp"
+#include "memory/universe.hpp"
 #include "oops/oop.hpp"
+#include "utilities/globalDefinitions.hpp"
 
 class BrooksPointer {
 
