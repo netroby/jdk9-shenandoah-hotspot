@@ -5,7 +5,6 @@ Copyright 2014 Red Hat, Inc. and/or its affiliates.
 #ifndef SHARE_VM_GC_IMPLEMENTATION_SHENANDOAH_BROOKSPOINTER_HPP
 #define SHARE_VM_GC_IMPLEMENTATION_SHENANDOAH_BROOKSPOINTER_HPP
 
-#include "memory/universe.hpp"
 #include "oops/oop.hpp"
 #include "utilities/globalDefinitions.hpp"
 
@@ -43,9 +42,11 @@ public:
     return other == old_brooks_ptr;
   }
 
+  bool check_forwardee_is_in_heap(oop forwardee);
+  
   inline oop get_forwardee() {
     oop forwardee = (oop) (*_heap_word & FORWARDEE_MASK);
-    assert(Universe::heap()->is_in(forwardee), "forwardee must be in heap");
+    assert(check_forwardee_is_in_heap(forwardee), "forwardee must be in heap");
     assert(forwardee->is_oop(), "forwardee must be valid oop");
     return forwardee;
   }

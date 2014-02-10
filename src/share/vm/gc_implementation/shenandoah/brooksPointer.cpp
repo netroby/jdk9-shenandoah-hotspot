@@ -47,4 +47,7 @@ HeapWord* BrooksPointer::cas_forwardee(HeapWord* old, HeapWord* forwardee) {
 
   return result;
 }					 
-  
+
+bool BrooksPointer::check_forwardee_is_in_heap(oop forwardee) {
+   return Universe::heap()->is_in(forwardee);
+}
