@@ -1490,10 +1490,13 @@ public:
 void ShenandoahHeap::start_concurrent_marking() {
   set_concurrent_mark_in_progress(true);
   
-  
-  if (ShenandoahGCVerbose) 
+  if (ShenandoahGCVerbose) {
+    // We need to make the heap parsable otherwise we access garbage in TLABs when
+    // printing objects
+    prepare_for_verify();
     print_all_refs("pre -mark");
-
+  }
+  
   _shenandoah_policy->record_bytes_allocated(_bytesAllocSinceCM);
   _bytesAllocSinceCM = 0;
 

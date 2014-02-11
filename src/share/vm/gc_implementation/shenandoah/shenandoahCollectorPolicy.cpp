@@ -148,6 +148,29 @@ public:
   }
 };
 
+// GC as little as possible 
+class LazyHeuristics : public ShenandoahHeuristics {
+public:
+  LazyHeuristics() : ShenandoahHeuristics() {
+    if (PrintGCDetails) {
+      tty->print_cr("Initializing lazy heuristics");
+    }
+  }
+
+  virtual bool should_start_concurrent_mark(size_t used, size_t capacity) const {
+    size_t targetStartMarking = (capacity / 5) * 4;
+    if (used > targetStartMarking) {
+      return true;
+    }
+  }
+
+  virtual void choose_collection_and_free_sets(ShenandoahHeapRegionSet* region_set,
+                                               ShenandoahHeapRegionSet* collection_set,
+                                               ShenandoahHeapRegionSet* free_set) const {
+    region_set->choose_collection_and_free_sets(collection_set, free_set);
+  }
+};
+
 // These are the heuristics in place when we made this class
 class StatusQuoHeuristics : public ShenandoahHeuristics {
 public:
@@ -195,6 +218,11 @@ ShenandoahCollectorPolicy::ShenandoahCollectorPolicy() {
         tty->print_cr("Shenandoah heuristics: halfway");
       }
       _heuristics = new HalfwayHeuristics();
+    } else if (strcmp(ShenandoahGCHeuristics, "lazy") == 0) {
+      if (ShenandoahLogConfig) {
+        tty->print_cr("Shenandoah heuristics: lazy");
+      }
+      _heuristics = new LazyHeuristics();
     } else {
       fatal("Unknown -XX:ShenandoahGCHeuristics option");
     }
