@@ -1308,8 +1308,8 @@ void  ShenandoahHeap::space_iterate(SpaceClosure* cl) {
 
 ShenandoahHeapRegion*
 ShenandoahHeap::heap_region_containing(const void* addr) const {
-  intptr_t region_start = ((intptr_t) addr) & ~(ShenandoahHeapRegion::RegionSizeBytes - 1);
-  intptr_t index = (region_start - (intptr_t) _first_region->bottom()) / ShenandoahHeapRegion::RegionSizeBytes;
+  uintptr_t region_start = ((uintptr_t) addr) & ~(ShenandoahHeapRegion::RegionSizeBytes - 1);
+  uintptr_t index = (region_start - (uintptr_t) _first_region_bottom) >> ShenandoahHeapRegion::RegionSizeShift;
   ShenandoahHeapRegion* result = _ordered_regions[index];
   assert(addr >= result->bottom() && addr < result->end(), "address must be in found region");
   return result;
