@@ -161,6 +161,8 @@ public:
     size_t targetStartMarking = (capacity / 5) * 4;
     if (used > targetStartMarking) {
       return true;
+    } else {
+      return false;
     }
   }
 
@@ -189,6 +191,8 @@ public:
       // Need to check that an appropriate number of regions have
       // been allocated since last concurrent mark too.
       return true;
+    } else {
+      return false;
     }
   }
 
