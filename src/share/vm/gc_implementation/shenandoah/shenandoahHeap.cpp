@@ -262,8 +262,8 @@ bool  ShenandoahHeap::is_scavengable(const void* p) {
 
 HeapWord* ShenandoahHeap::allocate_new_tlab(size_t word_size) {
   HeapWord* result = allocate_memory_gclab(word_size);
-  assert(! heap_region_containing(result)->is_in_collection_set(), "Never allocate in dirty region");
   if (result != NULL) {
+    assert(! heap_region_containing(result)->is_in_collection_set(), "Never allocate in dirty region");
     _bytesAllocSinceCM += word_size * HeapWordSize;
     heap_region_containing(result)->increase_active_tlab_count();
     if (ShenandoahGCVerbose)
@@ -1754,6 +1754,7 @@ oopDesc* ShenandoahHeap::evacuate_object(oop p, EvacuationAllocator* allocator) 
     }
     return_val = (oopDesc*) copy;
   }  else {
+    // tty->print_cr("Copy of %p to %p at epoch %d failed, using %p", p, copy, getEpoch(), result);
     allocator->rollback(filler, required);
     return_val = (oopDesc*) result;
   }
