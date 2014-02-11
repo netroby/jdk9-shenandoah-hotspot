@@ -3053,7 +3053,7 @@ class StubGenerator: public StubCodeGenerator {
     // Resolve (and maybe copy the destination) oops (Shenandoah GC).
     oopDesc::bs()->compile_resolve_oop_not_null(_masm, from);
     oopDesc::bs()->compile_resolve_oop_not_null(_masm, key);
-    oopDesc::bs()->compile_resolve_oop_for_write(_masm, to, 2, BarrierSet::ss_c_rarg0, BarrierSet::ss_c_rarg2);
+    oopDesc::bs()->compile_resolve_oop_for_write(_masm, to, true, 2, BarrierSet::ss_c_rarg0, BarrierSet::ss_c_rarg2);
 
     // keylen could be only {11, 13, 15} * 4 = {44, 52, 60}
     __ movl(keylen, Address(key, arrayOopDesc::length_offset_in_bytes() - arrayOopDesc::base_offset_in_bytes(T_INT)));
@@ -3152,7 +3152,7 @@ class StubGenerator: public StubCodeGenerator {
     // Resolve (and maybe copy the destination) oops (Shenandoah GC).
     oopDesc::bs()->compile_resolve_oop_not_null(_masm, from);
     oopDesc::bs()->compile_resolve_oop_not_null(_masm, key);
-    oopDesc::bs()->compile_resolve_oop_for_write(_masm, to, 2, BarrierSet::ss_c_rarg0, BarrierSet::ss_c_rarg2);
+    oopDesc::bs()->compile_resolve_oop_for_write(_masm, to, true, 2, BarrierSet::ss_c_rarg0, BarrierSet::ss_c_rarg2);
 
     // keylen could be only {11, 13, 15} * 4 = {44, 52, 60}
     __ movl(keylen, Address(key, arrayOopDesc::length_offset_in_bytes() - arrayOopDesc::base_offset_in_bytes(T_INT)));
@@ -3266,8 +3266,8 @@ class StubGenerator: public StubCodeGenerator {
     // Resolve (and maybe copy the destination) oops (Shenandoah GC).
     oopDesc::bs()->compile_resolve_oop_not_null(_masm, from);
     oopDesc::bs()->compile_resolve_oop_not_null(_masm, key);
-    oopDesc::bs()->compile_resolve_oop_for_write(_masm, to, 4, BarrierSet::ss_c_rarg0, BarrierSet::ss_c_rarg2, BarrierSet::ss_c_rarg3, BarrierSet::ss_c_rarg4);
-    oopDesc::bs()->compile_resolve_oop_for_write(_masm, rvec, 4, BarrierSet::ss_c_rarg0, BarrierSet::ss_c_rarg1, BarrierSet::ss_c_rarg2, BarrierSet::ss_c_rarg4);
+    oopDesc::bs()->compile_resolve_oop_for_write(_masm, to, true, 4, BarrierSet::ss_c_rarg0, BarrierSet::ss_c_rarg2, BarrierSet::ss_c_rarg3, BarrierSet::ss_c_rarg4);
+    oopDesc::bs()->compile_resolve_oop_for_write(_masm, rvec, true, 4, BarrierSet::ss_c_rarg0, BarrierSet::ss_c_rarg1, BarrierSet::ss_c_rarg2, BarrierSet::ss_c_rarg4);
 
 #ifdef _WIN64
     // on win64, fill len_reg from stack position
@@ -3461,8 +3461,8 @@ class StubGenerator: public StubCodeGenerator {
     // Resolve (and maybe copy the destination) oops (Shenandoah GC).
     oopDesc::bs()->compile_resolve_oop_not_null(_masm, from);
     oopDesc::bs()->compile_resolve_oop_not_null(_masm, key);
-    oopDesc::bs()->compile_resolve_oop_for_write(_masm, to, 4, BarrierSet::ss_c_rarg0, BarrierSet::ss_c_rarg2, BarrierSet::ss_c_rarg3, BarrierSet::ss_c_rarg4);
-    oopDesc::bs()->compile_resolve_oop_for_write(_masm, rvec, 4, BarrierSet::ss_c_rarg0, BarrierSet::ss_c_rarg1, BarrierSet::ss_c_rarg2, BarrierSet::ss_c_rarg4);
+    oopDesc::bs()->compile_resolve_oop_for_write(_masm, to, true, 4, BarrierSet::ss_c_rarg0, BarrierSet::ss_c_rarg2, BarrierSet::ss_c_rarg3, BarrierSet::ss_c_rarg4);
+    oopDesc::bs()->compile_resolve_oop_for_write(_masm, rvec, true, 4, BarrierSet::ss_c_rarg0, BarrierSet::ss_c_rarg1, BarrierSet::ss_c_rarg2, BarrierSet::ss_c_rarg4);
 
 
 #ifdef _WIN64

@@ -263,7 +263,7 @@ Address LIR_Assembler::as_Address(LIR_Address* addr, Register tmp) {
 Address LIR_Assembler::as_Address_resolve_oop(LIR_Address* addr, Register tmp) {
   if(addr->base()->type() == T_OBJECT || addr->base()->type() == T_ARRAY) {
     Register reg = addr->base()->as_pointer_register();
-    oopDesc::bs()->compile_resolve_oop(_masm, reg);
+    oopDesc::bs()->compile_resolve_oop_not_null(_masm, reg);
   }
   return as_Address(addr, tmp);
 }
@@ -271,7 +271,7 @@ Address LIR_Assembler::as_Address_resolve_oop(LIR_Address* addr, Register tmp) {
 Address LIR_Assembler::as_Address_resolve_oop_for_write(LIR_Address* addr) {
   if(addr->base()->type() == T_OBJECT || addr->base()->type() == T_ARRAY) {
     Register reg = addr->base()->as_pointer_register();
-    oopDesc::bs()->compile_resolve_oop_for_write(_masm, reg, 1, BarrierSet::ss_all);
+    oopDesc::bs()->compile_resolve_oop_for_write(_masm, reg, false, 1, BarrierSet::ss_all);
   }
   return as_Address(addr);
 }
@@ -1050,6 +1050,7 @@ void LIR_Assembler::reg2mem(LIR_Opr src, LIR_Opr dest, BasicType type, LIR_Patch
     oopDesc::bs()->compile_resolve_oop(_masm, src->as_register());
   }
 
+  int null_check_here = code_offset();
   Address addr = as_Address_resolve_oop_for_write(to_addr);
 
   if (patch_code != lir_patch_none) {
@@ -1058,7 +1059,6 @@ void LIR_Assembler::reg2mem(LIR_Opr src, LIR_Opr dest, BasicType type, LIR_Patch
     assert(toa.disp() != 0, "must have");
   }
 
-  int null_check_here = code_offset();
   switch (type) {
     case T_FLOAT: {
       if (src->is_single_xmm()) {
@@ -1253,6 +1253,9 @@ void LIR_Assembler::mem2reg(LIR_Opr src, LIR_Opr dest, BasicType type, LIR_Patch
 
   LIR_Address* addr = src->as_address_ptr();
 
+  if (info != NULL) {
+    add_debug_info_for_null_check_here(info);
+  }
   Address from_addr = as_Address_resolve_oop(addr);
 
   if (addr->base()->type() == T_OBJECT) {
@@ -2031,7 +2034,7 @@ void LIR_Assembler::emit_compare_and_swap(LIR_OpCompareAndSwap* op) {
       __ movptr(rscratch1, rax);
       __ movptr(rax, addr);
       __ movptr(rscratch2, rax);
-      oopDesc::bs()->compile_resolve_oop_for_write(_masm, rscratch2, 1, BarrierSet::ss_all);
+      oopDesc::bs()->compile_resolve_oop_for_write(_masm, rscratch2, true, 1, BarrierSet::ss_all);
       if (os::is_MP()) {
         __ lock();
       }
@@ -2754,7 +2757,7 @@ void LIR_Assembler::comp_op(LIR_Condition condition, LIR_Opr opr1, LIR_Opr opr2,
     if (opr2->is_single_cpu()) {
       // cpu register - cpu register
       if (opr1->type() == T_OBJECT || opr1->type() == T_ARRAY) {
-        oopDesc::bs()->compile_resolve_oop_for_write(_masm, reg1, 1, BarrierSet::ss_all);
+        oopDesc::bs()->compile_resolve_oop_for_write(_masm, reg1, true, 1, BarrierSet::ss_all);
         oopDesc::bs()->compile_resolve_oop(_masm, opr2->as_register());
         __ cmpptr(reg1, opr2->as_register());
       } else {
@@ -2764,7 +2767,7 @@ void LIR_Assembler::comp_op(LIR_Condition condition, LIR_Opr opr1, LIR_Opr opr2,
     } else if (opr2->is_stack()) {
       // cpu register - stack
       if (opr1->type() == T_OBJECT || opr1->type() == T_ARRAY) {
-        oopDesc::bs()->compile_resolve_oop_for_write(_masm, reg1, 1, BarrierSet::ss_all);
+        oopDesc::bs()->compile_resolve_oop_for_write(_masm, reg1, true, 1, BarrierSet::ss_all);
         __ movptr(rscratch1, frame_map()->address_for_slot(opr2->single_stack_ix()));
         oopDesc::bs()->compile_resolve_oop(_masm, rscratch1);
         __ cmpptr(reg1, rscratch1);
@@ -2783,7 +2786,7 @@ void LIR_Assembler::comp_op(LIR_Condition condition, LIR_Opr opr1, LIR_Opr opr2,
           __ cmpptr(reg1, (int32_t)NULL_WORD);
         } else {
 #ifdef _LP64
-          oopDesc::bs()->compile_resolve_oop_for_write(_masm, reg1, 1, BarrierSet::ss_all);
+          oopDesc::bs()->compile_resolve_oop_for_write(_masm, reg1, true, 1, BarrierSet::ss_all);
           __ movoop(rscratch1, o);
           oopDesc::bs()->compile_resolve_oop(_masm, rscratch1);
           __ cmpptr(reg1, rscratch1);
@@ -2900,7 +2903,7 @@ void LIR_Assembler::comp_op(LIR_Condition condition, LIR_Opr opr1, LIR_Opr opr2,
 #ifdef _LP64
       // %%% Make this explode if addr isn't reachable until we figure out a
       // better strategy by giving noreg as the temp for as_Address
-      oopDesc::bs()->compile_resolve_oop_for_write(_masm, rscratch1, 1, BarrierSet::ss_all);
+      oopDesc::bs()->compile_resolve_oop_for_write(_masm, rscratch1, true, 1, BarrierSet::ss_all);
       __ movptr(rscratch2, as_Address(addr, noreg));
       oopDesc::bs()->compile_resolve_oop(_masm, rscratch2);
       __ cmpptr(rscratch1, rscratch2);
@@ -3452,7 +3455,7 @@ void LIR_Assembler::emit_arraycopy(LIR_OpArrayCopy* op) {
         __ push(length);
 
         oopDesc::bs()->compile_resolve_oop_not_null(_masm, src);
-        oopDesc::bs()->compile_resolve_oop_for_write(_masm, dst, 1, BarrierSet::ss_all);
+        oopDesc::bs()->compile_resolve_oop_for_write(_masm, dst, false, 1, BarrierSet::ss_all);
         __ lea(tmp, Address(dst, dst_pos, scale, arrayOopDesc::base_offset_in_bytes(basic_type)));
         __ push(tmp);
         __ lea(tmp, Address(src, src_pos, scale, arrayOopDesc::base_offset_in_bytes(basic_type)));
@@ -3579,7 +3582,7 @@ void LIR_Assembler::emit_arraycopy(LIR_OpArrayCopy* op) {
 #ifdef _LP64
   assert_different_registers(c_rarg0, dst, dst_pos, length);
   oopDesc::bs()->compile_resolve_oop_not_null(_masm, src);
-  oopDesc::bs()->compile_resolve_oop_for_write(_masm, dst, 1, BarrierSet::ss_all);
+  oopDesc::bs()->compile_resolve_oop_for_write(_masm, dst, false, 1, BarrierSet::ss_all);
   __ lea(c_rarg0, Address(src, src_pos, scale, arrayOopDesc::base_offset_in_bytes(basic_type)));
   assert_different_registers(c_rarg1, length);
   __ lea(c_rarg1, Address(dst, dst_pos, scale, arrayOopDesc::base_offset_in_bytes(basic_type)));

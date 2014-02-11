@@ -224,7 +224,7 @@ public:
     // Default implementation does nothing.
   }
 
-  virtual void compile_resolve_oop_for_write(MacroAssembler* masm, Register dst, int num_save_state = 0, ...) {
+  virtual void compile_resolve_oop_for_write(MacroAssembler* masm, Register dst, bool explicit_null_check, int num_save_state = 0, ...) {
     // Default implementation does nothing.
   }
 };
