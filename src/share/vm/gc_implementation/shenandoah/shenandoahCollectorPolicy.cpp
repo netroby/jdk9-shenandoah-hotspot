@@ -1,4 +1,5 @@
 #include "gc_implementation/shenandoah/shenandoahCollectorPolicy.hpp"
+#include "gc_implementation/shenandoah/shenandoahHeap.hpp"
 #include "utilities/numberSeq.hpp"
 
 class ShenandoahHeuristics : public CHeapObj<mtGC> {
@@ -132,7 +133,9 @@ public:
   }
 
   bool should_start_concurrent_mark(size_t used, size_t capacity) const {
-    if (used * 2 > capacity)
+    ShenandoahHeap* heap = ShenandoahHeap::heap();
+    size_t threshold_bytes_allocated = heap->capacity() / 4;
+    if (used * 2 > capacity && heap->_bytesAllocSinceCM > threshold_bytes_allocated)
       return true;
     else
       return false;
@@ -156,7 +159,10 @@ public:
 
   virtual bool should_start_concurrent_mark(size_t used, size_t capacity) const {
     size_t targetStartMarking = capacity / 16;
-    if (used > targetStartMarking) {
+    ShenandoahHeap* heap = ShenandoahHeap::heap();
+    size_t threshold_bytes_allocated = heap->capacity() / 4;
+    if (used > targetStartMarking
+        && heap->_bytesAllocSinceCM > threshold_bytes_allocated) {
       // Need to check that an appropriate number of regions have
       // been allocated since last concurrent mark too.
       return true;
