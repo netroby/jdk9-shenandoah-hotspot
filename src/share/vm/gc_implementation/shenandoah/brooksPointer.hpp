@@ -11,7 +11,7 @@ Copyright 2014 Red Hat, Inc. and/or its affiliates.
 class BrooksPointer {
 
 public:
-  static const uint BROOKS_POINTER_OBJ_SIZE = 4;
+  static const uint BROOKS_POINTER_OBJ_SIZE = 1;
 
 private:
 

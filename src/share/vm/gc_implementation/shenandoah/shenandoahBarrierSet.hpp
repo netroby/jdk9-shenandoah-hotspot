@@ -72,8 +72,6 @@ public:
   void write_region_work(MemRegion mr);
 
   oopDesc* get_shenandoah_forwardee(oopDesc* p);
-  static bool is_brooks_ptr(oopDesc* p);
-  static bool has_brooks_ptr(oopDesc* p);
 
   virtual oopDesc* resolve_oop(oopDesc* src);
   virtual oopDesc* maybe_resolve_oop(oopDesc* src);

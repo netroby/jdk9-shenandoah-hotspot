@@ -623,7 +623,7 @@ private:
     }
 #endif
 
-    if ((! ShenandoahBarrierSet::is_brooks_ptr(p)) && _heap->isMarkedCurrent(p)) {
+    if (_heap->isMarkedCurrent(p)) {
       _heap->evacuate_object(p, &_allocator);
     }
   }
@@ -635,10 +635,6 @@ private:
       
 
 void ShenandoahHeap::initialize_brooks_ptr(HeapWord* filler, HeapWord* obj, bool new_obj) {
-  CollectedHeap::fill_with_array(filler, BrooksPointer::BROOKS_POINTER_OBJ_SIZE, false, false);
-  markOop mark = oop(filler)->mark();
-  oop(filler)->set_mark(mark->set_age(15));
-  assert(ShenandoahBarrierSet::is_brooks_ptr(oop(filler)), "brooks pointer must be brooks pointer");
   BrooksPointer brooks_ptr = BrooksPointer::get(oop(obj));
   brooks_ptr.set_forwardee(oop(obj));
 }
@@ -648,7 +644,7 @@ class VerifyEvacuatedObjectClosure : public ObjectClosure {
 public:
   
   void do_object(oop p) {
-    if ((! ShenandoahBarrierSet::is_brooks_ptr(p)) && ShenandoahHeap::heap()->isMarkedCurrent(p)) {
+    if (ShenandoahHeap::heap()->isMarkedCurrent(p)) {
       oop p_prime = oopDesc::bs()->resolve_oop(p);
       assert(p != p_prime, "Should point to evacuated copy");
       assert(p->klass() == p_prime->klass(), "Should have the same class");
@@ -775,7 +771,7 @@ public:
   void do_oop(oop* p)       {
     oop o = *p;
     if (o != NULL) {
-      if (ShenandoahHeap::heap()->is_in(o) && o->is_oop() && !ShenandoahBarrierSet::is_brooks_ptr(o)) {
+      if (ShenandoahHeap::heap()->is_in(o) && o->is_oop()) {
         tty->print_cr("%s %d (%p)-> %p (marked: %d) (%s %p)", _prefix, _index, p, o, ShenandoahHeap::heap()->isMarkedCurrent(o), o->klass()->internal_name(), o->klass());
       } else {
         tty->print_cr("%s %d (%p dirty: %d) -> %p (not in heap, possibly corrupted or dirty (%d))", _prefix, _index, p, ShenandoahHeap::heap()->heap_region_containing(p)->is_in_collection_set(), o, ShenandoahHeap::heap()->heap_region_containing(o)->is_in_collection_set());
@@ -799,12 +795,9 @@ public:
   PrintAllRefsObjectClosure(const char* prefix) : _prefix(prefix) {}
 
   void do_object(oop p) {
-    if (!ShenandoahBarrierSet::is_brooks_ptr(p)) {
-      tty->print_cr("%s object %p (marked: %d) (%s %p) refers to:", _prefix, p, ShenandoahHeap::heap()->isMarkedCurrent(p), p->klass()->internal_name(), p->klass());
-      PrintAllRefsOopClosure cl(_prefix);
-      p->oop_iterate(&cl);
-    }
-    //}
+    tty->print_cr("%s object %p (marked: %d) (%s %p) refers to:", _prefix, p, ShenandoahHeap::heap()->isMarkedCurrent(p), p->klass()->internal_name(), p->klass());
+    PrintAllRefsOopClosure cl(_prefix);
+    p->oop_iterate(&cl);
   }
 };
 
@@ -850,11 +843,6 @@ public:
       }
       assert(o->is_oop(), "oop must be an oop");
       assert(Metaspace::contains(o->klass()), "klass pointer must go to metaspace");
-      assert(! ShenandoahBarrierSet::is_brooks_ptr(o), "oop must not be a brooks ptr");
-      if (! ShenandoahBarrierSet::has_brooks_ptr(o)) {
-        tty->print_cr("oop doesn't have a brooks ptr: %p", o);
-      }
-      assert(ShenandoahBarrierSet::has_brooks_ptr(o), "oop must have a brooks ptr");
       if (! (o == oopDesc::bs()->resolve_oop(o))) {
         tty->print_cr("oops has forwardee: p: %p (%d), o = %p (%d), new-o: %p (%d)", p, _heap->heap_region_containing(p)->is_in_collection_set(), o,  _heap->heap_region_containing(o)->is_in_collection_set(), oopDesc::bs()->resolve_oop(o),  _heap->heap_region_containing(oopDesc::bs()->resolve_oop(o))->is_in_collection_set());
         tty->print_cr("oop class: %s", o->klass()->internal_name());
@@ -880,7 +868,7 @@ public:
     _heap(ShenandoahHeap::heap()), _cl(cl) {};
 
   void do_object(oop p) {
-    if ((!ShenandoahBarrierSet::is_brooks_ptr(p)) && _heap->isMarkedCurrent(p)) {
+    if (_heap->isMarkedCurrent(p)) {
       p->oop_iterate(_cl);
     }
   }
@@ -896,7 +884,7 @@ public:
     _heap(ShenandoahHeap::heap()), _cl(cl) {};
 
   void do_object(oop p) {
-    if ((!ShenandoahBarrierSet::is_brooks_ptr(p)) && _heap->isMarkedCurrent(p)) {
+    if (_heap->isMarkedCurrent(p)) {
       p->oop_iterate(_cl);
     }
   }
@@ -1045,7 +1033,6 @@ oop ShenandoahHeap::maybe_update_oop_ref(oop* p) {
     if (forwarded_oop != heap_oop) {
       // tty->print_cr("updating old ref: %p pointing to %p to new ref: %p", p, heap_oop, forwarded_oop);
       assert(forwarded_oop->is_oop(), "oop required");
-      assert(ShenandoahBarrierSet::has_brooks_ptr(forwarded_oop), "brooks pointer required");
       // If this fails, another thread wrote to p before us, it will be logged in SATB and the
       // reference be updated later.
       oop result = (oop) Atomic::cmpxchg_ptr(forwarded_oop, p, heap_oop);
@@ -1173,7 +1160,7 @@ public:
   bool failures() { return _failures; }
 
   void do_oop(oop* p)       {
-    if (*p != NULL && ! ShenandoahBarrierSet::is_brooks_ptr(*p)) {
+    if (*p != NULL) {
       oop heap_oop = oopDesc::load_heap_oop(p);
       oop obj = oopDesc::decode_heap_oop_not_null(heap_oop);
       if (!obj->is_oop()) {
@@ -1202,14 +1189,6 @@ public:
 
   void do_object(oop p) {
     _rootsCl.do_oop(&p);
-
-    HeapWord* oopWord = (HeapWord*) p;
-    if (ShenandoahBarrierSet::is_brooks_ptr(oop(oopWord))) { // Brooks pointer
-      guarantee(arrayOop(oopWord)->length() == 2, "brooks ptr objects must have length == 2");
-    } else {
-      HeapWord* brooksPOop = (oopWord - BrooksPointer::BROOKS_POINTER_OBJ_SIZE);
-      guarantee(ShenandoahBarrierSet::is_brooks_ptr(oop(brooksPOop)), "age in mark word of brooks obj must be 15");
-    }
   }
 
 };
@@ -1816,23 +1795,7 @@ int ShenandoahHeap::ensure_new_regions(int new_regions) {
 
 #ifndef CC_INTERP
 void ShenandoahHeap::compile_prepare_oop(MacroAssembler* masm, Register obj) {
-  assert(obj != rscratch1, "Need rscratch1");
-  // Initialize brooks pointer.
-  __ movptr(Address(obj, oopDesc::mark_offset_in_bytes()),
-            (intptr_t) markOopDesc::prototype()); // header (address 0x1)
-  // Mark oop as brooks ptr.
-  __ orl(Address(obj, oopDesc::mark_offset_in_bytes()), 15 << 3);
-  // Set klass to intArray.
-  __ movptr(rscratch1, ExternalAddress((address)Universe::intArrayKlassObj_addr()));
-  __ movptr(Address(obj, oopDesc::klass_offset_in_bytes()), rscratch1);
-
-  // Array size.
-  __ movptr(Address(obj, arrayOopDesc::length_offset_in_bytes()), (intptr_t) 2);
-
-  // Write brooks pointer address.
-  // Move obj pointer to the actual oop.
   __ incrementq(obj, BrooksPointer::BROOKS_POINTER_OBJ_SIZE * HeapWordSize);
   __ movptr(Address(obj, -1 * HeapWordSize), obj);
-  __ os_breakpoint();
 }
 #endif

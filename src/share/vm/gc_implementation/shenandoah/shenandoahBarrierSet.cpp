@@ -244,7 +244,6 @@ void ShenandoahBarrierSet::write_region_work(MemRegion mr) {
   // tty->print_cr("write_region_work: %p, %p", mr.start(), mr.end());
   oop obj = oop(mr.start());
   assert(obj->is_oop(), "must be an oop");
-  assert(ShenandoahBarrierSet::has_brooks_ptr(obj), "must have brooks pointer");
   UpdateRefsForOopClosure cl;
   obj->oop_iterate(&cl);
 }
@@ -252,7 +251,6 @@ void ShenandoahBarrierSet::write_region_work(MemRegion mr) {
 oopDesc* ShenandoahBarrierSet::get_shenandoah_forwardee_helper(oopDesc* p) {
   assert(UseShenandoahGC, "must only be called when Shenandoah is used.");
   assert(Universe::heap()->is_in(p), "We shouldn't be calling this on objects not in the heap");
-  assert(! is_brooks_ptr(p), "oop must not be a brooks pointer itself.");
   return BrooksPointer::get(p).get_forwardee();
 }
 
@@ -280,19 +278,6 @@ oopDesc* ShenandoahBarrierSet::get_shenandoah_forwardee(oopDesc* p) {
     return result;
 }
 
-
-bool ShenandoahBarrierSet::is_brooks_ptr(oopDesc* p) {
-  markOop mark = p->mark();
-  if (mark->has_displaced_mark_helper()) {
-    return false;
-  } else {
-    return mark->age() == 15;
-  }
-}
-
-bool ShenandoahBarrierSet::has_brooks_ptr(oopDesc* p) {
-  return is_brooks_ptr(oop(((HeapWord*) p) - BrooksPointer::BROOKS_POINTER_OBJ_SIZE));
-}
 
 oopDesc* ShenandoahBarrierSet::resolve_oop(oopDesc* src) {
 

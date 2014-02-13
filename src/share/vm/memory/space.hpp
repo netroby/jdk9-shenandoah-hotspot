@@ -864,7 +864,7 @@ class ContiguousSpace: public CompactibleSpace {
   // Iteration
   void oop_iterate(ExtendedOopClosure* cl);
   void oop_iterate(MemRegion mr, ExtendedOopClosure* cl);
-  void object_iterate(ObjectClosure* blk);
+  virtual void object_iterate(ObjectClosure* blk);
   // For contiguous spaces this method will iterate safely over objects
   // in the space (i.e., between bottom and top) when at a safepoint.
   void safe_object_iterate(ObjectClosure* blk);
