@@ -252,7 +252,7 @@ void ShenandoahBarrierSet::write_region_work(MemRegion mr) {
 oopDesc* ShenandoahBarrierSet::get_shenandoah_forwardee_helper(oopDesc* p) {
   assert(UseShenandoahGC, "must only be called when Shenandoah is used.");
   assert(Universe::heap()->is_in(p), "We shouldn't be calling this on objects not in the heap");
-  assert(! is_brooks_ptr(p), err_msg("oop must not be a brooks pointer itself. oop's mark word: %p", BrooksPointer::get(p).get_age()));
+  assert(! is_brooks_ptr(p), "oop must not be a brooks pointer itself.");
   return BrooksPointer::get(p).get_forwardee();
 }
 
@@ -377,7 +377,9 @@ void ShenandoahBarrierSet::compile_resolve_oop(MacroAssembler* masm, Register ds
 
 void ShenandoahBarrierSet::compile_resolve_oop_not_null(MacroAssembler* masm, Register dst) {
   __ movptr(dst, Address(dst, -8));
+  /*
   __ andq(dst, ~0x7);
+  */
 }
 
 void ShenandoahBarrierSet::compile_resolve_oop_for_write(MacroAssembler* masm, Register dst, bool explicit_null_check, int num_state_save, ...) {

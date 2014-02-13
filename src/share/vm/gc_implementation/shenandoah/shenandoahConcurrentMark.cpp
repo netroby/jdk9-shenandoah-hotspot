@@ -41,7 +41,7 @@ public:
   void work(uint worker_id) {
     int seed = 17;
     ShenandoahHeap* sh = (ShenandoahHeap*) Universe::heap();
-    ShenandoahMarkRefsClosure cl(sh->getEpoch(), worker_id);
+    ShenandoahMarkRefsClosure cl(worker_id);
 
     while (true) {
       oop obj;
@@ -153,7 +153,7 @@ void ShenandoahConcurrentMark::finishMarkFromRoots() {
   }
 
   // Also drain our overflow queue.
-  ShenandoahMarkRefsClosure cl(sh->getEpoch(), 0);
+  ShenandoahMarkRefsClosure cl(0);
   oop obj = _overflow_queue->pop();
   while (obj != NULL) {
     assert(obj->is_oop(), "Oops, not an oop");
@@ -185,7 +185,7 @@ void ShenandoahConcurrentMark::drain_satb_buffers(uint worker_id, bool remark) {
     tty->print_cr("start draining SATB buffers. remark: %d", remark);
   }
   ShenandoahHeap* sh = (ShenandoahHeap*) Universe::heap();
-  ShenandoahMarkObjsClosure cl(sh->getEpoch(), worker_id);
+  ShenandoahMarkObjsClosure cl(worker_id);
 
   SATBMarkQueueSet& satb_mq_set = JavaThread::satb_mark_queue_set();
   satb_mq_set.set_par_closure(worker_id, &cl);

@@ -156,7 +156,6 @@ ShenandoahHeap::ShenandoahHeap(ShenandoahCollectorPolicy* policy) :
   SharedHeap(policy),
   _shenandoah_policy(policy), 
   _concurrent_mark_in_progress(false),
-  _epoch(1),
   _free_regions(NULL),
   _collection_set(NULL),
   _bytesAllocSinceCM(0),
@@ -548,7 +547,7 @@ HeapWord* ShenandoahHeap::mem_allocate_locked(size_t size,
     if (ShenandoahGCVerbose) {
       if (*gc_overhead_limit_was_exceeded)
 	tty->print("gc_overhead_limit_was_exceeded");
-      tty->print("mem_allocate_locked object of size %d at addr %p in epoch %d\n", size, result, _epoch);
+      tty->print("mem_allocate_locked object of size %d at addr %p\n", size, result);
     }
 
     assert(! heap_region_containing(result)->is_in_collection_set(), "never allocate in targetted region");
@@ -606,15 +605,12 @@ HeapWord*  ShenandoahHeap::mem_allocate(size_t size,
 
 class ParallelEvacuateRegionObjectClosure : public ObjectClosure {
 private:
-  uint _epoch;
   ShenandoahHeap* _heap;
   GCLABAllocator _allocator;
 
   public:
-  ParallelEvacuateRegionObjectClosure(uint epoch, 
-				      ShenandoahHeap* heap, 
+  ParallelEvacuateRegionObjectClosure(ShenandoahHeap* heap, 
 				      ShenandoahAllocRegion* allocRegion) :
-    _epoch(epoch),
     _heap(heap),
     _allocator(GCLABAllocator(allocRegion)) { 
   }
@@ -645,18 +641,11 @@ void ShenandoahHeap::initialize_brooks_ptr(HeapWord* filler, HeapWord* obj, bool
   assert(ShenandoahBarrierSet::is_brooks_ptr(oop(filler)), "brooks pointer must be brooks pointer");
   BrooksPointer brooks_ptr = BrooksPointer::get(oop(obj));
   brooks_ptr.set_forwardee(oop(obj));
-  if (new_obj) {
-    brooks_ptr.set_age(_epoch);
-  } else {
-    brooks_ptr.set_age(0);
-  }
 }
 
 class VerifyEvacuatedObjectClosure : public ObjectClosure {
-  uint _epoch;
 
 public:
-  VerifyEvacuatedObjectClosure(uint epoch) : _epoch(epoch) {}
   
   void do_object(oop p) {
     if ((! ShenandoahBarrierSet::is_brooks_ptr(p)) && ShenandoahHeap::heap()->isMarkedCurrent(p)) {
@@ -676,13 +665,13 @@ void ShenandoahHeap::verify_evacuated_region(ShenandoahHeapRegion* from_region) 
     from_region->print();
   }
 
-  VerifyEvacuatedObjectClosure verify_evacuation(_epoch);
+  VerifyEvacuatedObjectClosure verify_evacuation;
   from_region->object_iterate(&verify_evacuation);
 }
 
 void ShenandoahHeap::parallel_evacuate_region(ShenandoahHeapRegion* from_region, 
 					      ShenandoahAllocRegion *alloc_region) {
-  ParallelEvacuateRegionObjectClosure evacuate_region(_epoch, this, alloc_region);
+  ParallelEvacuateRegionObjectClosure evacuate_region(this, alloc_region);
   
 #ifdef ASSERT
   if (ShenandoahGCVerbose) {
@@ -787,12 +776,12 @@ public:
     oop o = *p;
     if (o != NULL) {
       if (ShenandoahHeap::heap()->is_in(o) && o->is_oop() && !ShenandoahBarrierSet::is_brooks_ptr(o)) {
-        tty->print_cr("%s (e%d) %d (%p)-> %p (age: %d) (%s %p)", _prefix, ShenandoahHeap::heap()->getEpoch(), _index, p, o, BrooksPointer::get(o).get_age(), o->klass()->internal_name(), o->klass());
+        tty->print_cr("%s %d (%p)-> %p (marked: %d) (%s %p)", _prefix, _index, p, o, ShenandoahHeap::heap()->isMarkedCurrent(o), o->klass()->internal_name(), o->klass());
       } else {
-        tty->print_cr("%s (e%d) %d (%p dirty: %d) -> %p (not in heap, possibly corrupted or dirty (%d))", _prefix, ShenandoahHeap::heap()->getEpoch(), _index, p, ShenandoahHeap::heap()->heap_region_containing(p)->is_in_collection_set(), o, ShenandoahHeap::heap()->heap_region_containing(o)->is_in_collection_set());
+        tty->print_cr("%s %d (%p dirty: %d) -> %p (not in heap, possibly corrupted or dirty (%d))", _prefix, _index, p, ShenandoahHeap::heap()->heap_region_containing(p)->is_in_collection_set(), o, ShenandoahHeap::heap()->heap_region_containing(o)->is_in_collection_set());
       }
     } else {
-      tty->print_cr("%s (e%d) %d (%p) -> %p", _prefix, ShenandoahHeap::heap()->getEpoch(), _index, p, o);
+      tty->print_cr("%s %d (%p) -> %p", _prefix, _index, p, o);
     }
     _index++;
   }
@@ -811,7 +800,7 @@ public:
 
   void do_object(oop p) {
     if (!ShenandoahBarrierSet::is_brooks_ptr(p)) {
-      tty->print_cr("%s (e%d) object %p (age: %d) (%s %p) refers to:", _prefix, ShenandoahHeap::heap()->getEpoch(), p, BrooksPointer::get(p).get_age(), p->klass()->internal_name(), p->klass());
+      tty->print_cr("%s object %p (marked: %d) (%s %p) refers to:", _prefix, p, ShenandoahHeap::heap()->isMarkedCurrent(p), p->klass()->internal_name(), p->klass());
       PrintAllRefsOopClosure cl(_prefix);
       p->oop_iterate(&cl);
     }
@@ -844,12 +833,12 @@ public:
       if (! _heap->isMarkedCurrent(o)) {
 	_heap->print_heap_regions();
 	_heap->print_all_refs("post-mark");
-        tty->print_cr("oop not marked, although referrer is marked: %p: in_heap: %d, age: %d, epoch: %d, is_marked: %d", o, _heap->is_in(o), BrooksPointer::get(o).get_age(), _heap->getEpoch(), _heap->isMarkedCurrent(o));
+        tty->print_cr("oop not marked, although referrer is marked: %p: in_heap: %d, is_marked: %d", o, _heap->is_in(o), _heap->isMarkedCurrent(o));
         tty->print_cr("oop class: %s", o->klass()->internal_name());
 	if (_heap->is_in(p)) {
 	  oop referrer = oop(_heap->heap_region_containing(p)->block_start_const(p));
 	  tty->print("Referrer starts at addr %p\n", referrer);
-          tty->print("Referrer age: %d is_marked. %d", BrooksPointer::get(referrer).get_age(), _heap->isMarkedCurrent(referrer));
+          tty->print("Referrer is_marked: %d", _heap->isMarkedCurrent(referrer));
 	  referrer->print();
 	}
         tty->print_cr("heap region containing object:");
@@ -1398,8 +1387,8 @@ oop ShenandoahHeap::oop_containing_oop_ptr(oop* p) {
 }
  */
 
-ShenandoahMarkRefsClosure::ShenandoahMarkRefsClosure(uint e, uint worker_id) :
-  _epoch(e), _worker_id(worker_id), _heap(ShenandoahHeap::heap()) {
+ShenandoahMarkRefsClosure::ShenandoahMarkRefsClosure(uint worker_id) :
+  _worker_id(worker_id), _heap(ShenandoahHeap::heap()) {
 }
 
 void ShenandoahMarkRefsClosure::do_oop_work(oop* p) {
@@ -1418,7 +1407,7 @@ void ShenandoahMarkRefsClosure::do_oop_work(oop* p) {
   // assert(oopDesc::bs()->resolve_oop(obj) == *p, "we just updated the referrer");
   // assert(obj == NULL || ! _heap->heap_region_containing(obj)->is_dirty(), "must not point to dirty region");
 
-  ShenandoahMarkObjsClosure cl(_epoch, _worker_id);
+  ShenandoahMarkObjsClosure cl(_worker_id);
   cl.do_object(obj);
 }
 
@@ -1430,7 +1419,7 @@ void ShenandoahMarkRefsClosure::do_oop(oop* p) {
   do_oop_work(p);
 }
 
-ShenandoahMarkObjsClosure::ShenandoahMarkObjsClosure(uint e, uint worker_id) : _epoch(e), _worker_id(worker_id) {
+ShenandoahMarkObjsClosure::ShenandoahMarkObjsClosure(uint worker_id) : _worker_id(worker_id) {
 }
 
 void ShenandoahMarkObjsClosure::do_object(oop obj) {
@@ -1461,7 +1450,7 @@ void ShenandoahMarkObjsClosure::do_object(oop obj) {
 #ifdef ASSERT
     else {
       if (ShenandoahGCVerbose) {
-        tty->print_cr("failed to mark obj (already marked): %p, epoch: %d", obj, sh->getEpoch());
+        tty->print_cr("failed to mark obj (already marked): %p", obj);
       }
       assert(sh->isMarkedCurrent(obj), "make sure object is marked");
     }
@@ -1469,7 +1458,7 @@ void ShenandoahMarkObjsClosure::do_object(oop obj) {
 
     /*
     else {
-      tty->print_cr("already marked object %p, %d, %d", obj, getMark(obj)->age(), sh->getEpoch());
+      tty->print_cr("already marked object %p, %d", obj, getMark(obj)->age());
     }
     */
   }
@@ -1483,7 +1472,7 @@ void ShenandoahMarkObjsClosure::do_object(oop obj) {
 }
 
 void ShenandoahHeap::prepare_unmarked_root_objs() {
-  ShenandoahMarkRefsClosure rootsCl(_epoch, 0);
+  ShenandoahMarkRefsClosure rootsCl(0);
   roots_iterate(&rootsCl);
 }
 
@@ -1519,23 +1508,10 @@ void ShenandoahHeap::start_concurrent_marking() {
   _shenandoah_policy->record_bytes_allocated(_bytesAllocSinceCM);
   _bytesAllocSinceCM = 0;
 
-  // Increase and wrap epoch back to 1 (not 0!)
-  _epoch = _epoch % MAX_EPOCH + 1;
-  assert(_epoch > 0 && _epoch <= MAX_EPOCH, err_msg("invalid epoch: %d", _epoch));
-  
   if (ShenandoahGCVerbose) {
-    tty->print_cr("epoch = %d", _epoch);
     print_all_refs("pre-mark0");
   }
 
-#ifdef ASSERT
-  if (ShenandoahVerify) {
-    // We need to make the heap parsable otherwise we access garbage in TLABs when
-    // bumping objects.
-    prepare_for_verify();
-  }
-#endif
-  
   ClearLivenessClosure clc(this);
   heap_region_iterate(&clc);
 
@@ -1548,9 +1524,6 @@ void ShenandoahHeap::start_concurrent_marking() {
 
   // oopDesc::_debug = true;
   prepare_unmarked_root_objs();
-  // if (getEpoch() < 5) {
-  // oopDesc::_debug = false;
-    //}
   //  print_all_refs("pre-mark2");
 }
 
@@ -1578,8 +1551,8 @@ public:
       if (! sh->isMarkedCurrent(obj)) {
         sh->print_on(tty);
       }
-      assert(sh->isMarkedCurrent(obj), err_msg("Referenced Objects should be marked obj: %p, epoch: %d, obj-age: %d, is_in_heap: %d", 
-					obj, sh->getEpoch(), BrooksPointer::get(obj).get_age(), sh->is_in(obj)));
+      assert(sh->isMarkedCurrent(obj), err_msg("Referenced Objects should be marked obj: %p, marked: %d, is_in_heap: %d", 
+					obj, sh->isMarkedCurrent(obj), sh->is_in(obj)));
     }
   }
 
@@ -1682,7 +1655,7 @@ void ShenandoahHeap::post_allocation_collector_specific_setup(HeapWord* hw) {
 
   // Assuming for now that objects can't be created already locked
   assert(! obj->has_displaced_mark(), "hopefully new objects don't have displaced mark");
-  // tty->print_cr("post_allocation_collector_specific_setup:: %p, (%d)", obj, _epoch);
+  // tty->print_cr("post_allocation_collector_specific_setup:: %p", obj);
 
   if (_concurrent_mark_in_progress) {
     mark_current_no_checks(obj);
@@ -1695,19 +1668,15 @@ void ShenandoahHeap::post_allocation_collector_specific_setup(HeapWord* hw) {
  * or if a competing thread succeeded in marking this object.
  */
 bool ShenandoahHeap::mark_current(oop obj) const {
-  assert(_epoch > 0 && _epoch <= MAX_EPOCH, err_msg("invalid epoch: %d", _epoch));
   assert(obj == oopDesc::bs()->resolve_oop(obj), "only mark forwarded copy of objects");
   return mark_current_no_checks(obj);
 }
 
 bool ShenandoahHeap::mark_current_no_checks(oop obj) const {
   return _next_mark_bit_map->parMark((HeapWord*) obj);
-  // return BrooksPointer::get(obj).set_age(_epoch);
 }
 
 bool ShenandoahHeap::isMarkedCurrent(oop obj) const {
-  // tty->print_cr("obj age: %d", BrooksPointer::get(obj).get_age());
-  //return BrooksPointer::get(obj).get_age() == _epoch;
   return _next_mark_bit_map->isMarked((HeapWord*) obj);
 }
 
@@ -1724,12 +1693,6 @@ void ShenandoahHeap::verify_copy(oop p,oop c){
     assert(c == oopDesc::bs()->resolve_oop(c), "verify only forwarded once");
   }
 
-// void ShenandoahHeap::assign_brooks_pointer(oop p, HeapWord* filler, HeapWord* copy) {
-//   initialize_brooks_ptr(filler, copy);
-//   BrooksPointer::get(oop(copy)).set_age(BrooksPointer::get(p).get_age());
-//   BrooksPointer::get(p).set_forwardee(oop(copy));
-// }
-
 void ShenandoahHeap::copy_object(oop p, HeapWord* s) {
   HeapWord* filler = s;
   assert(s != NULL, "allocation of brooks pointer must not fail");
@@ -1739,7 +1702,7 @@ void ShenandoahHeap::copy_object(oop p, HeapWord* s) {
   initialize_brooks_ptr(filler, copy);
 
   if (ShenandoahGCVerbose) {
-    tty->print_cr("copy object from %p to: %p epoch: %d, age: %d", p, copy, ShenandoahHeap::heap()->getEpoch(), BrooksPointer::get(p).get_age());
+    tty->print_cr("copy object from %p to: %p, marked: %d", p, copy, isMarkedCurrent(p));
   }
 }
 
@@ -1755,11 +1718,11 @@ oopDesc* ShenandoahHeap::evacuate_object(oop p, EvacuationAllocator* allocator) 
   oopDesc* return_val;
   if (result == (HeapWord*) p) {
     if (ShenandoahGCVerbose) {
-      tty->print("Copy of %p to %p at epoch %d succeeded \n", p, copy, getEpoch());
+      tty->print("Copy of %p to %p at succeeded \n", p, copy);
     }
     return_val = (oopDesc*) copy;
   }  else {
-    // tty->print_cr("Copy of %p to %p at epoch %d failed, using %p", p, copy, getEpoch(), result);
+    // tty->print_cr("Copy of %p to %p failed, using %p", p, copy, result);
     allocator->rollback(filler, required);
     return_val = (oopDesc*) result;
   }
@@ -1869,9 +1832,7 @@ void ShenandoahHeap::compile_prepare_oop(MacroAssembler* masm, Register obj) {
   // Write brooks pointer address.
   // Move obj pointer to the actual oop.
   __ incrementq(obj, BrooksPointer::BROOKS_POINTER_OBJ_SIZE * HeapWordSize);
-  __ movptr(rscratch1, ExternalAddress((address) &_epoch));
-  __ orq(rscratch1, obj);
-  __ movptr(Address(obj, -1 * HeapWordSize), rscratch1);
+  __ movptr(Address(obj, -1 * HeapWordSize), obj);
   __ os_breakpoint();
 }
 #endif

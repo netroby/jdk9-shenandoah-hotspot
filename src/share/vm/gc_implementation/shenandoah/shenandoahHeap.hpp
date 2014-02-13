@@ -50,8 +50,6 @@ class ShenandoahHeap : public SharedHeap {
 
 private:
 
-  static const uint MAX_EPOCH = 7;
-
   static ShenandoahHeap* _pgc;
   ShenandoahCollectorPolicy* _shenandoah_policy;
   VirtualSpace _storage;
@@ -75,7 +73,6 @@ private:
 #ifndef NDEBUG
   uint _numAllocs;
 #endif
-  uint _epoch;
   size_t _default_gclab_size;
   WorkGangBarrierSync barrierSync;
   int _max_workers;
@@ -102,8 +99,6 @@ public:
   HeapWord* allocate_new_gclab() { 
     return allocate_new_gclab(_default_gclab_size);
   }
-
-  uint getEpoch() {return _epoch;}
 
   // For now we are ignoring eden.
   inline bool should_alloc_in_eden(size_t size) { return false;}
@@ -281,12 +276,11 @@ private:
 };
 
 class ShenandoahMarkRefsClosure : public OopsInGenClosure {
-  uint _epoch;
   uint _worker_id;
   ShenandoahHeap* _heap;
 
 public: 
-  ShenandoahMarkRefsClosure(uint e, uint worker_id);
+  ShenandoahMarkRefsClosure(uint worker_id);
 
   void do_oop_work(oop* p);
   void do_oop(narrowOop* p);
@@ -294,10 +288,9 @@ public:
 };
   
 class ShenandoahMarkObjsClosure : public ObjectClosure {
-  uint _epoch;
   uint _worker_id;
 public: 
-  ShenandoahMarkObjsClosure(uint e, uint worker_id);
+  ShenandoahMarkObjsClosure(uint worker_id);
 
   void do_object(oop p);
 };
