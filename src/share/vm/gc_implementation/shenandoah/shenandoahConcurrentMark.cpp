@@ -181,8 +181,9 @@ void ShenandoahConcurrentMark::finishMarkFromRoots() {
 
 void ShenandoahConcurrentMark::drain_satb_buffers(uint worker_id, bool remark) {
 
-  // tty->print_cr("start draining SATB buffers");
-
+  if (ShenandoahGCVerbose) {
+    tty->print_cr("start draining SATB buffers. remark: %d", remark);
+  }
   ShenandoahHeap* sh = (ShenandoahHeap*) Universe::heap();
   ShenandoahMarkObjsClosure cl(sh->getEpoch(), worker_id);
 
@@ -197,8 +198,9 @@ void ShenandoahConcurrentMark::drain_satb_buffers(uint worker_id, bool remark) {
 
   satb_mq_set.set_par_closure(worker_id, NULL);
 
-  // tty->print_cr("end draining SATB buffers");
-
+  if (ShenandoahGCVerbose) {
+    tty->print_cr("end draining SATB buffers. remark: %d", remark);
+  }
 }
 
 void ShenandoahConcurrentMark::checkpointRootsFinal() {
@@ -209,9 +211,6 @@ void ShenandoahConcurrentMark::checkpointRootsFinal() {
 
 void ShenandoahConcurrentMark::addTask(oop obj, int q) {
   ShenandoahHeap* sh = (ShenandoahHeap*) Universe::heap();
-  int epoch = sh->getEpoch();
-  int age = BrooksPointer::get(obj).get_age();
-
   assert(obj->is_oop(), "Oops, not an oop");
   assert(! sh->heap_region_containing(obj)->is_in_collection_set(), "we don't want to mark objects in from-space");
 
@@ -219,7 +218,7 @@ void ShenandoahConcurrentMark::addTask(oop obj, int q) {
   //  tty->print("addTask q = %d: obj = "PTR_FORMAT" epoch = %d object age = %d\n", q, obj, epoch, age);
   // }
 
-  assert(age == epoch, "Only push marked objects on the queue");
+  assert(sh->isMarkedCurrent(obj), "Only push marked objects on the queue");
   assert(sh->is_in((HeapWord*) obj), "Only push heap objects on the queue");
 
   if (!_task_queues->queue(q)->push(obj)) {

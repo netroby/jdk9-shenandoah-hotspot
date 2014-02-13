@@ -11,6 +11,8 @@ Copyright 2014 Red Hat, Inc. and/or its affiliates.
 #include "gc_implementation/shenandoah/shenandoahHeapRegion.hpp"
 #include "gc_implementation/shenandoah/shenandoahHeapRegionSet.hpp"
 
+#include "gc_implementation/g1/concurrentMark.hpp"
+
 
 #include "memory/barrierSet.hpp"
 #include "memory/sharedHeap.hpp"
@@ -79,6 +81,8 @@ private:
   int _max_workers;
   volatile size_t _used;
 
+  CMBitMap _mark_bit_map;
+  CMBitMap* _next_mark_bit_map;
 
 public:
   size_t _bytesAllocSinceCM;
@@ -198,13 +202,13 @@ public:
   size_t bump_object_age(HeapWord* start, HeapWord* end);
   bool mark_current(oop obj) const;
   bool mark_current_no_checks(oop obj) const;
-  bool isMarkedPrev(oop obj) const;
   bool isMarkedCurrent(oop obj) const;
-  bool isMarked(oop obj)  { return isMarkedPrev(obj) || isMarkedCurrent(obj);}
 
   bool is_obj_ill(const oop obj) {
-    return isMarkedPrev(obj);
+    return ! isMarkedCurrent(obj);
   }
+
+  void reset_mark_bitmap();
 
   virtual void post_allocation_collector_specific_setup(HeapWord* obj);
 
