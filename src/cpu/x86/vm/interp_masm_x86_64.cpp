@@ -708,7 +708,7 @@ void InterpreterMacroAssembler::lock_object(Register lock_reg) {
     // Load object pointer into obj_reg %c_rarg3
     movptr(obj_reg, Address(lock_reg, obj_offset));
     // Need to preemptively evacuate obj because we CAS the mark word later.
-    oopDesc::bs()->compile_resolve_oop_for_write(this, obj_reg, true, 1, BarrierSet::ss_c_rarg1);
+    oopDesc::bs()->compile_resolve_oop_for_write(this, obj_reg, false, 1, BarrierSet::ss_c_rarg1);
 
     if (UseBiasedLocking) {
       biased_locking_enter(lock_reg, obj_reg, swap_reg, rscratch1, false, done, &slow_case);
@@ -801,7 +801,7 @@ void InterpreterMacroAssembler::unlock_object(Register lock_reg) {
     // Load oop into obj_reg(%c_rarg3)
     movptr(obj_reg, Address(lock_reg, BasicObjectLock::obj_offset_in_bytes()));
     // We need to preemptively evacuate obj, because we later CAS the mark word into it.
-    oopDesc::bs()->compile_resolve_oop_for_write(this, obj_reg, true, 2, BarrierSet::ss_c_rarg1, BarrierSet::ss_rax);
+    oopDesc::bs()->compile_resolve_oop_for_write(this, obj_reg, false, 2, BarrierSet::ss_c_rarg1, BarrierSet::ss_rax);
 
     // Free entry
     movptr(Address(lock_reg, BasicObjectLock::obj_offset_in_bytes()), (int32_t)NULL_WORD);

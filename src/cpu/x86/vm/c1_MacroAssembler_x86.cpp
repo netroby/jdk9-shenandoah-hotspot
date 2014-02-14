@@ -109,7 +109,7 @@ void C1_MacroAssembler::unlock_object(Register hdr, Register obj, Register disp_
   if (UseBiasedLocking) {
     // load object
     movptr(obj, Address(disp_hdr, BasicObjectLock::obj_offset_in_bytes()));
-    oopDesc::bs()->compile_resolve_oop_for_write(this, obj, true, 1, BarrierSet::ss_all);
+    oopDesc::bs()->compile_resolve_oop_for_write(this, obj, false, 1, BarrierSet::ss_all);
     biased_locking_exit(obj, hdr, done);
   }
 
@@ -122,7 +122,7 @@ void C1_MacroAssembler::unlock_object(Register hdr, Register obj, Register disp_
   if (!UseBiasedLocking) {
     // load object
     movptr(obj, Address(disp_hdr, BasicObjectLock::obj_offset_in_bytes()));
-    oopDesc::bs()->compile_resolve_oop_for_write(this, obj, true, 1, BarrierSet::ss_all);
+    oopDesc::bs()->compile_resolve_oop_for_write(this, obj, false, 1, BarrierSet::ss_all);
   }
   verify_oop(obj);
   // test if object header is pointing to the displaced header, and if so, restore
