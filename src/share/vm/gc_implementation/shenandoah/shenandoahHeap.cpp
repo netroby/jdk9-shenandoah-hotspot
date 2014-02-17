@@ -266,15 +266,20 @@ HeapWord* ShenandoahHeap::allocate_new_tlab(size_t word_size) {
   if (result != NULL) {
     _bytesAllocSinceCM += word_size * HeapWordSize;
     heap_region_containing(result)->increase_active_tlab_count();
-    if (ShenandoahGCVerbose)
+#ifdef ASSERT
+    if (ShenandoahTraceTLabs)
       tty->print("allocating new tlab of size %d at addr %p\n", word_size, result);
+#endif
   }
+
   return result;
 }
 
 void ShenandoahHeap::retire_tlab_at(HeapWord* start) {
-  if (ShenandoahGCVerbose)
+#ifdef ASSERT
+  if (ShenandoahTraceTLabs)
     tty->print_cr("retiring tlab at: %p", start);
+#endif 
   heap_region_containing(start)->decrease_active_tlab_count();
 }
 
@@ -528,11 +533,13 @@ HeapWord* ShenandoahHeap::mem_allocate_locked(size_t size,
   if (filler != NULL) {
     initialize_brooks_ptr(filler, result);
     _bytesAllocSinceCM += size * HeapWordSize;
-    if (ShenandoahGCVerbose) {
+#ifdef ASSERT
+    if (ShenandoahTraceAllocations) {
       if (*gc_overhead_limit_was_exceeded)
 	tty->print("gc_overhead_limit_was_exceeded");
       tty->print("mem_allocate_locked object of size %d at addr %p in epoch %d\n", size, result, _epoch);
     }
+#endif
 
     assert(! heap_region_containing(result)->is_in_collection_set(), "never allocate in targetted region");
     return result;
@@ -602,7 +609,7 @@ private:
   void do_object(oop p) {
 
 #ifdef ASSERT
-    if (ShenandoahGCVerbose) {
+    if (ShenandoahTraceEvacuations) {
       tty->print("Calling ParallelEvacuateRegionObjectClosure on %p \n", p);
     }
 #endif
@@ -898,9 +905,6 @@ void ShenandoahHeap::verify_heap_after_marking() {
     tty->print("verifying heap after marking\n");
   }
   prepare_for_verify();
-  if (ShenandoahGCVerbose) {
-    print_all_refs("post-mark");
-  }
   VerifyAfterMarkingOopClosure cl;
   roots_iterate(&cl);
 
@@ -1059,8 +1063,12 @@ bool ShenandoahHeap::supports_tlab_allocation() const {
   return true;
 }
 
+
 size_t  ShenandoahHeap::unsafe_max_tlab_alloc(Thread *thread) const {
   ShenandoahHeapRegion* my_current_region = _current_region;
+  // This can happen during initialization.
+  if (my_current_region == NULL)
+    return MinTLABSize;
   return MIN2(my_current_region->free(), (size_t) MinTLABSize);
 }
 
@@ -1382,14 +1390,16 @@ ShenandoahMarkRefsClosure::ShenandoahMarkRefsClosure(uint e, uint worker_id) :
 }
 
 void ShenandoahMarkRefsClosure::do_oop_work(oop* p) {
-
-  // tty->print_cr("marking oop ref: %p", p);
   // We piggy-back reference updating to the marking tasks.
+  // tty->print_cr("marking oop ref: %p", p);
   oop* old = p;
   oop obj = _heap->maybe_update_oop_ref(p);
-
-  if (ShenandoahGCVerbose)
-    tty->print("Update %p => %p  to %p => %p\n", p, *p, old, *old);
+#ifdef ASSERT
+  if (ShenandoahTraceUpdates) {
+    if (p != old) 
+      tty->print("Update %p => %p  to %p => %p\n", p, *p, old, *old);
+  }
+#endif
 
   // NOTE: We used to assert the following here. This does not always work because
   // a concurrent Java thread could change the the field after we updated it.
@@ -1490,13 +1500,6 @@ public:
 void ShenandoahHeap::start_concurrent_marking() {
   set_concurrent_mark_in_progress(true);
   
-  if (ShenandoahGCVerbose) {
-    // We need to make the heap parsable otherwise we access garbage in TLABs when
-    // printing objects
-    prepare_for_verify();
-    print_all_refs("pre -mark");
-  }
-  
   _shenandoah_policy->record_bytes_allocated(_bytesAllocSinceCM);
   _bytesAllocSinceCM = 0;
 
@@ -1504,9 +1507,10 @@ void ShenandoahHeap::start_concurrent_marking() {
   _epoch = _epoch % MAX_EPOCH + 1;
   assert(_epoch > 0 && _epoch <= MAX_EPOCH, err_msg("invalid epoch: %d", _epoch));
   
-  if (ShenandoahGCVerbose) {
+  if (ShenandoahDumpHeapBeforeConcurrentMark) {
+    prepare_for_verify();
     tty->print_cr("epoch = %d", _epoch);
-    print_all_refs("pre-mark0");
+    print_all_refs("pre-mark");
   }
 
 #ifdef ASSERT
@@ -1641,6 +1645,7 @@ void ShenandoahHeap::stop_concurrent_marking() {
   if (ShenandoahVerify) {
     verify_heap_after_marking();
   }
+
 #endif
 }
 
@@ -1733,9 +1738,11 @@ void ShenandoahHeap::copy_object(oop p, HeapWord* s) {
   Copy::aligned_disjoint_words((HeapWord*) p, copy, p->size());
   initialize_brooks_ptr(filler, copy);
 
-  if (ShenandoahGCVerbose) {
+#ifdef ASSERT
+  if (ShenandoahTraceEvacuations) {
     tty->print_cr("copy object from %p to: %p epoch: %d, age: %d", p, copy, ShenandoahHeap::heap()->getEpoch(), BrooksPointer::get(p).get_age());
   }
+#endif
 }
 
 oopDesc* ShenandoahHeap::evacuate_object(oop p, EvacuationAllocator* allocator) {
@@ -1749,12 +1756,19 @@ oopDesc* ShenandoahHeap::evacuate_object(oop p, EvacuationAllocator* allocator) 
 
   oopDesc* return_val;
   if (result == (HeapWord*) p) {
-    if (ShenandoahGCVerbose) {
+    return_val = (oopDesc*) copy;
+#ifdef ASSERT
+    if (ShenandoahTraceEvacuations) {
       tty->print("Copy of %p to %p at epoch %d succeeded \n", p, copy, getEpoch());
     }
-    return_val = (oopDesc*) copy;
+#endif
   }  else {
     allocator->rollback(filler, required);
+#ifdef ASSERT
+    if (ShenandoahTraceEvacuations) {
+      tty->print("Copy of %p to %p at epoch %d failed \n", p, copy, getEpoch());
+    }
+#endif
     return_val = (oopDesc*) result;
   }
   return return_val;

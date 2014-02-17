@@ -67,9 +67,6 @@ public:
       // We got one.
 
       assert(obj->is_oop(), "Oops, not an oop");
-      if (ShenandoahGCVerbose) {
-        tty->print("popping object: "PTR_FORMAT"\n", obj);
-      }
       assert(! sh->heap_region_containing(obj)->is_in_collection_set(), "we don't want to mark objects in from-space");
       obj->oop_iterate(&cl);
     }
@@ -177,6 +174,12 @@ void ShenandoahConcurrentMark::finishMarkFromRoots() {
     }
 #endif
   }
+#ifdef ASSERT
+  if (ShenandoahDumpHeapAfterConcurrentMark) {
+    sh->prepare_for_verify();
+    sh->print_all_refs("post-mark");
+  }
+#endif
 }
 
 void ShenandoahConcurrentMark::drain_satb_buffers(uint worker_id, bool remark) {
@@ -214,10 +217,6 @@ void ShenandoahConcurrentMark::addTask(oop obj, int q) {
 
   assert(obj->is_oop(), "Oops, not an oop");
   assert(! sh->heap_region_containing(obj)->is_in_collection_set(), "we don't want to mark objects in from-space");
-
-  // if (ShenandoahGCVerbose) {
-  //  tty->print("addTask q = %d: obj = "PTR_FORMAT" epoch = %d object age = %d\n", q, obj, epoch, age);
-  // }
 
   assert(age == epoch, "Only push marked objects on the queue");
   assert(sh->is_in((HeapWord*) obj), "Only push heap objects on the queue");

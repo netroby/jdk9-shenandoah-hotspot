@@ -321,7 +321,7 @@ oopDesc* ShenandoahBarrierSet::resolve_and_maybe_copy_oop_work(oopDesc* src) {
     assert(sh->is_evacuation_in_progress(), "only attempt evacuation during evacuation");
     oopDesc* dst = sh->evacuate_object(src, _allocator);
 #ifdef ASSERT
-    if (ShenandoahGCVerbose) {
+    if (ShenandoahTraceEvacuations) {
       tty->print("src = %p dst = %p src = %p src-2 = %p\n",
                  src, dst, src, src-2);
     }
