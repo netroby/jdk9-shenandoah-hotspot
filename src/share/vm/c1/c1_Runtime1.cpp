@@ -57,6 +57,7 @@
 #include "runtime/vframeArray.hpp"
 #include "utilities/copy.hpp"
 #include "utilities/events.hpp"
+#include "gc_implementation/shenandoah/shenandoahBarrierSet.hpp"
 
 
 // Implementation of StubAssembler
@@ -196,6 +197,7 @@ void Runtime1::generate_blob_for(BufferBlob* buffer_blob, StubID id) {
   switch (id) {
     // These stubs don't need to have an oopmap
     case dtrace_object_alloc_id:
+    case shenandoah_write_barrier_slow_id:
     case g1_pre_barrier_slow_id:
     case g1_post_barrier_slow_id:
     case slow_subtype_check_id:
@@ -300,6 +302,7 @@ const char* Runtime1::name_for_address(address entry) {
   FUNCTION_CASE(entry, TRACE_TIME_METHOD);
 #endif
   FUNCTION_CASE(entry, StubRoutines::updateBytesCRC32());
+  FUNCTION_CASE(entry, ShenandoahBarrierSet::resolve_and_maybe_copy_oop_static);
 
 #undef FUNCTION_CASE
 

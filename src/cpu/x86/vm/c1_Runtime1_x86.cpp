@@ -40,6 +40,7 @@
 #include "vmreg_x86.inline.hpp"
 #if INCLUDE_ALL_GCS
 #include "gc_implementation/g1/g1SATBCardTableModRefBS.hpp"
+#include "gc_implementation/shenandoah/shenandoahBarrierSet.hpp"
 #endif
 
 
@@ -1619,6 +1620,16 @@ OopMapSet* Runtime1::generate_code_for(StubID id, StubAssembler* sasm) {
       break;
 
 #if INCLUDE_ALL_GCS
+    case shenandoah_write_barrier_slow_id:
+      {
+        StubFrame f(sasm, "shenandoah_write_barrier", dont_gc_arguments);
+        save_live_registers(sasm, 1);
+        f.load_argument(0, rax);
+        __ super_call_VM_leaf(CAST_FROM_FN_PTR(address, ShenandoahBarrierSet::resolve_and_maybe_copy_oop_static), rax);
+        restore_live_registers_except_rax(sasm);
+
+      }
+      break;
     case g1_pre_barrier_slow_id:
       {
         StubFrame f(sasm, "g1_pre_barrier", dont_gc_arguments);

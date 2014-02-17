@@ -38,6 +38,8 @@
 #include "utilities/macros.hpp"
 #if INCLUDE_ALL_GCS
 #include "gc_implementation/g1/heapRegion.hpp"
+#include "gc_implementation/shenandoah/shenandoahBarrierSet.hpp"
+#include "gc_implementation/shenandoah/shenandoahHeap.hpp"
 #endif // INCLUDE_ALL_GCS
 
 #ifdef ASSERT
@@ -1714,6 +1716,17 @@ void LIRGenerator::do_StoreField(StoreField* x) {
     __ null_check(object.result(), new CodeEmitInfo(info));
   }
 
+  write_barrier(object.result(), info, x->needs_null_check());
+  LIR_Opr val = value.result();
+  if (is_oop) {
+    if (! val->is_register()) {
+      LIR_Opr tmp = new_register(T_OBJECT);
+      __ move(val, tmp);
+      val = tmp;
+    }
+    read_barrier(val, NULL, true);
+  }
+
   LIR_Address* address;
   if (needs_patching) {
     // we need to patch the offset in the instruction so don't allow
@@ -1811,6 +1824,7 @@ void LIRGenerator::do_LoadField(LoadField* x) {
     address = generate_address(object.result(), x->offset(), field_type);
   }
 
+  read_barrier(object.result(), info, x->needs_null_check() && x->explicit_null_check() != NULL);
   if (is_volatile && !needs_patching) {
     volatile_field_load(address, reg, info);
   } else {
@@ -1823,21 +1837,54 @@ void LIRGenerator::do_LoadField(LoadField* x) {
   }
 }
 
-void LIRGenerator::read_barrier(LIR_Opr obj, CodeEmitInfo* info) {
+void LIRGenerator::read_barrier(LIR_Opr obj, CodeEmitInfo* info, bool need_null_check) {
   if (UseShenandoahGC) {
 
     LabelObj* done = new LabelObj();
-
-    __ cmp(lir_cond_equal, obj, LIR_OprFact::intConst(0));
-    __ branch(lir_cond_equal, T_LONG, done->label());
-
+    if (need_null_check) {
+      __ cmp(lir_cond_equal, obj, LIR_OprFact::oopConst(NULL));
+      __ branch(lir_cond_equal, T_LONG, done->label());
+    }
     LIR_Address* brooks_ptr_address = generate_address(obj, -8, T_ADDRESS);
-    __ load(brooks_ptr_address, obj, info == NULL ? NULL: new CodeEmitInfo(info), lir_patch_none);
-    LIR_Opr y = new_register(T_LONG);
-    __ move(obj, y);
-    __ logical_and(y, LIR_OprFact::longConst(~0x7), y);
-    __ move(y, obj);
+    __ load(brooks_ptr_address, obj, info ? new CodeEmitInfo(info) : NULL, lir_patch_none);
 
+    __ branch_destination(done->label());
+
+  }
+}
+
+void LIRGenerator::write_barrier(LIR_Opr obj, CodeEmitInfo* info, bool need_null_check) {
+  if (UseShenandoahGC) {
+    LabelObj* done = new LabelObj();
+
+    LIR_Opr result = result_register_for(objectType);
+    // Usual read barrier with optional explicit null check.
+    if (need_null_check) {
+      // The following instruction is only there to make the result register
+      // live before the null-check-branch. This is needed in the case where
+      // rax (which is fixed result register) is live before, the compiler
+      // would move it to another register (e.g. r11) right before the branch
+      // to the stub later. However, if we get a NULL obj, this wouldn't happen
+      // and leave the other register uninitialized.
+      __ move(LIR_OprFact::oopConst(NULL), result);
+
+      __ cmp(lir_cond_equal, obj, LIR_OprFact::oopConst(NULL));
+      __ branch(lir_cond_equal, T_LONG, done->label());
+    }
+    LIR_Address* brooks_ptr_address = generate_address(obj, -8, T_ADDRESS);
+    __ load(brooks_ptr_address, obj, info ? new CodeEmitInfo(info) : NULL, lir_patch_none);
+
+    // Check if evacuation in progress.
+    LIR_Opr evac_in_progress = new_register(T_INT);
+    LIR_Opr evac_in_progress_addr = new_pointer_register();
+    __ move(LIR_OprFact::intptrConst(ShenandoahHeap::evacuation_in_progress_addr()), evac_in_progress_addr);
+    __ move(new LIR_Address(evac_in_progress_addr, T_INT), evac_in_progress);
+    __ cmp(lir_cond_equal, evac_in_progress, LIR_OprFact::intConst(0));
+
+    // Do the slow-path runtime call.
+    CodeStub* slow = new ShenandoahWriteBarrierStub(obj, result);
+    __ branch(lir_cond_notEqual, T_INT, slow);
+    __ branch_destination(slow->continuation());
     __ branch_destination(done->label());
 
   }
@@ -1956,6 +2003,7 @@ void LIRGenerator::do_LoadIndexed(LoadIndexed* x) {
     }
   }
 
+  read_barrier(array.result(), null_check_info, null_check_info != NULL);
   __ move(array_addr, rlock_result(x, x->elt_type()), null_check_info);
 }
 
@@ -2383,6 +2431,7 @@ void LIRGenerator::do_UnsafePrefetch(UnsafePrefetch* x, bool is_store) {
 
   set_no_result(x);
 
+  read_barrier(src.result(), NULL, false);
   LIR_Address* addr = generate_address(src.result(), off.result(), 0, 0, T_BYTE);
   __ prefetch(addr, is_store);
 }
@@ -3010,9 +3059,9 @@ void LIRGenerator::do_FPIntrinsics(Intrinsic* x) {
 
 // Code for  :  x->x() {x->cond()} x->y() ? x->tval() : x->fval()
 void LIRGenerator::do_IfOp(IfOp* x) {
+  ValueTag xtag = x->x()->type()->tag();
 #ifdef ASSERT
   {
-    ValueTag xtag = x->x()->type()->tag();
     ValueTag ttag = x->tval()->type()->tag();
     assert(xtag == intTag || xtag == objectTag, "cannot handle others");
     assert(ttag == addressTag || ttag == intTag || ttag == objectTag || ttag == longTag, "cannot handle others");
@@ -3035,7 +3084,24 @@ void LIRGenerator::do_IfOp(IfOp* x) {
   f_val.dont_load_item();
   LIR_Opr reg = rlock_result(x);
 
-  __ cmp(lir_cond(x->cond()), left.result(), right.result());
+  LIR_Opr left_opr = left.result();
+  LIR_Opr right_opr = right.result();
+  if (xtag == objectTag && UseShenandoahGC && x->y()->type() != objectNull) { // Don't need to resolve for ifnull.
+    if (! left_opr->is_register()) {
+      LIR_Opr tmp = new_register(T_OBJECT);
+      __ move(left_opr, tmp);
+      left_opr = tmp;
+    }
+    write_barrier(left_opr, NULL, true);
+    if (! right_opr->is_register()) {
+      LIR_Opr tmp = new_register(T_OBJECT);
+      __ move(right_opr, tmp);
+      right_opr = tmp;
+    }
+    read_barrier(right_opr, NULL, true);
+  }
+
+  __ cmp(lir_cond(x->cond()), left_opr, right_opr);
   __ cmove(lir_cond(x->cond()), t_val.result(), f_val.result(), reg, as_BasicType(x->x()->type()));
 }
 
