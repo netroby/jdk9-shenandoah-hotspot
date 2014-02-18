@@ -304,6 +304,10 @@ oopDesc* ShenandoahBarrierSet::resolve_and_maybe_copy_oop_work(oopDesc* src) {
 
   if (sh->heap_region_containing(src)->is_in_collection_set()) {
     return resolve_and_maybe_copy_oop_work2(src);
+    assert(sh->is_evacuation_in_progress(), "only attempt evacuation during evacuation");
+    oopDesc* dst = sh->evacuate_object(src, _allocator);
+    assert(sh->is_in(dst), "result should be in the heap");
+    return dst;
   } else {
     return src;
   }
@@ -315,10 +319,10 @@ oopDesc* ShenandoahBarrierSet::resolve_and_maybe_copy_oop_work2(oopDesc* src) {
   assert(sh->is_evacuation_in_progress(), "only attempt evacuation during evacuation");
   oopDesc* dst = sh->evacuate_object(src, _allocator);
 #ifdef ASSERT
-  if (ShenandoahGCVerbose) {
-    tty->print("src = %p dst = %p src = %p src-2 = %p\n",
-               src, dst, src, src-2);
-  }
+    if (ShenandoahTraceEvacuations) {
+      tty->print("src = %p dst = %p src = %p src-2 = %p\n",
+                 src, dst, src, src-2);
+    }
 #endif
   assert(sh->is_in(dst), "result should be in the heap");
   return dst;

@@ -17,7 +17,11 @@ BrooksPointer BrooksPointer::get(oop obj) {
 void BrooksPointer::set_forwardee(oop forwardee) {
   assert(ShenandoahHeap::heap()->is_in(forwardee), "forwardee must be valid oop in the heap");
   *_heap_word = (uintptr_t) forwardee;
-  //  tty->print("setting_forwardee to %p = %p\n", forwardee, *_heap_word);
+#ifdef ASSERT
+  if (ShenandoahTraceBrooksPointers) {
+    tty->print("setting_forwardee to %p = %p\n", forwardee, *_heap_word);
+  }
+#endif
 }
 
 HeapWord* BrooksPointer::cas_forwardee(HeapWord* old, HeapWord* forwardee) {
@@ -26,15 +30,15 @@ HeapWord* BrooksPointer::cas_forwardee(HeapWord* old, HeapWord* forwardee) {
   HeapWord* n = forwardee;
 
 #ifdef ASSERT
-  if (ShenandoahGCVerbose) {
+  if (ShenandoahTraceBrooksPointers) {
     tty->print("Attempting to CAS %p value %p from %p to %p\n", _heap_word, *_heap_word, o, n);
   }
 #endif
 
-  HeapWord* result =  (HeapWord*) Atomic::cmpxchg_ptr(n, _heap_word, o);
+  HeapWord* result =  (HeapWord*) (HeapWord*) Atomic::cmpxchg_ptr(n, _heap_word, o);
 
 #ifdef ASSERT
-  if (ShenandoahGCVerbose) {
+  if (ShenandoahTraceBrooksPointers) {
     tty->print("Result of CAS from %p to %p was %p read value was %p\n", o, n, result, *_heap_word);
   }
 #endif

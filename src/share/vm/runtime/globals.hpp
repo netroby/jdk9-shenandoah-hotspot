@@ -1369,6 +1369,30 @@ class CommandLineFlags {
   product(bool, UseShenandoahGC, false,                                     \
           "Use the Shenandoah garbage collector")                           \
                                                                             \
+  develop(bool, ShenandoahDumpHeapBeforeConcurrentMark, false,              \
+          "Dump the ShenanodahHeap Before Each ConcurrentMark")             \
+                                                                            \
+  develop(bool, ShenandoahDumpHeapAfterConcurrentMark, false,               \
+          "Dump the ShenanodahHeap After Each Concurrent Mark")             \
+                                                                            \
+  develop(bool, ShenandoahTraceAllocations, false,                          \
+          "Trace Shenandoah Allocations")                                   \
+                                                                            \
+  develop(bool, ShenandoahTraceBrooksPointers, false,                       \
+          "Trace Brooks Pointer updates")                                   \
+                                                                            \
+  develop(bool, ShenandoahTraceEvacuations, false,                          \
+          "Trace Shenandoah Evacuations")                                   \
+                                                                            \
+  develop(bool, ShenandoahTraceConcurrentMarking, false,                    \
+          "Trace Concurrent Marking")                                       \
+                                                                            \
+  develop(bool, ShenandoahTraceUpdates, false,                              \
+          "Trace Shenandoah Updates")                                       \
+                                                                            \
+  develop(bool, ShenandoahTraceTLabs, false,                                \
+          "Trace TLabs in Shenandoah Heap")                                 \
+                                                                            \
   develop(bool, ShenandoahGCVerbose, false,                                 \
           "Verbose information about the Shenandoah garbage collector")     \
                                                                             \
