@@ -762,15 +762,7 @@ void LIRGenerator::do_CompareAndSwap(Intrinsic* x, ValueType* type) {
   LIR_Opr addr = new_pointer_register();
   LIR_Address* a;
 
-  if (UseShenandoahGC) {
-    LIR_Opr tmp = new_register(T_OBJECT);
-    // The write barrier thrashes rax. This is normally not a problem,
-    // but since cmp is fixed on rax, it is. Therefore we need to save and
-    // restore it.
-    __ move(cmp.result(), tmp);
-    write_barrier(obj.result(), NULL, false);
-    __ move(tmp, cmp.result());
-  }
+  write_barrier(obj.result(), NULL, false);
 
   if(offset.result()->is_constant()) {
 #ifdef _LP64

@@ -519,10 +519,10 @@ void ArrayCopyStub::emit_code(LIR_Assembler* ce) {
 
 void ShenandoahWriteBarrierStub::emit_code(LIR_Assembler* ce) {
   __ bind(_entry);
-
-  ce->store_parameter(obj()->as_register(), 0);
+  __ xchgq(rax, obj()->as_register());
   __ call(RuntimeAddress(Runtime1::entry_for(Runtime1::shenandoah_write_barrier_slow_id)));
-  __ mov(obj()->as_register(), result()->as_register());
+  __ xchgq(rax, obj()->as_register());
+  __ os_breakpoint();
   __ jmp(_continuation);
 }
 

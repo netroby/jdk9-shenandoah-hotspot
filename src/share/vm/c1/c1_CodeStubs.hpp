@@ -538,20 +538,17 @@ class ArrayCopyStub: public CodeStub {
 class ShenandoahWriteBarrierStub : public CodeStub {
 private:
   LIR_Opr _obj;
-  LIR_Opr _result;
   bool _need_null_check;
 
 public:
-  ShenandoahWriteBarrierStub(LIR_Opr obj, LIR_Opr result) :
-    _obj(obj), _result(result) {
+  ShenandoahWriteBarrierStub(LIR_Opr obj) :
+    _obj(obj) {
   }
   LIR_Opr obj() const { return _obj; }
-  LIR_Opr result() const { return _result; }
   virtual void emit_code(LIR_Assembler* e);
   virtual void visit(LIR_OpVisitState* visitor) {
     visitor->do_slow_case();
     visitor->do_input(_obj);
-    visitor->do_temp(_result);
 
   }
 #ifndef PRODUCT

@@ -156,6 +156,7 @@ ShenandoahHeap::ShenandoahHeap(ShenandoahCollectorPolicy* policy) :
   SharedHeap(policy),
   _shenandoah_policy(policy), 
   _concurrent_mark_in_progress(false),
+  _evacuation_in_progress(false),
   _free_regions(NULL),
   _collection_set(NULL),
   _bytesAllocSinceCM(0),

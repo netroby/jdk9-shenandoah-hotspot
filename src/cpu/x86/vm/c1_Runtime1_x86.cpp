@@ -1624,7 +1624,6 @@ OopMapSet* Runtime1::generate_code_for(StubID id, StubAssembler* sasm) {
       {
         StubFrame f(sasm, "shenandoah_write_barrier", dont_gc_arguments);
         save_live_registers(sasm, 1);
-        f.load_argument(0, rax);
         __ super_call_VM_leaf(CAST_FROM_FN_PTR(address, ShenandoahBarrierSet::resolve_and_maybe_copy_oop_static), rax);
         restore_live_registers_except_rax(sasm);
 

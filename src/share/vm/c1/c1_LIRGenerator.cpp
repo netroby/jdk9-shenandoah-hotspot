@@ -1857,17 +1857,8 @@ void LIRGenerator::write_barrier(LIR_Opr obj, CodeEmitInfo* info, bool need_null
   if (UseShenandoahGC) {
     LabelObj* done = new LabelObj();
 
-    LIR_Opr result = result_register_for(objectType);
     // Usual read barrier with optional explicit null check.
     if (need_null_check) {
-      // The following instruction is only there to make the result register
-      // live before the null-check-branch. This is needed in the case where
-      // rax (which is fixed result register) is live before, the compiler
-      // would move it to another register (e.g. r11) right before the branch
-      // to the stub later. However, if we get a NULL obj, this wouldn't happen
-      // and leave the other register uninitialized.
-      __ move(LIR_OprFact::oopConst(NULL), result);
-
       __ cmp(lir_cond_equal, obj, LIR_OprFact::oopConst(NULL));
       __ branch(lir_cond_equal, T_LONG, done->label());
     }
@@ -1882,7 +1873,7 @@ void LIRGenerator::write_barrier(LIR_Opr obj, CodeEmitInfo* info, bool need_null
     __ cmp(lir_cond_equal, evac_in_progress, LIR_OprFact::intConst(0));
 
     // Do the slow-path runtime call.
-    CodeStub* slow = new ShenandoahWriteBarrierStub(obj, result);
+    CodeStub* slow = new ShenandoahWriteBarrierStub(obj);
     __ branch(lir_cond_notEqual, T_INT, slow);
     __ branch_destination(slow->continuation());
     __ branch_destination(done->label());
