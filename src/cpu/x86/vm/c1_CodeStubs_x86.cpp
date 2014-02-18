@@ -518,11 +518,15 @@ void ArrayCopyStub::emit_code(LIR_Assembler* ce) {
 #if INCLUDE_ALL_GCS
 
 void ShenandoahWriteBarrierStub::emit_code(LIR_Assembler* ce) {
+
   __ bind(_entry);
+
+  // Do the runtime call.
   __ xchgq(rax, obj()->as_register());
   __ call(RuntimeAddress(Runtime1::entry_for(Runtime1::shenandoah_write_barrier_slow_id)));
   __ xchgq(rax, obj()->as_register());
   __ os_breakpoint();
+
   __ jmp(_continuation);
 }
 

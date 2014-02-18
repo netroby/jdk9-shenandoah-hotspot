@@ -77,8 +77,10 @@ public:
   virtual oopDesc* maybe_resolve_oop(oopDesc* src);
   oopDesc* resolve_and_maybe_copy_oopHelper(oopDesc* src);
   oopDesc* resolve_and_maybe_copy_oop_work(oopDesc* src);
+  oopDesc* resolve_and_maybe_copy_oop_work2(oopDesc* src);
   virtual oopDesc* resolve_and_maybe_copy_oop(oopDesc* src);
   static oopDesc* resolve_and_maybe_copy_oop_static(oopDesc* src);
+  static oopDesc* resolve_and_maybe_copy_oop_static2(oopDesc* src);
 
 #ifndef CC_INTERP
   // TODO: The following should really live in an X86 specific subclass.

@@ -41,6 +41,8 @@
 #if INCLUDE_ALL_GCS
 #include "gc_implementation/g1/g1SATBCardTableModRefBS.hpp"
 #include "gc_implementation/shenandoah/shenandoahBarrierSet.hpp"
+#include "gc_implementation/shenandoah/shenandoahHeap.hpp"
+#include "gc_implementation/shenandoah/shenandoahHeapRegion.hpp"
 #endif
 
 
@@ -1623,10 +1625,41 @@ OopMapSet* Runtime1::generate_code_for(StubID id, StubAssembler* sasm) {
     case shenandoah_write_barrier_slow_id:
       {
         StubFrame f(sasm, "shenandoah_write_barrier", dont_gc_arguments);
-        save_live_registers(sasm, 1);
-        __ super_call_VM_leaf(CAST_FROM_FN_PTR(address, ShenandoahBarrierSet::resolve_and_maybe_copy_oop_static), rax);
-        restore_live_registers_except_rax(sasm);
+        Label done;
 
+        __ push(rscratch1);
+        __ push(rscratch2);
+
+        ExternalAddress heap_address = ExternalAddress((address) Universe::heap_addr());
+        __ movptr(rscratch1, heap_address);
+        // Compute index into regions array.
+        __ movq(rscratch2, rax);
+        __ andq(rscratch2, ~(ShenandoahHeapRegion::RegionSizeBytes - 1));
+        Address first_region_bottom_addr = Address(rscratch1, ShenandoahHeap::first_region_bottom_offset());
+        __ subq(rscratch2, first_region_bottom_addr);
+        __ shrq(rscratch2, ShenandoahHeapRegion::RegionSizeShift);
+
+        Address regions_address = Address(rscratch1, ShenandoahHeap::ordered_regions_offset());
+        __ movptr(rscratch1, regions_address);
+
+        Address heap_region_containing_addr = Address(rscratch1, rscratch2, Address::times_ptr);
+        __ movptr(rscratch1, heap_region_containing_addr);
+
+        Address is_in_coll_set_addr = Address(rscratch1, ShenandoahHeapRegion::is_in_collection_set_offset());
+        __ movb(rscratch1, is_in_coll_set_addr);
+        __ testb(rscratch1, 0x1);
+
+        __ pop(rscratch2);
+        __ pop(rscratch1);
+
+        __ jcc(Assembler::zero, done);
+
+
+        save_live_registers(sasm, 1);
+        __ super_call_VM_leaf(CAST_FROM_FN_PTR(address, ShenandoahBarrierSet::resolve_and_maybe_copy_oop_static2), rax);
+        restore_live_registers_except_rax(sasm);
+        __ bind(done);
+  
       }
       break;
     case g1_pre_barrier_slow_id:

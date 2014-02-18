@@ -1866,11 +1866,11 @@ void LIRGenerator::write_barrier(LIR_Opr obj, CodeEmitInfo* info, bool need_null
     __ load(brooks_ptr_address, obj, info ? new CodeEmitInfo(info) : NULL, lir_patch_none);
 
     // Check if evacuation in progress.
-    LIR_Opr evac_in_progress = new_register(T_INT);
     LIR_Opr evac_in_progress_addr = new_pointer_register();
-    __ move(LIR_OprFact::intptrConst(ShenandoahHeap::evacuation_in_progress_addr()), evac_in_progress_addr);
-    __ move(new LIR_Address(evac_in_progress_addr, T_INT), evac_in_progress);
-    __ cmp(lir_cond_equal, evac_in_progress, LIR_OprFact::intConst(0));
+    __ move(LIR_OprFact::intptrConst(ShenandoahHeap::evacuation_in_progress_addr()),
+            evac_in_progress_addr);
+    __ cmp(lir_cond_notEqual, LIR_OprFact::address(new LIR_Address(evac_in_progress_addr, T_INT)),
+           LIR_OprFact::intConst(0));
 
     // Do the slow-path runtime call.
     CodeStub* slow = new ShenandoahWriteBarrierStub(obj);

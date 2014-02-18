@@ -303,19 +303,25 @@ oopDesc* ShenandoahBarrierSet::resolve_and_maybe_copy_oop_work(oopDesc* src) {
   assert(src != NULL, "only evacuated non NULL oops");
 
   if (sh->heap_region_containing(src)->is_in_collection_set()) {
-    assert(sh->is_evacuation_in_progress(), "only attempt evacuation during evacuation");
-    oopDesc* dst = sh->evacuate_object(src, _allocator);
-#ifdef ASSERT
-    if (ShenandoahGCVerbose) {
-      tty->print("src = %p dst = %p src = %p src-2 = %p\n",
-                 src, dst, src, src-2);
-    }
-#endif
-    assert(sh->is_in(dst), "result should be in the heap");
-    return dst;
+    return resolve_and_maybe_copy_oop_work2(src);
   } else {
     return src;
   }
+}
+
+oopDesc* ShenandoahBarrierSet::resolve_and_maybe_copy_oop_work2(oopDesc* src) {
+  ShenandoahHeap *sh = (ShenandoahHeap*) Universe::heap();
+  assert(src != NULL, "only evacuated non NULL oops");
+  assert(sh->is_evacuation_in_progress(), "only attempt evacuation during evacuation");
+  oopDesc* dst = sh->evacuate_object(src, _allocator);
+#ifdef ASSERT
+  if (ShenandoahGCVerbose) {
+    tty->print("src = %p dst = %p src = %p src-2 = %p\n",
+               src, dst, src, src-2);
+  }
+#endif
+  assert(sh->is_in(dst), "result should be in the heap");
+  return dst;
 }
 
 oopDesc* ShenandoahBarrierSet::resolve_and_maybe_copy_oopHelper(oopDesc* src) {
@@ -333,6 +339,12 @@ oopDesc* ShenandoahBarrierSet::resolve_and_maybe_copy_oopHelper(oopDesc* src) {
 
 IRT_LEAF(oopDesc*, ShenandoahBarrierSet::resolve_and_maybe_copy_oop_static(oopDesc* src))
 oop result = ((ShenandoahBarrierSet*)oopDesc::bs())->resolve_and_maybe_copy_oop_work(src);
+  // tty->print_cr("called write barrier with: %p result: %p", src, result);
+  return result;
+IRT_END
+
+IRT_LEAF(oopDesc*, ShenandoahBarrierSet::resolve_and_maybe_copy_oop_static2(oopDesc* src))
+  oop result = ((ShenandoahBarrierSet*)oopDesc::bs())->resolve_and_maybe_copy_oop_work2(src);
   // tty->print_cr("called write barrier with: %p result: %p", src, result);
   return result;
 IRT_END
@@ -392,13 +404,10 @@ void ShenandoahBarrierSet::compile_resolve_oop_for_write(MacroAssembler* masm, R
   __ cmpl(rscratch1, 0);
   __ jcc(Assembler::equal, done);
 
-  /*
   __ push(rscratch2);
 
-  // Check if the heap region containing the oop is in the collection set.
   ExternalAddress heap_address = ExternalAddress((address) Universe::heap_addr());
   __ movptr(rscratch1, heap_address);
-
   // Compute index into regions array.
   __ movq(rscratch2, dst);
   __ andq(rscratch2, ~(ShenandoahHeapRegion::RegionSizeBytes - 1));
@@ -410,15 +419,15 @@ void ShenandoahBarrierSet::compile_resolve_oop_for_write(MacroAssembler* masm, R
   __ movptr(rscratch1, regions_address);
 
   Address heap_region_containing_addr = Address(rscratch1, rscratch2, Address::times_ptr);
-  __ pop(rscratch2);
   __ movptr(rscratch1, heap_region_containing_addr);
 
   Address is_in_coll_set_addr = Address(rscratch1, ShenandoahHeapRegion::is_in_collection_set_offset());
-
   __ movb(rscratch1, is_in_coll_set_addr);
   __ testb(rscratch1, 0x1);
+
+  __ pop(rscratch2);
+
   __ jcc(Assembler::zero, done);
-  */
 
   intArray save_states = intArray(num_state_save);
   va_list vl;
@@ -545,7 +554,7 @@ void ShenandoahBarrierSet::compile_resolve_oop_for_write(MacroAssembler* masm, R
 
 
   __ mov(c_rarg1, dst);
-  __ super_call_VM_leaf(CAST_FROM_FN_PTR(address, ShenandoahBarrierSet::resolve_and_maybe_copy_oop_static), c_rarg1);
+  __ super_call_VM_leaf(CAST_FROM_FN_PTR(address, ShenandoahBarrierSet::resolve_and_maybe_copy_oop_static2), c_rarg1);
   __ mov(rscratch1, rax);
 
   for (int i = num_state_save - 1; i >= 0; i--) {
