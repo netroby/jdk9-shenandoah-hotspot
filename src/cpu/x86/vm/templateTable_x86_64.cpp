@@ -920,7 +920,7 @@ void TemplateTable::iastore() {
   // ebx: index
   // rdx: array
   index_check(rdx, rbx); // prefer index in ebx
-  oopDesc::bs()->compile_resolve_oop_for_write(_masm, rdx, 2, BarrierSet::ss_rax, BarrierSet::ss_rbx);
+  oopDesc::bs()->compile_resolve_oop_for_write(_masm, rdx, false, 2, BarrierSet::ss_rax, BarrierSet::ss_rbx);
   __ movl(Address(rdx, rbx,
                   Address::times_4,
                   arrayOopDesc::base_offset_in_bytes(T_INT)),
@@ -935,7 +935,7 @@ void TemplateTable::lastore() {
   // ebx: index
   // rdx: array
   index_check(rdx, rbx); // prefer index in ebx
-  oopDesc::bs()->compile_resolve_oop_for_write(_masm, rdx, 2, BarrierSet::ss_rax, BarrierSet::ss_rbx);
+  oopDesc::bs()->compile_resolve_oop_for_write(_masm, rdx, false, 2, BarrierSet::ss_rax, BarrierSet::ss_rbx);
   __ movq(Address(rdx, rbx,
                   Address::times_8,
                   arrayOopDesc::base_offset_in_bytes(T_LONG)),
@@ -950,7 +950,7 @@ void TemplateTable::fastore() {
   // ebx:  index
   // rdx:  array
   index_check(rdx, rbx); // prefer index in ebx
-  oopDesc::bs()->compile_resolve_oop_for_write(_masm, rdx, 2, BarrierSet::ss_ftos, BarrierSet::ss_rbx);
+  oopDesc::bs()->compile_resolve_oop_for_write(_masm, rdx, false, 2, BarrierSet::ss_ftos, BarrierSet::ss_rbx);
   __ movflt(Address(rdx, rbx,
                    Address::times_4,
                    arrayOopDesc::base_offset_in_bytes(T_FLOAT)),
@@ -965,7 +965,7 @@ void TemplateTable::dastore() {
   // ebx:  index
   // rdx:  array
   index_check(rdx, rbx); // prefer index in ebx
-  oopDesc::bs()->compile_resolve_oop_for_write(_masm, rdx, 2, BarrierSet::ss_dtos, BarrierSet::ss_rbx);
+  oopDesc::bs()->compile_resolve_oop_for_write(_masm, rdx, false, 2, BarrierSet::ss_dtos, BarrierSet::ss_rbx);
   __ movdbl(Address(rdx, rbx,
                    Address::times_8,
                    arrayOopDesc::base_offset_in_bytes(T_DOUBLE)),
@@ -985,7 +985,7 @@ void TemplateTable::aastore() {
                           arrayOopDesc::base_offset_in_bytes(T_OBJECT));
 
   index_check(rdx, rcx);     // kills rbx
-  oopDesc::bs()->compile_resolve_oop_for_write(_masm, rdx, 2, BarrierSet::ss_rax, BarrierSet::ss_rcx);
+  oopDesc::bs()->compile_resolve_oop_for_write(_masm, rdx, false, 2, BarrierSet::ss_rax, BarrierSet::ss_rcx);
 
   // do array store check - check for NULL value first
   __ testptr(rax, rax);
@@ -1037,7 +1037,7 @@ void TemplateTable::bastore() {
   // ebx: index
   // rdx: array
   index_check(rdx, rbx); // prefer index in ebx
-  oopDesc::bs()->compile_resolve_oop_for_write(_masm, rdx, 2, BarrierSet::ss_rax, BarrierSet::ss_rbx);
+  oopDesc::bs()->compile_resolve_oop_for_write(_masm, rdx, false, 2, BarrierSet::ss_rax, BarrierSet::ss_rbx);
   __ movb(Address(rdx, rbx,
                   Address::times_1,
                   arrayOopDesc::base_offset_in_bytes(T_BYTE)),
@@ -1052,7 +1052,7 @@ void TemplateTable::castore() {
   // ebx: index
   // rdx: array
   index_check(rdx, rbx);  // prefer index in ebx
-  oopDesc::bs()->compile_resolve_oop_for_write(_masm, rdx, 2, BarrierSet::ss_rax, BarrierSet::ss_rbx);
+  oopDesc::bs()->compile_resolve_oop_for_write(_masm, rdx, false, 2, BarrierSet::ss_rax, BarrierSet::ss_rbx);
   __ movw(Address(rdx, rbx,
                   Address::times_2,
                   arrayOopDesc::base_offset_in_bytes(T_CHAR)),
@@ -1860,7 +1860,7 @@ void TemplateTable::if_acmp(Condition cc) {
   // NOTE: We need to preemptively evacuate the oops here (for Shenandoah GC), because
   // we might get false negatives if both operands are the same, but another
   // thread evacuates between the load of the 1st and 2nd operand.
-  oopDesc::bs()->compile_resolve_oop_for_write(_masm, rdx, 1, BarrierSet::ss_rax);
+  oopDesc::bs()->compile_resolve_oop_for_write(_masm, rdx, true, 1, BarrierSet::ss_rax);
   oopDesc::bs()->compile_resolve_oop(_masm, rax);
   __ cmpptr(rdx, rax);
   __ jcc(j_not(cc), not_taken);
@@ -2537,7 +2537,7 @@ void TemplateTable::putfield_or_static(int byte_no, bool is_static) {
   {
     __ pop(btos);
     if (!is_static) pop_and_check_object(obj);
-    oopDesc::bs()->compile_resolve_oop_for_write(_masm, obj, 3, BarrierSet::ss_rax, BarrierSet::ss_rbx, BarrierSet::ss_rdx);
+    oopDesc::bs()->compile_resolve_oop_for_write(_masm, obj, false, 3, BarrierSet::ss_rax, BarrierSet::ss_rbx, BarrierSet::ss_rdx);
     __ movb(field, rax);
     if (!is_static) {
       patch_bytecode(Bytecodes::_fast_bputfield, bc, rbx, true, byte_no);
@@ -2553,7 +2553,7 @@ void TemplateTable::putfield_or_static(int byte_no, bool is_static) {
   {
     __ pop(atos);
     if (!is_static) pop_and_check_object(obj);
-    oopDesc::bs()->compile_resolve_oop_for_write(_masm, obj, 3, BarrierSet::ss_rax, BarrierSet::ss_rbx, BarrierSet::ss_rdx);
+    oopDesc::bs()->compile_resolve_oop_for_write(_masm, obj, false, 3, BarrierSet::ss_rax, BarrierSet::ss_rbx, BarrierSet::ss_rdx);
     // Store into the field
     do_oop_store(_masm, field, rax, _bs->kind(), false);
     if (!is_static) {
@@ -2570,7 +2570,7 @@ void TemplateTable::putfield_or_static(int byte_no, bool is_static) {
   {
     __ pop(itos);
     if (!is_static) pop_and_check_object(obj);
-    oopDesc::bs()->compile_resolve_oop_for_write(_masm, obj, 3, BarrierSet::ss_rax, BarrierSet::ss_rbx, BarrierSet::ss_rdx);
+    oopDesc::bs()->compile_resolve_oop_for_write(_masm, obj, false, 3, BarrierSet::ss_rax, BarrierSet::ss_rbx, BarrierSet::ss_rdx);
     __ movl(field, rax);
     if (!is_static) {
       patch_bytecode(Bytecodes::_fast_iputfield, bc, rbx, true, byte_no);
@@ -2586,7 +2586,7 @@ void TemplateTable::putfield_or_static(int byte_no, bool is_static) {
   {
     __ pop(ctos);
     if (!is_static) pop_and_check_object(obj);
-    oopDesc::bs()->compile_resolve_oop_for_write(_masm, obj, 3, BarrierSet::ss_rax, BarrierSet::ss_rbx, BarrierSet::ss_rdx);
+    oopDesc::bs()->compile_resolve_oop_for_write(_masm, obj, false, 3, BarrierSet::ss_rax, BarrierSet::ss_rbx, BarrierSet::ss_rdx);
     __ movw(field, rax);
     if (!is_static) {
       patch_bytecode(Bytecodes::_fast_cputfield, bc, rbx, true, byte_no);
@@ -2602,7 +2602,7 @@ void TemplateTable::putfield_or_static(int byte_no, bool is_static) {
   {
     __ pop(stos);
     if (!is_static) pop_and_check_object(obj);
-    oopDesc::bs()->compile_resolve_oop_for_write(_masm, obj, 3, BarrierSet::ss_rax, BarrierSet::ss_rbx, BarrierSet::ss_rdx);
+    oopDesc::bs()->compile_resolve_oop_for_write(_masm, obj, false, 3, BarrierSet::ss_rax, BarrierSet::ss_rbx, BarrierSet::ss_rdx);
     __ movw(field, rax);
     if (!is_static) {
       patch_bytecode(Bytecodes::_fast_sputfield, bc, rbx, true, byte_no);
@@ -2618,7 +2618,7 @@ void TemplateTable::putfield_or_static(int byte_no, bool is_static) {
   {
     __ pop(ltos);
     if (!is_static) pop_and_check_object(obj);
-    oopDesc::bs()->compile_resolve_oop_for_write(_masm, obj, 3, BarrierSet::ss_rax, BarrierSet::ss_rbx, BarrierSet::ss_rdx);
+    oopDesc::bs()->compile_resolve_oop_for_write(_masm, obj, false, 3, BarrierSet::ss_rax, BarrierSet::ss_rbx, BarrierSet::ss_rdx);
     __ movq(field, rax);
     if (!is_static) {
       patch_bytecode(Bytecodes::_fast_lputfield, bc, rbx, true, byte_no);
@@ -2634,7 +2634,7 @@ void TemplateTable::putfield_or_static(int byte_no, bool is_static) {
   {
     __ pop(ftos);
     if (!is_static) pop_and_check_object(obj);
-    oopDesc::bs()->compile_resolve_oop_for_write(_masm, obj, 4, BarrierSet::ss_rax, BarrierSet::ss_rbx, BarrierSet::ss_rdx, BarrierSet::ss_ftos);
+    oopDesc::bs()->compile_resolve_oop_for_write(_masm, obj, false, 4, BarrierSet::ss_rax, BarrierSet::ss_rbx, BarrierSet::ss_rdx, BarrierSet::ss_ftos);
     __ movflt(field, xmm0);
     if (!is_static) {
       patch_bytecode(Bytecodes::_fast_fputfield, bc, rbx, true, byte_no);
@@ -2652,7 +2652,7 @@ void TemplateTable::putfield_or_static(int byte_no, bool is_static) {
   {
     __ pop(dtos);
     if (!is_static) pop_and_check_object(obj);
-    oopDesc::bs()->compile_resolve_oop_for_write(_masm, obj, 4, BarrierSet::ss_rax, BarrierSet::ss_rbx, BarrierSet::ss_rdx, BarrierSet::ss_dtos);
+    oopDesc::bs()->compile_resolve_oop_for_write(_masm, obj, false, 4, BarrierSet::ss_rax, BarrierSet::ss_rbx, BarrierSet::ss_rdx, BarrierSet::ss_dtos);
     __ movdbl(field, xmm0);
     if (!is_static) {
       patch_bytecode(Bytecodes::_fast_dputfield, bc, rbx, true, byte_no);
@@ -2773,33 +2773,33 @@ void TemplateTable::fast_storefield(TosState state) {
   // access field
   switch (bytecode()) {
   case Bytecodes::_fast_aputfield:
-    oopDesc::bs()->compile_resolve_oop_for_write(_masm, rcx, 3, BarrierSet::ss_rax, BarrierSet::ss_rbx, BarrierSet::ss_rdx);
+    oopDesc::bs()->compile_resolve_oop_for_write(_masm, rcx, false, 3, BarrierSet::ss_rax, BarrierSet::ss_rbx, BarrierSet::ss_rdx);
     do_oop_store(_masm, field, rax, _bs->kind(), false);
     break;
   case Bytecodes::_fast_lputfield:
-    oopDesc::bs()->compile_resolve_oop_for_write(_masm, rcx, 3, BarrierSet::ss_rax, BarrierSet::ss_rbx, BarrierSet::ss_rdx);
+    oopDesc::bs()->compile_resolve_oop_for_write(_masm, rcx, false, 3, BarrierSet::ss_rax, BarrierSet::ss_rbx, BarrierSet::ss_rdx);
     __ movq(field, rax);
     break;
   case Bytecodes::_fast_iputfield:
-    oopDesc::bs()->compile_resolve_oop_for_write(_masm, rcx, 3, BarrierSet::ss_rax, BarrierSet::ss_rbx, BarrierSet::ss_rdx);
+    oopDesc::bs()->compile_resolve_oop_for_write(_masm, rcx, false, 3, BarrierSet::ss_rax, BarrierSet::ss_rbx, BarrierSet::ss_rdx);
     __ movl(field, rax);
     break;
   case Bytecodes::_fast_bputfield:
-    oopDesc::bs()->compile_resolve_oop_for_write(_masm, rcx, 3, BarrierSet::ss_rax, BarrierSet::ss_rbx, BarrierSet::ss_rdx);
+    oopDesc::bs()->compile_resolve_oop_for_write(_masm, rcx, false, 3, BarrierSet::ss_rax, BarrierSet::ss_rbx, BarrierSet::ss_rdx);
     __ movb(field, rax);
     break;
   case Bytecodes::_fast_sputfield:
     // fall through
   case Bytecodes::_fast_cputfield:
-    oopDesc::bs()->compile_resolve_oop_for_write(_masm, rcx, 3, BarrierSet::ss_rax, BarrierSet::ss_rbx, BarrierSet::ss_rdx);
+    oopDesc::bs()->compile_resolve_oop_for_write(_masm, rcx, false, 3, BarrierSet::ss_rax, BarrierSet::ss_rbx, BarrierSet::ss_rdx);
     __ movw(field, rax);
     break;
   case Bytecodes::_fast_fputfield:
-    oopDesc::bs()->compile_resolve_oop_for_write(_masm, rcx, 3, BarrierSet::ss_rbx, BarrierSet::ss_rdx, BarrierSet::ss_ftos);
+    oopDesc::bs()->compile_resolve_oop_for_write(_masm, rcx, false, 3, BarrierSet::ss_rbx, BarrierSet::ss_rdx, BarrierSet::ss_ftos);
     __ movflt(field, xmm0);
     break;
   case Bytecodes::_fast_dputfield:
-    oopDesc::bs()->compile_resolve_oop_for_write(_masm, rcx, 3, BarrierSet::ss_rbx, BarrierSet::ss_rdx, BarrierSet::ss_dtos);
+    oopDesc::bs()->compile_resolve_oop_for_write(_masm, rcx, false, 3, BarrierSet::ss_rbx, BarrierSet::ss_rdx, BarrierSet::ss_dtos);
     __ movdbl(field, xmm0);
     break;
   default:
@@ -3656,7 +3656,7 @@ void TemplateTable::monitorenter() {
   // We need to preemptively evacuate the object, because we later compare
   // it to objects in the BasicObjectLock list, and we might get false negatives
   // if another thread evacuates the object in the meantime. See acmp.
-  oopDesc::bs()->compile_resolve_oop_for_write(_masm, rax);
+  oopDesc::bs()->compile_resolve_oop_for_write(_masm, rax, false);
 
   const Address monitor_block_top(
         rbp, frame::interpreter_frame_monitor_block_top_offset * wordSize);
@@ -3757,7 +3757,7 @@ void TemplateTable::monitorexit() {
   // We need to preemptively evacuate the object, because we later compare
   // it to objects in the BasicObjectLock list, and we might get false negatives
   // if another thread evacuates the object in the meantime. See acmp.
-  oopDesc::bs()->compile_resolve_oop_for_write(_masm, rax);
+  oopDesc::bs()->compile_resolve_oop_for_write(_masm, rax, false);
 
   const Address monitor_block_top(
         rbp, frame::interpreter_frame_monitor_block_top_offset * wordSize);

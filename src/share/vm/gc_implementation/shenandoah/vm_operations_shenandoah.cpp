@@ -44,6 +44,7 @@ void VM_ShenandoahFinishMark::doit() {
   if (! ShenandoahConcurrentEvacuation) {
     sh->parallel_evacuate();
     sh->set_evacuation_in_progress(false);
+    sh->reset_mark_bitmap();
   }
   sh->shenandoahPolicy()->record_final_mark_end();    
 }
@@ -79,6 +80,7 @@ void VM_ShenandoahEvacuation::doit() {
     ShenandoahHeap *sh = ShenandoahHeap::heap();
     sh->parallel_evacuate();
     sh->set_evacuation_in_progress(false);
+    sh->reset_mark_bitmap();
   }
 }
 

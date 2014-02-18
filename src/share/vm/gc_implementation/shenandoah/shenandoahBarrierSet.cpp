@@ -244,7 +244,6 @@ void ShenandoahBarrierSet::write_region_work(MemRegion mr) {
   // tty->print_cr("write_region_work: %p, %p", mr.start(), mr.end());
   oop obj = oop(mr.start());
   assert(obj->is_oop(), "must be an oop");
-  assert(ShenandoahBarrierSet::has_brooks_ptr(obj), "must have brooks pointer");
   UpdateRefsForOopClosure cl;
   obj->oop_iterate(&cl);
 }
@@ -252,7 +251,6 @@ void ShenandoahBarrierSet::write_region_work(MemRegion mr) {
 oopDesc* ShenandoahBarrierSet::get_shenandoah_forwardee_helper(oopDesc* p) {
   assert(UseShenandoahGC, "must only be called when Shenandoah is used.");
   assert(Universe::heap()->is_in(p), "We shouldn't be calling this on objects not in the heap");
-  assert(! is_brooks_ptr(p), err_msg("oop must not be a brooks pointer itself. oop's mark word: %p", BrooksPointer::get(p).get_age()));
   return BrooksPointer::get(p).get_forwardee();
 }
 
@@ -280,19 +278,6 @@ oopDesc* ShenandoahBarrierSet::get_shenandoah_forwardee(oopDesc* p) {
     return result;
 }
 
-
-bool ShenandoahBarrierSet::is_brooks_ptr(oopDesc* p) {
-  markOop mark = p->mark();
-  if (mark->has_displaced_mark_helper()) {
-    return false;
-  } else {
-    return mark->age() == 15;
-  }
-}
-
-bool ShenandoahBarrierSet::has_brooks_ptr(oopDesc* p) {
-  return is_brooks_ptr(oop(((HeapWord*) p) - BrooksPointer::BROOKS_POINTER_OBJ_SIZE));
-}
 
 oopDesc* ShenandoahBarrierSet::resolve_oop(oopDesc* src) {
 
@@ -377,10 +362,12 @@ void ShenandoahBarrierSet::compile_resolve_oop(MacroAssembler* masm, Register ds
 
 void ShenandoahBarrierSet::compile_resolve_oop_not_null(MacroAssembler* masm, Register dst) {
   __ movptr(dst, Address(dst, -8));
+  /*
   __ andq(dst, ~0x7);
+  */
 }
 
-void ShenandoahBarrierSet::compile_resolve_oop_for_write(MacroAssembler* masm, Register dst, int num_state_save, ...) {
+void ShenandoahBarrierSet::compile_resolve_oop_for_write(MacroAssembler* masm, Register dst, bool explicit_null_check, int num_state_save, ...) {
   assert(dst != rscratch1, "different regs");
   //assert(dst != rscratch2, "Need rscratch2");
 
@@ -388,17 +375,50 @@ void ShenandoahBarrierSet::compile_resolve_oop_for_write(MacroAssembler* masm, R
 
   // Resolve oop first.
   // TODO: Make this not-null-checking as soon as we have implicit null checks in c1!
-  __ push(rscratch1);
 
-  __ testptr(dst, dst);
-  __ jcc(Assembler::zero, done);
+  if (explicit_null_check) {
+    __ push(rscratch1);
+    __ testptr(dst, dst);
+    __ jcc(Assembler::zero, done);
+  }
   compile_resolve_oop_not_null(masm, dst);
+  if (! explicit_null_check) {
+    __ push(rscratch1);
+  }
 
   // Now check if evacuation is in progress.
   ExternalAddress evacuation_in_progress = ExternalAddress(ShenandoahHeap::evacuation_in_progress_addr());
   __ movptr(rscratch1, evacuation_in_progress);
   __ cmpl(rscratch1, 0);
   __ jcc(Assembler::equal, done);
+
+  /*
+  __ push(rscratch2);
+
+  // Check if the heap region containing the oop is in the collection set.
+  ExternalAddress heap_address = ExternalAddress((address) Universe::heap_addr());
+  __ movptr(rscratch1, heap_address);
+
+  // Compute index into regions array.
+  __ movq(rscratch2, dst);
+  __ andq(rscratch2, ~(ShenandoahHeapRegion::RegionSizeBytes - 1));
+  Address first_region_bottom_addr = Address(rscratch1, ShenandoahHeap::first_region_bottom_offset());
+  __ subq(rscratch2, first_region_bottom_addr);
+  __ shrq(rscratch2, ShenandoahHeapRegion::RegionSizeShift);
+
+  Address regions_address = Address(rscratch1, ShenandoahHeap::ordered_regions_offset());
+  __ movptr(rscratch1, regions_address);
+
+  Address heap_region_containing_addr = Address(rscratch1, rscratch2, Address::times_ptr);
+  __ pop(rscratch2);
+  __ movptr(rscratch1, heap_region_containing_addr);
+
+  Address is_in_coll_set_addr = Address(rscratch1, ShenandoahHeapRegion::is_in_collection_set_offset());
+
+  __ movb(rscratch1, is_in_coll_set_addr);
+  __ testb(rscratch1, 0x1);
+  __ jcc(Assembler::zero, done);
+  */
 
   intArray save_states = intArray(num_state_save);
   va_list vl;
@@ -523,60 +543,6 @@ void ShenandoahBarrierSet::compile_resolve_oop_for_write(MacroAssembler* masm, R
     }
   }
 
-  /*
-  Label done;
-
-  // Resolve oop.
-  __ movptr(dst, Address(dst, -8));
-  __ andq(dst, ~0x7);
-
-  __ os_breakpoint();
-
-  // Check if the heap region containing the oop is in the collection set.
-  ExternalAddress heap_address = ExternalAddress((address) Universe::heap_addr());
-  __ movptr(rscratch1, heap_address);
-
-  // Compute index into regions array.
-  __ movq(rscratch2, dst);
-  __ andq(rscratch2, ~(ShenandoahHeapRegion::RegionSizeBytes - 1));
-  Address first_region_bottom_addr = Address(rscratch1, ShenandoahHeap::first_region_bottom_offset());
-  __ subq(rscratch2, first_region_bottom_addr);
-  __ shrq(rscratch2, ShenandoahHeapRegion::RegionSizeShift);
-
-  Address regions_address = Address(rscratch1, ShenandoahHeap::ordered_regions_offset());
-  __ movptr(rscratch1, regions_address);
-
-  Address heap_region_containing_addr = Address(rscratch1, rscratch2, Address::times_ptr);
-  __ movptr(rscratch1, heap_region_containing_addr);
-
-  Address is_in_coll_set_addr = Address(rscratch1, ShenandoahHeapRegion::is_in_collection_set_offset());
-
-  __ movb(rscratch1, is_in_coll_set_addr);
-  __ testb(rscratch1, 0x1);
-  __ jcc(Assembler::zero, done);
-
-  __ movptr(c_rarg1, dst);
-  // __ push_callee_saved_registers();
-  __ push(rsi);
-  __ push(rdi);
-  __ push(rdx);
-  __ push(rcx);
-  __ push(rbx);
-  __ push(rax);
-
-  __ call_VM(c_rarg1, CAST_FROM_FN_PTR(address, ShenandoahHeap::allocate_memory_static), c_rarg1);
-  // __ pop_callee_saved_registers();
-  __ pop(rax);
-  __ pop(rbx);
-  __ pop(rcx);
-  __ pop(rdx);
-  __ pop(rdi);
-  __ pop(rsi);
-  __ movptr(dst, c_rarg1);
-
-  // __ stop("CAS not yet implemented");
-  __ bind(done);
-*/
 
   __ mov(c_rarg1, dst);
   __ super_call_VM_leaf(CAST_FROM_FN_PTR(address, ShenandoahBarrierSet::resolve_and_maybe_copy_oop_static), c_rarg1);

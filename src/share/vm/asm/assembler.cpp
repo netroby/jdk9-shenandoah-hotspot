@@ -313,5 +313,5 @@ bool MacroAssembler::needs_explicit_null_check(intptr_t offset) {
     }
   }
 #endif
-  return offset < 0 || os::vm_page_size() <= offset;
+  return (offset < 0 && ((!UseShenandoahGC) || offset != -8)) || os::vm_page_size() <= offset;
 }

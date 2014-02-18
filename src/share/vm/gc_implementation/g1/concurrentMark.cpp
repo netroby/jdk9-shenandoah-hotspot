@@ -149,6 +149,17 @@ void CMBitMap::markRange(MemRegion mr) {
                    heapWordToOffset(mr.end()), true);
 }
 
+void CMBitMap::parMarkRange(MemRegion mr) {
+  mr.intersection(MemRegion(_bmStartWord, _bmWordSize));
+  assert(!mr.is_empty(), "unexpected empty region");
+  assert((offsetToHeapWord(heapWordToOffset(mr.end())) ==
+          ((HeapWord *) mr.end())),
+         "markRange memory region end is not card aligned");
+  // convert address range into offset range
+  _bm.par_at_put_range(heapWordToOffset(mr.start()),
+                   heapWordToOffset(mr.end()), true);
+}
+
 void CMBitMap::clearRange(MemRegion mr) {
   mr.intersection(MemRegion(_bmStartWord, _bmWordSize));
   assert(!mr.is_empty(), "unexpected empty region");

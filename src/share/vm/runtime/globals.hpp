@@ -1384,6 +1384,9 @@ class CommandLineFlags {
   develop(bool, ShenandoahTraceEvacuations, false,                          \
           "Trace Shenandoah Evacuations")                                   \
                                                                             \
+  develop(bool, ShenandoahTraceConcurrentMarking, false,                    \
+          "Trace Concurrent Marking")                                       \
+                                                                            \
   develop(bool, ShenandoahTraceUpdates, false,                              \
           "Trace Shenandoah Updates")                                       \
                                                                             \

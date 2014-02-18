@@ -148,6 +148,7 @@ class CMBitMap : public CMBitMapRO {
     return _bm.par_clear_bit(heapWordToOffset(addr));
   }
   void markRange(MemRegion mr);
+  void parMarkRange(MemRegion mr);
   void clearAll();
   void clearRange(MemRegion mr);
 

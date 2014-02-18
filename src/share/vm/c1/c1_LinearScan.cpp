@@ -3349,6 +3349,10 @@ void LinearScan::verify_no_oops_in_fixed_intervals() {
 
               if (mode == LIR_OpVisitState::inputMode) {
                 if (interval->to() >= op_id + 1) {
+                  if (!(interval->to() < op_id + 2 ||
+                         interval->has_hole_between(op_id, op_id + 2))) {
+                    tty->print_cr("interval-to: %d, op_id: %d, has_hole: %d", interval->to(), op_id, interval->has_hole_between(op_id, op_id + 2));
+                  }
                   assert(interval->to() < op_id + 2 ||
                          interval->has_hole_between(op_id, op_id + 2),
                          "oop input operand live after instruction");

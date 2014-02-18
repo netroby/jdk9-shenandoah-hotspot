@@ -14,15 +14,9 @@ BrooksPointer BrooksPointer::get(oop obj) {
   return BrooksPointer(((uintptr_t*) obj) - 1);
 }
 
-uint BrooksPointer::get_age() {
-  assert(! ShenandoahBarrierSet::is_brooks_ptr(oop((HeapWord*) _heap_word + 1)), "can't get age of brooks pointers");
-  assert(ShenandoahBarrierSet::is_brooks_ptr(oop((HeapWord*) _heap_word - 3)), "must be brooks pointer oop");
-  return (uint) (*_heap_word & AGE_MASK);
-}
-
 void BrooksPointer::set_forwardee(oop forwardee) {
   assert(ShenandoahHeap::heap()->is_in(forwardee), "forwardee must be valid oop in the heap");
-  *_heap_word = (*_heap_word & AGE_MASK) | ((uintptr_t) forwardee & FORWARDEE_MASK);
+  *_heap_word = (uintptr_t) forwardee;
 #ifdef ASSERT
   if (ShenandoahTraceBrooksPointers) {
     tty->print("setting_forwardee to %p = %p\n", forwardee, *_heap_word);
@@ -32,8 +26,8 @@ void BrooksPointer::set_forwardee(oop forwardee) {
 
 HeapWord* BrooksPointer::cas_forwardee(HeapWord* old, HeapWord* forwardee) {
   assert(ShenandoahHeap::heap()->is_in(forwardee), "forwardee must point to a heap address");
-  HeapWord* o = (HeapWord*) ((*_heap_word & AGE_MASK) | ((uintptr_t) old & FORWARDEE_MASK));
-  HeapWord* n = (HeapWord*) ((*_heap_word & AGE_MASK) | ((uintptr_t) forwardee & FORWARDEE_MASK));
+  HeapWord* o = old;
+  HeapWord* n = forwardee;
 
 #ifdef ASSERT
   if (ShenandoahTraceBrooksPointers) {
@@ -41,7 +35,7 @@ HeapWord* BrooksPointer::cas_forwardee(HeapWord* old, HeapWord* forwardee) {
   }
 #endif
 
-  HeapWord* result =  (HeapWord*) ((uintptr_t) Atomic::cmpxchg_ptr(n, _heap_word, o) & FORWARDEE_MASK);
+  HeapWord* result =  (HeapWord*) (HeapWord*) Atomic::cmpxchg_ptr(n, _heap_word, o);
 
 #ifdef ASSERT
   if (ShenandoahTraceBrooksPointers) {

@@ -120,6 +120,14 @@ public:
   }
 };
 
+void ShenandoahHeapRegion::object_iterate(ObjectClosure* blk) {
+  HeapWord* p = bottom() + BrooksPointer::BROOKS_POINTER_OBJ_SIZE;
+  while (p < top()) {
+    blk->do_object(oop(p));
+    p += oop(p)->size() + BrooksPointer::BROOKS_POINTER_OBJ_SIZE;
+  }
+}
+
 void ShenandoahHeapRegion::oop_iterate(ExtendedOopClosure* cl, bool skip_unreachable_objects) {
   SkipUnreachableObjectToOopClosure cl2(cl, skip_unreachable_objects);
   object_iterate(&cl2);

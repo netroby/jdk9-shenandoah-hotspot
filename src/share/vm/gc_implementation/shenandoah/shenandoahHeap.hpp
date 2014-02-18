@@ -11,6 +11,8 @@ Copyright 2014 Red Hat, Inc. and/or its affiliates.
 #include "gc_implementation/shenandoah/shenandoahHeapRegion.hpp"
 #include "gc_implementation/shenandoah/shenandoahHeapRegionSet.hpp"
 
+#include "gc_implementation/g1/concurrentMark.hpp"
+
 
 #include "memory/barrierSet.hpp"
 #include "memory/sharedHeap.hpp"
@@ -48,8 +50,6 @@ class ShenandoahHeap : public SharedHeap {
 
 private:
 
-  static const uint MAX_EPOCH = 7;
-
   static ShenandoahHeap* _pgc;
   ShenandoahCollectorPolicy* _shenandoah_policy;
   VirtualSpace _storage;
@@ -73,12 +73,13 @@ private:
 #ifndef NDEBUG
   uint _numAllocs;
 #endif
-  uint _epoch;
   size_t _default_gclab_size;
   WorkGangBarrierSync barrierSync;
   int _max_workers;
   volatile size_t _used;
 
+  CMBitMap _mark_bit_map;
+  CMBitMap* _next_mark_bit_map;
 
 public:
   size_t _bytesAllocSinceCM;
@@ -98,8 +99,6 @@ public:
   HeapWord* allocate_new_gclab() { 
     return allocate_new_gclab(_default_gclab_size);
   }
-
-  uint getEpoch() {return _epoch;}
 
   // For now we are ignoring eden.
   inline bool should_alloc_in_eden(size_t size) { return false;}
@@ -198,13 +197,13 @@ public:
   size_t bump_object_age(HeapWord* start, HeapWord* end);
   bool mark_current(oop obj) const;
   bool mark_current_no_checks(oop obj) const;
-  bool isMarkedPrev(oop obj) const;
   bool isMarkedCurrent(oop obj) const;
-  bool isMarked(oop obj)  { return isMarkedPrev(obj) || isMarkedCurrent(obj);}
 
   bool is_obj_ill(const oop obj) {
-    return isMarkedPrev(obj);
+    return ! isMarkedCurrent(obj);
   }
+
+  void reset_mark_bitmap();
 
   virtual void post_allocation_collector_specific_setup(HeapWord* obj);
 
@@ -277,12 +276,11 @@ private:
 };
 
 class ShenandoahMarkRefsClosure : public OopsInGenClosure {
-  uint _epoch;
   uint _worker_id;
   ShenandoahHeap* _heap;
 
 public: 
-  ShenandoahMarkRefsClosure(uint e, uint worker_id);
+  ShenandoahMarkRefsClosure(uint worker_id);
 
   void do_oop_work(oop* p);
   void do_oop(narrowOop* p);
@@ -290,10 +288,9 @@ public:
 };
   
 class ShenandoahMarkObjsClosure : public ObjectClosure {
-  uint _epoch;
   uint _worker_id;
 public: 
-  ShenandoahMarkObjsClosure(uint e, uint worker_id);
+  ShenandoahMarkObjsClosure(uint worker_id);
 
   void do_object(oop p);
 };

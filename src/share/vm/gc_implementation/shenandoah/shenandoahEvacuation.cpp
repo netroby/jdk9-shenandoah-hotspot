@@ -18,33 +18,43 @@ HeapWord* GCLABAllocator::allocate(size_t size) {
   HeapWord* obj;
 
   if (size < _region->space_available()) {
-    if (ShenandoahGCVerbose) {
+#ifdef ASSERT
+    if (ShenandoahTraceAllocations) {
       tty->print("PEROC: %d size < _region->space_available() = %d\n", 
                  size, _region->space_available());
     }
+#endif
     obj = _region->allocate(size);
     _last_alloc_in_gclab = true;
   } else if (size < _region->region_size()) {
-    if (ShenandoahGCVerbose) {
+#ifdef ASSERT
+    if (ShenandoahTraceAllocations) {
       tty->print("PEROC: %d size < _region->region_size = %d\n ", size, _region->region_size());
     }
+#endif
     _waste += _region->space_available();
     _region->fill_region();
     _region->allocate_new_region();
     obj = _region->allocate(size);
     _last_alloc_in_gclab = true;
   } else if (size < ShenandoahHeapRegion::RegionSizeBytes) {
-    if (ShenandoahGCVerbose) {
+#ifdef ASSERT
+    if (ShenandoahTraceAllocations) {
       tty->print("PEROC: %d size < ShenandoahHeapRegion::RegionSizeBytes = %d\n ", 
                  size, ShenandoahHeapRegion::RegionSizeBytes);
     }
+#endif
     _waste += _region->space_available();
     _region->fill_region();
     obj = _fallback.allocate(size);
     _last_alloc_in_gclab = false;
   } else {
-    tty->print("PEROC:%d don't handle humongous objects\n", size);
-    assert(false, "Don't handle humongous objects yet");
+#ifdef ASSERT
+    if (ShenandoahTraceAllocations) {
+      tty->print("PEROC:%d don't handle humongous objects\n", size);
+      assert(false, "Don't handle humongous objects yet");
+    }
+#endif
   }
   return obj;
 }
