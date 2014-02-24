@@ -2191,3 +2191,14 @@ void Parse::dump_bci(int bci) {
 }
 
 #endif
+
+Node* Parse::shenandoah_read_barrier(Node* obj, const Type* obj_type) {
+
+  if (UseShenandoahGC) {
+    Node* bp_addr = basic_plus_adr(obj, -0x8);
+    Node* bp_load = make_load(NULL, bp_addr, obj_type, T_OBJECT, obj_type->make_oopptr(), false);
+    return bp_load;
+  } else {
+    return obj;
+  }
+}
