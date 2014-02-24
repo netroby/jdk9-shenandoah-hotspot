@@ -186,3 +186,22 @@ void ShenandoahHeapRegion::recycle() {
   _humonguous_start = false;
   _humonguous_continuation = false;
 }
+
+HeapWord* ShenandoahHeapRegion::block_start_const(const void* p) const {
+  assert(MemRegion(bottom(), end()).contains(p),
+         err_msg("p (" PTR_FORMAT ") not in space [" PTR_FORMAT ", " PTR_FORMAT ")",
+                  p, bottom(), end()));
+  if (p >= top()) {
+    return top();
+  } else {
+    HeapWord* last = bottom() + BrooksPointer::BROOKS_POINTER_OBJ_SIZE;
+    HeapWord* cur = last;
+    while (cur <= p) {
+      last = cur;
+      cur += oop(cur)->size() + BrooksPointer::BROOKS_POINTER_OBJ_SIZE;
+    }
+    assert(oop(last)->is_oop(),
+           err_msg(PTR_FORMAT " should be an object start", last));
+    return last;
+  }
+}
