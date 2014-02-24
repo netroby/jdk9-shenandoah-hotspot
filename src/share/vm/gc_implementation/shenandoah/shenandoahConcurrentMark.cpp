@@ -48,10 +48,10 @@ public:
     
       bool success = _cm->task_queues()->queue(worker_id)->pop_local(obj);
       if (! success) {
-        // If our queue runs empty, drain SATB buffers, then try again.
-        // tty->print_cr("drainig SATB buffers while concurrently marking");
-        _cm->drain_satb_buffers(worker_id);
-        success = _cm->task_queues()->queue(worker_id)->pop_local(obj);
+        // If our queue runs empty, drain some of the SATB buffers, then try again.
+        // tty->print_cr("draining SATB buffers while concurrently marking");
+	while (_cm->drain_one_satb_buffer(worker_id) && !success)
+	  success = _cm->task_queues()->queue(worker_id)->pop_local(obj);
       }
       if (! success) {
         if (!_cm->task_queues()->steal(worker_id, &seed, obj)) {
@@ -204,6 +204,18 @@ void ShenandoahConcurrentMark::drain_satb_buffers(uint worker_id, bool remark) {
 
 }
 
+bool ShenandoahConcurrentMark::drain_one_satb_buffer(uint worker_id) {
+
+  ShenandoahHeap* sh = (ShenandoahHeap*) Universe::heap();
+  ShenandoahMarkObjsClosure cl(worker_id);
+
+  SATBMarkQueueSet& satb_mq_set = JavaThread::satb_mark_queue_set();
+  satb_mq_set.set_par_closure(worker_id, &cl);
+  bool result = satb_mq_set.par_apply_closure_to_completed_buffer(worker_id);
+  satb_mq_set.set_par_closure(worker_id, NULL);
+  return result;
+}
+
 void ShenandoahConcurrentMark::checkpointRootsFinal() {
   ParallelTaskTerminator terminator(_max_worker_id, _task_queues);
   SCMConcurrentMarkingTask markingTask(this, &terminator);
@@ -216,9 +228,14 @@ void ShenandoahConcurrentMark::addTask(oop obj, int q) {
   assert(! sh->heap_region_containing(obj)->is_in_collection_set(), "we don't want to mark objects in from-space");
 
   assert(sh->is_in((HeapWord*) obj), "Only push heap objects on the queue");
+#ifdef ASSERT
+  if (ShenandoahTraceConcurrentMarking){
+    tty->print_cr("Adding object %p to marking queue %d\n", obj, q);
+  }
+#endif
 
   if (!_task_queues->queue(q)->push(obj)) {
-    tty->print_cr("WARNING: Shenandoah mark queues overflown, increase mark queue size -XX:MarkStackSize=VALUE");
+    tty->print_cr("WARNING: Shenandoah mark queues overflown");
     _overflow_queue->push(obj);
   }
 }
