@@ -1541,13 +1541,13 @@ void GraphKit::pre_barrier(bool do_load,
   switch (bs->kind()) {
     case BarrierSet::G1SATBCT:
     case BarrierSet::G1SATBCTLogging:
+    case BarrierSet::ShenandoahBarrierSet:
       g1_write_barrier_pre(do_load, obj, adr, adr_idx, val, val_type, pre_val, bt);
       break;
 
     case BarrierSet::CardTableModRef:
     case BarrierSet::CardTableExtension:
     case BarrierSet::ModRef:
-    case BarrierSet::ShenandoahBarrierSet:
       break;
 
     case BarrierSet::Other:
@@ -1562,6 +1562,7 @@ bool GraphKit::can_move_pre_barrier() const {
   switch (bs->kind()) {
     case BarrierSet::G1SATBCT:
     case BarrierSet::G1SATBCTLogging:
+    case BarrierSet::ShenandoahBarrierSet:
       return true; // Can move it if no safepoint
 
     case BarrierSet::CardTableModRef:
