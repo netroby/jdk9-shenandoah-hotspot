@@ -1964,6 +1964,9 @@ bool ConnectionGraph::is_oop_field(Node* n, int offset, bool* unsafe) {
     } else if (adr_type->isa_aryptr()) {
       if (offset == arrayOopDesc::length_offset_in_bytes()) {
         // Ignore array length load.
+      } else if (UseShenandoahGC && offset == -8) {
+        // Shenandoah read barrier.
+        bt = T_ARRAY;
       } else if (find_second_addp(n, n->in(AddPNode::Base)) != NULL) {
         // Ignore first AddP.
       } else {

@@ -304,6 +304,8 @@ void Parse::do_put_xxx(Node* obj, ciField* field, bool is_field) {
       field_type = TypeOopPtr::make_from_klass(field->type()->as_klass());
     }
 
+    val = shenandoah_read_barrier(val, field_type);
+
     store = store_oop_to_object( control(), obj, adr, adr_type, val, field_type, bt);
   } else {
     store = store_to_memory( control(), adr, val, bt, adr_type, is_vol );
