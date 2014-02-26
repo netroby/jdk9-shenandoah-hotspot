@@ -166,6 +166,8 @@ void Parse::do_monitor_enter() {
 
   // Null check; get casted pointer.
   Node* obj = null_check(peek());
+  obj = shenandoah_read_barrier(obj, TypeInstPtr::BOTTOM);
+
   // Check for locking null object
   if (stopped()) return;
 
@@ -185,5 +187,7 @@ void Parse::do_monitor_exit() {
   // Because monitors are guaranteed paired (else we bail out), we know
   // the matching Lock for this Unlock.  Hence we know there is no need
   // for a null check on Unlock.
-  shared_unlock(map()->peek_monitor_box(), map()->peek_monitor_obj());
+  Node* obj = map()->peek_monitor_obj();
+  obj = shenandoah_read_barrier(obj, TypeInstPtr::BOTTOM);
+  shared_unlock(map()->peek_monitor_box(), obj);
 }
