@@ -2191,36 +2191,3 @@ void Parse::dump_bci(int bci) {
 }
 
 #endif
-
-Node* Parse::shenandoah_read_barrier(Node* obj, const Type* obj_type) {
-
-  if (UseShenandoahGC) {
-
-    // First we need to null-check.
-    Node* cmp_node = _gvn.transform( new (C) CmpPNode(obj, null()));
-    Node* tst = _gvn.transform( new (C) BoolNode(cmp_node, BoolTest::eq));
-    IfNode* iff = create_and_map_if(control(), tst, PROB_FAIR, COUNT_UNKNOWN);
-    Node* r = new (C) RegionNode(3);
-    record_for_igvn(r);
-    Node* iftrue = _gvn.transform( new (C) IfTrueNode(iff));
-    r->init_req(1, iftrue);
-    Node* iffalse = _gvn.transform( new (C) IfFalseNode(iff));
-    set_control(iffalse);
-
-    Node* bp_addr = basic_plus_adr(obj, -0x8);
-    Node* bp_load = make_load(control(), bp_addr, obj_type, T_OBJECT, obj_type->make_oopptr(), false);
-
-    r->init_req(2, control());
-    r = _gvn.transform(r);
-    set_control(r);
-
-    Node* phi = PhiNode::make(r, NULL, obj_type);
-    phi->init_req(1, null());
-    phi->init_req(2, bp_load);
-    phi = _gvn.transform(phi);
-
-    return phi;
-  } else {
-    return obj;
-  }
-}

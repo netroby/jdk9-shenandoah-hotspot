@@ -610,8 +610,6 @@ class Parse : public GraphKit {
   // Use speculative type to optimize CmpP node
   Node* optimize_cmp_with_klass(Node* c);
 
-  Node* shenandoah_read_barrier(Node* obj, const Type* type);
-
  public:
 #ifndef PRODUCT
   // Handle PrintOpto, etc.

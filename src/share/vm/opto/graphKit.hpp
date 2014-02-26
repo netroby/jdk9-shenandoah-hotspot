@@ -864,6 +864,9 @@ class GraphKit : public Phase {
 
   // Produce new array node of stable type
   Node* cast_array_to_stable(Node* ary, const TypeAryPtr* ary_type);
+
+  Node* shenandoah_read_barrier(Node* obj, const Type* type);
+
 };
 
 // Helper class to support building of control flow branches. Upon
