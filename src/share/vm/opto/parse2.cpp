@@ -154,7 +154,7 @@ Node* Parse::array_addressing(BasicType type, int vals, const Type* *result2) {
   // Check for always knowing you are throwing a range-check exception
   if (stopped())  return top();
 
-  ary = shenandoah_read_barrier(ary, arytype);
+  ary = shenandoah_read_barrier(ary);
 
   Node* ptr = array_element_address(ary, idx, type, sizetype);
 
@@ -1746,8 +1746,8 @@ void Parse::do_one_bytecode() {
     a = pop();                  // the array itself
     const TypeOopPtr* elemtype  = _gvn.type(a)->is_aryptr()->elem()->make_oopptr();
     const TypeAryPtr* adr_type = TypeAryPtr::OOPS;
-    a = shenandoah_read_barrier(a, a->bottom_type());
-    c = shenandoah_read_barrier(c, elemtype);
+    a = shenandoah_read_barrier(a);
+    c = shenandoah_read_barrier(c);
     Node* store = store_oop_to_array(control(), a, d, adr_type, c, elemtype, T_OBJECT);
     break;
   }
@@ -2292,8 +2292,8 @@ void Parse::do_one_bytecode() {
     maybe_add_safepoint(iter().get_dest());
     a = pop();
     b = pop();
-    a = shenandoah_read_barrier(a, a->bottom_type());
-    b = shenandoah_read_barrier(b, b->bottom_type());
+    a = shenandoah_read_barrier(a);
+    b = shenandoah_read_barrier(b);
     c = _gvn.transform( new (C) CmpPNode(b, a) );
     c = optimize_cmp_with_klass(c);
     do_if(btest, c);

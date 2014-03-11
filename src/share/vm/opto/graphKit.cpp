@@ -3130,7 +3130,7 @@ FastLockNode* GraphKit::shared_lock(Node* obj) {
 
   assert(dead_locals_are_killed(), "should kill locals before sync. point");
 
-  obj = shenandoah_read_barrier(obj, obj->bottom_type());
+  obj = shenandoah_read_barrier(obj);
 
   // Box the stack location
   Node* box = _gvn.transform(new (C) BoxLockNode(next_monitor()));
@@ -3196,7 +3196,7 @@ void GraphKit::shared_unlock(Node* box, Node* obj) {
     return;
   }
 
-  obj = shenandoah_read_barrier(obj, obj->bottom_type());
+  obj = shenandoah_read_barrier(obj);
 
   // Memory barrier to avoid floating things down past the locked region
   insert_mem_bar(Op_MemBarReleaseLock);
@@ -4126,7 +4126,7 @@ Node* GraphKit::cast_array_to_stable(Node* ary, const TypeAryPtr* ary_type) {
 }
 
 
-Node* GraphKit::shenandoah_read_barrier(Node* obj, const Type* obj_type) {
+Node* GraphKit::shenandoah_read_barrier(Node* obj) {
 
   if (UseShenandoahGC) {
 
@@ -4142,6 +4142,7 @@ Node* GraphKit::shenandoah_read_barrier(Node* obj, const Type* obj_type) {
     set_control(iffalse);
 
     Node* bp_addr = basic_plus_adr(obj, -0x8);
+    const Type* obj_type = obj->bottom_type();
     const Type* type = obj_type->isa_oopptr() ? obj_type : TypeOopPtr::BOTTOM;
     Node* bp_load = make_load(control(), bp_addr, type, T_OBJECT, type->make_oopptr(), false);
 

@@ -2557,7 +2557,7 @@ bool LibraryCallKit::inline_unsafe_access(bool is_native_ptr, bool is_store, Bas
   if (!is_native_ptr) {
     // The base is either a Java object or a value produced by Unsafe.staticFieldBase
     Node* base = argument(1);  // type: oop
-    base = shenandoah_read_barrier(base, base->bottom_type());
+    base = shenandoah_read_barrier(base);
     // The offset is a value produced by Unsafe.staticFieldOffset or Unsafe.objectFieldOffset
     offset = argument(2);  // type: long
     // We currently rely on the cookies produced by Unsafe.xxxFieldOffset
@@ -2688,7 +2688,7 @@ bool LibraryCallKit::inline_unsafe_access(bool is_native_ptr, bool is_store, Bas
     if (type != T_OBJECT ) {
       (void) store_to_memory(control(), adr, val, type, adr_type, is_volatile);
     } else {
-      val = shenandoah_read_barrier(val, val->bottom_type());
+      val = shenandoah_read_barrier(val);
       // Possibly an oop being stored to Java heap or native memory
       if (!TypePtr::NULL_PTR->higher_equal(_gvn.type(heap_base_oop))) {
         // oop to Java heap.
@@ -2882,7 +2882,7 @@ bool LibraryCallKit::inline_unsafe_load_store(BasicType type, LoadStoreKind kind
     return true;
   }
 
-  base = shenandoah_read_barrier(base, base->bottom_type());
+  base = shenandoah_read_barrier(base);
 
   // Build field offset expression.
   // We currently rely on the cookies produced by Unsafe.xxxFieldOffset
@@ -2955,7 +2955,7 @@ bool LibraryCallKit::inline_unsafe_load_store(BasicType type, LoadStoreKind kind
     if (_gvn.type(newval) == TypePtr::NULL_PTR)
       newval = _gvn.makecon(TypePtr::NULL_PTR);
 
-    newval = shenandoah_read_barrier(newval, value_type);
+    newval = shenandoah_read_barrier(newval);
 
     // Reference stores need a store barrier.
     if (kind == LS_xchg) {
@@ -2971,7 +2971,7 @@ bool LibraryCallKit::inline_unsafe_load_store(BasicType type, LoadStoreKind kind
       if (_gvn.type(oldval) == TypePtr::NULL_PTR) {
         oldval = _gvn.makecon(TypePtr::NULL_PTR);
       }
-      oldval = shenandoah_read_barrier(oldval, value_type);
+      oldval = shenandoah_read_barrier(oldval);
 
       // The only known value which might get overwritten is oldval.
       pre_barrier(false /* do_load */,
@@ -3084,7 +3084,7 @@ bool LibraryCallKit::inline_unsafe_ordered_store(BasicType type) {
     return true;
   }
 
-  base = shenandoah_read_barrier(base, base->bottom_type());
+  base = shenandoah_read_barrier(base);
 
   // Build field offset expression.
   assert(Unsafe_field_offset_to_byte_offset(11) == 11, "fieldOffset must be byte-scaled");
@@ -3101,7 +3101,7 @@ bool LibraryCallKit::inline_unsafe_ordered_store(BasicType type) {
   const bool require_atomic_access = true;
   Node* store;
   if (type == T_OBJECT) { // reference stores need a store barrier.
-    val = shenandoah_read_barrier(val, value_type);
+    val = shenandoah_read_barrier(val);
     store = store_oop_to_unknown(control(), base, adr, adr_type, val, type);
   }
   else {
@@ -4357,8 +4357,8 @@ bool LibraryCallKit::inline_unsafe_copyMemory() {
   assert(Unsafe_field_offset_to_byte_offset(11) == 11,
          "fieldOffset must be byte-scaled");
 
-  src_ptr = shenandoah_read_barrier(src_ptr, src_ptr->bottom_type());
-  dst_ptr = shenandoah_read_barrier(dst_ptr, src_ptr->bottom_type());
+  src_ptr = shenandoah_read_barrier(src_ptr);
+  dst_ptr = shenandoah_read_barrier(dst_ptr);
 
   Node* src = make_unsafe_address(src_ptr, src_off);
   Node* dst = make_unsafe_address(dst_ptr, dst_off);
@@ -4693,8 +4693,8 @@ bool LibraryCallKit::inline_arraycopy() {
   Node* dest_offset = argument(3);  // type: int
   Node* length      = argument(4);  // type: int
 
-  src = shenandoah_read_barrier(src, src->bottom_type());
-  dest = shenandoah_read_barrier(dest, dest->bottom_type());
+  src = shenandoah_read_barrier(src);
+  dest = shenandoah_read_barrier(dest);
 
   // Compile time checks.  If any of these checks cannot be verified at compile time,
   // we do not make a fast path for this call.  Instead, we let the call remain as it
