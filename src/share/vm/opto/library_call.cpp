@@ -2882,6 +2882,8 @@ bool LibraryCallKit::inline_unsafe_load_store(BasicType type, LoadStoreKind kind
     return true;
   }
 
+  base = shenandoah_read_barrier(base, base->bottom_type());
+
   // Build field offset expression.
   // We currently rely on the cookies produced by Unsafe.xxxFieldOffset
   // to be plain byte offsets, which are also the same as those accepted
@@ -2953,6 +2955,8 @@ bool LibraryCallKit::inline_unsafe_load_store(BasicType type, LoadStoreKind kind
     if (_gvn.type(newval) == TypePtr::NULL_PTR)
       newval = _gvn.makecon(TypePtr::NULL_PTR);
 
+    newval = shenandoah_read_barrier(newval, value_type);
+
     // Reference stores need a store barrier.
     if (kind == LS_xchg) {
       // If pre-barrier must execute before the oop store, old value will require do_load here.
@@ -2967,6 +2971,8 @@ bool LibraryCallKit::inline_unsafe_load_store(BasicType type, LoadStoreKind kind
       if (_gvn.type(oldval) == TypePtr::NULL_PTR) {
         oldval = _gvn.makecon(TypePtr::NULL_PTR);
       }
+      oldval = shenandoah_read_barrier(oldval, value_type);
+
       // The only known value which might get overwritten is oldval.
       pre_barrier(false /* do_load */,
                   control(), NULL, NULL, max_juint, NULL, NULL,
@@ -2995,6 +3001,7 @@ bool LibraryCallKit::inline_unsafe_load_store(BasicType type, LoadStoreKind kind
         load_store = _gvn.transform(new (C) GetAndSetPNode(control(), mem, adr, newval, adr_type, value_type->is_oopptr()));
       } else {
         assert(kind == LS_cmpxchg, "wrong LoadStore operation");
+        // TODO Shenandoah: Add barrier for the value-in-memory and write that back to the memory location.
         load_store = _gvn.transform(new (C) CompareAndSwapPNode(control(), mem, adr, newval, oldval));
       }
     }
@@ -3077,6 +3084,8 @@ bool LibraryCallKit::inline_unsafe_ordered_store(BasicType type) {
     return true;
   }
 
+  base = shenandoah_read_barrier(base, base->bottom_type());
+
   // Build field offset expression.
   assert(Unsafe_field_offset_to_byte_offset(11) == 11, "fieldOffset must be byte-scaled");
   // 32-bit machines ignore the high half of long offsets
@@ -3091,8 +3100,10 @@ bool LibraryCallKit::inline_unsafe_ordered_store(BasicType type) {
   // Ensure that the store is atomic for longs:
   const bool require_atomic_access = true;
   Node* store;
-  if (type == T_OBJECT) // reference stores need a store barrier.
+  if (type == T_OBJECT) { // reference stores need a store barrier.
+    val = shenandoah_read_barrier(val, value_type);
     store = store_oop_to_unknown(control(), base, adr, adr_type, val, type);
+  }
   else {
     store = store_to_memory(control(), adr, val, type, adr_type, require_atomic_access);
   }
@@ -4345,6 +4356,9 @@ bool LibraryCallKit::inline_unsafe_copyMemory() {
 
   assert(Unsafe_field_offset_to_byte_offset(11) == 11,
          "fieldOffset must be byte-scaled");
+
+  src_ptr = shenandoah_read_barrier(src_ptr, src_ptr->bottom_type());
+  dst_ptr = shenandoah_read_barrier(dst_ptr, src_ptr->bottom_type());
 
   Node* src = make_unsafe_address(src_ptr, src_off);
   Node* dst = make_unsafe_address(dst_ptr, dst_off);
