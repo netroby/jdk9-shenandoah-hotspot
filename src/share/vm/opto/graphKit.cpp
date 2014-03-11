@@ -3130,6 +3130,8 @@ FastLockNode* GraphKit::shared_lock(Node* obj) {
 
   assert(dead_locals_are_killed(), "should kill locals before sync. point");
 
+  obj = shenandoah_read_barrier(obj, obj->bottom_type());
+
   // Box the stack location
   Node* box = _gvn.transform(new (C) BoxLockNode(next_monitor()));
   Node* mem = reset_memory();
@@ -3193,6 +3195,8 @@ void GraphKit::shared_unlock(Node* box, Node* obj) {
     map()->pop_monitor();        // Kill monitor from debug info
     return;
   }
+
+  obj = shenandoah_read_barrier(obj, obj->bottom_type());
 
   // Memory barrier to avoid floating things down past the locked region
   insert_mem_bar(Op_MemBarReleaseLock);

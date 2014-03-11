@@ -1873,6 +1873,8 @@ int SharedRuntime::_monitor_exit_ctr=0;
 // Handles the uncommon cases of monitor unlocking in compiled code
 JRT_LEAF(void, SharedRuntime::complete_monitor_unlocking_C(oopDesc* _obj, BasicLock* lock))
    oop obj(_obj);
+   obj = oopDesc::bs()->resolve_oop(obj);
+
 #ifndef PRODUCT
   _monitor_exit_ctr++;              // monitor exit slow
 #endif
