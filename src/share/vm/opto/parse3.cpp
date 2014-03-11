@@ -200,7 +200,7 @@ void Parse::do_get_xxx(Node* obj, ciField* field, bool is_field) {
   bool is_vol = field->is_volatile();
 
   // Insert read barrier for Shenandoah.
-  obj = shenandoah_read_barrier(obj, TypeOopPtr::make_from_klass(field->holder()));
+  obj = shenandoah_read_barrier(obj, obj->bottom_type());
 
   // Compute address and memory type.
   int offset = field->offset_in_bytes();

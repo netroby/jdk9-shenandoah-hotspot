@@ -2292,10 +2292,8 @@ void Parse::do_one_bytecode() {
     maybe_add_safepoint(iter().get_dest());
     a = pop();
     b = pop();
-    // TODO: the following should really be TypeOopPtr::BOTTOM, but currently
-    // this leads to confusion in the optimizer (namely, chaitin.cpp:1699).
-    a = shenandoah_read_barrier(a, TypeInstPtr::BOTTOM);
-    b = shenandoah_read_barrier(b, TypeInstPtr::BOTTOM);
+    a = shenandoah_read_barrier(a, a->bottom_type());
+    b = shenandoah_read_barrier(b, b->bottom_type());
     c = _gvn.transform( new (C) CmpPNode(b, a) );
     c = optimize_cmp_with_klass(c);
     do_if(btest, c);

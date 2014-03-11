@@ -4138,7 +4138,8 @@ Node* GraphKit::shenandoah_read_barrier(Node* obj, const Type* obj_type) {
     set_control(iffalse);
 
     Node* bp_addr = basic_plus_adr(obj, -0x8);
-    Node* bp_load = make_load(control(), bp_addr, obj_type, T_OBJECT, obj_type->make_oopptr(), false);
+    const Type* type = obj_type->isa_oopptr() ? obj_type : TypeOopPtr::BOTTOM;
+    Node* bp_load = make_load(control(), bp_addr, type, T_OBJECT, type->make_oopptr(), false);
 
     r->init_req(2, control());
     r = _gvn.transform(r);
