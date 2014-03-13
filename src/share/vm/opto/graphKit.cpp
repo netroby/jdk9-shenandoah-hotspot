@@ -4130,6 +4130,25 @@ Node* GraphKit::shenandoah_read_barrier(Node* obj) {
 
   if (UseShenandoahGC) {
 
+    const Type* obj_type = obj->bottom_type();
+    assert (obj_type->isa_ptr(), "Must be pointer type");
+    if (obj_type->is_ptr()->ptr() == TypePtr::Null) {
+      return obj;
+    }
+    assert(obj_type->isa_oopptr(), "Must be oop pointer type");
+
+    if (obj_type->singleton()) {
+      if (obj_type->isa_instptr()) {
+        const TypeInstPtr* inst_ptr = obj_type->is_instptr();
+        obj_type = TypeInstPtr::make(TypePtr::BotPTR, inst_ptr->klass(), inst_ptr->klass_is_exact(), NULL, inst_ptr->offset());
+      } else if (obj_type->isa_aryptr()) {
+        const TypeAryPtr* ary_ptr = obj_type->is_aryptr();
+        obj_type = TypeAryPtr::make(TypePtr::BotPTR, ary_ptr->ary(), ary_ptr->klass(), ary_ptr->klass_is_exact(), ary_ptr->offset());
+      } else {
+        ShouldNotReachHere();
+      }
+    }
+
     // First we need to null-check.
     Node* cmp_node = _gvn.transform( new (C) CmpPNode(obj, null()));
     Node* tst = _gvn.transform( new (C) BoolNode(cmp_node, BoolTest::eq));
@@ -4142,10 +4161,8 @@ Node* GraphKit::shenandoah_read_barrier(Node* obj) {
     set_control(iffalse);
 
     Node* bp_addr = basic_plus_adr(obj, -0x8);
-    const Type* obj_type = obj->bottom_type();
-    const Type* type = obj_type->isa_oopptr() ? obj_type : TypeOopPtr::BOTTOM;
-    Node* bp_load = make_load(control(), bp_addr, type, T_OBJECT, type->make_oopptr(), false);
-
+    Node* bp_load = make_load(control(), bp_addr, obj_type, T_OBJECT, obj_type->make_oopptr(), false);
+      
     r->init_req(2, control());
     r = _gvn.transform(r);
     set_control(r);
@@ -4156,6 +4173,7 @@ Node* GraphKit::shenandoah_read_barrier(Node* obj) {
     phi = _gvn.transform(phi);
 
     return phi;
+
   } else {
     return obj;
   }

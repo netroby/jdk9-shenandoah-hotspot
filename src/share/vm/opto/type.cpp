@@ -2473,7 +2473,7 @@ TypeOopPtr::TypeOopPtr(TYPES t, PTR ptr, ciKlass* k, bool xk, ciObject* o, int o
 
         if (klass() == ciEnv::current()->Class_klass() &&
             (_offset == java_lang_Class::klass_offset_in_bytes() ||
-             _offset == java_lang_Class::array_klass_offset_in_bytes())) {
+             _offset == java_lang_Class::array_klass_offset_in_bytes()) || UseShenandoahGC) {
           // Special hidden fields from the Class.
           assert(this->isa_instptr(), "must be an instance ptr.");
           _is_ptr_to_narrowoop = false;
