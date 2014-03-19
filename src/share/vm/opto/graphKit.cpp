@@ -4137,16 +4137,34 @@ Node* GraphKit::shenandoah_read_barrier(Node* obj) {
     }
     assert(obj_type->isa_oopptr(), "Must be oop pointer type");
 
-    if (obj_type->singleton()) {
-      if (obj_type->isa_instptr()) {
-        const TypeInstPtr* inst_ptr = obj_type->is_instptr();
-        obj_type = TypeInstPtr::make(TypePtr::BotPTR, inst_ptr->klass(), inst_ptr->klass_is_exact(), NULL, inst_ptr->offset());
-      } else if (obj_type->isa_aryptr()) {
-        const TypeAryPtr* ary_ptr = obj_type->is_aryptr();
-        obj_type = TypeAryPtr::make(TypePtr::BotPTR, ary_ptr->ary(), ary_ptr->klass(), ary_ptr->klass_is_exact(), ary_ptr->offset());
-      } else {
-        ShouldNotReachHere();
-      }
+    // Simple case when we know it's not null.
+    if (obj_type->is_oopptr()->ptr() == TypePtr::NotNull) {
+      assert(! obj_type->singleton(), "hopefully not singleton");
+      Node* bp_addr = basic_plus_adr(obj, -0x8);
+      Node* bp_load = make_load(NULL, bp_addr, obj_type, T_OBJECT, obj_type->make_oopptr(), false);
+      return bp_load;
+    }
+
+    // More complex case with null-check.
+    const Type* barrier_type = NULL;
+    const Type* load_type = NULL;
+
+    // Figure out type of the LoadP and the Phi nodes. The LoadP can be NotNull b/c we null-check
+    // around it. The Phi must be BotPtr, it can be null or not null and is not a constant.
+    // We intentionally turn constant inputs into non-constant outputs because the result
+    // can be the input itself, or the forwarded copy of it. I.e. it's not constant anymore.
+    // Using the constant type as output would trigger some code to replace the whole barrier
+    // by the constant value.
+    if (obj_type->isa_instptr()) {
+      const TypeInstPtr* inst_ptr = obj_type->is_instptr();
+      barrier_type = TypeInstPtr::make(TypePtr::BotPTR, inst_ptr->klass(), inst_ptr->klass_is_exact(), NULL, inst_ptr->offset(), inst_ptr->instance_id(), inst_ptr->speculative());
+      load_type = TypeInstPtr::make(TypePtr::NotNull, inst_ptr->klass(), inst_ptr->klass_is_exact(), NULL, inst_ptr->offset(), inst_ptr->instance_id(), inst_ptr->speculative());
+    } else if (obj_type->isa_aryptr()) {
+      const TypeAryPtr* ary_ptr = obj_type->is_aryptr();
+      barrier_type = TypeAryPtr::make(TypePtr::BotPTR, NULL, ary_ptr->ary(), ary_ptr->klass(), ary_ptr->klass_is_exact(), ary_ptr->offset(), ary_ptr->instance_id(), ary_ptr->speculative(), ary_ptr->is_autobox_cache());
+      load_type = TypeAryPtr::make(TypePtr::NotNull, NULL, ary_ptr->ary(), ary_ptr->klass(), ary_ptr->klass_is_exact(), ary_ptr->offset(), ary_ptr->instance_id(), ary_ptr->speculative(), ary_ptr->is_autobox_cache());
+    } else {
+      ShouldNotReachHere();
     }
 
     // First we need to null-check.
@@ -4161,13 +4179,13 @@ Node* GraphKit::shenandoah_read_barrier(Node* obj) {
     set_control(iffalse);
 
     Node* bp_addr = basic_plus_adr(obj, -0x8);
-    Node* bp_load = make_load(control(), bp_addr, obj_type, T_OBJECT, obj_type->make_oopptr(), false);
+    Node* bp_load = make_load(control(), bp_addr, load_type, T_OBJECT, load_type->make_oopptr(), false);
       
     r->init_req(2, control());
     r = _gvn.transform(r);
     set_control(r);
 
-    Node* phi = PhiNode::make(r, NULL, obj_type);
+    Node* phi = PhiNode::make(r, NULL, barrier_type);
     phi->init_req(1, null());
     phi->init_req(2, bp_load);
     phi = _gvn.transform(phi);
