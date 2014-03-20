@@ -4048,6 +4048,16 @@ Node* GraphKit::load_String_offset(Node* ctrl, Node* str) {
                                                        false, NULL, 0);
     const TypePtr* offset_field_type = string_type->add_offset(offset_offset);
     int offset_field_idx = C->get_alias_index(offset_field_type);
+
+    // TODO: This is only a workaround and is probably not needed, because
+    // the value never changes (strings are immutable). However, if we leave
+    // that out, it tries to 'see' the stored value (from the initializer) and
+    // fails because no stores have been captured. I don't know yet, why. So we
+    // leave this here as workaround for now. The other option would be
+    // to leave this barrier here in any case, and let C2 optimize it away
+    // if it can prove that the object is immutable.
+    str = shenandoah_read_barrier(str);
+
     return make_load(ctrl,
                      basic_plus_adr(str, str, offset_offset),
                      TypeInt::INT, T_INT, offset_field_idx);
@@ -4063,6 +4073,10 @@ Node* GraphKit::load_String_length(Node* ctrl, Node* str) {
                                                        false, NULL, 0);
     const TypePtr* count_field_type = string_type->add_offset(count_offset);
     int count_field_idx = C->get_alias_index(count_field_type);
+
+    // TODO: See comment in load_String_offset().
+    str = shenandoah_read_barrier(str);
+
     return make_load(ctrl,
                      basic_plus_adr(str, str, count_offset),
                      TypeInt::INT, T_INT, count_field_idx);
@@ -4080,6 +4094,10 @@ Node* GraphKit::load_String_value(Node* ctrl, Node* str) {
                                                    TypeAry::make(TypeInt::CHAR,TypeInt::POS),
                                                    ciTypeArrayKlass::make(T_CHAR), true, 0);
   int value_field_idx = C->get_alias_index(value_field_type);
+
+  // TODO: See comment in load_String_offset().
+  str = shenandoah_read_barrier(str);
+
   Node* load = make_load(ctrl, basic_plus_adr(str, str, value_offset),
                          value_type, T_OBJECT, value_field_idx);
   // String.value field is known to be @Stable.
@@ -4095,6 +4113,10 @@ void GraphKit::store_String_offset(Node* ctrl, Node* str, Node* value) {
                                                      false, NULL, 0);
   const TypePtr* offset_field_type = string_type->add_offset(offset_offset);
   int offset_field_idx = C->get_alias_index(offset_field_type);
+
+  // TODO: See comment in load_String_offset().
+  str = shenandoah_read_barrier(str);
+
   store_to_memory(ctrl, basic_plus_adr(str, offset_offset),
                   value, T_INT, offset_field_idx);
 }
@@ -4104,6 +4126,9 @@ void GraphKit::store_String_value(Node* ctrl, Node* str, Node* value) {
   const TypeInstPtr* string_type = TypeInstPtr::make(TypePtr::NotNull, C->env()->String_klass(),
                                                      false, NULL, 0);
   const TypePtr* value_field_type = string_type->add_offset(value_offset);
+
+  // TODO: See comment in load_String_offset().
+  str = shenandoah_read_barrier(str);
 
   store_oop_to_object(ctrl, str,  basic_plus_adr(str, value_offset), value_field_type,
       value, TypeAryPtr::CHARS, T_OBJECT);
@@ -4115,6 +4140,10 @@ void GraphKit::store_String_length(Node* ctrl, Node* str, Node* value) {
                                                      false, NULL, 0);
   const TypePtr* count_field_type = string_type->add_offset(count_offset);
   int count_field_idx = C->get_alias_index(count_field_type);
+
+  // TODO: See comment in load_String_offset().
+  str = shenandoah_read_barrier(str);
+
   store_to_memory(ctrl, basic_plus_adr(str, count_offset),
                   value, T_INT, count_field_idx);
 }
