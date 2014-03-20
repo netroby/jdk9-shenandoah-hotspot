@@ -5700,6 +5700,9 @@ bool LibraryCallKit::inline_encodeISOArray() {
   Node *dst_offset  = argument(3);
   Node *length      = argument(4);
 
+  src = shenandoah_read_barrier(src);
+  dst = shenandoah_read_barrier(dst);
+
   const Type* src_type = src->Value(&_gvn);
   const Type* dst_type = dst->Value(&_gvn);
   const TypeAryPtr* top_src = src_type->isa_aryptr();
@@ -5777,6 +5780,8 @@ bool LibraryCallKit::inline_updateBytesCRC32() {
   Node* src     = argument(1); // type: oop
   Node* offset  = argument(2); // type: int
   Node* length  = argument(3); // type: int
+
+  src = shenandoah_read_barrier(src);
 
   const Type* src_type = src->Value(&_gvn);
   const TypeAryPtr* top_src = src_type->isa_aryptr();
