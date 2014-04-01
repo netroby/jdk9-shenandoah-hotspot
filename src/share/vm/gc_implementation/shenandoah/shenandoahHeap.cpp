@@ -936,6 +936,26 @@ void ShenandoahHeap::prepare_for_concurrent_evacuation() {
 
 }
 
+void ShenandoahHeap::do_evacuation() {
+  // If we have active critical regions, abort evacuation, but keep the mark bitmap intact.
+  // We're gonna need it soon.
+  if (! GC_locker::check_active_before_gc()) {
+    parallel_evacuate();
+    set_evacuation_in_progress(false);
+    reset_mark_bitmap();
+
+    if (ShenandoahVerify) {
+      VM_ShenandoahVerifyHeapAfterEvacuation verify_after_evacuation;
+      if (Thread::current()->is_VM_thread()) {
+        verify_after_evacuation.doit();
+      } else {
+        VMThread::execute(&verify_after_evacuation);
+      }
+    }
+
+  }
+}
+
 void ShenandoahHeap::parallel_evacuate() {
   if (ShenandoahGCVerbose) {
     tty->print_cr("starting parallel_evacuate");
@@ -1094,8 +1114,17 @@ size_t ShenandoahHeap::unsafe_max_alloc() {
   return ShenandoahHeapRegion::RegionSizeBytes / HeapWordSize;
 }
 
-void ShenandoahHeap::collect(GCCause::Cause) {
-  // Unimplemented();
+void ShenandoahHeap::collect(GCCause::Cause cause) {
+  if (cause == GCCause::_gc_locker) {
+    assert(_evacuation_in_progress, "evacuation needs to be in progress");
+    VM_ShenandoahEvacuation evacuation;
+
+    if (ShenandoahConcurrentEvacuation) {
+      evacuation.doit();
+    } else {
+      VMThread::execute(&evacuation);
+    }
+  }
 }
 
 void ShenandoahHeap::do_full_collection(bool clear_all_soft_refs) {

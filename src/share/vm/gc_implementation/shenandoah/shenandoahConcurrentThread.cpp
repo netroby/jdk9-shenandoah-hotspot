@@ -63,10 +63,6 @@ void ShenandoahConcurrentThread::run() {
 	  VMThread::execute(&evacuation);
 	}
 
-	if (ShenandoahVerify) {
-	  VM_ShenandoahVerifyHeapAfterEvacuation verify_after_evacuation;
-	  VMThread::execute(&verify_after_evacuation);
-	}
       } else {
       Thread::current()->_ParkEvent->park(10) ;
       // yield();

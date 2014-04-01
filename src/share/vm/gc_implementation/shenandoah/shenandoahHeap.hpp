@@ -214,6 +214,7 @@ public:
   void prepare_unmarked_root_objs();
 
   void prepare_for_concurrent_evacuation();
+  void do_evacuation();
   void parallel_evacuate();
 
   void initialize_brooks_ptr(HeapWord* brooks_ptr, HeapWord* object, bool new_obj = true);

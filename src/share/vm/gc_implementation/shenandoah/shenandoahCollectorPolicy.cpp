@@ -307,7 +307,10 @@ void ShenandoahCollectorPolicy::record_bytes_reclaimed(size_t bytes) {
 
 bool ShenandoahCollectorPolicy::should_start_concurrent_mark(size_t used,
 							     size_t capacity) {
-  _heuristics->should_start_concurrent_mark(used, capacity);
+  ShenandoahHeap* heap = ShenandoahHeap::heap();
+  // We never start a marking cycle if evacuation is in progress. This can happen
+  // when we're waiting for a critical region to be released.
+  return (! heap->is_evacuation_in_progress()) && _heuristics->should_start_concurrent_mark(used, capacity);
 }
   
 void ShenandoahCollectorPolicy::choose_collection_and_free_sets(
