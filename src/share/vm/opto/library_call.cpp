@@ -3910,6 +3910,9 @@ bool LibraryCallKit::inline_array_copyOf(bool is_copyOfRange) {
 
       newcopy = new_array(klass_node, length, 0);  // no argments to push
 
+      original = shenandoah_read_barrier(original);
+      newcopy = shenandoah_read_barrier(newcopy);
+
       // Generate a direct call to the right arraycopy function(s).
       // We know the copy is disjoint but we might not know if the
       // oop stores need checking.
@@ -4388,6 +4391,8 @@ void LibraryCallKit::copy_to_clone(Node* obj, Node* alloc_obj, Node* obj_size, b
   Node* raw_obj = alloc_obj->in(1);
   assert(alloc_obj->is_CheckCastPP() && raw_obj->is_Proj() && raw_obj->in(0)->is_Allocate(), "");
 
+  obj = shenandoah_read_barrier(obj);
+
   AllocateNode* alloc = NULL;
   if (ReduceBulkZeroing) {
     // We will be completely responsible for initializing this object -
@@ -4548,6 +4553,13 @@ bool LibraryCallKit::inline_native_clone(bool is_virtual) {
         if (is_obja != NULL) {
           PreserveJVMState pjvms2(this);
           set_control(is_obja);
+
+          obj = shenandoah_read_barrier(obj);
+          // I believe the 2nd barrier should not be needed, the object is created
+          // above and copied to below, as long as there ain't a safepoint in between
+          // (is there?) it shouldn't matter whether or not we resolve it.
+          alloc_obj = shenandoah_read_barrier(alloc_obj);
+
           // Generate a direct call to the right arraycopy function(s).
           bool disjoint_bases = true;
           bool length_never_negative = true;

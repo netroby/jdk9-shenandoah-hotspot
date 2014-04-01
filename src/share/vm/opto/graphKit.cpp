@@ -4196,6 +4196,9 @@ Node* GraphKit::shenandoah_read_barrier(Node* obj) {
       ShouldNotReachHere();
     }
 
+    assert(! barrier_type->singleton(), "Must not be singleton/constant");
+    assert(! load_type->singleton(), "Must not be singleton/constant");
+
     // First we need to null-check.
     Node* cmp_node = _gvn.transform( new (C) CmpPNode(obj, null()));
     Node* tst = _gvn.transform( new (C) BoolNode(cmp_node, BoolTest::eq));
