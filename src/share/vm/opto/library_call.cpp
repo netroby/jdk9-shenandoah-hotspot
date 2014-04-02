@@ -4445,6 +4445,15 @@ void LibraryCallKit::copy_to_clone(Node* obj, Node* alloc_obj, Node* obj_size, b
                                src, NULL, dest, NULL, countx,
                                /*dest_uninitialized*/true);
 
+  if (UseShenandoahGC) {
+    // Make sure that references in the cloned object are updated for Shenandoah.
+    make_runtime_call(RC_LEAF|RC_NO_FP,
+                      OptoRuntime::shenandoah_clone_barrier_Type(),
+                      CAST_FROM_FN_PTR(address, SharedRuntime::shenandoah_clone_barrier),
+                      "shenandoah_clone_barrier", TypePtr::BOTTOM,
+                      alloc_obj);
+  }
+
   // If necessary, emit some card marks afterwards.  (Non-arrays only.)
   if (card_mark) {
     assert(!is_array, "");
@@ -4555,10 +4564,6 @@ bool LibraryCallKit::inline_native_clone(bool is_virtual) {
           set_control(is_obja);
 
           obj = shenandoah_read_barrier(obj);
-          // I believe the 2nd barrier should not be needed, the object is created
-          // above and copied to below, as long as there ain't a safepoint in between
-          // (is there?) it shouldn't matter whether or not we resolve it.
-          alloc_obj = shenandoah_read_barrier(alloc_obj);
 
           // Generate a direct call to the right arraycopy function(s).
           bool disjoint_bases = true;

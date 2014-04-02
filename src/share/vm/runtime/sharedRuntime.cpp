@@ -235,6 +235,11 @@ JRT_END
 
 #endif // INCLUDE_ALL_GCS
 
+// G1 write-barrier pre: executed before a pointer store.
+JRT_LEAF(void, SharedRuntime::shenandoah_clone_barrier(oopDesc* obj))
+  oopDesc::bs()->write_region(MemRegion((HeapWord*) obj, obj->size()));
+JRT_END
+
 
 JRT_LEAF(jlong, SharedRuntime::lmul(jlong y, jlong x))
   return x * y;
