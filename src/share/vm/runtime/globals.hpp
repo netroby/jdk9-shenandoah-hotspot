@@ -1402,7 +1402,7 @@ class CommandLineFlags {
   develop(bool, ShenandoahVerify, false,                                    \
           "Verify the  Shenandoah garbage collector")                       \
                                                                             \
-  develop(bool, ShenandoahConcurrentEvacuation, true,                       \
+  product(bool, ShenandoahConcurrentEvacuation, true,                       \
           "Turn on/off concurrent evacuation in Shenandoah")                \
                                                                             \
   product(ccstr, ShenandoahGCHeuristics, NULL,                              \
