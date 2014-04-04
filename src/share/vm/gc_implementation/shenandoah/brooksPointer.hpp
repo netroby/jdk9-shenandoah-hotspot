@@ -15,9 +15,9 @@ public:
 
 private:
 
-  uintptr_t* _heap_word;
+  HeapWord** _heap_word;
 
-  BrooksPointer(uintptr_t* heap_word);
+  BrooksPointer(HeapWord** heap_word);
 
 public:
 

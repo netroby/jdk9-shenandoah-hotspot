@@ -233,7 +233,7 @@ public:
 
   void print_all_refs(const char* prefix);
 
-  oopDesc*  evacuate_object(oopDesc* src, EvacuationAllocator* allocator);
+  oop  evacuate_object(oop src, EvacuationAllocator* allocator);
   bool is_in_collection_set(oop* p) {
     return heap_region_containing(p)->is_in_collection_set();
   }

@@ -11,7 +11,7 @@ class ShenandoahBarrierSet: public BarrierSet {
 private:
   EvacuationAllocator* _allocator;
 
-  oopDesc* get_shenandoah_forwardee_helper(oopDesc* p);
+  oop get_shenandoah_forwardee_helper(oop p);
 
 
 public:
@@ -71,16 +71,16 @@ public:
   void write_ref_field_work(void* v, oop o);
   void write_region_work(MemRegion mr);
 
-  oopDesc* get_shenandoah_forwardee(oopDesc* p);
+  oop get_shenandoah_forwardee(oop p);
 
-  virtual oopDesc* resolve_oop(oopDesc* src);
-  virtual oopDesc* maybe_resolve_oop(oopDesc* src);
-  oopDesc* resolve_and_maybe_copy_oopHelper(oopDesc* src);
-  oopDesc* resolve_and_maybe_copy_oop_work(oopDesc* src);
-  oopDesc* resolve_and_maybe_copy_oop_work2(oopDesc* src);
-  virtual oopDesc* resolve_and_maybe_copy_oop(oopDesc* src);
-  static oopDesc* resolve_and_maybe_copy_oop_static(oopDesc* src);
-  static oopDesc* resolve_and_maybe_copy_oop_static2(oopDesc* src);
+  virtual oop resolve_oop(oop src);
+  virtual oop maybe_resolve_oop(oop src);
+  oop resolve_and_maybe_copy_oopHelper(oop src);
+  oop resolve_and_maybe_copy_oop_work(oop src);
+  oop resolve_and_maybe_copy_oop_work2(oop src);
+  virtual oop resolve_and_maybe_copy_oop(oop src);
+  static oop resolve_and_maybe_copy_oop_static(oop src);
+  static oop resolve_and_maybe_copy_oop_static2(oop src);
 
 #ifndef CC_INTERP
   // TODO: The following should really live in an X86 specific subclass.

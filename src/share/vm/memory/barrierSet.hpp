@@ -206,13 +206,13 @@ public:
   // Print a description of the memory for the barrier set
   virtual void print_on(outputStream* st) const = 0;
 
-  virtual oopDesc* resolve_oop(oopDesc* src) {
+  virtual oop resolve_oop(oop src) {
     return src;
   }
-  virtual oopDesc* maybe_resolve_oop(oopDesc* src) {
+  virtual oop maybe_resolve_oop(oop src) {
     return src;
   }
-  virtual oopDesc* resolve_and_maybe_copy_oop(oopDesc* src) {
+  virtual oop resolve_and_maybe_copy_oop(oop src) {
     return src;
   }
 

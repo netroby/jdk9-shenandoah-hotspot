@@ -154,7 +154,7 @@ inline bool oopDesc::is_array()              const { return klass()->oop_is_arra
 inline bool oopDesc::is_objArray()           const { return klass()->oop_is_objArray(); }
 inline bool oopDesc::is_typeArray()          const { return klass()->oop_is_typeArray(); }
 
-inline void*     oopDesc::field_base(int offset)        const { return (void*)&((char*)bs()->resolve_oop((oopDesc*) this))[offset]; }
+inline void*     oopDesc::field_base(int offset)        const { return (void*)&((char*)(oopDesc*)bs()->resolve_oop((oop) this))[offset]; }
 
 template <class T> inline T* oopDesc::obj_field_addr(int offset) const { return (T*)field_base(offset); }
 inline Metadata** oopDesc::metadata_field_addr(int offset) const { return (Metadata**)field_base(offset); }

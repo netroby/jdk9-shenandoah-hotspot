@@ -584,7 +584,7 @@ class PrintOopContents: public OopClosure {
 public:
   void do_oop(oop* o) {
     oop obj = *o;
-    tty->print("References oop "PTR_FORMAT"\n", obj);
+    tty->print("References oop "PTR_FORMAT"\n", (HeapWord*) obj);
     obj->print();
   }
 
@@ -631,7 +631,7 @@ private:
 
 #ifdef ASSERT
     if (ShenandoahTraceEvacuations) {
-      tty->print("Calling ParallelEvacuateRegionObjectClosure on %p \n", p);
+      tty->print("Calling ParallelEvacuateRegionObjectClosure on %p \n", (HeapWord*) p);
     }
 #endif
 
@@ -783,12 +783,12 @@ public:
     oop o = *p;
     if (o != NULL) {
       if (ShenandoahHeap::heap()->is_in(o) && o->is_oop()) {
-	tty->print_cr("%s %d (%p)-> %p (marked: %d) (%s %p)", _prefix, _index, p, o, ShenandoahHeap::heap()->isMarkedCurrent(o), o->klass()->internal_name(), o->klass());
+	tty->print_cr("%s %d (%p)-> %p (marked: %d) (%s %p)", _prefix, _index, p, (HeapWord*) o, ShenandoahHeap::heap()->isMarkedCurrent(o), o->klass()->internal_name(), o->klass());
       } else {
-        tty->print_cr("%s %d (%p dirty: %d) -> %p (not in heap, possibly corrupted or dirty (%d))", _prefix, _index, p, ShenandoahHeap::heap()->heap_region_containing(p)->is_in_collection_set(), o, ShenandoahHeap::heap()->heap_region_containing(o)->is_in_collection_set());
+        tty->print_cr("%s %d (%p dirty: %d) -> %p (not in heap, possibly corrupted or dirty (%d))", _prefix, _index, p, ShenandoahHeap::heap()->heap_region_containing(p)->is_in_collection_set(), (HeapWord*) o, ShenandoahHeap::heap()->heap_region_containing(o)->is_in_collection_set());
       }
     } else {
-      tty->print_cr("%s %d (%p) -> %p", _prefix, _index, p, o);
+      tty->print_cr("%s %d (%p) -> %p", _prefix, _index, p, (HeapWord*) o);
     }
     _index++;
   }
@@ -806,7 +806,7 @@ public:
   PrintAllRefsObjectClosure(const char* prefix) : _prefix(prefix) {}
 
   void do_object(oop p) {
-    tty->print_cr("%s object %p (marked: %d) (%s %p) refers to:", _prefix, p, ShenandoahHeap::heap()->isMarkedCurrent(p), p->klass()->internal_name(), p->klass());
+    tty->print_cr("%s object %p (marked: %d) (%s %p) refers to:", _prefix, (HeapWord*) p, ShenandoahHeap::heap()->isMarkedCurrent(p), p->klass()->internal_name(), p->klass());
     PrintAllRefsOopClosure cl(_prefix);
     p->oop_iterate(&cl);
   }
@@ -838,12 +838,12 @@ public:
 	_heap->print_heap_regions();
 	_heap->print_all_refs("post-mark");
 	tty->print_cr("oop not marked, although referrer is marked: %p: in_heap: %d, is_marked: %d", 
-		      o, _heap->is_in(o), _heap->isMarkedCurrent(o));
+		      (HeapWord*) o, _heap->is_in(o), _heap->isMarkedCurrent(o));
 
         tty->print_cr("oop class: %s", o->klass()->internal_name());
 	if (_heap->is_in(p)) {
 	  oop referrer = oop(_heap->heap_region_containing(p)->block_start_const(p));
-	  tty->print("Referrer starts at addr %p\n", referrer);
+	  tty->print("Referrer starts at addr %p\n", (HeapWord*) referrer);
 	  referrer->print();
 	}
         tty->print_cr("heap region containing object:");
@@ -856,7 +856,7 @@ public:
       assert(o->is_oop(), "oop must be an oop");
       assert(Metaspace::contains(o->klass()), "klass pointer must go to metaspace");
       if (! (o == oopDesc::bs()->resolve_oop(o))) {
-        tty->print_cr("oops has forwardee: p: %p (%d), o = %p (%d), new-o: %p (%d)", p, _heap->heap_region_containing(p)->is_in_collection_set(), o,  _heap->heap_region_containing(o)->is_in_collection_set(), oopDesc::bs()->resolve_oop(o),  _heap->heap_region_containing(oopDesc::bs()->resolve_oop(o))->is_in_collection_set());
+        tty->print_cr("oops has forwardee: p: %p (%d), o = %p (%d), new-o: %p (%d)", p, _heap->heap_region_containing(p)->is_in_collection_set(), (HeapWord*) o,  _heap->heap_region_containing(o)->is_in_collection_set(), (HeapWord*) oopDesc::bs()->resolve_oop(o),  _heap->heap_region_containing(oopDesc::bs()->resolve_oop(o))->is_in_collection_set());
         tty->print_cr("oop class: %s", o->klass()->internal_name());
       }
       assert(o == oopDesc::bs()->resolve_oop(o), "oops must not be forwarded");
@@ -1012,7 +1012,7 @@ public:
   void do_oop(oop* p)       {
     oop heap_oop = oopDesc::load_heap_oop(p);
     if (! oopDesc::is_null(heap_oop)) {
-      guarantee(! _from_region->is_in(heap_oop), err_msg("no references to from-region allowed after evacuation: %p", heap_oop));
+      guarantee(! _from_region->is_in(heap_oop), err_msg("no references to from-region allowed after evacuation: %p", (HeapWord*) heap_oop));
     }
   }
 
@@ -1052,7 +1052,7 @@ oop ShenandoahHeap::maybe_update_oop_ref(oop* p) {
 #ifdef ASSERT
     if (! is_in(heap_oop)) {
       print_heap_regions();
-      tty->print_cr("object not in heap: %p, referenced by: %p", heap_oop, p);
+      tty->print_cr("object not in heap: %p, referenced by: %p", (HeapWord*) heap_oop, p);
       assert(is_in(heap_oop), "object must be in heap");
     }
 #endif
@@ -1419,7 +1419,7 @@ void ShenandoahMarkRefsClosure::do_oop_work(oop* p) {
 #ifdef ASSERT
   if (ShenandoahTraceUpdates) {
     if (p != old) 
-      tty->print("Update %p => %p  to %p => %p\n", p, *p, old, *old);
+      tty->print("Update %p => %p  to %p => %p\n", p, (HeapWord*) *p, old, (HeapWord*) *old);
   }
 #endif
 
@@ -1453,7 +1453,7 @@ void ShenandoahMarkObjsClosure::do_object(oop obj) {
 
 #ifdef ASSERT
     if (sh->heap_region_containing(obj)->is_in_collection_set()) {
-      tty->print_cr("trying to mark obj: %p (%d) in dirty region: ", obj, sh->isMarkedCurrent(obj));
+      tty->print_cr("trying to mark obj: %p (%d) in dirty region: ", (HeapWord*) obj, sh->isMarkedCurrent(obj));
       sh->heap_region_containing(obj)->print();
       sh->print_heap_regions();
     }
@@ -1463,7 +1463,7 @@ void ShenandoahMarkObjsClosure::do_object(oop obj) {
     if (sh->mark_current(obj)) {
 #ifdef ASSERT
       if (ShenandoahTraceConcurrentMarking)
-	tty->print_cr("marked obj: %p", obj);
+	tty->print_cr("marked obj: %p", (HeapWord*) obj);
 #endif
       // Calculate liveness of heap region containing object.
       ShenandoahHeapRegion* region = sh->heap_region_containing(obj);
@@ -1473,7 +1473,7 @@ void ShenandoahMarkObjsClosure::do_object(oop obj) {
 #ifdef ASSERT
     else {
       if (ShenandoahTraceConcurrentMarking) {
-        tty->print_cr("failed to mark obj (already marked): %p", obj);
+        tty->print_cr("failed to mark obj (already marked): %p", (HeapWord*) obj);
       }
       assert(sh->isMarkedCurrent(obj), "make sure object is marked");
     }
@@ -1571,7 +1571,7 @@ public:
         sh->print_on(tty);
       }
       assert(sh->isMarkedCurrent(obj), err_msg("Referenced Objects should be marked obj: %p, marked: %d, is_in_heap: %d", 
-                                       obj, sh->isMarkedCurrent(obj), sh->is_in(obj)));
+                                               (HeapWord*) obj, sh->isMarkedCurrent(obj), sh->is_in(obj)));
     }
   }
 
@@ -1722,12 +1722,12 @@ void ShenandoahHeap::copy_object(oop p, HeapWord* s) {
 
 #ifdef ASSERT
   if (ShenandoahTraceEvacuations) {
-    tty->print_cr("copy object from %p to: %p", p, copy);
+    tty->print_cr("copy object from %p to: %p", (HeapWord*) p, copy);
   }
 #endif
 }
 
-oopDesc* ShenandoahHeap::evacuate_object(oop p, EvacuationAllocator* allocator) {
+oop ShenandoahHeap::evacuate_object(oop p, EvacuationAllocator* allocator) {
 
   size_t required = BrooksPointer::BROOKS_POINTER_OBJ_SIZE + p->size();
   HeapWord* filler = allocator->allocate(required);
@@ -1736,19 +1736,19 @@ oopDesc* ShenandoahHeap::evacuate_object(oop p, EvacuationAllocator* allocator) 
 
   HeapWord* result = BrooksPointer::get(p).cas_forwardee((HeapWord*) p, copy);
 
-  oopDesc* return_val;
+  oop return_val;
   if (result == (HeapWord*) p) {
-    return_val = (oopDesc*) copy;
+    return_val = oop(copy);
 #ifdef ASSERT
     if (ShenandoahTraceEvacuations) {
-      tty->print("Copy of %p to %p succeeded \n", p, copy);
+      tty->print("Copy of %p to %p succeeded \n", (HeapWord*) p, copy);
     }
 #endif
   }  else {
     allocator->rollback(filler, required);
 #ifdef ASSERT
     if (ShenandoahTraceEvacuations) {
-      tty->print("Copy of %p to %p \n", p, copy);
+      tty->print("Copy of %p to %p \n", (HeapWord*) p, copy);
     }
 #endif
     return_val = (oopDesc*) result;

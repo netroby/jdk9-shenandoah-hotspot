@@ -8,18 +8,22 @@ Copyright 2014 Red Hat, Inc. and/or its affiliates.
 #include "gc_implementation/shenandoah/shenandoahHeap.hpp"
 #include "gc_implementation/shenandoah/shenandoahBarrierSet.hpp"
 
-BrooksPointer::BrooksPointer(uintptr_t* hw) : _heap_word(hw) {}
+BrooksPointer::BrooksPointer(HeapWord** hw) : _heap_word(hw) {}
 
 BrooksPointer BrooksPointer::get(oop obj) {
-  return BrooksPointer(((uintptr_t*) obj) - 1);
+  HeapWord* hw_obj = (HeapWord*) obj;
+  HeapWord* brooks_ptr = hw_obj - 1;
+  // We know that the value in that memory location is a pointer to another
+  // heapword/oop.
+  return BrooksPointer((HeapWord**) brooks_ptr);
 }
 
 void BrooksPointer::set_forwardee(oop forwardee) {
   assert(ShenandoahHeap::heap()->is_in(forwardee), "forwardee must be valid oop in the heap");
-  *_heap_word = (uintptr_t) forwardee;
+  *_heap_word = (HeapWord*) forwardee;
 #ifdef ASSERT
   if (ShenandoahTraceBrooksPointers) {
-    tty->print("setting_forwardee to %p = %p\n", forwardee, *_heap_word);
+    tty->print("setting_forwardee to %p = %p\n", (HeapWord*) forwardee, *_heap_word);
   }
 #endif
 }

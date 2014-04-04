@@ -230,7 +230,7 @@ void ShenandoahConcurrentMark::addTask(oop obj, int q) {
   assert(sh->is_in((HeapWord*) obj), "Only push heap objects on the queue");
 #ifdef ASSERT
   if (ShenandoahTraceConcurrentMarking){
-    tty->print_cr("Adding object %p to marking queue %d\n", obj, q);
+    tty->print_cr("Adding object %p to marking queue %d\n", (HeapWord*) obj, q);
   }
 #endif
 

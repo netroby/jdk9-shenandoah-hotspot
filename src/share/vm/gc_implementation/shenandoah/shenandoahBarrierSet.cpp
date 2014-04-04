@@ -248,14 +248,14 @@ void ShenandoahBarrierSet::write_region_work(MemRegion mr) {
   obj->oop_iterate(&cl);
 }
 
-oopDesc* ShenandoahBarrierSet::get_shenandoah_forwardee_helper(oopDesc* p) {
+oop ShenandoahBarrierSet::get_shenandoah_forwardee_helper(oop p) {
   assert(UseShenandoahGC, "must only be called when Shenandoah is used.");
   assert(Universe::heap()->is_in(p), "We shouldn't be calling this on objects not in the heap");
   return BrooksPointer::get(p).get_forwardee();
 }
 
 
-oopDesc* ShenandoahBarrierSet::get_shenandoah_forwardee(oopDesc* p) {
+oop ShenandoahBarrierSet::get_shenandoah_forwardee(oop p) {
   oop result = get_shenandoah_forwardee_helper(p);
 
 #ifdef ASSERT
@@ -265,11 +265,11 @@ oopDesc* ShenandoahBarrierSet::get_shenandoah_forwardee(oopDesc* p) {
       // We should never be forwarded more than once.
       if (result != second_forwarding) {
 	ShenandoahHeap* sh = (ShenandoahHeap*) Universe::heap();
-	tty->print("first reference %p is in heap region:\n", p);
+	tty->print("first reference %p is in heap region:\n", (HeapWord*) p);
 	sh->heap_region_containing(p)->print();
-	tty->print("first_forwarding %p is in heap region:\n", result);
+	tty->print("first_forwarding %p is in heap region:\n", (HeapWord*) result);
 	sh->heap_region_containing(result)->print();
-	tty->print("final reference %p is in heap region:\n", second_forwarding);
+	tty->print("final reference %p is in heap region:\n", (HeapWord*) second_forwarding);
 	sh->heap_region_containing(second_forwarding)->print();
 	assert(get_shenandoah_forwardee_helper(result) == result, "Only one fowarding per customer");  
       }
@@ -279,10 +279,10 @@ oopDesc* ShenandoahBarrierSet::get_shenandoah_forwardee(oopDesc* p) {
 }
 
 
-oopDesc* ShenandoahBarrierSet::resolve_oop(oopDesc* src) {
+oop ShenandoahBarrierSet::resolve_oop(oop src) {
 
   if (src != NULL) {
-    oopDesc* result = get_shenandoah_forwardee(src);
+    oop result = get_shenandoah_forwardee(src);
     assert(ShenandoahHeap::heap()->is_in(result) && result->is_oop(), "resolved oop must be a valid oop in the heap");
     return result;
   } else {
@@ -290,7 +290,7 @@ oopDesc* ShenandoahBarrierSet::resolve_oop(oopDesc* src) {
   }
 }
 
-oopDesc* ShenandoahBarrierSet::maybe_resolve_oop(oopDesc* src) {
+oop ShenandoahBarrierSet::maybe_resolve_oop(oop src) {
   if (Universe::heap()->is_in(src)) {
     return get_shenandoah_forwardee(src);
   } else {
@@ -298,14 +298,14 @@ oopDesc* ShenandoahBarrierSet::maybe_resolve_oop(oopDesc* src) {
   }
 }
 
-oopDesc* ShenandoahBarrierSet::resolve_and_maybe_copy_oop_work(oopDesc* src) {
+oop ShenandoahBarrierSet::resolve_and_maybe_copy_oop_work(oop src) {
   ShenandoahHeap *sh = (ShenandoahHeap*) Universe::heap();
   assert(src != NULL, "only evacuated non NULL oops");
 
   if (sh->heap_region_containing(src)->is_in_collection_set()) {
     return resolve_and_maybe_copy_oop_work2(src);
     assert(sh->is_evacuation_in_progress(), "only attempt evacuation during evacuation");
-    oopDesc* dst = sh->evacuate_object(src, _allocator);
+    oop dst = sh->evacuate_object(src, _allocator);
     assert(sh->is_in(dst), "result should be in the heap");
     return dst;
   } else {
@@ -313,25 +313,25 @@ oopDesc* ShenandoahBarrierSet::resolve_and_maybe_copy_oop_work(oopDesc* src) {
   }
 }
 
-oopDesc* ShenandoahBarrierSet::resolve_and_maybe_copy_oop_work2(oopDesc* src) {
+oop ShenandoahBarrierSet::resolve_and_maybe_copy_oop_work2(oop src) {
   ShenandoahHeap *sh = (ShenandoahHeap*) Universe::heap();
   assert(src != NULL, "only evacuated non NULL oops");
   assert(sh->is_evacuation_in_progress(), "only attempt evacuation during evacuation");
-  oopDesc* dst = sh->evacuate_object(src, _allocator);
+  oop dst = sh->evacuate_object(src, _allocator);
 #ifdef ASSERT
     if (ShenandoahTraceEvacuations) {
       tty->print("src = %p dst = %p src = %p src-2 = %p\n",
-                 src, dst, src, src-2);
+                 (HeapWord*) src, (HeapWord*) dst, (HeapWord*) src, ((HeapWord*) src) - 2);
     }
 #endif
   assert(sh->is_in(dst), "result should be in the heap");
   return dst;
 }
 
-oopDesc* ShenandoahBarrierSet::resolve_and_maybe_copy_oopHelper(oopDesc* src) {
+oop ShenandoahBarrierSet::resolve_and_maybe_copy_oopHelper(oop src) {
     if (src != NULL) {
       ShenandoahHeap *sh = (ShenandoahHeap*) Universe::heap();
-      oopDesc* tmp = get_shenandoah_forwardee(src);
+      oop tmp = get_shenandoah_forwardee(src);
       if (! sh->is_evacuation_in_progress()) {
         return tmp;
       }
@@ -341,21 +341,21 @@ oopDesc* ShenandoahBarrierSet::resolve_and_maybe_copy_oopHelper(oopDesc* src) {
     }
 }
 
-IRT_LEAF(oopDesc*, ShenandoahBarrierSet::resolve_and_maybe_copy_oop_static(oopDesc* src))
+IRT_LEAF(oop, ShenandoahBarrierSet::resolve_and_maybe_copy_oop_static(oop src))
 oop result = ((ShenandoahBarrierSet*)oopDesc::bs())->resolve_and_maybe_copy_oop_work(src);
   // tty->print_cr("called write barrier with: %p result: %p", src, result);
   return result;
 IRT_END
 
-IRT_LEAF(oopDesc*, ShenandoahBarrierSet::resolve_and_maybe_copy_oop_static2(oopDesc* src))
+IRT_LEAF(oop, ShenandoahBarrierSet::resolve_and_maybe_copy_oop_static2(oop src))
   oop result = ((ShenandoahBarrierSet*)oopDesc::bs())->resolve_and_maybe_copy_oop_work2(src);
   // tty->print_cr("called write barrier with: %p result: %p", src, result);
   return result;
 IRT_END
 
-oopDesc* ShenandoahBarrierSet::resolve_and_maybe_copy_oop(oopDesc* src) {
+oop ShenandoahBarrierSet::resolve_and_maybe_copy_oop(oop src) {
     ShenandoahHeap *sh = (ShenandoahHeap*) Universe::heap();      
-    oopDesc* result;
+    oop result;
     if (src != NULL && sh->is_in(src)) {
       result = resolve_and_maybe_copy_oopHelper(src);
       assert(sh->is_in(result), "result should be in the heap");

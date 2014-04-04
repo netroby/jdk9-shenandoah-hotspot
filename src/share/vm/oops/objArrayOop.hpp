@@ -89,9 +89,9 @@ private:
   }
 
   void obj_at_put(int index, oop value) {
-    objArrayOopDesc* forwarded_copy = 
-      (objArrayOopDesc*) oopDesc::bs()->resolve_and_maybe_copy_oop(this);
-    if (forwarded_copy != this)
+    objArrayOop forwarded_copy = 
+      (objArrayOop) oopDesc::bs()->resolve_and_maybe_copy_oop(this);
+    if ((oopDesc*) forwarded_copy != this)
       return forwarded_copy->obj_at_put(index, value);
 
     if (UseCompressedOops) {
