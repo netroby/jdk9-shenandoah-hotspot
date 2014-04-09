@@ -56,11 +56,10 @@ void ShenandoahConcurrentThread::run() {
 	VM_ShenandoahFinishMark finishMark;
 	VMThread::execute(&finishMark);
 
-	VM_ShenandoahEvacuation evacuation;
+        // If we're not concurrently evacuating, evacuation is done
+        // from VM_ShenandoahFinishMark within the VMThread above.
 	if (ShenandoahConcurrentEvacuation) {
-	  evacuation.doit();
-	} else {
-	  VMThread::execute(&evacuation);
+	  heap->do_evacuation();
 	}
 
       } else {

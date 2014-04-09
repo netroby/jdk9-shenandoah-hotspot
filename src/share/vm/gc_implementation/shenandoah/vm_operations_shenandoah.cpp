@@ -40,11 +40,11 @@ void VM_ShenandoahFinishMark::doit() {
   sh->prepare_for_concurrent_evacuation();
   sh->set_evacuation_in_progress(true);
 
+  sh->shenandoahPolicy()->record_final_mark_end();    
 
   if (! ShenandoahConcurrentEvacuation) {
     sh->do_evacuation();
   }
-  sh->shenandoahPolicy()->record_final_mark_end();    
 }
 
 VM_Operation::VMOp_Type VM_ShenandoahVerifyHeapAfterEvacuation::type() const {
@@ -74,9 +74,7 @@ void VM_ShenandoahEvacuation::doit() {
   if (ShenandoahGCVerbose)
     tty->print("vm_ShenandoahEvacuation\n");
 
-  if (ShenandoahConcurrentEvacuation) {
-    ShenandoahHeap *sh = ShenandoahHeap::heap();
-    sh->do_evacuation();
-  }
+  ShenandoahHeap *sh = ShenandoahHeap::heap();
+  sh->do_evacuation();
 }
 

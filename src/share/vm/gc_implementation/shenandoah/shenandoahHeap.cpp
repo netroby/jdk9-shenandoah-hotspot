@@ -679,6 +679,7 @@ void ShenandoahHeap::verify_evacuated_region(ShenandoahHeapRegion* from_region) 
 
 void ShenandoahHeap::parallel_evacuate_region(ShenandoahHeapRegion* from_region, 
 					      ShenandoahAllocRegion *alloc_region) {
+
   ParallelEvacuateRegionObjectClosure evacuate_region(this, alloc_region);
   
 #ifdef ASSERT
@@ -937,6 +938,8 @@ void ShenandoahHeap::prepare_for_concurrent_evacuation() {
 }
 
 void ShenandoahHeap::do_evacuation() {
+  assert(Thread::current()->is_VM_thread() || ShenandoahConcurrentEvacuation, "Only evacuate from VMThread unless we do concurrent evacuation");
+
   // If we have active critical regions, abort evacuation, but keep the mark bitmap intact.
   // We're gonna need it soon.
   if (! GC_locker::check_active_before_gc()) {
@@ -953,10 +956,15 @@ void ShenandoahHeap::do_evacuation() {
       }
     }
 
-  }
+  } else {
+    tty->print_cr("deferring evacuation");
+  }    
 }
 
 void ShenandoahHeap::parallel_evacuate() {
+
+  assert(Thread::current()->is_VM_thread() || ShenandoahConcurrentEvacuation, "Only evacuate from VMThread unless we do concurrent evacuation");
+
   if (ShenandoahGCVerbose) {
     tty->print_cr("starting parallel_evacuate");
     //    PrintHeapRegionsClosure pc1;
@@ -1117,11 +1125,12 @@ size_t ShenandoahHeap::unsafe_max_alloc() {
 void ShenandoahHeap::collect(GCCause::Cause cause) {
   if (cause == GCCause::_gc_locker) {
     assert(_evacuation_in_progress, "evacuation needs to be in progress");
-    VM_ShenandoahEvacuation evacuation;
 
+    tty->print_cr("deferred evacuation");
     if (ShenandoahConcurrentEvacuation) {
-      evacuation.doit();
+      do_evacuation();
     } else {
+      VM_ShenandoahEvacuation evacuation;
       VMThread::execute(&evacuation);
     }
   }

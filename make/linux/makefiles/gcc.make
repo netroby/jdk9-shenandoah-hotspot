@@ -230,7 +230,7 @@ CFLAGS_WARN/BYFILE = $(CFLAGS_WARN/$@)$(CFLAGS_WARN/DEFAULT$(CFLAGS_WARN/$@))
 
 # The flags to use for an Optimized g++ build
 OPT_CFLAGS/SIZE=-Os
-OPT_CFLAGS/SPEED=-O3
+OPT_CFLAGS/SPEED=-O3 -D_NMT_NOINLINE_
 
 # Hotspot uses very unstrict aliasing turn this optimization off
 # This option is added to CFLAGS rather than OPT_CFLAGS
