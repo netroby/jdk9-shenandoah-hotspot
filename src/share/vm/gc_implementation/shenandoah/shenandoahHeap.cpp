@@ -1005,6 +1005,15 @@ void ShenandoahHeap::parallel_evacuate() {
     print_heap_regions();
   }
 
+  // TODO: The following is updating the root references after evacuation. It also
+  // marks unmarked root objs, which is not necessary. This can be optimized.
+  if (! ShenandoahConcurrentEvacuation) {
+    update_root_refs();
+  } else {
+    VM_ShenandoahUpdateRootRefs update_root_refs;
+    VMThread::execute(&update_root_refs);
+  }
+
   _shenandoah_policy->record_concurrent_evacuation_end();
 }
 
@@ -1450,6 +1459,24 @@ void ShenandoahMarkRefsClosure::do_oop(oop* p) {
   do_oop_work(p);
 }
 
+ShenandoahUpdateRootRefsClosure::ShenandoahUpdateRootRefsClosure(uint worker_id) :
+  _worker_id(worker_id), _heap(ShenandoahHeap::heap()) {
+}
+
+void ShenandoahUpdateRootRefsClosure::do_oop_work(oop* p) {
+  oop* old = p;
+  oop obj = _heap->maybe_update_oop_ref(p);
+}
+
+void ShenandoahUpdateRootRefsClosure::do_oop(narrowOop* p) {
+  assert(false, "narrowOops not supported");
+}
+
+void ShenandoahUpdateRootRefsClosure::do_oop(oop* p) {
+  do_oop_work(p);
+}
+
+
 ShenandoahMarkObjsClosure::ShenandoahMarkObjsClosure(uint worker_id) : _worker_id(worker_id) {
 }
 
@@ -1504,7 +1531,14 @@ void ShenandoahMarkObjsClosure::do_object(oop obj) {
 }
 
 void ShenandoahHeap::prepare_unmarked_root_objs() {
+  assert(Thread::current()->is_VM_thread(), "can only do this in VMThread");
   ShenandoahMarkRefsClosure rootsCl(0);
+  roots_iterate(&rootsCl);
+}
+
+void ShenandoahHeap::update_root_refs() {
+  assert(Thread::current()->is_VM_thread(), "can only do this in VMThread");
+  ShenandoahUpdateRootRefsClosure rootsCl(0);
   roots_iterate(&rootsCl);
 }
 

@@ -212,6 +212,7 @@ public:
   // Prepares unmarked root objects by marking them and putting
   // them into the marking task queue.
   void prepare_unmarked_root_objs();
+  void update_root_refs();
 
   void prepare_for_concurrent_evacuation();
   void do_evacuation();
@@ -282,6 +283,18 @@ class ShenandoahMarkRefsClosure : public OopsInGenClosure {
 
 public: 
   ShenandoahMarkRefsClosure(uint worker_id);
+
+  void do_oop_work(oop* p);
+  void do_oop(narrowOop* p);
+  void do_oop(oop* p);
+};
+  
+class ShenandoahUpdateRootRefsClosure : public OopsInGenClosure {
+  uint _worker_id;
+  ShenandoahHeap* _heap;
+
+public: 
+  ShenandoahUpdateRootRefsClosure(uint worker_id);
 
   void do_oop_work(oop* p);
   void do_oop(narrowOop* p);

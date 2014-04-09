@@ -96,6 +96,7 @@
   template(ShenandoahFinishMark)                  \
   template(ShenandoahVerifyHeapAfterEvacuation)   \
   template(ShenandoahEvacuation)                  \
+  template(ShenandoahUpdateRootRefs)              \
   template(Exit)                                  \
   template(LinuxDllLoad)                          \
 

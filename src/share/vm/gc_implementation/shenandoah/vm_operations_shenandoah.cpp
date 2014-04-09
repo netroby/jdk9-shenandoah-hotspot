@@ -78,3 +78,19 @@ void VM_ShenandoahEvacuation::doit() {
   sh->do_evacuation();
 }
 
+VM_Operation::VMOp_Type VM_ShenandoahUpdateRootRefs::type() const {
+  return VMOp_ShenandoahUpdateRootRefs;
+}
+
+const char* VM_ShenandoahUpdateRootRefs::name() const {
+  return "Shenandoah update root references";
+}
+
+void VM_ShenandoahUpdateRootRefs::doit() {
+  if (ShenandoahGCVerbose)
+    tty->print("vm_ShenandoahUpdateRootRefs\n");
+
+  ShenandoahHeap *sh = ShenandoahHeap::heap();
+  sh->update_root_refs();
+}
+
