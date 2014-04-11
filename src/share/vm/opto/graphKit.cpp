@@ -4170,7 +4170,8 @@ Node* GraphKit::shenandoah_read_barrier(Node* obj) {
     if (obj_type->is_oopptr()->ptr() == TypePtr::NotNull) {
       assert(! obj_type->singleton(), "hopefully not singleton");
       Node* bp_addr = basic_plus_adr(obj, -0x8);
-      Node* bp_load = make_load(NULL, bp_addr, obj_type, T_OBJECT, obj_type->make_oopptr(), false);
+      Node* bp_load = make_load(control(), bp_addr, obj_type, T_OBJECT, obj_type->make_oopptr(), false);
+      // set_control(bp_load);
       return bp_load;
     }
 
