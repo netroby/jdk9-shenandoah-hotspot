@@ -387,6 +387,14 @@ ShenandoahHeapRegion* ShenandoahHeap::cas_update_current_region(ShenandoahHeapRe
 }
 
 HeapWord* ShenandoahHeap::allocate_memory_gclab(size_t word_size) {
+  MutexLockerEx ml(ShenandoahHeap_lock, true);
+  {
+    return allocate_memory_work(word_size);
+  }
+}
+
+HeapWord* ShenandoahHeap::allocate_memory_work(size_t word_size) {
+
   ShenandoahHeapRegion* my_current_region = _current_region;
 #ifdef ASSERT
   if (my_current_region->is_in_collection_set()) {
@@ -422,7 +430,7 @@ HeapWord* ShenandoahHeap::allocate_memory_gclab(size_t word_size) {
     // Check if we ran out of regions and try to grow heap.
     if (my_current_region == NULL && _num_regions < _max_regions) {
       if (grow_heap_by()) {
-        result = allocate_memory_gclab(word_size);
+        result = allocate_memory_work(word_size);
       }
     }
     /*
@@ -569,9 +577,9 @@ HeapWord* ShenandoahHeap::mem_allocate_locked(size_t size,
     return result;
   } else {
     tty->print_cr("Out of memory. Requested number of words: %x used heap: %d, bytes allocated since last CM: %d", size, used(), _bytesAllocSinceCM);
-    print_heap_regions();
     MutexLockerEx ml(ShenandoahHeap_lock, true);
     {
+      print_heap_regions();
       tty->print("Printing %d free regions:\n", _free_regions->length());
       _free_regions->print();
     }
@@ -764,12 +772,8 @@ public:
 };
 
 void ShenandoahHeap::print_heap_regions()  {
-  MutexLockerEx ml(ShenandoahHeap_lock, true);
-  {
-
-    PrintHeapRegionsClosure pc1;
-    heap_region_iterate(&pc1);
-  }
+  PrintHeapRegionsClosure pc1;
+  heap_region_iterate(&pc1);
 }
 
 class PrintAllRefsOopClosure: public ExtendedOopClosure {
@@ -1857,8 +1861,8 @@ int ShenandoahHeap::ensure_new_regions(int new_regions) {
   }
   */
 
-  MutexLockerEx ml(ShenandoahHeap_lock, true);
-  {
+  //  MutexLockerEx ml(ShenandoahHeap_lock, true);
+  // {
     size_t num_regions = _num_regions;
     size_t new_num_regions = num_regions + new_regions;
     if (new_num_regions >= _max_regions) {
@@ -1880,7 +1884,7 @@ int ShenandoahHeap::ensure_new_regions(int new_regions) {
     OrderAccess::storeload();
 
     return num_regions;
-  }
+    // }
 
 }
 

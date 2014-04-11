@@ -91,6 +91,7 @@ public:
   HeapWord* allocate_new_gclab(size_t word_size);
 
   HeapWord* allocate_memory_gclab(size_t word_size);
+  HeapWord* allocate_memory_work(size_t word_size);
   HeapWord* allocate_large_memory(size_t word_size);
 
   bool find_contiguous_free_regions(uint num_free_regions, ShenandoahHeapRegion** free_regions);
