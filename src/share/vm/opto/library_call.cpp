@@ -5919,6 +5919,8 @@ Node * LibraryCallKit::load_field_from_object(Node * fromObj, const char * field
   if (field == NULL) return (Node *) NULL;
   assert (field != NULL, "undefined field");
 
+  fromObj = shenandoah_read_barrier(fromObj);
+
   // Next code  copied from Parse::do_get_xxx():
 
   // Compute address and memory type.
@@ -5962,6 +5964,10 @@ bool LibraryCallKit::inline_aescrypt_Block(vmIntrinsics::ID id) {
   Node* src_offset      = argument(2);
   Node* dest            = argument(3);
   Node* dest_offset     = argument(4);
+
+  // Resolve src and dest arrays for ShenandoahGC.
+  src = shenandoah_read_barrier(src);
+  dest = shenandoah_read_barrier(dest);
 
   // (1) src and dest are arrays.
   const Type* src_type = src->Value(&_gvn);
@@ -6019,6 +6025,10 @@ bool LibraryCallKit::inline_cipherBlockChaining_AESCrypt(vmIntrinsics::ID id) {
   Node* dest                       = argument(4);
   Node* dest_offset                = argument(5);
 
+  // Resolve src and dest arrays for ShenandoahGC.
+  src = shenandoah_read_barrier(src);
+  dest = shenandoah_read_barrier(dest);
+  
   // (1) src and dest are arrays.
   const Type* src_type = src->Value(&_gvn);
   const Type* dest_type = dest->Value(&_gvn);
@@ -6063,6 +6073,9 @@ bool LibraryCallKit::inline_cipherBlockChaining_AESCrypt(vmIntrinsics::ID id) {
 
   // similarly, get the start address of the r vector
   Node* objRvec = load_field_from_object(cipherBlockChaining_object, "r", "[B", /*is_exact*/ false);
+
+  objRvec = shenandoah_read_barrier(objRvec);
+
   if (objRvec == NULL) return false;
   Node* r_start = array_element_address(objRvec, intcon(0), T_BYTE);
 
@@ -6082,6 +6095,8 @@ Node * LibraryCallKit::get_key_start_from_aescrypt_object(Node *aescrypt_object)
   Node* objAESCryptKey = load_field_from_object(aescrypt_object, "K", "[I", /*is_exact*/ false);
   assert (objAESCryptKey != NULL, "wrong version of com.sun.crypto.provider.AESCrypt");
   if (objAESCryptKey == NULL) return (Node *) NULL;
+
+  objAESCryptKey = shenandoah_read_barrier(objAESCryptKey);
 
   // now have the array, need to get the start address of the K array
   Node* k_start = array_element_address(objAESCryptKey, intcon(0), T_INT);
