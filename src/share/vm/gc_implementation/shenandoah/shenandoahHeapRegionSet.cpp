@@ -264,14 +264,17 @@ void ShenandoahHeapRegionSet::reclaim_humonguous_region_at(int r) {
 }
 
  ShenandoahHeapRegion* ShenandoahHeapRegionSet::claim_next() {
-   while (_index < _inserted) {
-     ShenandoahHeapRegion* result = _regions[_index];
+   // Need to use local variable to avoid race with other threads.
+   int idx = _index;
+   while (idx < _inserted) {
+     ShenandoahHeapRegion* result = _regions[idx];
      if (result->claim()) {
        Atomic::add(1, &_index);
        if (ShenandoahGCVerbose)
 	 tty->print("Claiming region %p\n", result);
        return result;
      }
+     idx = _index;
    }
    return NULL;
  }
