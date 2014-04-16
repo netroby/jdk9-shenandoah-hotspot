@@ -347,10 +347,10 @@ oop result = ((ShenandoahBarrierSet*)oopDesc::bs())->resolve_and_maybe_copy_oop_
   return result;
 IRT_END
 
-IRT_LEAF(oop, ShenandoahBarrierSet::resolve_and_maybe_copy_oop_static2(oop src))
-  oop result = ((ShenandoahBarrierSet*)oopDesc::bs())->resolve_and_maybe_copy_oop_work2(src);
+IRT_LEAF(oopDesc*, ShenandoahBarrierSet::resolve_and_maybe_copy_oop_static2(oopDesc* src))
+  oop result = ((ShenandoahBarrierSet*)oopDesc::bs())->resolve_and_maybe_copy_oop_work2(oop(src));
   // tty->print_cr("called write barrier with: %p result: %p", src, result);
-  return result;
+  return (oopDesc*) result;
 IRT_END
 
 oop ShenandoahBarrierSet::resolve_and_maybe_copy_oop(oop src) {
