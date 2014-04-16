@@ -156,6 +156,7 @@ ShenandoahHeap::ShenandoahHeap(ShenandoahCollectorPolicy* policy) :
   _shenandoah_policy(policy), 
   _concurrent_mark_in_progress(false),
   _evacuation_in_progress(false),
+  _waiting_for_jni_before_gc(false),
   _free_regions(NULL),
   _collection_set(NULL),
   _bytesAllocSinceCM(0),
@@ -944,25 +945,19 @@ void ShenandoahHeap::prepare_for_concurrent_evacuation() {
 void ShenandoahHeap::do_evacuation() {
   assert(Thread::current()->is_VM_thread() || ShenandoahConcurrentEvacuation, "Only evacuate from VMThread unless we do concurrent evacuation");
 
-  // If we have active critical regions, abort evacuation, but keep the mark bitmap intact.
-  // We're gonna need it soon.
-  if (! GC_locker::check_active_before_gc()) {
-    parallel_evacuate();
-    set_evacuation_in_progress(false);
-    reset_mark_bitmap();
+  parallel_evacuate();
+  set_evacuation_in_progress(false);
+  reset_mark_bitmap();
 
-    if (ShenandoahVerify) {
-      VM_ShenandoahVerifyHeapAfterEvacuation verify_after_evacuation;
-      if (Thread::current()->is_VM_thread()) {
-        verify_after_evacuation.doit();
-      } else {
-        VMThread::execute(&verify_after_evacuation);
-      }
+  if (ShenandoahVerify) {
+    VM_ShenandoahVerifyHeapAfterEvacuation verify_after_evacuation;
+    if (Thread::current()->is_VM_thread()) {
+      verify_after_evacuation.doit();
+    } else {
+      VMThread::execute(&verify_after_evacuation);
     }
+  }
 
-  } else {
-    tty->print_cr("deferring evacuation");
-  }    
 }
 
 void ShenandoahHeap::parallel_evacuate() {
@@ -1128,15 +1123,21 @@ size_t ShenandoahHeap::unsafe_max_alloc() {
 
 void ShenandoahHeap::collect(GCCause::Cause cause) {
   if (cause == GCCause::_gc_locker) {
-    assert(_evacuation_in_progress, "evacuation needs to be in progress");
+    assert(is_waiting_for_jni_before_gc(), "must be waiting for JNI, why enter this otherwise?");
 
-    tty->print_cr("deferred evacuation");
-    if (ShenandoahConcurrentEvacuation) {
-      do_evacuation();
-    } else {
+    // This kicks off concurrent marking in the GC background thread.
+    set_evacuation_in_progress(true);
+
+    // We need to do non-concurrent marking right now, before we release the flag below.
+    // The GC background thread is waiting on it and would start another marking
+    // cycle otherwise.
+    if (! ShenandoahConcurrentEvacuation) {
       VM_ShenandoahEvacuation evacuation;
       VMThread::execute(&evacuation);
     }
+
+    // The GC background thread is waiting on this flag. Get it going again.
+    set_waiting_for_jni_before_gc(false);
   }
 }
 
@@ -1681,6 +1682,15 @@ void ShenandoahHeap::set_evacuation_in_progress(bool in_progress) {
 
 bool ShenandoahHeap::is_evacuation_in_progress() {
   return _evacuation_in_progress;
+}
+
+void ShenandoahHeap::set_waiting_for_jni_before_gc(bool wait_for_jni) {
+  _waiting_for_jni_before_gc = wait_for_jni;
+  OrderAccess::storeload();
+}
+
+bool ShenandoahHeap::is_waiting_for_jni_before_gc() {
+  return _waiting_for_jni_before_gc;
 }
 
 void ShenandoahHeap::post_allocation_collector_specific_setup(HeapWord* hw) {

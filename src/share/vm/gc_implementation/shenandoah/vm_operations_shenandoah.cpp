@@ -3,6 +3,7 @@ Copyright 2014 Red Hat, Inc. and/or its affiliates.
  */
 #include "gc_implementation/shenandoah/vm_operations_shenandoah.hpp"
 #include "gc_implementation/shenandoah/shenandoahHeap.hpp"
+#include "memory/gcLocker.hpp"
 
 VM_Operation::VMOp_Type VM_ShenandoahInitMark::type() const {
   return VMOp_ShenandoahInitMark;
@@ -38,13 +39,20 @@ void VM_ShenandoahFinishMark::doit() {
   sh->concurrentMark()->finishMarkFromRoots();
   sh->stop_concurrent_marking();
   sh->prepare_for_concurrent_evacuation();
-  sh->set_evacuation_in_progress(true);
-
   sh->shenandoahPolicy()->record_final_mark_end();    
 
-  if (! ShenandoahConcurrentEvacuation) {
-    sh->do_evacuation();
+  if (! GC_locker::check_active_before_gc()) {
+    sh->set_evacuation_in_progress(true);
+
+    if (! ShenandoahConcurrentEvacuation) {
+      sh->do_evacuation();
+    }
+  } else {
+    // This makes the GC background thread wait, and kick off evacuation as
+    // soon as JNI notifies us that critical regions have all been left.
+    sh->set_waiting_for_jni_before_gc(true);
   }
+
 }
 
 VM_Operation::VMOp_Type VM_ShenandoahVerifyHeapAfterEvacuation::type() const {

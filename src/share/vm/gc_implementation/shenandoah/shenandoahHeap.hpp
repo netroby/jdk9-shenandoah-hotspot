@@ -190,6 +190,7 @@ public:
   volatile unsigned int _concurrent_mark_in_progress;
 
   volatile unsigned int _evacuation_in_progress;
+  volatile bool _waiting_for_jni_before_gc;
 
   bool should_start_concurrent_marking();
   void start_concurrent_marking();
@@ -261,6 +262,9 @@ public:
 
   void set_evacuation_in_progress(bool in_progress);
   bool is_evacuation_in_progress();
+
+  void set_waiting_for_jni_before_gc(bool wait_for_jni);
+  bool is_waiting_for_jni_before_gc();
 
 private:
 

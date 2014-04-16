@@ -56,6 +56,11 @@ void ShenandoahConcurrentThread::run() {
 	VM_ShenandoahFinishMark finishMark;
 	VMThread::execute(&finishMark);
 
+        // Wait if necessary for JNI critical regions to be cleared. See ShenandoahHeap::collect().
+        while (heap->is_waiting_for_jni_before_gc()) {
+          Thread::current()->_ParkEvent->park(1) ;
+        }
+
         // If we're not concurrently evacuating, evacuation is done
         // from VM_ShenandoahFinishMark within the VMThread above.
 	if (ShenandoahConcurrentEvacuation) {
