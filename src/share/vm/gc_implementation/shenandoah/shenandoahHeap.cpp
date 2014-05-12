@@ -975,11 +975,11 @@ void ShenandoahHeap::parallel_evacuate() {
   if (ShenandoahGCVerbose) {
     tty->print("Printing all available regions");
     print_heap_regions();
+  }
+
+  if (ShenandoahPrintCollectionSet) {
     tty->print("Printing collection set which contains %d regions:\n", _collection_set->available_regions());
     _collection_set->print();
-
-    tty->print("Printing %d free regions:\n", _free_regions->available_regions());
-    _free_regions->print();
   }
 
   barrierSync.set_n_workers(_max_workers);

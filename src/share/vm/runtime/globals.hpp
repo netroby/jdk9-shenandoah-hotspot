@@ -1408,6 +1408,9 @@ class CommandLineFlags {
   product(ccstr, ShenandoahGCHeuristics, NULL,                              \
           "The heuristics to use in Shenandoah GC; possible values: statusquo, aggressive, halfway, lazy") \
                                                                             \
+  product(bool, ShenandoahPrintCollectionSet, false,                        \
+          "Print the collection set before each GC phase")                  \
+                                                                            \
   product(bool, UseParallelGC, false,                                       \
           "Use the Parallel Scavenge garbage collector")                    \
                                                                             \
