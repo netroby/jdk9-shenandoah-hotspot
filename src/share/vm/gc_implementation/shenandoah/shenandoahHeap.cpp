@@ -1557,7 +1557,13 @@ void ShenandoahHeap::start_concurrent_marking() {
   // print_all_refs("pre -mark");
 
   // oopDesc::_debug = true;
+
+  COMPILER2_PRESENT(DerivedPointerTable::clear());
+
   prepare_unmarked_root_objs();
+
+  COMPILER2_PRESENT(DerivedPointerTable::update_pointers());
+
   //  print_all_refs("pre-mark2");
 }
 

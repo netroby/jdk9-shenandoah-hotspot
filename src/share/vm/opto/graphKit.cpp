@@ -4166,11 +4166,14 @@ Node* GraphKit::shenandoah_read_barrier(Node* obj) {
     }
     assert(obj_type->isa_oopptr(), "Must be oop pointer type");
 
+    Node* bp_addr = basic_plus_adr(obj, -0x8);
+    const TypePtr* adr_type = bp_addr->bottom_type()->is_ptr();
+    assert(adr_type->offset() == -8, "sane address type offset");
+
     // Simple case when we know it's not null.
     if (obj_type->is_oopptr()->ptr() == TypePtr::NotNull) {
       assert(! obj_type->singleton(), "hopefully not singleton");
-      Node* bp_addr = basic_plus_adr(obj, -0x8);
-      Node* bp_load = make_load(control(), bp_addr, obj_type, T_OBJECT, obj_type->make_oopptr(), false);
+      Node* bp_load = make_load(control(), bp_addr, obj_type, T_OBJECT, adr_type, false);
       // set_control(bp_load);
       return bp_load;
     }
@@ -4211,8 +4214,7 @@ Node* GraphKit::shenandoah_read_barrier(Node* obj) {
     Node* iffalse = _gvn.transform( new (C) IfFalseNode(iff));
     set_control(iffalse);
 
-    Node* bp_addr = basic_plus_adr(obj, -0x8);
-    Node* bp_load = make_load(control(), bp_addr, load_type, T_OBJECT, load_type->make_oopptr(), false);
+    Node* bp_load = make_load(control(), bp_addr, load_type, T_OBJECT, adr_type, false);
       
     r->init_req(2, control());
     r = _gvn.transform(r);
