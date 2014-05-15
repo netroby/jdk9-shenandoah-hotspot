@@ -942,10 +942,42 @@ void ShenandoahHeap::prepare_for_concurrent_evacuation() {
 
 }
 
+class ShenandoahUpdateRootsClosure: public ExtendedOopClosure {
+
+  void do_oop(oop* p)       {
+    ShenandoahHeap::heap()->maybe_update_oop_ref(p);
+  }
+
+  void do_oop(narrowOop* p) {
+    Unimplemented();
+  }
+
+};
+
+void ShenandoahHeap::update_roots() {
+
+  COMPILER2_PRESENT(DerivedPointerTable::clear());
+
+  ShenandoahUpdateRootsClosure cl;
+  roots_iterate(&cl);
+
+  COMPILER2_PRESENT(DerivedPointerTable::update_pointers());
+}
+
 void ShenandoahHeap::do_evacuation() {
   assert(Thread::current()->is_VM_thread() || ShenandoahConcurrentEvacuation, "Only evacuate from VMThread unless we do concurrent evacuation");
 
   parallel_evacuate();
+
+  if (! ShenandoahConcurrentEvacuation) {
+    // We need to make sure that after leaving the safepoint, all
+    // GC roots are up-to-date. This is an assumption built into
+    // the hotspot compilers, especially C2, that allows it to
+    // do optimizations like lifting barriers outside of a loop.
+
+    update_roots();
+  }
+
   set_evacuation_in_progress(false);
   reset_mark_bitmap();
 
@@ -1030,6 +1062,8 @@ public:
 };
 
 void ShenandoahHeap::roots_iterate(ExtendedOopClosure* cl) {
+
+  assert(Thread::current()->is_VM_thread(), "Only iterate roots while world is stopped");
 
   CodeBlobToOopClosure blobsCl(cl, false);
   KlassToOopClosure klassCl(cl);

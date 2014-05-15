@@ -268,6 +268,8 @@ public:
 
 private:
 
+  void update_roots();
+
   bool grow_heap_by();
 
   void verify_evacuation(ShenandoahHeapRegion* from_region);

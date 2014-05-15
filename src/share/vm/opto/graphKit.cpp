@@ -4173,8 +4173,7 @@ Node* GraphKit::shenandoah_read_barrier(Node* obj) {
     // Simple case when we know it's not null.
     if (obj_type->is_oopptr()->ptr() == TypePtr::NotNull) {
       assert(! obj_type->singleton(), "hopefully not singleton");
-      Node* bp_load = make_load(control(), bp_addr, obj_type, T_OBJECT, adr_type, false);
-      // set_control(bp_load);
+      Node* bp_load = make_load(NULL, bp_addr, obj_type, T_OBJECT, adr_type, false);
       return bp_load;
     }
 
