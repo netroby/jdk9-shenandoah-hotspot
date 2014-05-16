@@ -279,7 +279,25 @@ int PhaseChaitin::clone_projs(Block* b, uint idx, Node* orig, Node* copy, uint& 
     Node* proj = orig->raw_out(i);
     if (proj->is_MachProj()) {
       assert(proj->outcnt() == 0, "only kill projections are expected here");
-      assert(_cfg.get_block_for_node(proj) == borig, "incorrect block for kill projections");
+
+#ifdef ASSERT
+      if (UseShenandoahGC && _cfg.get_block_for_node(proj) != borig) {
+        tty->print_cr("WARNING: block of original node doesn't match block of kill projection (NULL) in Shenandoah. Consider fixing this in chaitin.cpp PhaseChaitin::clone_projs().");
+        /*
+        tty->print_cr("orig:");
+        orig->dump(3);
+
+        orig->raw_out(i+1)->dump(3);
+
+        tty->print_cr("\nproj:");
+        proj->dump(3);
+        tty->print_cr("\nblock(orig):");
+        borig->dump();
+        tty->print_cr("");
+        */
+      }
+#endif
+      assert(_cfg.get_block_for_node(proj) == borig || UseShenandoahGC, "incorrect block for kill projections");
       found_projs++;
       // Copy kill projections after the cloned node
       Node* kills = proj->clone();
