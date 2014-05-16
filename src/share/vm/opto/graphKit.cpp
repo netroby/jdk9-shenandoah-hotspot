@@ -4159,72 +4159,77 @@ Node* GraphKit::shenandoah_read_barrier(Node* obj) {
 
   if (UseShenandoahGC) {
 
-    const Type* obj_type = obj->bottom_type();
-    assert (obj_type->isa_ptr(), "Must be pointer type");
-    if (obj_type->is_ptr()->ptr() == TypePtr::Null) {
+    const Type* obj_type = _gvn.type(obj);
+
+    // Fast path 1: We know it's NULL, so simply return it.
+    if (obj_type->higher_equal(TypePtr::NULL_PTR)) {
       return obj;
     }
-    assert(obj_type->isa_oopptr(), "Must be oop pointer type");
 
-    Node* bp_addr = basic_plus_adr(obj, -0x8);
-    const TypePtr* adr_type = bp_addr->bottom_type()->is_ptr();
-    assert(adr_type->offset() == -8, "sane address type offset");
+    // Do the null-check.
+    Node* null_ctrl = top();
+    obj = null_check_oop(obj, &null_ctrl, false, false);
 
-    // Simple case when we know it's not null.
-    if (obj_type->is_oopptr()->ptr() == TypePtr::NotNull) {
-      assert(! obj_type->singleton(), "hopefully not singleton");
+    // Fast path 2: we know it's not null. Return a simple barrier.
+    if (null_ctrl == top()) {
+      // Construct the address of the brooks ptr and the load.
+      Node* bp_addr = basic_plus_adr(obj, -0x8);
+      const TypePtr* adr_type = bp_addr->bottom_type()->is_ptr();
+      assert(adr_type->offset() == -8, "sane address type offset");
       Node* bp_load = make_load(NULL, bp_addr, obj_type, T_OBJECT, adr_type, false);
       return bp_load;
     }
 
-    // More complex case with null-check.
+    // Transform type into a non-constant type to prevent constants optimizations.
+    // This is correct, because it's no longer a constant anymore. It can be the old
+    // or new copy of the object.
     const Type* barrier_type = NULL;
     const Type* load_type = NULL;
-
-    // Figure out type of the LoadP and the Phi nodes. The LoadP can be NotNull b/c we null-check
-    // around it. The Phi must be BotPtr, it can be null or not null and is not a constant.
-    // We intentionally turn constant inputs into non-constant outputs because the result
-    // can be the input itself, or the forwarded copy of it. I.e. it's not constant anymore.
-    // Using the constant type as output would trigger some code to replace the whole barrier
-    // by the constant value.
     if (obj_type->isa_instptr()) {
       const TypeInstPtr* inst_ptr = obj_type->is_instptr();
-      barrier_type = TypeInstPtr::make(TypePtr::BotPTR, inst_ptr->klass(), inst_ptr->klass_is_exact(), NULL, inst_ptr->offset(), inst_ptr->instance_id(), inst_ptr->speculative());
-      load_type = TypeInstPtr::make(TypePtr::NotNull, inst_ptr->klass(), inst_ptr->klass_is_exact(), NULL, inst_ptr->offset(), inst_ptr->instance_id(), inst_ptr->speculative());
+      barrier_type = TypeInstPtr::make(TypePtr::BotPTR, inst_ptr->klass(),
+                                       inst_ptr->klass_is_exact(), NULL, inst_ptr->offset(),
+                                       inst_ptr->instance_id(), inst_ptr->speculative());
+      load_type = TypeInstPtr::make(TypePtr::NotNull, inst_ptr->klass(),
+                                    inst_ptr->klass_is_exact(), NULL, inst_ptr->offset(),
+                                    inst_ptr->instance_id(), inst_ptr->speculative());
     } else if (obj_type->isa_aryptr()) {
       const TypeAryPtr* ary_ptr = obj_type->is_aryptr();
-      barrier_type = TypeAryPtr::make(TypePtr::BotPTR, NULL, ary_ptr->ary(), ary_ptr->klass(), ary_ptr->klass_is_exact(), ary_ptr->offset(), ary_ptr->instance_id(), ary_ptr->speculative(), ary_ptr->is_autobox_cache());
-      load_type = TypeAryPtr::make(TypePtr::NotNull, NULL, ary_ptr->ary(), ary_ptr->klass(), ary_ptr->klass_is_exact(), ary_ptr->offset(), ary_ptr->instance_id(), ary_ptr->speculative(), ary_ptr->is_autobox_cache());
+      barrier_type = TypeAryPtr::make(TypePtr::BotPTR, NULL, ary_ptr->ary(),
+                                      ary_ptr->klass(), ary_ptr->klass_is_exact(),
+                                      ary_ptr->offset(), ary_ptr->instance_id(),
+                                      ary_ptr->speculative(), ary_ptr->is_autobox_cache());
+      load_type = TypeAryPtr::make(TypePtr::NotNull, NULL, ary_ptr->ary(),
+                                   ary_ptr->klass(), ary_ptr->klass_is_exact(),
+                                   ary_ptr->offset(), ary_ptr->instance_id(),
+                                   ary_ptr->speculative(), ary_ptr->is_autobox_cache());
     } else {
       ShouldNotReachHere();
     }
 
-    assert(! barrier_type->singleton(), "Must not be singleton/constant");
-    assert(! load_type->singleton(), "Must not be singleton/constant");
+    // Make the merge point.
+    enum { _obj_path = 1, _null_path, PATH_LIMIT };
+    RegionNode* region = new(C) RegionNode(PATH_LIMIT);
+    Node*       phi    = new(C) PhiNode(region, barrier_type);
+    
+    region->init_req(_null_path, null_ctrl);
+    phi   ->init_req(_null_path, null()); // Set null path value
 
-    // First we need to null-check.
-    Node* cmp_node = _gvn.transform( new (C) CmpPNode(obj, null()));
-    Node* tst = _gvn.transform( new (C) BoolNode(cmp_node, BoolTest::eq));
-    IfNode* iff = create_and_map_if(control(), tst, PROB_FAIR, COUNT_UNKNOWN);
-    Node* r = new (C) RegionNode(3);
-    record_for_igvn(r);
-    Node* iftrue = _gvn.transform( new (C) IfTrueNode(iff));
-    r->init_req(1, iftrue);
-    Node* iffalse = _gvn.transform( new (C) IfFalseNode(iff));
-    set_control(iffalse);
-
+    // Construct the address of the brooks ptr and the load.
+    Node* bp_addr = basic_plus_adr(obj, -0x8);
+    const TypePtr* adr_type = bp_addr->bottom_type()->is_ptr();
+    assert(adr_type->offset() == -8, "sane address type offset");
     Node* bp_load = make_load(control(), bp_addr, load_type, T_OBJECT, adr_type, false);
-      
-    r->init_req(2, control());
-    r = _gvn.transform(r);
-    set_control(r);
 
-    Node* phi = PhiNode::make(r, NULL, barrier_type);
-    phi->init_req(1, null());
-    phi->init_req(2, bp_load);
-    phi = _gvn.transform(phi);
+    // Plug in the success path to the general merge in slot 1.
+    region->init_req(_obj_path, control());
+    phi   ->init_req(_obj_path, bp_load);
 
-    return phi;
+    // Return final merged results
+    set_control( _gvn.transform(region) );
+    record_for_igvn(region);
+
+    return _gvn.transform(phi);
 
   } else {
     return obj;
