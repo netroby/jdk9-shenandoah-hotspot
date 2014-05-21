@@ -965,9 +965,22 @@ void ShenandoahHeap::update_roots() {
 }
 
 class ShenandoahEvacuateUpdateRootsClosure: public ExtendedOopClosure {
+private:
+  ShenandoahHeap* _heap;
+  HeapAllocator _allocator;
+public:
+  ShenandoahEvacuateUpdateRootsClosure() :
+    _heap(ShenandoahHeap::heap()),
+    _allocator(HeapAllocator()) {
+  }
 
-  void do_oop(oop* p)       {
-    *p = oopDesc::bs()->resolve_and_maybe_copy_oop(*p);
+  void do_oop(oop* p) {
+    assert(_heap->is_evacuation_in_progress(), "Only do this when evacuation is in progress");
+
+    oop obj = *p;
+    if (obj != NULL && _heap->heap_region_containing(obj)->is_in_collection_set()) {
+      *p = _heap->evacuate_object(*p, &_allocator);
+    }
   }
 
   void do_oop(narrowOop* p) {

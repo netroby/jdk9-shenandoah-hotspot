@@ -1277,6 +1277,13 @@ void PhaseMacroExpand::expand_allocate_common(
 
     transform_later(old_eden_top);
     // Add to heap top to get a new heap top
+
+    if (UseShenandoahGC) {
+      // Allocate one word more for the Shenandoah brooks pointer.
+      size_in_bytes = new (C) AddLNode(size_in_bytes, _igvn.MakeConX(8));
+      transform_later(size_in_bytes);
+    }
+
     Node *new_eden_top = new (C) AddPNode(top(), old_eden_top, size_in_bytes);
     transform_later(new_eden_top);
     // Check for needing a GC; compare against heap end
@@ -1365,6 +1372,13 @@ void PhaseMacroExpand::expand_allocate_common(
       transform_later(new_alloc_bytes);
       fast_oop_rawmem = make_store(fast_oop_ctrl, store_eden_top, alloc_bytes_adr,
                                    0, new_alloc_bytes, T_LONG);
+    }
+
+    if (UseShenandoahGC) {
+      // Bump up object by one word. The preceding word is used for
+      // the Shenandoah brooks pointer.
+      fast_oop = new (C) AddPNode(top(), fast_oop, _igvn.MakeConX(8));
+      transform_later(fast_oop);
     }
 
     InitializeNode* init = alloc->initialization();
@@ -1642,6 +1656,11 @@ PhaseMacroExpand::initialize_object(AllocateNode* alloc,
     ciKlass* k = _igvn.type(klass_node)->is_klassptr()->klass();
     if (k->is_array_klass())    // we know the exact header size in most cases:
       header_size = Klass::layout_helper_header_size(k->layout_helper());
+  }
+
+  if (UseShenandoahGC) {
+    // Initialize Shenandoah brooks pointer to point to the object itself.
+    rawmem = make_store(control, rawmem, object, -8, object, T_OBJECT);
   }
 
   // Clear the object body, if necessary.
