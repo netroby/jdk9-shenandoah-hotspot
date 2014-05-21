@@ -186,6 +186,7 @@ public:
     size_t targetStartMarking = capacity / 16;
     ShenandoahHeap* heap = ShenandoahHeap::heap();
     size_t threshold_bytes_allocated = heap->capacity() / 4;
+
     if (used > targetStartMarking
         && heap->_bytesAllocSinceCM > threshold_bytes_allocated) {
       // Need to check that an appropriate number of regions have
@@ -203,6 +204,114 @@ public:
   }
 };
 
+static uintx clamp(uintx value, uintx min, uintx max) {
+  value = MAX2(value, min);
+  value = MIN2(value, max);
+  return value;
+}
+
+static double get_percent(uintx value) {
+  double _percent = static_cast<double>(clamp(value, 0, 100));
+  return _percent / 100.;
+}
+
+class DynamicHeuristics : public ShenandoahHeuristics {
+private:
+  double _used_threshold_factor;
+  double _garbage_threshold_factor;
+  double _allocation_threshold_factor;
+
+  uintx _used_threshold;
+  uintx _garbage_threshold;
+  uintx _allocation_threshold;
+
+public:
+  DynamicHeuristics() : ShenandoahHeuristics() {
+    if (PrintGCDetails) {
+      tty->print_cr("Initializing dynamic heuristics");
+    }
+
+    _used_threshold = 0;
+    _garbage_threshold = 0;
+    _allocation_threshold = 0;
+
+    _used_threshold_factor = 0.;
+    _garbage_threshold_factor = 0.;
+    _allocation_threshold_factor = 0.;
+  }
+
+  virtual ~DynamicHeuristics() {}
+
+  virtual bool should_start_concurrent_mark(size_t used, size_t capacity) const {
+
+    bool shouldStartConcurrentMark = false;
+
+    ShenandoahHeap* heap = ShenandoahHeap::heap();
+    size_t targetStartMarking = capacity * _used_threshold_factor;
+
+    size_t threshold_bytes_allocated = heap->capacity() * _allocation_threshold_factor;
+    if (used > targetStartMarking &&
+        heap->_bytesAllocSinceCM > threshold_bytes_allocated)
+    {
+      // Need to check that an appropriate number of regions have
+      // been allocated since last concurrent mark too.
+      shouldStartConcurrentMark = true;
+    }
+
+    return shouldStartConcurrentMark;
+  }
+
+  virtual void choose_collection_and_free_sets(ShenandoahHeapRegionSet* region_set,
+                                               ShenandoahHeapRegionSet* collection_set,
+                                               ShenandoahHeapRegionSet* free_set) const
+  {
+    region_set->set_garbage_threshold(ShenandoahHeapRegion::RegionSizeBytes * _garbage_threshold_factor);
+    region_set->choose_collection_and_free_sets(collection_set, free_set);
+  }
+
+  void set_used_threshold(uintx used_threshold) {
+    this->_used_threshold_factor = get_percent(used_threshold);
+    this->_used_threshold = used_threshold;
+  }
+
+  void set_garbage_threshold(uintx garbage_threshold) {
+    this->_garbage_threshold_factor = get_percent(garbage_threshold);
+    this->_garbage_threshold = _garbage_threshold;
+  }
+
+  void set_allocation_threshold(uintx allocationThreshold) {
+    this->_allocation_threshold_factor = get_percent(allocationThreshold);
+    this->_allocation_threshold = allocationThreshold;
+  }
+
+  uintx get_allocation_threshold() {
+    return this->_allocation_threshold;
+  }
+
+  uintx get_garbage_threshold() {
+    return this->_garbage_threshold;
+  }
+
+  uintx get_used_threshold() {
+    return this->_used_threshold;
+  }
+};
+
+
+static DynamicHeuristics *configureDynamicHeuristics() {
+  DynamicHeuristics *heuristics = new DynamicHeuristics();
+
+  heuristics->set_garbage_threshold(ShenandoahGarbageThreshold);
+  heuristics->set_allocation_threshold(ShenandoahAllocationThreshold);
+  heuristics->set_used_threshold(ShenandoahUsedThreshold);
+  if (ShenandoahLogConfig) {
+    tty->print_cr("Shenandoah dynamic heuristics thresholds: allocation %d, used %d, garbage %d",
+                  heuristics->get_allocation_threshold(),
+                  heuristics->get_used_threshold(),
+                  heuristics->get_garbage_threshold());
+  }
+  return heuristics;
+}
 
 ShenandoahCollectorPolicy::ShenandoahCollectorPolicy() {
   initialize_all();
@@ -227,6 +336,11 @@ ShenandoahCollectorPolicy::ShenandoahCollectorPolicy() {
         tty->print_cr("Shenandoah heuristics: lazy");
       }
       _heuristics = new LazyHeuristics();
+    } else if (strcmp(ShenandoahGCHeuristics, "dynamic") == 0) {
+      if (ShenandoahLogConfig) {
+        tty->print_cr("Shenandoah heuristics: dynamic");
+      }
+      _heuristics = configureDynamicHeuristics();
     } else {
       fatal("Unknown -XX:ShenandoahGCHeuristics option");
     }

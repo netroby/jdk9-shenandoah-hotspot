@@ -1406,7 +1406,25 @@ class CommandLineFlags {
           "Turn on/off concurrent evacuation in Shenandoah")                \
                                                                             \
   product(ccstr, ShenandoahGCHeuristics, NULL,                              \
-          "The heuristics to use in Shenandoah GC; possible values: statusquo, aggressive, halfway, lazy") \
+          "The heuristics to use in Shenandoah GC; possible values: "       \
+          "statusquo, aggressive, halfway, lazy, dynamic")                  \
+                                                                            \
+  product(uintx, ShenandoahGarbageThreshold, 50,                            \
+          "Sets the percentage of garbage a region need to contain before " \
+          "it can be marked for collection. Applies to "                    \
+          "Shenandoah GC dynamic Heuristic mode only (ignored otherwise)")  \
+                                                                            \
+  product(uintx, ShenandoahUsedThreshold, 6,                                \
+          "Set the percentage of heap used in relation to the total "       \
+          "capacity before a region can enter the concurrent marking "      \
+          "phase. Applies to Shenandoah GC dynamic Heuristic mode only "    \
+          "(ignored otherwise)")                                            \
+                                                                            \
+  product(uintx, ShenandoahAllocationThreshold, 25,                         \
+          "Set the number of bytes allocated since last GC cycle before"    \
+          "a region can enter the concurrent marking "                      \
+          "phase. Applies to Shenandoah GC dynamic Heuristic mode only "    \
+          "(ignored otherwise)")                                            \
                                                                             \
   product(bool, ShenandoahPrintCollectionSet, false,                        \
           "Print the collection set before each GC phase")                  \
