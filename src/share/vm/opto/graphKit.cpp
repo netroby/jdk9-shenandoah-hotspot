@@ -26,6 +26,7 @@
 #include "compiler/compileLog.hpp"
 #include "gc_implementation/g1/g1SATBCardTableModRefBS.hpp"
 #include "gc_implementation/g1/heapRegion.hpp"
+#include "gc_implementation/shenandoah/shenandoahBarrierSet.hpp"
 #include "gc_interface/collectedHeap.hpp"
 #include "memory/barrierSet.hpp"
 #include "memory/cardTableModRefBS.hpp"
@@ -3130,7 +3131,7 @@ FastLockNode* GraphKit::shared_lock(Node* obj) {
 
   assert(dead_locals_are_killed(), "should kill locals before sync. point");
 
-  obj = shenandoah_read_barrier(obj);
+  obj = shenandoah_write_barrier(obj);
 
   // Box the stack location
   Node* box = _gvn.transform(new (C) BoxLockNode(next_monitor()));
@@ -3196,7 +3197,7 @@ void GraphKit::shared_unlock(Node* box, Node* obj) {
     return;
   }
 
-  obj = shenandoah_read_barrier(obj);
+  obj = shenandoah_write_barrier(obj);
 
   // Memory barrier to avoid floating things down past the locked region
   insert_mem_bar(Op_MemBarReleaseLock);
@@ -4229,8 +4230,56 @@ Node* GraphKit::shenandoah_read_barrier(Node* obj) {
     set_control( _gvn.transform(region) );
     record_for_igvn(region);
 
-    return _gvn.transform(phi);
+    phi = _gvn.transform(phi);
+    return phi;
 
+  } else {
+    return obj;
+  }
+}
+
+Node* GraphKit::shenandoah_write_barrier(Node* obj) {
+
+  if (UseShenandoahGC) {
+
+    const TypePtr* obj_type = _gvn.type(obj)->is_ptr();
+
+    // Fast path 1: We know it's NULL, so simply return it.
+    if (obj_type->higher_equal(TypePtr::NULL_PTR)) {
+      return obj;
+    }
+
+    // Transform type into a non-constant type to prevent constants optimizations.
+    // This is correct, because it's no longer a constant anymore. It can be the old
+    // or new copy of the object.
+    const TypePtr* barrier_type = NULL;
+    if (obj_type->isa_instptr()) {
+      const TypeInstPtr* inst_ptr = obj_type->is_instptr();
+      barrier_type = TypeInstPtr::make(TypePtr::BotPTR, inst_ptr->klass(),
+                                       inst_ptr->klass_is_exact(), NULL, inst_ptr->offset(),
+                                       inst_ptr->instance_id(), inst_ptr->speculative());
+    } else if (obj_type->isa_aryptr()) {
+      const TypeAryPtr* ary_ptr = obj_type->is_aryptr();
+      barrier_type = TypeAryPtr::make(TypePtr::BotPTR, NULL, ary_ptr->ary(),
+                                      ary_ptr->klass(), ary_ptr->klass_is_exact(),
+                                      ary_ptr->offset(), ary_ptr->instance_id(),
+                                      ary_ptr->speculative(), ary_ptr->is_autobox_cache());
+    } else {
+      ShouldNotReachHere();
+    }
+
+    Node *call = make_runtime_call(RC_LEAF | RC_NO_IO,
+                                   OptoRuntime::shenandoah_write_barrier_Type(),
+                                   CAST_FROM_FN_PTR(address, ShenandoahBarrierSet::resolve_and_maybe_copy_oop_static),
+                                   "shenandoah_write_barrier",
+                                   barrier_type->add_offset(-8),
+                                   obj);
+
+    Node* result = _gvn.transform(new (C) ProjNode(call, TypeFunc::Parms + 0));
+    Node* result_cast = _gvn.transform(new (C) CheckCastPPNode(control(), result, barrier_type));
+
+    return result_cast;
+    
   } else {
     return obj;
   }

@@ -866,6 +866,7 @@ class GraphKit : public Phase {
   Node* cast_array_to_stable(Node* ary, const TypeAryPtr* ary_type);
 
   Node* shenandoah_read_barrier(Node* obj);
+  Node* shenandoah_write_barrier(Node* obj);
 
 };
 

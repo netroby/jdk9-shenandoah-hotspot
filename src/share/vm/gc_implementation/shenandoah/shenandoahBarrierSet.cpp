@@ -304,7 +304,6 @@ oop ShenandoahBarrierSet::resolve_and_maybe_copy_oop_work(oop src) {
 
   if (sh->heap_region_containing(src)->is_in_collection_set()) {
     return resolve_and_maybe_copy_oop_work2(src);
-    assert(sh->is_evacuation_in_progress(), "only attempt evacuation during evacuation");
     oop dst = sh->evacuate_object(src, _allocator);
     assert(sh->is_in(dst), "result should be in the heap");
     return dst;
@@ -316,7 +315,6 @@ oop ShenandoahBarrierSet::resolve_and_maybe_copy_oop_work(oop src) {
 oop ShenandoahBarrierSet::resolve_and_maybe_copy_oop_work2(oop src) {
   ShenandoahHeap *sh = (ShenandoahHeap*) Universe::heap();
   assert(src != NULL, "only evacuated non NULL oops");
-  assert(sh->is_evacuation_in_progress(), "only attempt evacuation during evacuation");
   oop dst = sh->evacuate_object(src, _allocator);
 #ifdef ASSERT
     if (ShenandoahTraceEvacuations) {
@@ -341,10 +339,10 @@ oop ShenandoahBarrierSet::resolve_and_maybe_copy_oopHelper(oop src) {
     }
 }
 
-IRT_LEAF(oop, ShenandoahBarrierSet::resolve_and_maybe_copy_oop_static(oop src))
-oop result = ((ShenandoahBarrierSet*)oopDesc::bs())->resolve_and_maybe_copy_oop_work(src);
-  // tty->print_cr("called write barrier with: %p result: %p", src, result);
-  return result;
+IRT_LEAF(oopDesc*, ShenandoahBarrierSet::resolve_and_maybe_copy_oop_static(oopDesc* src))
+  oop result = ((ShenandoahBarrierSet*)oopDesc::bs())->resolve_and_maybe_copy_oop(oop(src));
+  // tty->print_cr("called static write barrier with: %p result: %p copy: %d", (oopDesc*) src, (oopDesc*) result, src != result);
+  return (oopDesc*) result;
 IRT_END
 
 IRT_LEAF(oopDesc*, ShenandoahBarrierSet::resolve_and_maybe_copy_oop_static2(oopDesc* src))

@@ -1261,6 +1261,22 @@ const TypeFunc *OptoRuntime::dtrace_object_alloc_Type() {
   return TypeFunc::make(domain,range);
 }
 
+/**
+ * oop resolve_and_maybe_copy_oop_static(oop obj)
+ */
+const TypeFunc* OptoRuntime::shenandoah_write_barrier_Type() {
+  // create input type (domain)
+  const Type** fields = TypeTuple::fields(1);
+  fields[TypeFunc::Parms+0] = TypeOopPtr::BOTTOM;
+
+  const TypeTuple* domain = TypeTuple::make(TypeFunc::Parms+1, fields);
+
+  // result type needed
+  fields = TypeTuple::fields(1);
+  fields[TypeFunc::Parms+0] = TypeOopPtr::BOTTOM;
+  const TypeTuple* range = TypeTuple::make(TypeFunc::Parms + 1, fields);
+  return TypeFunc::make(domain, range);
+}
 
 JRT_ENTRY_NO_ASYNC(void, OptoRuntime::register_finalizer(oopDesc* obj, JavaThread* thread))
   assert(obj->is_oop(), "must be a valid oop");

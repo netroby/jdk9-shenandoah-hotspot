@@ -964,6 +964,30 @@ void ShenandoahHeap::update_roots() {
   COMPILER2_PRESENT(DerivedPointerTable::update_pointers());
 }
 
+class ShenandoahEvacuateUpdateRootsClosure: public ExtendedOopClosure {
+
+  void do_oop(oop* p)       {
+    *p = oopDesc::bs()->resolve_and_maybe_copy_oop(*p);
+  }
+
+  void do_oop(narrowOop* p) {
+    Unimplemented();
+  }
+
+};
+
+
+void ShenandoahHeap::evacuate_and_update_roots() {
+
+  COMPILER2_PRESENT(DerivedPointerTable::clear());
+
+  ShenandoahEvacuateUpdateRootsClosure cl;
+  roots_iterate(&cl);
+
+  COMPILER2_PRESENT(DerivedPointerTable::update_pointers());
+}
+
+
 void ShenandoahHeap::do_evacuation() {
   assert(Thread::current()->is_VM_thread() || ShenandoahConcurrentEvacuation, "Only evacuate from VMThread unless we do concurrent evacuation");
 

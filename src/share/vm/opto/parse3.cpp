@@ -281,8 +281,8 @@ void Parse::do_put_xxx(Node* obj, ciField* field, bool is_field) {
   // another volatile read.
   if (is_vol)  insert_mem_bar(Op_MemBarRelease);
 
-  // Insert read barrier for Shenandoah.
-  obj = shenandoah_read_barrier(obj);
+  // Insert write barrier for Shenandoah.
+  obj = shenandoah_write_barrier(obj);
 
   // Compute address and memory type.
   int offset = field->offset_in_bytes();

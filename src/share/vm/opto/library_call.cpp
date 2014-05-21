@@ -2557,7 +2557,11 @@ bool LibraryCallKit::inline_unsafe_access(bool is_native_ptr, bool is_store, Bas
   if (!is_native_ptr) {
     // The base is either a Java object or a value produced by Unsafe.staticFieldBase
     Node* base = argument(1);  // type: oop
-    base = shenandoah_read_barrier(base);
+    if (is_store) {
+      base = shenandoah_write_barrier(base);
+    } else {
+      base = shenandoah_read_barrier(base);
+    }
     // The offset is a value produced by Unsafe.staticFieldOffset or Unsafe.objectFieldOffset
     offset = argument(2);  // type: long
     // We currently rely on the cookies produced by Unsafe.xxxFieldOffset
@@ -2882,7 +2886,7 @@ bool LibraryCallKit::inline_unsafe_load_store(BasicType type, LoadStoreKind kind
     return true;
   }
 
-  base = shenandoah_read_barrier(base);
+  base = shenandoah_write_barrier(base);
 
   // Build field offset expression.
   // We currently rely on the cookies produced by Unsafe.xxxFieldOffset
@@ -2971,13 +2975,13 @@ bool LibraryCallKit::inline_unsafe_load_store(BasicType type, LoadStoreKind kind
       if (_gvn.type(oldval) == TypePtr::NULL_PTR) {
         oldval = _gvn.makecon(TypePtr::NULL_PTR);
       }
-      oldval = shenandoah_read_barrier(oldval);
+      oldval = shenandoah_write_barrier(oldval);
 
       if (UseShenandoahGC) {
         // We need to update the value in memory in order to avoid comparison failures
         // (false negatives).
         Node* current = make_load(control(), adr, TypeInstPtr::BOTTOM, type, TypeInstPtr::BOTTOM, false);
-        Node* new_current = shenandoah_read_barrier(current);
+        Node* new_current = shenandoah_write_barrier(current);
         Node* cas_current = _gvn.transform(new (C) CompareAndSwapPNode(control(), mem, adr, new_current, current));
         set_control(cas_current);
       }
@@ -3092,7 +3096,7 @@ bool LibraryCallKit::inline_unsafe_ordered_store(BasicType type) {
     return true;
   }
 
-  base = shenandoah_read_barrier(base);
+  base = shenandoah_write_barrier(base);
 
   // Build field offset expression.
   assert(Unsafe_field_offset_to_byte_offset(11) == 11, "fieldOffset must be byte-scaled");
@@ -3919,7 +3923,6 @@ bool LibraryCallKit::inline_array_copyOf(bool is_copyOfRange) {
       newcopy = new_array(klass_node, length, 0);  // no argments to push
 
       original = shenandoah_read_barrier(original);
-      newcopy = shenandoah_read_barrier(newcopy);
 
       // Generate a direct call to the right arraycopy function(s).
       // We know the copy is disjoint but we might not know if the
@@ -4369,7 +4372,7 @@ bool LibraryCallKit::inline_unsafe_copyMemory() {
          "fieldOffset must be byte-scaled");
 
   src_ptr = shenandoah_read_barrier(src_ptr);
-  dst_ptr = shenandoah_read_barrier(dst_ptr);
+  dst_ptr = shenandoah_write_barrier(dst_ptr);
 
   Node* src = make_unsafe_address(src_ptr, src_off);
   Node* dst = make_unsafe_address(dst_ptr, dst_off);
@@ -4719,7 +4722,7 @@ bool LibraryCallKit::inline_arraycopy() {
   Node* length      = argument(4);  // type: int
 
   src = shenandoah_read_barrier(src);
-  dest = shenandoah_read_barrier(dest);
+  dest = shenandoah_write_barrier(dest);
 
   // Compile time checks.  If any of these checks cannot be verified at compile time,
   // we do not make a fast path for this call.  Instead, we let the call remain as it
@@ -5726,7 +5729,7 @@ bool LibraryCallKit::inline_encodeISOArray() {
   Node *length      = argument(4);
 
   src = shenandoah_read_barrier(src);
-  dst = shenandoah_read_barrier(dst);
+  dst = shenandoah_write_barrier(dst);
 
   const Type* src_type = src->Value(&_gvn);
   const Type* dst_type = dst->Value(&_gvn);
@@ -5967,7 +5970,7 @@ bool LibraryCallKit::inline_aescrypt_Block(vmIntrinsics::ID id) {
 
   // Resolve src and dest arrays for ShenandoahGC.
   src = shenandoah_read_barrier(src);
-  dest = shenandoah_read_barrier(dest);
+  dest = shenandoah_write_barrier(dest);
 
   // (1) src and dest are arrays.
   const Type* src_type = src->Value(&_gvn);
@@ -6027,7 +6030,7 @@ bool LibraryCallKit::inline_cipherBlockChaining_AESCrypt(vmIntrinsics::ID id) {
 
   // Resolve src and dest arrays for ShenandoahGC.
   src = shenandoah_read_barrier(src);
-  dest = shenandoah_read_barrier(dest);
+  dest = shenandoah_write_barrier(dest);
   
   // (1) src and dest are arrays.
   const Type* src_type = src->Value(&_gvn);
@@ -6074,7 +6077,7 @@ bool LibraryCallKit::inline_cipherBlockChaining_AESCrypt(vmIntrinsics::ID id) {
   // similarly, get the start address of the r vector
   Node* objRvec = load_field_from_object(cipherBlockChaining_object, "r", "[B", /*is_exact*/ false);
 
-  objRvec = shenandoah_read_barrier(objRvec);
+  objRvec = shenandoah_write_barrier(objRvec);
 
   if (objRvec == NULL) return false;
   Node* r_start = array_element_address(objRvec, intcon(0), T_BYTE);

@@ -865,7 +865,7 @@ void ConnectionGraph::add_call_node(CallNode* call) {
   } else {
     // An other type of call, assume the worst case:
     // returned value is unknown and globally escapes.
-    assert(call->Opcode() == Op_CallDynamicJava, "add failed case check");
+    assert(call->Opcode() == Op_CallDynamicJava || call->Opcode() == Op_CallLeaf, "add failed case check");
     map_ideal_node(call, phantom_obj);
   }
 }
@@ -935,6 +935,7 @@ void ConnectionGraph::process_call_arguments(CallNode *call) {
                  (strcmp(call->as_CallLeaf()->_name, "g1_wb_pre")  == 0 ||
                   strcmp(call->as_CallLeaf()->_name, "g1_wb_post") == 0 ||
                   strcmp(call->as_CallLeaf()->_name, "shenandoah_clone_barrier")  == 0 ||
+                  strcmp(call->as_CallLeaf()->_name, "shenandoah_write_barrier")  == 0 ||
                   strcmp(call->as_CallLeaf()->_name, "updateBytesCRC32") == 0 ||
                   strcmp(call->as_CallLeaf()->_name, "aescrypt_encryptBlock") == 0 ||
                   strcmp(call->as_CallLeaf()->_name, "aescrypt_decryptBlock") == 0 ||

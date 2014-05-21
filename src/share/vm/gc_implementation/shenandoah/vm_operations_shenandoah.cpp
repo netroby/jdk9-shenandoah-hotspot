@@ -46,6 +46,8 @@ void VM_ShenandoahFinishMark::doit() {
 
     if (! ShenandoahConcurrentEvacuation) {
       sh->do_evacuation();
+    } else {
+      sh->evacuate_and_update_roots();
     }
   } else {
     // This makes the GC background thread wait, and kick off evacuation as

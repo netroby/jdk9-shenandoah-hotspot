@@ -79,7 +79,7 @@ public:
   oop resolve_and_maybe_copy_oop_work(oop src);
   oop resolve_and_maybe_copy_oop_work2(oop src);
   virtual oop resolve_and_maybe_copy_oop(oop src);
-  static oop resolve_and_maybe_copy_oop_static(oop src);
+  static oopDesc* resolve_and_maybe_copy_oop_static(oopDesc* src);
   static oopDesc* resolve_and_maybe_copy_oop_static2(oopDesc* src);
 
 #ifndef CC_INTERP

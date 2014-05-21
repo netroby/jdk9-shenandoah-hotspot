@@ -266,6 +266,8 @@ public:
   void set_waiting_for_jni_before_gc(bool wait_for_jni);
   bool is_waiting_for_jni_before_gc();
 
+  void evacuate_and_update_roots();
+
 private:
 
   void update_roots();
