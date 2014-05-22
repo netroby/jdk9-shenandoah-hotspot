@@ -27,6 +27,7 @@
 #include "gc_implementation/g1/g1SATBCardTableModRefBS.hpp"
 #include "gc_implementation/g1/heapRegion.hpp"
 #include "gc_implementation/shenandoah/shenandoahBarrierSet.hpp"
+#include "gc_implementation/shenandoah/shenandoahHeap.hpp"
 #include "gc_interface/collectedHeap.hpp"
 #include "memory/barrierSet.hpp"
 #include "memory/cardTableModRefBS.hpp"
@@ -4155,6 +4156,35 @@ Node* GraphKit::cast_array_to_stable(Node* ary, const TypeAryPtr* ary_type) {
   return _gvn.transform(new(C) CastPPNode(ary, ary_type->cast_to_stable(true)));
 }
 
+Node* GraphKit::make_shenandoah_read_barrier(Node* ctrl, Node* obj, const Type* obj_type) {
+
+  // Construct the address of the brooks ptr and the load.
+  Node* bp_addr = basic_plus_adr(obj, -0x8);
+  const TypePtr* adr_type = bp_addr->bottom_type()->is_ptr();
+  assert(adr_type->offset() == -8, "sane address type offset");
+  Node* bp_load = make_load(ctrl, bp_addr, obj_type, T_OBJECT, adr_type, false);
+  return bp_load;
+}
+
+const Type* GraphKit::cast_to_non_constant(const Type* type) {
+
+  const Type* non_const_type = NULL;
+  if (type->isa_instptr()) {
+    const TypeInstPtr* inst_ptr = type->is_instptr();
+    non_const_type = TypeInstPtr::make(TypePtr::BotPTR, inst_ptr->klass(),
+                                       inst_ptr->klass_is_exact(), NULL, inst_ptr->offset(),
+                                       inst_ptr->instance_id(), inst_ptr->speculative());
+  } else if (type->isa_aryptr()) {
+    const TypeAryPtr* ary_ptr = type->is_aryptr();
+    non_const_type = TypeAryPtr::make(TypePtr::BotPTR, NULL, ary_ptr->ary(),
+                                      ary_ptr->klass(), ary_ptr->klass_is_exact(),
+                                      ary_ptr->offset(), ary_ptr->instance_id(),
+                                      ary_ptr->speculative(), ary_ptr->is_autobox_cache());
+  } else {
+    ShouldNotReachHere();
+  }
+  return non_const_type;
+}
 
 Node* GraphKit::shenandoah_read_barrier(Node* obj) {
 
@@ -4173,40 +4203,15 @@ Node* GraphKit::shenandoah_read_barrier(Node* obj) {
 
     // Fast path 2: we know it's not null. Return a simple barrier.
     if (null_ctrl == top()) {
-      // Construct the address of the brooks ptr and the load.
-      Node* bp_addr = basic_plus_adr(obj, -0x8);
-      const TypePtr* adr_type = bp_addr->bottom_type()->is_ptr();
-      assert(adr_type->offset() == -8, "sane address type offset");
-      Node* bp_load = make_load(NULL, bp_addr, obj_type, T_OBJECT, adr_type, false);
+      Node* bp_load = make_shenandoah_read_barrier(NULL, obj, obj_type);
       return bp_load;
     }
 
     // Transform type into a non-constant type to prevent constants optimizations.
     // This is correct, because it's no longer a constant anymore. It can be the old
     // or new copy of the object.
-    const Type* barrier_type = NULL;
-    const Type* load_type = NULL;
-    if (obj_type->isa_instptr()) {
-      const TypeInstPtr* inst_ptr = obj_type->is_instptr();
-      barrier_type = TypeInstPtr::make(TypePtr::BotPTR, inst_ptr->klass(),
-                                       inst_ptr->klass_is_exact(), NULL, inst_ptr->offset(),
-                                       inst_ptr->instance_id(), inst_ptr->speculative());
-      load_type = TypeInstPtr::make(TypePtr::NotNull, inst_ptr->klass(),
-                                    inst_ptr->klass_is_exact(), NULL, inst_ptr->offset(),
-                                    inst_ptr->instance_id(), inst_ptr->speculative());
-    } else if (obj_type->isa_aryptr()) {
-      const TypeAryPtr* ary_ptr = obj_type->is_aryptr();
-      barrier_type = TypeAryPtr::make(TypePtr::BotPTR, NULL, ary_ptr->ary(),
-                                      ary_ptr->klass(), ary_ptr->klass_is_exact(),
-                                      ary_ptr->offset(), ary_ptr->instance_id(),
-                                      ary_ptr->speculative(), ary_ptr->is_autobox_cache());
-      load_type = TypeAryPtr::make(TypePtr::NotNull, NULL, ary_ptr->ary(),
-                                   ary_ptr->klass(), ary_ptr->klass_is_exact(),
-                                   ary_ptr->offset(), ary_ptr->instance_id(),
-                                   ary_ptr->speculative(), ary_ptr->is_autobox_cache());
-    } else {
-      ShouldNotReachHere();
-    }
+    const Type* barrier_type = cast_to_non_constant(obj_type);
+    const Type* load_type = barrier_type->join(TypePtr::NOTNULL);
 
     // Make the merge point.
     enum { _obj_path = 1, _null_path, PATH_LIMIT };
@@ -4216,11 +4221,7 @@ Node* GraphKit::shenandoah_read_barrier(Node* obj) {
     region->init_req(_null_path, null_ctrl);
     phi   ->init_req(_null_path, null()); // Set null path value
 
-    // Construct the address of the brooks ptr and the load.
-    Node* bp_addr = basic_plus_adr(obj, -0x8);
-    const TypePtr* adr_type = bp_addr->bottom_type()->is_ptr();
-    assert(adr_type->offset() == -8, "sane address type offset");
-    Node* bp_load = make_load(control(), bp_addr, load_type, T_OBJECT, adr_type, false);
+    Node* bp_load = make_shenandoah_read_barrier(control(), obj, barrier_type);
 
     // Plug in the success path to the general merge in slot 1.
     region->init_req(_obj_path, control());
@@ -4238,6 +4239,57 @@ Node* GraphKit::shenandoah_read_barrier(Node* obj) {
   }
 }
 
+Node* GraphKit::make_shenandoah_write_barrier(Node* ctrl, Node* obj, const Type* obj_type) {
+
+  obj = make_shenandoah_read_barrier(ctrl, obj, obj_type);
+
+  // Construct check for evacuation-in-progress.
+  Node* evac_in_progr_addr = makecon(TypeRawPtr::make(ShenandoahHeap::evacuation_in_progress_addr()));
+  Node* evac_in_progr = make_load(control(), evac_in_progr_addr, TypeInt::BOOL, T_INT, Compile::AliasIdxRaw, false);
+  Node* chk = _gvn.transform(new (C) CmpINode(evac_in_progr, intcon(0)));
+  Node* test = _gvn.transform(new (C) BoolNode(chk, BoolTest::eq));
+
+  Node* oldmem = map()->memory();
+
+  // Make the merge point.
+  enum { _evac_path = 1, _no_evac_path, PATH_LIMIT };
+  RegionNode* region = new(C) RegionNode(PATH_LIMIT);
+  Node*       phi    = new(C) PhiNode(region, obj_type);
+
+  // Make the actual if-branch.
+  IfNode* iff = create_and_map_if(control(), test, PROB_LIKELY_MAG(3), COUNT_UNKNOWN);
+  Node* iftrue = _gvn.transform(new (C) IfTrueNode(iff));
+  Node* iffalse = _gvn.transform(new (C) IfFalseNode(iff));
+
+  // No-evacuation path.
+  region->init_req(_no_evac_path, iftrue);
+  phi->init_req(_no_evac_path, obj);
+
+  // Evacuation path.
+  set_control(iffalse);
+  Node *call = make_runtime_call(RC_LEAF | RC_NO_IO,
+                                 OptoRuntime::shenandoah_write_barrier_Type(),
+                                 CAST_FROM_FN_PTR(address, ShenandoahBarrierSet::resolve_and_maybe_copy_oop_static),
+                                 "shenandoah_write_barrier",
+                                 obj_type->is_ptr()->add_offset(-8),
+                                 obj);
+
+  Node* result = _gvn.transform(new (C) ProjNode(call, TypeFunc::Parms + 0));
+  Node* result_cast = _gvn.transform(new (C) CheckCastPPNode(control(), result, obj_type));
+
+  region->init_req(_evac_path, control());
+  phi->init_req(_evac_path, result_cast);
+
+  // Return final merged results
+  set_control( _gvn.transform(region) );
+  record_for_igvn(region);
+  phi = _gvn.transform(phi);
+
+  merge_memory(oldmem, region, _no_evac_path);
+
+  return phi;
+}
+
 Node* GraphKit::shenandoah_write_barrier(Node* obj) {
 
   if (UseShenandoahGC) {
@@ -4249,37 +4301,49 @@ Node* GraphKit::shenandoah_write_barrier(Node* obj) {
       return obj;
     }
 
+    // Fast path 2: we know it's not null.
+    if (obj_type->meet(TypePtr::NULL_PTR) != obj_type) {
+      return make_shenandoah_write_barrier(NULL, obj, obj_type);
+    }
+
+    Node* oldmem = map()->memory();
+
     // Transform type into a non-constant type to prevent constants optimizations.
     // This is correct, because it's no longer a constant anymore. It can be the old
     // or new copy of the object.
-    const TypePtr* barrier_type = NULL;
-    if (obj_type->isa_instptr()) {
-      const TypeInstPtr* inst_ptr = obj_type->is_instptr();
-      barrier_type = TypeInstPtr::make(TypePtr::BotPTR, inst_ptr->klass(),
-                                       inst_ptr->klass_is_exact(), NULL, inst_ptr->offset(),
-                                       inst_ptr->instance_id(), inst_ptr->speculative());
-    } else if (obj_type->isa_aryptr()) {
-      const TypeAryPtr* ary_ptr = obj_type->is_aryptr();
-      barrier_type = TypeAryPtr::make(TypePtr::BotPTR, NULL, ary_ptr->ary(),
-                                      ary_ptr->klass(), ary_ptr->klass_is_exact(),
-                                      ary_ptr->offset(), ary_ptr->instance_id(),
-                                      ary_ptr->speculative(), ary_ptr->is_autobox_cache());
-    } else {
-      ShouldNotReachHere();
-    }
+    const Type* barrier_type = cast_to_non_constant(obj_type);
 
-    Node *call = make_runtime_call(RC_LEAF | RC_NO_IO,
-                                   OptoRuntime::shenandoah_write_barrier_Type(),
-                                   CAST_FROM_FN_PTR(address, ShenandoahBarrierSet::resolve_and_maybe_copy_oop_static),
-                                   "shenandoah_write_barrier",
-                                   barrier_type->add_offset(-8),
-                                   obj);
+    // Make the merge point.
+    enum { _obj_path = 1, _null_path, PATH_LIMIT };
+    RegionNode* region = new(C) RegionNode(PATH_LIMIT);
+    Node*       phi    = new(C) PhiNode(region, barrier_type);
 
-    Node* result = _gvn.transform(new (C) ProjNode(call, TypeFunc::Parms + 0));
-    Node* result_cast = _gvn.transform(new (C) CheckCastPPNode(control(), result, barrier_type));
+    // Construct the null check.
+    Node* chk = _gvn.transform(new (C) CmpPNode(obj, null()));
+    Node* test = _gvn.transform(new (C) BoolNode(chk, BoolTest::ne));
+    IfNode* iff = create_and_map_if(control(), test, PROB_LIKELY_MAG(3), COUNT_UNKNOWN);
+    Node* iftrue = _gvn.transform(new (C) IfTrueNode(iff));
+    Node* iffalse = _gvn.transform(new (C) IfFalseNode(iff));
 
-    return result_cast;
-    
+    // Null-path.
+    region->init_req(_null_path, iffalse);
+    phi   ->init_req(_null_path, null()); // Set null path value
+
+    // Not-null path.
+    set_control(iftrue);
+    Node* wb = make_shenandoah_write_barrier(control(), obj, barrier_type);
+
+    region->init_req(_obj_path, control());
+    phi   ->init_req(_obj_path, wb);
+
+    // Return final merged results
+    set_control( _gvn.transform(region) );
+    record_for_igvn(region);
+    phi = _gvn.transform(phi);
+
+    merge_memory(oldmem, region, _null_path);
+
+    return phi;
   } else {
     return obj;
   }
