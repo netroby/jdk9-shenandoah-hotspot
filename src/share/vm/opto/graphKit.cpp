@@ -4117,9 +4117,9 @@ void GraphKit::store_String_offset(Node* ctrl, Node* str, Node* value) {
   int offset_field_idx = C->get_alias_index(offset_field_type);
 
   // TODO: See comment in load_String_offset().
-  str = shenandoah_read_barrier(str);
+  str = shenandoah_write_barrier(str);
 
-  store_to_memory(ctrl, basic_plus_adr(str, offset_offset),
+  store_to_memory(control(), basic_plus_adr(str, offset_offset),
                   value, T_INT, offset_field_idx);
 }
 
@@ -4130,9 +4130,9 @@ void GraphKit::store_String_value(Node* ctrl, Node* str, Node* value) {
   const TypePtr* value_field_type = string_type->add_offset(value_offset);
 
   // TODO: See comment in load_String_offset().
-  str = shenandoah_read_barrier(str);
+  str = shenandoah_write_barrier(str);
 
-  store_oop_to_object(ctrl, str,  basic_plus_adr(str, value_offset), value_field_type,
+  store_oop_to_object(control(), str,  basic_plus_adr(str, value_offset), value_field_type,
       value, TypeAryPtr::CHARS, T_OBJECT);
 }
 
@@ -4144,9 +4144,9 @@ void GraphKit::store_String_length(Node* ctrl, Node* str, Node* value) {
   int count_field_idx = C->get_alias_index(count_field_type);
 
   // TODO: See comment in load_String_offset().
-  str = shenandoah_read_barrier(str);
+  str = shenandoah_write_barrier(str);
 
-  store_to_memory(ctrl, basic_plus_adr(str, count_offset),
+  store_to_memory(control(), basic_plus_adr(str, count_offset),
                   value, T_INT, count_field_idx);
 }
 
