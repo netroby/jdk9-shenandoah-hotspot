@@ -4166,26 +4166,6 @@ Node* GraphKit::make_shenandoah_read_barrier(Node* ctrl, Node* obj, const Type* 
   return bp_load;
 }
 
-const Type* GraphKit::cast_to_non_constant(const Type* type) {
-
-  const Type* non_const_type = NULL;
-  if (type->isa_instptr()) {
-    const TypeInstPtr* inst_ptr = type->is_instptr();
-    non_const_type = TypeInstPtr::make(TypePtr::BotPTR, inst_ptr->klass(),
-                                       inst_ptr->klass_is_exact(), NULL, inst_ptr->offset(),
-                                       inst_ptr->instance_id(), inst_ptr->speculative());
-  } else if (type->isa_aryptr()) {
-    const TypeAryPtr* ary_ptr = type->is_aryptr();
-    non_const_type = TypeAryPtr::make(TypePtr::BotPTR, NULL, ary_ptr->ary(),
-                                      ary_ptr->klass(), ary_ptr->klass_is_exact(),
-                                      ary_ptr->offset(), ary_ptr->instance_id(),
-                                      ary_ptr->speculative(), ary_ptr->is_autobox_cache());
-  } else {
-    ShouldNotReachHere();
-  }
-  return non_const_type;
-}
-
 Node* GraphKit::shenandoah_read_barrier(Node* obj) {
 
   if (UseShenandoahGC) {
@@ -4207,21 +4187,17 @@ Node* GraphKit::shenandoah_read_barrier(Node* obj) {
       return bp_load;
     }
 
-    // Transform type into a non-constant type to prevent constants optimizations.
-    // This is correct, because it's no longer a constant anymore. It can be the old
-    // or new copy of the object.
-    const Type* barrier_type = cast_to_non_constant(obj_type);
-    const Type* load_type = barrier_type->join(TypePtr::NOTNULL);
+    const Type* load_type = obj_type->join(TypePtr::NOTNULL);
 
     // Make the merge point.
     enum { _obj_path = 1, _null_path, PATH_LIMIT };
     RegionNode* region = new(C) RegionNode(PATH_LIMIT);
-    Node*       phi    = new(C) PhiNode(region, barrier_type);
+    Node*       phi    = new(C) PhiNode(region, obj_type);
     
     region->init_req(_null_path, null_ctrl);
     phi   ->init_req(_null_path, null()); // Set null path value
 
-    Node* bp_load = make_shenandoah_read_barrier(control(), obj, barrier_type);
+    Node* bp_load = make_shenandoah_read_barrier(control(), obj, obj_type);
 
     // Plug in the success path to the general merge in slot 1.
     region->init_req(_obj_path, control());
@@ -4308,15 +4284,10 @@ Node* GraphKit::shenandoah_write_barrier(Node* obj) {
 
     Node* oldmem = map()->memory();
 
-    // Transform type into a non-constant type to prevent constants optimizations.
-    // This is correct, because it's no longer a constant anymore. It can be the old
-    // or new copy of the object.
-    const Type* barrier_type = cast_to_non_constant(obj_type);
-
     // Make the merge point.
     enum { _obj_path = 1, _null_path, PATH_LIMIT };
     RegionNode* region = new(C) RegionNode(PATH_LIMIT);
-    Node*       phi    = new(C) PhiNode(region, barrier_type);
+    Node*       phi    = new(C) PhiNode(region, obj_type);
 
     // Construct the null check.
     Node* chk = _gvn.transform(new (C) CmpPNode(obj, null()));
@@ -4331,7 +4302,7 @@ Node* GraphKit::shenandoah_write_barrier(Node* obj) {
 
     // Not-null path.
     set_control(iftrue);
-    Node* wb = make_shenandoah_write_barrier(control(), obj, barrier_type);
+    Node* wb = make_shenandoah_write_barrier(control(), obj, obj_type);
 
     region->init_req(_obj_path, control());
     phi   ->init_req(_obj_path, wb);

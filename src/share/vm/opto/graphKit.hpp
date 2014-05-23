@@ -871,7 +871,6 @@ class GraphKit : public Phase {
 private:
   Node* make_shenandoah_read_barrier(Node* ctrl, Node* obj, const Type* type);
   Node* make_shenandoah_write_barrier(Node* ctrl, Node* obj, const Type* type);
-  const Type* cast_to_non_constant(const Type* type);
 };
 
 // Helper class to support building of control flow branches. Upon
