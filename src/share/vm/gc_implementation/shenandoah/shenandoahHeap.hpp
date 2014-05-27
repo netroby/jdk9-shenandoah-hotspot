@@ -285,9 +285,20 @@ private:
 
 };
 
+class ShenandoahMarkObjsClosure : public ObjectClosure {
+  uint _worker_id;
+  ShenandoahHeap* _heap;
+  ShenandoahConcurrentMark* _concurrent_mark;
+public: 
+  ShenandoahMarkObjsClosure(uint worker_id);
+
+  void do_object(oop p);
+};
+
 class ShenandoahMarkRefsClosure : public OopsInGenClosure {
   uint _worker_id;
   ShenandoahHeap* _heap;
+  ShenandoahMarkObjsClosure _mark_objs;
 
 public: 
   ShenandoahMarkRefsClosure(uint worker_id);
@@ -295,14 +306,6 @@ public:
   void do_oop_work(oop* p);
   void do_oop(narrowOop* p);
   void do_oop(oop* p);
-};
-  
-class ShenandoahMarkObjsClosure : public ObjectClosure {
-  uint _worker_id;
-public: 
-  ShenandoahMarkObjsClosure(uint worker_id);
-
-  void do_object(oop p);
 };
 
 #endif // SHARE_VM_GC_IMPLEMENTATION_SHENANDOAH_SHENANDOAHHEAP_HPP

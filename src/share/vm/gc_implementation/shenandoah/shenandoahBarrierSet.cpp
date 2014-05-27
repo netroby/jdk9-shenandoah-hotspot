@@ -248,51 +248,13 @@ void ShenandoahBarrierSet::write_region_work(MemRegion mr) {
   obj->oop_iterate(&cl);
 }
 
-oop ShenandoahBarrierSet::get_shenandoah_forwardee_helper(oop p) {
-  assert(UseShenandoahGC, "must only be called when Shenandoah is used.");
-  assert(Universe::heap()->is_in(p), "We shouldn't be calling this on objects not in the heap");
-  return BrooksPointer::get(p).get_forwardee();
-}
-
-
-oop ShenandoahBarrierSet::get_shenandoah_forwardee(oop p) {
-  oop result = get_shenandoah_forwardee_helper(p);
-
-#ifdef ASSERT
-    if (result != p) {
-      oop second_forwarding = get_shenandoah_forwardee_helper(result);
-
-      // We should never be forwarded more than once.
-      if (result != second_forwarding) {
-	ShenandoahHeap* sh = (ShenandoahHeap*) Universe::heap();
-	tty->print("first reference %p is in heap region:\n", (HeapWord*) p);
-	sh->heap_region_containing(p)->print();
-	tty->print("first_forwarding %p is in heap region:\n", (HeapWord*) result);
-	sh->heap_region_containing(result)->print();
-	tty->print("final reference %p is in heap region:\n", (HeapWord*) second_forwarding);
-	sh->heap_region_containing(second_forwarding)->print();
-	assert(get_shenandoah_forwardee_helper(result) == result, "Only one fowarding per customer");  
-      }
-    }
-#endif
-    return result;
-}
-
-
 oop ShenandoahBarrierSet::resolve_oop(oop src) {
-
-  if (src != NULL) {
-    oop result = get_shenandoah_forwardee(src);
-    assert(ShenandoahHeap::heap()->is_in(result) && result->is_oop(), "resolved oop must be a valid oop in the heap");
-    return result;
-  } else {
-    return NULL;
-  }
+  return ShenandoahBarrierSet::resolve_oop_static(src);
 }
 
 oop ShenandoahBarrierSet::maybe_resolve_oop(oop src) {
   if (Universe::heap()->is_in(src)) {
-    return get_shenandoah_forwardee(src);
+    return resolve_oop_static(src);
   } else {
     return src;
   }
@@ -329,7 +291,7 @@ oop ShenandoahBarrierSet::resolve_and_maybe_copy_oop_work2(oop src) {
 oop ShenandoahBarrierSet::resolve_and_maybe_copy_oopHelper(oop src) {
     if (src != NULL) {
       ShenandoahHeap *sh = (ShenandoahHeap*) Universe::heap();
-      oop tmp = get_shenandoah_forwardee(src);
+      oop tmp = resolve_oop_static(src);
       if (! sh->is_evacuation_in_progress()) {
         return tmp;
       }

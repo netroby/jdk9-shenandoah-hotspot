@@ -11,8 +11,11 @@ class ShenandoahBarrierSet: public BarrierSet {
 private:
   EvacuationAllocator* _allocator;
 
-  oop get_shenandoah_forwardee_helper(oop p);
-
+  static inline oop get_shenandoah_forwardee_helper(oop p) {
+    assert(UseShenandoahGC, "must only be called when Shenandoah is used.");
+    assert(Universe::heap()->is_in(p), "We shouldn't be calling this on objects not in the heap");
+    return oop( *((HeapWord**) ((HeapWord*) p) - 1)); //;
+  }
 
 public:
 
@@ -71,9 +74,42 @@ public:
   void write_ref_field_work(void* v, oop o);
   void write_region_work(MemRegion mr);
 
-  oop get_shenandoah_forwardee(oop p);
-
   virtual oop resolve_oop(oop src);
+
+  static inline oop resolve_oop_static_not_null(oop p) {
+    assert(p != NULL, "Must be NULL checked");
+
+    oop result = get_shenandoah_forwardee_helper(p);
+
+#ifdef ASSERT
+    if (result != p) {
+        oop second_forwarding = get_shenandoah_forwardee_helper(result);
+
+        // We should never be forwarded more than once.
+        if (result != second_forwarding) {
+          ShenandoahHeap* sh = (ShenandoahHeap*) Universe::heap();
+          tty->print("first reference %p is in heap region:\n", (HeapWord*) p);
+          sh->heap_region_containing(p)->print();
+          tty->print("first_forwarding %p is in heap region:\n", (HeapWord*) result);
+          sh->heap_region_containing(result)->print();
+          tty->print("final reference %p is in heap region:\n", (HeapWord*) second_forwarding);
+          sh->heap_region_containing(second_forwarding)->print();
+          assert(get_shenandoah_forwardee_helper(result) == result, "Only one fowarding per customer");
+        }
+    }
+#endif
+    assert(ShenandoahHeap::heap()->is_in(result) && result->is_oop(), "resolved oop must be a valid oop in the heap");
+    return result;
+  }
+
+  static inline oop resolve_oop_static(oop p) {
+    if (((HeapWord*) p) != NULL) {
+      return resolve_oop_static_not_null(p);
+    } else {
+      return p;
+    }
+  }
+
   virtual oop maybe_resolve_oop(oop src);
   oop resolve_and_maybe_copy_oopHelper(oop src);
   oop resolve_and_maybe_copy_oop_work(oop src);

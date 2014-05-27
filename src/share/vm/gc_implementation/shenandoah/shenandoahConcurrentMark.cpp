@@ -25,6 +25,7 @@ Copyright 2014 Red Hat, Inc. and/or its affiliates.
  *
  */
 
+#include "gc_implementation/shenandoah/shenandoahBarrierSet.hpp"
 #include "gc_implementation/shenandoah/shenandoahConcurrentMark.hpp"
 #include "gc_implementation/shenandoah/shenandoahHeap.hpp"
 #include "gc_implementation/shenandoah/brooksPointer.hpp"
@@ -182,12 +183,28 @@ void ShenandoahConcurrentMark::finishMarkFromRoots() {
 #endif
 }
 
+class ShenandoahSATBMarkObjsClosure : public ObjectClosure {
+  uint _worker_id;
+  ShenandoahMarkObjsClosure _wrapped;
+
+public:
+  ShenandoahSATBMarkObjsClosure(uint worker_id) :
+    _worker_id(worker_id),
+    _wrapped(ShenandoahMarkObjsClosure(worker_id)) { }
+
+  void do_object(oop obj) {
+    obj = ShenandoahBarrierSet::resolve_oop_static(obj);
+    _wrapped.do_object(obj);
+  }
+
+};
+
 void ShenandoahConcurrentMark::drain_satb_buffers(uint worker_id, bool remark) {
 
   // tty->print_cr("start draining SATB buffers");
 
   ShenandoahHeap* sh = (ShenandoahHeap*) Universe::heap();
-  ShenandoahMarkObjsClosure cl(worker_id);
+  ShenandoahSATBMarkObjsClosure cl(worker_id);
 
   SATBMarkQueueSet& satb_mq_set = JavaThread::satb_mark_queue_set();
   satb_mq_set.set_par_closure(worker_id, &cl);
@@ -207,7 +224,7 @@ void ShenandoahConcurrentMark::drain_satb_buffers(uint worker_id, bool remark) {
 bool ShenandoahConcurrentMark::drain_one_satb_buffer(uint worker_id) {
 
   ShenandoahHeap* sh = (ShenandoahHeap*) Universe::heap();
-  ShenandoahMarkObjsClosure cl(worker_id);
+  ShenandoahSATBMarkObjsClosure cl(worker_id);
 
   SATBMarkQueueSet& satb_mq_set = JavaThread::satb_mark_queue_set();
   satb_mq_set.set_par_closure(worker_id, &cl);

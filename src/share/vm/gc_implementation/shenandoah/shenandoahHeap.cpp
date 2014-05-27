@@ -1136,7 +1136,7 @@ oop ShenandoahHeap::maybe_update_oop_ref(oop* p) {
 #endif
     assert(is_in(heap_oop), "only ever call this on objects in the heap");
     assert(! (is_in(p) && heap_region_containing(p)->is_in_collection_set()), "we don't want to update references in from-space");
-    oop forwarded_oop = oopDesc::bs()->resolve_oop(heap_oop); // read brooks ptr
+    oop forwarded_oop = ShenandoahBarrierSet::resolve_oop_static_not_null(heap_oop); // read brooks ptr
     if (forwarded_oop != heap_oop) {
       // tty->print_cr("updating old ref: %p pointing to %p to new ref: %p", p, heap_oop, forwarded_oop);
       assert(forwarded_oop->is_oop(), "oop required");
@@ -1493,7 +1493,10 @@ oop ShenandoahHeap::oop_containing_oop_ptr(oop* p) {
  */
 
 ShenandoahMarkRefsClosure::ShenandoahMarkRefsClosure(uint worker_id) :
-  _worker_id(worker_id), _heap(ShenandoahHeap::heap()) {
+  _worker_id(worker_id),
+  _heap(ShenandoahHeap::heap()),
+  _mark_objs(ShenandoahMarkObjsClosure(worker_id))
+{
 }
 
 void ShenandoahMarkRefsClosure::do_oop_work(oop* p) {
@@ -1514,8 +1517,7 @@ void ShenandoahMarkRefsClosure::do_oop_work(oop* p) {
   // assert(oopDesc::bs()->resolve_oop(obj) == *p, "we just updated the referrer");
   // assert(obj == NULL || ! _heap->heap_region_containing(obj)->is_dirty(), "must not point to dirty region");
 
-  ShenandoahMarkObjsClosure cl(_worker_id);
-  cl.do_object(obj);
+  _mark_objs.do_object(obj);
 }
 
 void ShenandoahMarkRefsClosure::do_oop(narrowOop* p) {
@@ -1526,41 +1528,40 @@ void ShenandoahMarkRefsClosure::do_oop(oop* p) {
   do_oop_work(p);
 }
 
-ShenandoahMarkObjsClosure::ShenandoahMarkObjsClosure(uint worker_id) : _worker_id(worker_id) {
+ShenandoahMarkObjsClosure::ShenandoahMarkObjsClosure(uint worker_id) :
+  _worker_id(worker_id),
+  _heap(ShenandoahHeap::heap()),
+  _concurrent_mark(_heap->concurrentMark()) {
 }
 
 void ShenandoahMarkObjsClosure::do_object(oop obj) {
-  ShenandoahHeap* sh = (ShenandoahHeap* ) Universe::heap();
   if (obj != NULL) {
-    // TODO: The following resolution of obj is only ever needed when draining the SATB queues.
-    // Wrap this closure to avoid this call in usual marking.
-    obj = oopDesc::bs()->resolve_oop(obj);
 
 #ifdef ASSERT
-    if (sh->heap_region_containing(obj)->is_in_collection_set()) {
-      tty->print_cr("trying to mark obj: %p (%d) in dirty region: ", (HeapWord*) obj, sh->isMarkedCurrent(obj));
-      sh->heap_region_containing(obj)->print();
-      sh->print_heap_regions();
+    if (_heap->heap_region_containing(obj)->is_in_collection_set()) {
+      tty->print_cr("trying to mark obj: %p (%d) in dirty region: ", (HeapWord*) obj, _heap->isMarkedCurrent(obj));
+      _heap->heap_region_containing(obj)->print();
+      _heap->print_heap_regions();
     }
 #endif
-    assert(! sh->heap_region_containing(obj)->is_in_collection_set(), "we don't want to mark objects in from-space");
-    assert(sh->is_in(obj), "referenced objects must be in the heap. No?");
-    if (sh->mark_current(obj)) {
+    assert(! _heap->heap_region_containing(obj)->is_in_collection_set(), "we don't want to mark objects in from-space");
+    assert(_heap->is_in(obj), "referenced objects must be in the heap. No?");
+    if (_heap->mark_current(obj)) {
 #ifdef ASSERT
       if (ShenandoahTraceConcurrentMarking)
 	tty->print_cr("marked obj: %p", (HeapWord*) obj);
 #endif
       // Calculate liveness of heap region containing object.
-      ShenandoahHeapRegion* region = sh->heap_region_containing(obj);
+      ShenandoahHeapRegion* region = _heap->heap_region_containing(obj);
       region->increase_live_data((obj->size() + BrooksPointer::BROOKS_POINTER_OBJ_SIZE) * HeapWordSize);
-      sh->concurrentMark()->addTask(obj, _worker_id);
+      _concurrent_mark->addTask(obj, _worker_id);
     }
 #ifdef ASSERT
     else {
       if (ShenandoahTraceConcurrentMarking) {
         tty->print_cr("failed to mark obj (already marked): %p", (HeapWord*) obj);
       }
-      assert(sh->isMarkedCurrent(obj), "make sure object is marked");
+      assert(_heap->isMarkedCurrent(obj), "make sure object is marked");
     }
 #endif
 
