@@ -20,6 +20,12 @@ void VM_ShenandoahInitMark::doit() {
     tty->print("vm_ShenandoahInitMark\n");
   sh->start_concurrent_marking();
   sh->shenandoahPolicy()->record_init_mark_end();
+
+  if (! ShenandoahConcurrentMarking) {
+    sh->concurrentMark()->markFromRoots();
+    VM_ShenandoahFinishMark finishMark;
+    finishMark.doit();
+  }
 }
 
 VM_Operation::VMOp_Type VM_ShenandoahFinishMark::type() const {
@@ -45,7 +51,8 @@ void VM_ShenandoahFinishMark::doit() {
     sh->set_evacuation_in_progress(true);
 
     if (! ShenandoahConcurrentEvacuation) {
-      sh->do_evacuation();
+      VM_ShenandoahEvacuation evacuation;
+      evacuation.doit();
     } else {
       sh->evacuate_and_update_roots();
     }

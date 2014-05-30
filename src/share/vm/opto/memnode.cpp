@@ -1051,6 +1051,7 @@ Node* MemNode::can_see_stored_value(Node* st, PhaseTransform* phase) const {
       // Now prove that we have a LoadQ matched to a StoreQ, for some Q.
       if (store_Opcode() != st->Opcode())
         return NULL;
+      //tty->print_cr("can_see_stored_value 1");
       return st->in(MemNode::ValueIn);
     }
 
@@ -1064,6 +1065,7 @@ Node* MemNode::can_see_stored_value(Node* st, PhaseTransform* phase) const {
       // (This is one of the few places where a generic PhaseTransform
       // can create new nodes.  Think of it as lazily manifesting
       // virtually pre-existing constants.)
+      // tty->print_cr("can_see_stored_value 2");
       return phase->zerocon(memory_type());
     }
 
@@ -1088,6 +1090,8 @@ Node* MemNode::can_see_stored_value(Node* st, PhaseTransform* phase) const {
           base->as_Proj()->_con == TypeFunc::Parms &&
           base->in(0)->is_CallStaticJava() &&
           base->in(0)->as_CallStaticJava()->is_boxing_method()) {
+
+        //tty->print_cr("can_see_stored_value 3");
         return base->in(0)->in(TypeFunc::Parms);
       }
     }

@@ -1405,6 +1405,18 @@ class CommandLineFlags {
   product(bool, ShenandoahConcurrentEvacuation, true,                       \
           "Turn on/off concurrent evacuation in Shenandoah")                \
                                                                             \
+  product(bool, ShenandoahConcurrentMarking, true,                          \
+          "Turn on/off concurrent marking in Shenandoah")                   \
+                                                                            \
+  product(bool, ShenandoahConcurrentUpdateRefs, true,                       \
+          "Turn on/off concurrent reference updating in Shenandoah")        \
+                                                                            \
+  product(bool, ShenandoahWriteBarrier, true,                               \
+          "Turn on/off write barriers in Shenandoah")                       \
+                                                                            \
+  product(bool, ShenandoahReadBarrier, true,                                \
+          "Turn on/off read barriers in Shenandoah")                        \
+                                                                            \
   product(ccstr, ShenandoahGCHeuristics, NULL,                              \
           "The heuristics to use in Shenandoah GC; possible values: "       \
           "statusquo, aggressive, halfway, lazy, dynamic")                  \

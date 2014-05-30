@@ -143,6 +143,7 @@ public:
 
   
   void object_iterate(ObjectClosure* cl);
+  void object_iterate_no_from_space(ObjectClosure* cl);
   void safe_object_iterate(ObjectClosure* cl);
 
   HeapWord* block_start(const void* addr) const;
@@ -268,6 +269,8 @@ public:
 
   void evacuate_and_update_roots();
 
+  void update_references();
+
 private:
 
   void update_roots();
@@ -304,6 +307,18 @@ public:
   ShenandoahMarkRefsClosure(uint worker_id);
 
   void do_oop_work(oop* p);
+  void do_oop(narrowOop* p);
+  void do_oop(oop* p);
+};
+
+class ShenandoahMarkRefsNoUpdateClosure : public OopsInGenClosure {
+  uint _worker_id;
+  ShenandoahHeap* _heap;
+  ShenandoahMarkObjsClosure _mark_objs;
+
+public: 
+  ShenandoahMarkRefsNoUpdateClosure(uint worker_id);
+
   void do_oop(narrowOop* p);
   void do_oop(oop* p);
 };

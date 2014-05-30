@@ -964,6 +964,68 @@ void ShenandoahHeap::update_roots() {
   COMPILER2_PRESENT(DerivedPointerTable::update_pointers());
 }
 
+class ShenandoahUpdateObjectsClosure : public ObjectClosure {
+  ShenandoahUpdateRootsClosure _refs_cl;
+  ShenandoahHeap* _heap;
+
+public:
+  ShenandoahUpdateObjectsClosure() :
+    _refs_cl(ShenandoahUpdateRootsClosure()),
+    _heap(ShenandoahHeap::heap()) {
+  }
+
+  void do_object(oop p) {
+    assert(ShenandoahHeap::heap()->is_in(p), "only update objects in heap (where else?)");
+    if (_heap->isMarkedCurrent(p)) {
+      p->oop_iterate(&_refs_cl);
+    }
+  }
+};
+
+class ParallelUpdateRefsTask : public AbstractGangTask {
+private:
+  ShenandoahHeapRegionSet* _regions;
+  ShenandoahUpdateObjectsClosure _update_refs_cl;
+
+public:
+  ParallelUpdateRefsTask(ShenandoahHeapRegionSet* regions) :
+    AbstractGangTask("Parallel Update References Task"), 
+  _regions(regions),
+    _update_refs_cl(ShenandoahUpdateObjectsClosure()) {
+  }
+
+  void work(uint worker_id) {
+    ShenandoahHeapRegion* region = _regions->claim_next();
+
+    while (region != NULL) {
+      if (! region->is_in_collection_set()) {
+        region->object_iterate(&_update_refs_cl);
+      }
+      region = _regions->claim_next();
+    }
+  }
+};
+
+void ShenandoahHeap::update_references() {
+
+  update_roots();
+  ShenandoahUpdateObjectsClosure cl;
+
+  for (uint i = 0; i < _num_regions; i++) {
+    _ordered_regions[i]->clearClaim();
+  }
+
+  ShenandoahHeapRegionSet regions = ShenandoahHeapRegionSet(_num_regions, _ordered_regions);
+  ParallelUpdateRefsTask task = ParallelUpdateRefsTask(&regions);
+  workers()->run_task(&task);
+
+  for (uint i = 0; i < _num_regions; i++) {
+    _ordered_regions[i]->clearClaim();
+  }
+  _current_region->claim();
+}
+
+
 class ShenandoahEvacuateUpdateRootsClosure: public ExtendedOopClosure {
 private:
   ShenandoahHeap* _heap;
@@ -1016,6 +1078,11 @@ void ShenandoahHeap::do_evacuation() {
   }
 
   set_evacuation_in_progress(false);
+
+  if (! ShenandoahConcurrentUpdateRefs) {
+    update_references();
+  }
+
   reset_mark_bitmap();
 
   if (ShenandoahVerify) {
@@ -1528,6 +1595,24 @@ void ShenandoahMarkRefsClosure::do_oop(oop* p) {
   do_oop_work(p);
 }
 
+ShenandoahMarkRefsNoUpdateClosure::ShenandoahMarkRefsNoUpdateClosure(uint worker_id) :
+  _worker_id(worker_id),
+  _heap(ShenandoahHeap::heap()),
+  _mark_objs(ShenandoahMarkObjsClosure(worker_id))
+{
+}
+
+void ShenandoahMarkRefsNoUpdateClosure::do_oop(narrowOop* p) {
+  assert(false, "narrowOops not supported");
+}
+
+void ShenandoahMarkRefsNoUpdateClosure::do_oop(oop* p) {
+  oop obj = *p;
+  if (! oopDesc::is_null(obj)) {
+    _mark_objs.do_object(obj);
+  }
+}
+
 ShenandoahMarkObjsClosure::ShenandoahMarkObjsClosure(uint worker_id) :
   _worker_id(worker_id),
   _heap(ShenandoahHeap::heap()),
@@ -1582,8 +1667,15 @@ void ShenandoahMarkObjsClosure::do_object(oop obj) {
 
 void ShenandoahHeap::prepare_unmarked_root_objs() {
   assert(Thread::current()->is_VM_thread(), "can only do this in VMThread");
-  ShenandoahMarkRefsClosure rootsCl(0);
-  roots_iterate(&rootsCl);
+  OopsInGenClosure* cl;
+  ShenandoahMarkRefsClosure rootsCl1(0);
+  ShenandoahMarkRefsNoUpdateClosure rootsCl2(0);
+  if (ShenandoahConcurrentUpdateRefs) {
+    cl = &rootsCl1;
+  } else {
+    cl = &rootsCl2;
+  }
+  roots_iterate(cl);
 }
 
 class ClearLivenessClosure : public ShenandoahHeapRegionClosure {
@@ -1835,12 +1927,16 @@ oop ShenandoahHeap::evacuate_object(oop p, EvacuationAllocator* allocator) {
   HeapWord* filler = allocator->allocate(required);
   HeapWord* copy = filler + BrooksPointer::BROOKS_POINTER_OBJ_SIZE;
   copy_object(p, filler);
-
   HeapWord* result = BrooksPointer::get(p).cas_forwardee((HeapWord*) p, copy);
 
   oop return_val;
   if (result == (HeapWord*) p) {
     return_val = oop(copy);
+
+    if (! ShenandoahConcurrentUpdateRefs) {
+      mark_current(return_val);
+    }
+
 #ifdef ASSERT
     if (ShenandoahTraceEvacuations) {
       tty->print("Copy of %p to %p succeeded \n", (HeapWord*) p, copy);
@@ -1855,6 +1951,7 @@ oop ShenandoahHeap::evacuate_object(oop p, EvacuationAllocator* allocator) {
 #endif
     return_val = (oopDesc*) result;
   }
+
   return return_val;
 }
 

@@ -4168,7 +4168,7 @@ Node* GraphKit::make_shenandoah_read_barrier(Node* ctrl, Node* obj, const Type* 
 
 Node* GraphKit::shenandoah_read_barrier(Node* obj) {
 
-  if (UseShenandoahGC) {
+  if (UseShenandoahGC && ShenandoahReadBarrier) {
 
     const Type* obj_type = _gvn.type(obj);
 
@@ -4269,6 +4269,11 @@ Node* GraphKit::make_shenandoah_write_barrier(Node* ctrl, Node* obj, const Type*
 Node* GraphKit::shenandoah_write_barrier(Node* obj) {
 
   if (UseShenandoahGC) {
+
+    if (! ShenandoahWriteBarrier) {
+      assert(! ShenandoahConcurrentEvacuation, "Can only do this without concurrent evacuation");
+      return shenandoah_read_barrier(obj);
+    }
 
     const TypePtr* obj_type = _gvn.type(obj)->is_ptr();
 

@@ -42,7 +42,15 @@ public:
   void work(uint worker_id) {
     int seed = 17;
     ShenandoahHeap* sh = (ShenandoahHeap*) Universe::heap();
-    ShenandoahMarkRefsClosure cl(worker_id);
+
+    ShenandoahMarkRefsClosure cl1(worker_id);
+    ShenandoahMarkRefsNoUpdateClosure cl2(worker_id);
+    OopsInGenClosure* cl;
+    if (ShenandoahConcurrentUpdateRefs) {
+      cl = &cl1;
+    } else {
+      cl = &cl2;
+    }
 
     while (true) {
       oop obj;
@@ -69,7 +77,7 @@ public:
 
       assert(obj->is_oop(), "Oops, not an oop");
       assert(! sh->heap_region_containing(obj)->is_in_collection_set(), "we don't want to mark objects in from-space");
-      obj->oop_iterate(&cl);
+      obj->oop_iterate(cl);
     }
   }
 };
@@ -151,11 +159,18 @@ void ShenandoahConcurrentMark::finishMarkFromRoots() {
   }
 
   // Also drain our overflow queue.
-  ShenandoahMarkRefsClosure cl(0);
+  ShenandoahMarkRefsClosure cl1(0);
+  ShenandoahMarkRefsNoUpdateClosure cl2(0);
+  OopsInGenClosure* cl;
+  if (ShenandoahConcurrentUpdateRefs) {
+    cl = &cl1;
+  } else {
+    cl = &cl2;
+  }
   oop obj = _overflow_queue->pop();
   while (obj != NULL) {
     assert(obj->is_oop(), "Oops, not an oop");
-    obj->oop_iterate(&cl);
+    obj->oop_iterate(cl);
     obj = _overflow_queue->pop();
   }
 

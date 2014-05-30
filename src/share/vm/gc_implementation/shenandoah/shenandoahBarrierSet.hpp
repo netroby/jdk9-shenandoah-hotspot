@@ -5,6 +5,7 @@ Copyright 2014 Red Hat, Inc. and/or its affiliates.
 #define SHARE_VM_GC_IMPLEMENTATION_SHENANDOAH_SHENANDOAHBARRIERSET_HPP
 
 #include "memory/barrierSet.hpp"
+#include "gc_implementation/shenandoah/shenandoahHeap.hpp"
 #include "gc_implementation/shenandoah/shenandoahEvacuation.hpp"
 
 class ShenandoahBarrierSet: public BarrierSet {

@@ -329,21 +329,28 @@ oop ShenandoahBarrierSet::resolve_and_maybe_copy_oop(oop src) {
 #ifndef CC_INTERP
 // TODO: The following should really live in an X86 specific subclass.
 void ShenandoahBarrierSet::compile_resolve_oop(MacroAssembler* masm, Register dst) {
-  Label is_null;
-  __ testptr(dst, dst);
-  __ jcc(Assembler::zero, is_null);
-  compile_resolve_oop_not_null(masm, dst);
-  __ bind(is_null);
+  if (ShenandoahReadBarrier) {
+    Label is_null;
+    __ testptr(dst, dst);
+    __ jcc(Assembler::zero, is_null);
+    compile_resolve_oop_not_null(masm, dst);
+    __ bind(is_null);
+  }
 }
 
 void ShenandoahBarrierSet::compile_resolve_oop_not_null(MacroAssembler* masm, Register dst) {
-  __ movptr(dst, Address(dst, -8));
-  /*
-  __ andq(dst, ~0x7);
-  */
+  if (ShenandoahReadBarrier) {
+    __ movptr(dst, Address(dst, -8));
+  }
 }
 
 void ShenandoahBarrierSet::compile_resolve_oop_for_write(MacroAssembler* masm, Register dst, bool explicit_null_check, int num_state_save, ...) {
+
+  if (! ShenandoahWriteBarrier) {
+    assert(! ShenandoahConcurrentEvacuation, "Can only do this without concurrent evacuation");
+    return compile_resolve_oop(masm, dst);
+  }
+      
   assert(dst != rscratch1, "different regs");
   //assert(dst != rscratch2, "Need rscratch2");
 
