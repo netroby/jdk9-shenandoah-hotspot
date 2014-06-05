@@ -11,11 +11,15 @@ class ShenandoahHeapRegionSet : public CHeapObj<mtGC> {
 private:
   ShenandoahHeapRegion** _regions;
   // current region to be returned from get_next()
-  volatile int _index;
+  ShenandoahHeapRegion** _current;
+
   // last inserted region.
-  int _inserted;
-  // size of the set.
-  int _numRegions;
+  ShenandoahHeapRegion** _next_free;
+  ShenandoahHeapRegion** _concurrent_next_free;
+
+  // Maximum size of the set.
+  const int _max_regions;
+
   size_t _garbage_threshold;
   size_t _free_threshold;
 
@@ -23,27 +27,42 @@ private:
   void choose_empty_regions(ShenandoahHeapRegionSet* region_set);
 
 public:
-  ShenandoahHeapRegionSet(size_t numRegions);
+  ShenandoahHeapRegionSet(size_t max_regions);
 
-  ShenandoahHeapRegionSet(size_t num_regions, ShenandoahHeapRegion** regions);
+  ShenandoahHeapRegionSet(size_t max_regions, ShenandoahHeapRegion** regions, size_t num_regions);
 
   ~ShenandoahHeapRegionSet();
 
   void set_garbage_threshold(size_t minimum_garbage) { _garbage_threshold = minimum_garbage;}
   void set_free_threshold(size_t minimum_free) { _free_threshold = minimum_free;}
-  void put(size_t i, ShenandoahHeapRegion* region);
+
+  /**
+   * Appends a region to the set. This is implemented to be concurrency-safe.
+   */
   void append(ShenandoahHeapRegion* region);
 
-  int numRegions() { return _numRegions;}
+  void clear();
 
-  ShenandoahHeapRegion* at(uint i);
   size_t length();
   size_t available_regions();
   void print();
 
-  bool has_next();
+  /**
+   * Returns a pointer to the current region.
+   */
+  ShenandoahHeapRegion* current();
+
+  /**
+   * Gets the next region for allocation (from free-list).
+   * If multiple threads are competing, one will succeed to
+   * increment to the next region, the others will fail and return
+   * the region that the succeeding thread got.
+   */
   ShenandoahHeapRegion* get_next();
-  ShenandoahHeapRegion* peek_next();
+
+  /**
+   * Claims next region for processing. This is implemented to be concurrency-safe.
+   */
   ShenandoahHeapRegion* claim_next();
 
   void choose_collection_and_free_sets(ShenandoahHeapRegionSet* col_set, ShenandoahHeapRegionSet* free_set);
@@ -59,7 +78,9 @@ public:
   void reclaim_humonguous_regions();
 
 private:
-  void reclaim_humonguous_region_at(int r);
+  void reclaim_humonguous_region_at(ShenandoahHeapRegion** r);
+
+  ShenandoahHeapRegion** limit_region(ShenandoahHeapRegion** region);
 
 };
 

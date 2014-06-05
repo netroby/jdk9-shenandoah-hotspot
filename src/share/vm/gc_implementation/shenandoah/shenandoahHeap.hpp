@@ -53,7 +53,6 @@ private:
   static ShenandoahHeap* _pgc;
   ShenandoahCollectorPolicy* _shenandoah_policy;
   VirtualSpace _storage;
-  ShenandoahHeapRegion* _current_region;
   ShenandoahHeapRegion* _first_region;
   HeapWord* _first_region_bottom;
   // Ordered array of regions  (name confusing with _regions)
@@ -90,9 +89,7 @@ public:
   void retire_tlab_at(HeapWord* start);
   HeapWord* allocate_new_gclab(size_t word_size);
 
-  HeapWord* allocate_memory_gclab(size_t word_size);
-  HeapWord* allocate_memory_work(size_t word_size);
-  HeapWord* allocate_large_memory(size_t word_size);
+  HeapWord* allocate_memory(size_t word_size);
 
   bool find_contiguous_free_regions(uint num_free_regions, ShenandoahHeapRegion** free_regions);
   bool allocate_contiguous_free_regions(uint num_free_regions, ShenandoahHeapRegion** free_regions);
@@ -228,10 +225,6 @@ public:
 				ShenandoahAllocRegion *alloc_region);
   void verify_evacuated_region(ShenandoahHeapRegion* from_region);
 
-  ShenandoahHeapRegion* cas_update_current_region(ShenandoahHeapRegion* expected);
-
-  ShenandoahHeapRegion* current_region() { return _current_region;}
-
   void print_heap_regions();
 
   void print_all_refs(const char* prefix);
@@ -286,6 +279,14 @@ private:
   void verify_live();
   void verify_liveness_after_concurrent_mark();
 
+  HeapWord* allocate_memory_work(size_t word_size);
+  HeapWord* allocate_large_memory(size_t word_size);
+  ShenandoahHeapRegion* check_skip_humonguous(ShenandoahHeapRegion* region);
+  ShenandoahHeapRegion* get_next_region_skip_humonguous();
+  ShenandoahHeapRegion* get_current_region_skip_humonguous();
+  ShenandoahHeapRegion* check_grow_heap(ShenandoahHeapRegion* current);
+  ShenandoahHeapRegion* get_next_region_for_allocation();
+  ShenandoahHeapRegion* get_current_region_for_allocation();
 };
 
 class ShenandoahMarkObjsClosure : public ObjectClosure {

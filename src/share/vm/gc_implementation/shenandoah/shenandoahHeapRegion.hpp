@@ -18,7 +18,6 @@ private:
   int _region_number;
   volatile size_t liveData;
   MemRegion reserved;
-  volatile unsigned int claimed;
   bool _is_in_collection_set;
   bool _is_current_allocation_region;
   volatile jint active_tlab_count;
@@ -47,10 +46,6 @@ public:
   size_t garbage();
 
   void recycle();
-
-  bool claim();
-
-  void clearClaim();
 
   void oop_iterate(ExtendedOopClosure* cl, bool skip_unreachable_objects);
 

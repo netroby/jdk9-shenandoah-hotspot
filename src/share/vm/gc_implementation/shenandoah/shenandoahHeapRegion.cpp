@@ -55,15 +55,6 @@ size_t ShenandoahHeapRegion::garbage() {
   return result;
 }
 
-bool ShenandoahHeapRegion::claim() {
-  bool previous = Atomic::cmpxchg(true, &claimed, false);
-  return !previous;
-}
-
-void ShenandoahHeapRegion::clearClaim() {
-  claimed = false;
-}
-
 bool ShenandoahHeapRegion::is_in_collection_set() {
   return _is_in_collection_set;
 }
@@ -94,8 +85,8 @@ void ShenandoahHeapRegion::print(outputStream* st) {
   //else
     st->print(" ");
 
-  st->print("live = %u garbage = %u claimed = %d bottom = %p end = %p top = %p active_tlabs: %d\n", 
-            getLiveData(), garbage(), claimed, bottom(), end(), top(), active_tlab_count);
+  st->print("live = %u garbage = %u bottom = %p end = %p top = %p active_tlabs: %d\n", 
+            getLiveData(), garbage(), bottom(), end(), top(), active_tlab_count);
 }
 
 

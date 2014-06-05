@@ -77,7 +77,7 @@ HeapAllocator::HeapAllocator() :
 }
 
 HeapWord* HeapAllocator::allocate(size_t size) {
-  return _heap->allocate_memory_gclab(size);
+  return _heap->allocate_memory(size);
 }
 
 void HeapAllocator::rollback(HeapWord* filler, size_t size) {

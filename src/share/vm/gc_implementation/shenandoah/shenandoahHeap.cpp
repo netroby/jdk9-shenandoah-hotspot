@@ -113,7 +113,7 @@ jint ShenandoahHeap::initialize() {
     ShenandoahHeapRegion* current = new ShenandoahHeapRegion();
     current->initialize((HeapWord*) pgc_rs.base() + 
 			regionSizeWords * i, regionSizeWords, i);
-    _free_regions->put(i, current);
+    _free_regions->append(current);
     _ordered_regions[i] = current;
   }
   _first_region = _ordered_regions[0];
@@ -127,9 +127,6 @@ jint ShenandoahHeap::initialize() {
     tty->print("Free Regions\n");
     _free_regions->print();
   }
-
-  _current_region = NULL;
-  cas_update_current_region(NULL);
 
   // The call below uses stuff (the SATB* things) that are in G1, but probably
   // belong into a shared location.
@@ -275,7 +272,7 @@ bool  ShenandoahHeap::is_scavengable(const void* p) {
 }
 
 HeapWord* ShenandoahHeap::allocate_new_tlab(size_t word_size) {
-  HeapWord* result = allocate_memory_gclab(word_size);
+  HeapWord* result = allocate_memory(word_size);
 
   if (result != NULL) {
     if (_concurrent_mark_in_progress) {
@@ -305,7 +302,7 @@ void ShenandoahHeap::retire_tlab_at(HeapWord* start) {
 }
 
 HeapWord* ShenandoahHeap::allocate_new_gclab(size_t word_size) {
-  HeapWord* result = allocate_memory_gclab(word_size);
+  HeapWord* result = allocate_memory(word_size);
   assert(! heap_region_containing(result)->is_in_collection_set(), "Never allocate in dirty region");
   if (result != NULL) {
     if (ShenandoahGCVerbose)
@@ -359,44 +356,65 @@ public:
 
 };
 
-ShenandoahHeapRegion* ShenandoahHeap::cas_update_current_region(ShenandoahHeapRegion* expected) {
-  if (expected != NULL) {
-    expected->set_is_current_allocation_region(false);
-    expected->clearClaim();
-  }
-  if (_free_regions->has_next()) {
-    ShenandoahHeapRegion* next = _free_regions->peek_next();
-    assert(! next->is_in_collection_set(), "Never use targetted regions for allocations.");
-    ShenandoahHeapRegion* previous = (ShenandoahHeapRegion*) Atomic::cmpxchg_ptr(next, &_current_region, expected);
-    assert(! _current_region->is_humonguous(), "never get humonguous allocation region");
-    guarantee(! _current_region->is_in_collection_set(), "Never use targetted regions for allocations.");
-    if (previous == expected) {
-      // Advance the region set.
-      _free_regions->get_next();
-      next->set_is_current_allocation_region(true);
-      return next;
-    } else {
-      next->clearClaim(); // peek_next claimed it, unclaim it here, otherwise it stays forever.
-      // If the above CAS fails, we want the caller to get the _current_region that the other thread
-      // CAS'ed.
-      return previous;
-    }
-  } else {
-    return NULL;
-  }
-
-}
-
-HeapWord* ShenandoahHeap::allocate_memory_gclab(size_t word_size) {
+HeapWord* ShenandoahHeap::allocate_memory(size_t word_size) {
   MutexLockerEx ml(ShenandoahHeap_lock, true);
   {
     return allocate_memory_work(word_size);
   }
 }
 
+ShenandoahHeapRegion* ShenandoahHeap::check_skip_humonguous(ShenandoahHeapRegion* region) {
+  while (region != NULL && region->is_humonguous()) {
+    region = _free_regions->get_next();
+  }
+  return region;
+}
+
+ShenandoahHeapRegion* ShenandoahHeap::get_next_region_skip_humonguous() {
+  ShenandoahHeapRegion* next = _free_regions->get_next();
+  return check_skip_humonguous(next);
+}
+
+ShenandoahHeapRegion* ShenandoahHeap::get_current_region_skip_humonguous() {
+  ShenandoahHeapRegion* current = _free_regions->current();
+  return check_skip_humonguous(current);
+}
+
+ShenandoahHeapRegion* ShenandoahHeap::check_grow_heap(ShenandoahHeapRegion* current) {
+  if (current == NULL) {
+    if (grow_heap_by()) {
+      current = _free_regions->get_next();
+      assert(current != NULL, "After successfully growing the heap we should have a region");
+      assert(! current->is_humonguous(), "new region must not be humonguous");
+    } else {
+      current = NULL; // No more room to make a new region. OOM.
+    }
+  }
+  return current;
+}
+
+ShenandoahHeapRegion* ShenandoahHeap::get_current_region_for_allocation() {
+  ShenandoahHeapRegion* current = get_current_region_skip_humonguous();
+  return check_grow_heap(current);
+}
+
+ShenandoahHeapRegion* ShenandoahHeap::get_next_region_for_allocation() {
+  ShenandoahHeapRegion* current = get_next_region_skip_humonguous();
+  return check_grow_heap(current);
+}
+
 HeapWord* ShenandoahHeap::allocate_memory_work(size_t word_size) {
 
-  ShenandoahHeapRegion* my_current_region = _current_region;
+  if (word_size * HeapWordSize > ShenandoahHeapRegion::RegionSizeBytes) {
+    return allocate_large_memory(word_size);
+  }
+
+  ShenandoahHeapRegion* my_current_region = get_current_region_for_allocation();
+  if (my_current_region == NULL) {
+    return NULL; // No more room to make a new region. OOM.
+  }
+  assert(my_current_region != NULL, "should have a region at this point");
+
 #ifdef ASSERT
   if (my_current_region->is_in_collection_set()) {
     print_heap_regions();
@@ -404,46 +422,25 @@ HeapWord* ShenandoahHeap::allocate_memory_work(size_t word_size) {
 #endif
   assert(! my_current_region->is_in_collection_set(), "never get targetted regions in free-lists");
   assert(! my_current_region->is_humonguous(), "never attempt to allocate from humonguous object regions");
-  if (my_current_region == NULL) {
-    my_current_region = cas_update_current_region(my_current_region);
-  }
-  assert(! my_current_region->is_in_collection_set() && my_current_region != NULL, "Never allocate from targetted or NULL region");
-  assert(! my_current_region->is_humonguous(), "never attempt to allocate from humonguous object regions");
 
-  // This isn't necessary when doing mem_allocate_locked but is for gc lab allocation.
   HeapWord* result;
 
-  if (word_size * HeapWordSize > ShenandoahHeapRegion::RegionSizeBytes) {
-    return allocate_large_memory(word_size);
+  result = my_current_region->par_allocate(word_size);
+  while (result == NULL && my_current_region != NULL) {
+    // 2nd attempt. Try next region.
+    my_current_region = get_next_region_for_allocation();
+    if (my_current_region == NULL) {
+      return NULL; // No more room to make a new region. OOM.
+    }
+    assert(my_current_region != NULL, "should have a region at this point");
+    result = my_current_region->par_allocate(word_size);
   }
 
-
-  do {
-    result = my_current_region->par_allocate(word_size);
-    if (result == NULL) {
-      my_current_region = cas_update_current_region(my_current_region);
-    } else {
-      my_current_region->increase_live_data(word_size * HeapWordSize);
-    }
-  } while (result == NULL && my_current_region != NULL);
-
-  if (result == NULL) {
-    // Check if we ran out of regions and try to grow heap.
-    if (my_current_region == NULL && _num_regions < _max_regions) {
-      if (grow_heap_by()) {
-        result = allocate_memory_work(word_size);
-      }
-    }
-    /*
-    else {
-      // We reached the maximum number of regions we can allocate. Throw OOM. (We don't need this code, result
-      // already is NULL.
-      result = NULL;
-    }
-    */
-  } else {
+  if (result != NULL) {
+    my_current_region->increase_live_data(word_size * HeapWordSize);
     increase_used(word_size * HeapWordSize);
-    assert(! heap_region_containing(result)->is_in_collection_set(), "never allocate in targetted region");
+  } else {
+    tty->print_cr("no more regions 3");
   }
   return result;
 }
@@ -463,13 +460,21 @@ HeapWord* ShenandoahHeap::allocate_large_memory(size_t words) {
     result = NULL; // Throw OOM, we cannot allocate the huge object.
   } else {
     // Initialize huge object flags in the regions.
+    size_t live = words;
     free_regions[0]->set_humonguous_start(true);
     free_regions[0]->set_top(free_regions[0]->end());
+    size_t region_live_data = MIN2(ShenandoahHeapRegion::RegionSizeBytes, live * HeapWordSize);
+    free_regions[0]->increase_live_data(region_live_data);
+    live -= region_live_data;
     for (uint i = 1; i < required_regions; i++) {
       free_regions[i]->set_humonguous_continuation(true);
       free_regions[i]->set_top(free_regions[i]->end());
+      region_live_data = MIN2(ShenandoahHeapRegion::RegionSizeBytes, live * HeapWordSize);
+      free_regions[i]->increase_live_data(region_live_data);
+      live -= region_live_data;
     }
     result = free_regions[0]->bottom();
+    increase_used(words * HeapWordSize);
   }
   return result;
 }
@@ -482,17 +487,14 @@ bool ShenandoahHeap::find_contiguous_free_regions(uint num_free_regions, Shenand
   for (uint regions_index = 0; regions_index < _num_regions; regions_index++) {
     // Claim a free region.
     ShenandoahHeapRegion* region = _ordered_regions[regions_index];
-    bool claimed_and_free = false;
-    if (region != NULL && region->claim()) {
-      if (region->free() < ShenandoahHeapRegion::RegionSizeBytes) {
-        region->clearClaim();
-      } else {
+    bool free = false;
+    if (region != NULL) {
+      if (region->free() == ShenandoahHeapRegion::RegionSizeBytes) {
         assert(! region->is_humonguous(), "don't reuse occupied humonguous regions");
-        assert(_current_region != region, "humonguous region must not become current allocation region");
-        claimed_and_free = true;
+        free = true;
       }
     }
-    if (! claimed_and_free) {
+    if (! free) {
       // Not contiguous, reset search
       free_regions_index = 0;
       continue;
@@ -557,7 +559,7 @@ HeapWord* ShenandoahHeap::mem_allocate_locked(size_t size,
   // This was used for allocation while holding the Heap_lock.
   // HeapWord* filler = allocate_memory(BrooksPointer::BROOKS_POINTER_OBJ_SIZE + size);
 
-  HeapWord* filler = allocate_memory_gclab(BrooksPointer::BROOKS_POINTER_OBJ_SIZE + size);
+  HeapWord* filler = allocate_memory(BrooksPointer::BROOKS_POINTER_OBJ_SIZE + size);
   HeapWord* result = filler + BrooksPointer::BROOKS_POINTER_OBJ_SIZE;
   if (filler != NULL) {
     initialize_brooks_ptr(filler, result);
@@ -936,8 +938,10 @@ void ShenandoahHeap::prepare_for_concurrent_evacuation() {
   // operand gets resolved, the region could be in the collection set
   // and the oop gets evacuated. If both operands have originally been
   // the same, we get false negatives.
-  ShenandoahHeapRegionSet regions = ShenandoahHeapRegionSet(_num_regions, _ordered_regions);
+  ShenandoahHeapRegionSet regions = ShenandoahHeapRegionSet(_num_regions, _ordered_regions, _num_regions);
   regions.reclaim_humonguous_regions();
+  _collection_set->clear();
+  _free_regions->clear();
   _shenandoah_policy->choose_collection_and_free_sets(&regions, _collection_set, _free_regions);
 
 }
@@ -1011,18 +1015,10 @@ void ShenandoahHeap::update_references() {
   update_roots();
   ShenandoahUpdateObjectsClosure cl;
 
-  for (uint i = 0; i < _num_regions; i++) {
-    _ordered_regions[i]->clearClaim();
-  }
-
-  ShenandoahHeapRegionSet regions = ShenandoahHeapRegionSet(_num_regions, _ordered_regions);
+  ShenandoahHeapRegionSet regions = ShenandoahHeapRegionSet(_num_regions, _ordered_regions, _num_regions);
   ParallelUpdateRefsTask task = ParallelUpdateRefsTask(&regions);
   workers()->run_task(&task);
 
-  for (uint i = 0; i < _num_regions; i++) {
-    _ordered_regions[i]->clearClaim();
-  }
-  _current_region->claim();
 }
 
 
@@ -1232,11 +1228,12 @@ bool ShenandoahHeap::supports_tlab_allocation() const {
 
 
 size_t  ShenandoahHeap::unsafe_max_tlab_alloc(Thread *thread) const {
-  ShenandoahHeapRegion* my_current_region = _current_region;
-  // This can happen during initialization.
-  if (my_current_region == NULL)
+  ShenandoahHeapRegion* current = _free_regions->current();
+  if (current == NULL) {
     return MinTLABSize;
-  return MIN2(my_current_region->free(), (size_t) MinTLABSize);
+  } else {
+    return MIN2(current->free(), (size_t) MinTLABSize);
+  }
 }
 
 bool  ShenandoahHeap::can_elide_tlab_store_barriers() const {
@@ -1685,7 +1682,6 @@ public:
   
   bool doHeapRegion(ShenandoahHeapRegion* r) {
     r->clearLiveData();
-    r->clearClaim();
     return false;
   }
 };
@@ -1712,11 +1708,6 @@ void ShenandoahHeap::start_concurrent_marking() {
   
   ClearLivenessClosure clc(this);
   heap_region_iterate(&clc);
-
-  // We need to claim the current region here, because we just cleared the claimed
-  // marks in all regions, and the current region might otherwise get used for a humonguous
-  // region.
-  _current_region->claim();
 
   // print_all_refs("pre -mark");
 
@@ -1988,55 +1979,28 @@ bool ShenandoahHeap::grow_heap_by() {
 }
 
 int ShenandoahHeap::ensure_new_regions(int new_regions) {
-  /*
-  while (true) {
 
-    jlong num_regions = _num_regions;
-    jlong new_num_regions = num_regions + new_regions;
-    if (new_num_regions >= _max_regions) {
-      // Not enough regions left.
-      return -1;
-    }
-
-    jlong old = Atomic::cmpxchg(new_num_regions, &_num_regions, num_regions);
-    if (old == num_regions) {
-      // CAS Successful. Expand virtual memory and return the index.
-      size_t expand_size = new_regions * ShenandoahHeapRegion::RegionSizeBytes;
-      // if (ShenandoahGCVerbose) {
-        tty->print_cr("expanding storage by %x bytes, for %d new regions", expand_size, new_regions);
-        // }
-      bool success = _storage.expand_by(expand_size);
-      assert(success, "should always be able to expand by requested size");
-
-      return num_regions;
-    }
+  size_t num_regions = _num_regions;
+  size_t new_num_regions = num_regions + new_regions;
+  if (new_num_regions >= _max_regions) {
+    // Not enough regions left.
+    return -1;
   }
-  */
 
-  //  MutexLockerEx ml(ShenandoahHeap_lock, true);
-  // {
-    size_t num_regions = _num_regions;
-    size_t new_num_regions = num_regions + new_regions;
-    if (new_num_regions >= _max_regions) {
-      // Not enough regions left.
-      return -1;
-    }
+  size_t expand_size = new_regions * ShenandoahHeapRegion::RegionSizeBytes;
+  if (ShenandoahGCVerbose) {
+    tty->print_cr("expanding storage by %x bytes, for %d new regions", expand_size, new_regions);
+  }
+  bool success = _storage.expand_by(expand_size);
+  assert(success, "should always be able to expand by requested size");
 
-    size_t expand_size = new_regions * ShenandoahHeapRegion::RegionSizeBytes;
-    if (ShenandoahGCVerbose) {
-      tty->print_cr("expanding storage by %x bytes, for %d new regions", expand_size, new_regions);
-    }
-    bool success = _storage.expand_by(expand_size);
-    assert(success, "should always be able to expand by requested size");
+  _num_regions = new_num_regions;
 
-    _num_regions = new_num_regions;
+  // We need a memory barrier here to prevent subsequent threads from loading
+  // a cached value of _num_regions.
+  OrderAccess::storeload();
 
-    // We need a memory barrier here to prevent subsequent threads from loading
-    // a cached value of _num_regions.
-    OrderAccess::storeload();
-
-    return num_regions;
-    // }
+  return num_regions;
 
 }
 
