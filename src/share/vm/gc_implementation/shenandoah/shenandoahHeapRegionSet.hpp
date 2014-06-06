@@ -77,6 +77,8 @@ public:
   // Check for unreachable humonguous regions and reclaim them.
   void reclaim_humonguous_regions();
 
+  void set_concurrent_iteration_safe_limits();
+
 private:
   void reclaim_humonguous_region_at(ShenandoahHeapRegion** r);
 

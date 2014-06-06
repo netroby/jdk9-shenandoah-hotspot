@@ -143,8 +143,14 @@ bool ShenandoahBarrierSet::write_prim_needs_barrier(HeapWord* hw, size_t s, juin
   Unimplemented();
 }
 
+bool ShenandoahBarrierSet::need_update_refs_barrier() {
+  ShenandoahHeap* heap = ShenandoahHeap::heap();
+  return ShenandoahUpdateRefsEarly ? heap->is_update_references_in_progress()
+                                   : JavaThread::satb_mark_queue_set().is_active();
+}
+
 void ShenandoahBarrierSet::write_ref_array_work(MemRegion mr) {
-  if (!JavaThread::satb_mark_queue_set().is_active()) return;
+  if (! need_update_refs_barrier()) return;
   ShenandoahHeap* heap = ShenandoahHeap::heap();
   for (HeapWord* word = mr.start(); word < mr.end(); word++) {
     oop* oop_ptr = (oop*) word;
@@ -228,13 +234,15 @@ void ShenandoahBarrierSet::write_ref_field_pre_work(void* field, oop new_val) {
 }
 
 void ShenandoahBarrierSet::write_ref_field_work(void* v, oop o) {
-  if (! JavaThread::satb_mark_queue_set().is_active()) return;
+  if (! need_update_refs_barrier()) return;
   assert (! UseCompressedOops, "compressed oops not supported yet");
   ShenandoahHeap::heap()->maybe_update_oop_ref((oop*) v);
   // tty->print("write_ref_field_work: v = "PTR_FORMAT" o = "PTR_FORMAT"\n", v, o);
 }
 
 void ShenandoahBarrierSet::write_region_work(MemRegion mr) {
+
+  if (! need_update_refs_barrier()) return;
 
   // This is called for cloning an object (see jvm.cpp) after the clone
   // has been made. We are not interested in any 'previous value' because

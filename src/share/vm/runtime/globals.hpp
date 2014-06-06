@@ -1408,6 +1408,9 @@ class CommandLineFlags {
   product(bool, ShenandoahConcurrentMarking, true,                          \
           "Turn on/off concurrent marking in Shenandoah")                   \
                                                                             \
+  product(bool, ShenandoahUpdateRefsEarly, true,                            \
+          "Turn on/off early updating of references in Shenandoah")         \
+                                                                            \
   product(bool, ShenandoahConcurrentUpdateRefs, true,                       \
           "Turn on/off concurrent reference updating in Shenandoah")        \
                                                                             \

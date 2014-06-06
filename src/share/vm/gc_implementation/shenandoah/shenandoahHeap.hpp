@@ -77,8 +77,11 @@ private:
   int _max_workers;
   volatile size_t _used;
 
-  CMBitMap _mark_bit_map;
+  CMBitMap _mark_bit_map0;
   CMBitMap* _next_mark_bit_map;
+
+  CMBitMap _mark_bit_map1;
+  CMBitMap* _prev_mark_bit_map;
 
 public:
   size_t _bytesAllocSinceCM;
@@ -188,6 +191,7 @@ public:
   volatile unsigned int _concurrent_mark_in_progress;
 
   volatile unsigned int _evacuation_in_progress;
+  volatile bool _update_references_in_progress;
   volatile bool _waiting_for_jni_before_gc;
 
   bool should_start_concurrent_marking();
@@ -198,6 +202,7 @@ public:
   bool mark_current(oop obj) const;
   bool mark_current_no_checks(oop obj) const;
   bool isMarkedCurrent(oop obj) const;
+  bool is_marked_prev(oop obj) const;
 
   bool is_obj_ill(const oop obj) {
     return ! isMarkedCurrent(obj);
@@ -239,6 +244,7 @@ public:
   //  void assign_brooks_pointer(oop p, HeapWord* filler, HeapWord* copy);
   void verify_heap_after_marking();
   void verify_heap_after_evacuation();
+  void verify_heap_after_update_refs();
 
   // This is here to get access to the otherwise protected method in CollectedHeap.
   static HeapWord* allocate_from_tlab_work(Thread* thread, size_t size);
@@ -257,16 +263,23 @@ public:
   void set_evacuation_in_progress(bool in_progress);
   bool is_evacuation_in_progress();
 
+  bool is_update_references_in_progress();
+  void set_update_references_in_progress(bool update_refs_in_progress);
+
   void set_waiting_for_jni_before_gc(bool wait_for_jni);
   bool is_waiting_for_jni_before_gc();
 
   void evacuate_and_update_roots();
 
+  void prepare_for_update_references();
+
   void update_references();
 
-private:
+  ShenandoahHeapRegionSet* free_regions();
 
   void update_roots();
+
+private:
 
   bool grow_heap_by();
 

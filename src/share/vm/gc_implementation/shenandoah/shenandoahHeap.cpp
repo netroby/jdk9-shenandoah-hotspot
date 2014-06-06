@@ -134,11 +134,16 @@ jint ShenandoahHeap::initialize() {
                                                SATB_Q_FL_lock,
                                                20 /*G1SATBProcessCompletedThreshold */,
                                                Shared_SATB_Q_lock);
-  if (!_mark_bit_map.allocate(heap_rs)) {
-    fatal("Failed to allocate CM bit map");
+  if (!_mark_bit_map0.allocate(heap_rs)) {
+    fatal("Failed to allocate CM bit map 0");
     return JNI_ENOMEM;
   }
-  _next_mark_bit_map = &_mark_bit_map;
+  if (!_mark_bit_map1.allocate(heap_rs)) {
+    fatal("Failed to allocate CM bit map 1");
+    return JNI_ENOMEM;
+  }
+  _prev_mark_bit_map = &_mark_bit_map0;
+  _next_mark_bit_map = &_mark_bit_map1;
   reset_mark_bitmap();
 
   // TODO: Implement swapping of mark bitmaps.
@@ -158,7 +163,8 @@ ShenandoahHeap::ShenandoahHeap(ShenandoahCollectorPolicy* policy) :
   _collection_set(NULL),
   _bytesAllocSinceCM(0),
   _max_workers((int) MAX2((uint)ParallelGCThreads, 1U)),
-  _mark_bit_map(log2_intptr(MinObjAlignment)),
+  _mark_bit_map0(log2_intptr(MinObjAlignment)),
+  _mark_bit_map1(log2_intptr(MinObjAlignment)),
   _default_gclab_size(1024){
   _pgc = this;
   _scm = new ShenandoahConcurrentMark();
@@ -166,6 +172,9 @@ ShenandoahHeap::ShenandoahHeap(ShenandoahCollectorPolicy* policy) :
 }
 
 void ShenandoahHeap::reset_mark_bitmap() {
+  CMBitMap* current = _next_mark_bit_map;
+  _next_mark_bit_map = _prev_mark_bit_map;
+  _prev_mark_bit_map = current;
   _next_mark_bit_map->clearAll();
 }
 
@@ -275,7 +284,7 @@ HeapWord* ShenandoahHeap::allocate_new_tlab(size_t word_size) {
   HeapWord* result = allocate_memory(word_size);
 
   if (result != NULL) {
-    if (_concurrent_mark_in_progress) {
+    if (_concurrent_mark_in_progress || (ShenandoahUpdateRefsEarly && _evacuation_in_progress)) {
       // We mark the whole tlab here, this way we avoid marking every single
       // allocated object.
       _next_mark_bit_map->parMarkRange(MemRegion(result, word_size));
@@ -573,7 +582,7 @@ HeapWord* ShenandoahHeap::mem_allocate_locked(size_t size,
 #endif
 
     assert(! heap_region_containing(result)->is_in_collection_set(), "never allocate in targetted region");
-    if (_concurrent_mark_in_progress) {
+    if (_concurrent_mark_in_progress || (ShenandoahUpdateRefsEarly && _evacuation_in_progress)) {
       mark_current_no_checks(oop(result));
     }
 
@@ -758,8 +767,10 @@ public:
 };
 
 class RecycleDirtyRegionsClosure: public ShenandoahHeapRegionClosure {
+private:
+  ShenandoahHeap* _heap;
 public:
-  RecycleDirtyRegionsClosure() {}
+  RecycleDirtyRegionsClosure() : _heap(ShenandoahHeap::heap()) {}
 
   bool doHeapRegion(ShenandoahHeapRegion* r) {
 
@@ -767,12 +778,20 @@ public:
       // tty->print_cr("recycling region %d:", r->region_number());
       // r->print_on(tty);
       // tty->print_cr("");
-      ShenandoahHeap::heap()->decrease_used(r->used());
+      _heap->decrease_used(r->used());
       r->recycle();
+      if (ShenandoahUpdateRefsEarly) {
+        _heap->free_regions()->append(r);
+      }
     }
+
     return false;
   }
 };
+
+ShenandoahHeapRegionSet* ShenandoahHeap::free_regions() {
+  return _free_regions;
+}
 
 void ShenandoahHeap::print_heap_regions()  {
   PrintHeapRegionsClosure pc1;
@@ -925,10 +944,10 @@ void ShenandoahHeap::verify_heap_after_marking() {
 
 void ShenandoahHeap::prepare_for_concurrent_evacuation() {
 
-  RecycleDirtyRegionsClosure cl;
-  heap_region_iterate(&cl);
-
-  // _current_region->fill_region();
+  if (! ShenandoahUpdateRefsEarly) {
+    RecycleDirtyRegionsClosure cl;
+    heap_region_iterate(&cl);
+  }
 
   // NOTE: This needs to be done during a stop the world pause, because
   // putting regions into the collection set concurrently with Java threads
@@ -968,7 +987,7 @@ void ShenandoahHeap::update_roots() {
   COMPILER2_PRESENT(DerivedPointerTable::update_pointers());
 }
 
-class ShenandoahUpdateObjectsClosure : public ObjectClosure {
+class ShenandoahUpdateObjectsClosure : public ObjectClosureCareful {
   ShenandoahUpdateRootsClosure _refs_cl;
   ShenandoahHeap* _heap;
 
@@ -978,12 +997,22 @@ public:
     _heap(ShenandoahHeap::heap()) {
   }
 
-  void do_object(oop p) {
+  size_t do_object_careful(oop p) {
     assert(ShenandoahHeap::heap()->is_in(p), "only update objects in heap (where else?)");
     if (_heap->isMarkedCurrent(p)) {
       p->oop_iterate(&_refs_cl);
     }
+    return p->size();
   }
+
+  size_t do_object_careful_m(oop p, MemRegion mr) {
+    Unimplemented();
+  }
+
+  void do_object(oop p) {
+    Unimplemented();
+  }
+
 };
 
 class ParallelUpdateRefsTask : public AbstractGangTask {
@@ -1002,22 +1031,53 @@ public:
     ShenandoahHeapRegion* region = _regions->claim_next();
 
     while (region != NULL) {
-      if (! region->is_in_collection_set()) {
-        region->object_iterate(&_update_refs_cl);
+      if (! (region->is_in_collection_set() || region->is_humonguous_continuation())) {
+        HeapWord* failed = region->object_iterate_careful(&_update_refs_cl);
+        assert(failed == NULL, "careful iteration is implemented safe for now in Shenandaoh");
       }
       region = _regions->claim_next();
     }
   }
 };
 
-void ShenandoahHeap::update_references() {
+void ShenandoahHeap::prepare_for_update_references() {
+  ensure_parsability(true);
 
+  ShenandoahHeapRegionSet regions = ShenandoahHeapRegionSet(_num_regions, _ordered_regions, _num_regions);
+  regions.set_concurrent_iteration_safe_limits();
+
+  // We need to update the roots so that they are ok for C2 when returning from the safepoint.
   update_roots();
-  ShenandoahUpdateObjectsClosure cl;
+
+  set_update_references_in_progress(true);
+}
+
+void ShenandoahHeap::update_references() {
 
   ShenandoahHeapRegionSet regions = ShenandoahHeapRegionSet(_num_regions, _ordered_regions, _num_regions);
   ParallelUpdateRefsTask task = ParallelUpdateRefsTask(&regions);
   workers()->run_task(&task);
+
+  VM_ShenandoahUpdateRootRefs update_roots;
+  if (ShenandoahConcurrentUpdateRefs) {
+    VMThread::execute(&update_roots);
+  } else {
+    update_roots.doit();
+  }
+
+  if (ShenandoahVerify) {
+    VM_ShenandoahVerifyHeapAfterUpdateRefs verify_after_update_refs;
+    if (ShenandoahConcurrentUpdateRefs) {
+      VMThread::execute(&verify_after_update_refs);
+    } else {
+      verify_after_update_refs.doit();
+    }
+  }
+
+  RecycleDirtyRegionsClosure recycle;
+  heap_region_iterate(&recycle);
+
+  set_update_references_in_progress(false);
 
 }
 
@@ -1074,12 +1134,6 @@ void ShenandoahHeap::do_evacuation() {
   }
 
   set_evacuation_in_progress(false);
-
-  if (! ShenandoahConcurrentUpdateRefs) {
-    update_references();
-  }
-
-  reset_mark_bitmap();
 
   if (ShenandoahVerify) {
     VM_ShenandoahVerifyHeapAfterEvacuation verify_after_evacuation;
@@ -1606,6 +1660,15 @@ void ShenandoahMarkRefsNoUpdateClosure::do_oop(narrowOop* p) {
 void ShenandoahMarkRefsNoUpdateClosure::do_oop(oop* p) {
   oop obj = *p;
   if (! oopDesc::is_null(obj)) {
+#ifdef ASSERT
+  if (obj != oopDesc::bs()->resolve_oop(obj)) {
+    tty->print_cr("heap region containing ref:");
+    ShenandoahHeapRegion* ref_region = _heap->heap_region_containing(p);
+    ref_region->print();
+    //tty->print_cr("obj has been marked prev: %d", _heap->is_marked_prev(obj));
+  }
+#endif
+  assert(obj == oopDesc::bs()->resolve_oop(obj), "only mark forwarded copy of objects");
     _mark_objs.do_object(obj);
   }
 }
@@ -1667,7 +1730,7 @@ void ShenandoahHeap::prepare_unmarked_root_objs() {
   OopsInGenClosure* cl;
   ShenandoahMarkRefsClosure rootsCl1(0);
   ShenandoahMarkRefsNoUpdateClosure rootsCl2(0);
-  if (ShenandoahConcurrentUpdateRefs) {
+  if (! ShenandoahUpdateRefsEarly) {
     cl = &rootsCl1;
   } else {
     cl = &rootsCl2;
@@ -1794,6 +1857,32 @@ public:
 
 };
 
+class VerifyAfterUpdateRefsClosure : public ExtendedOopClosure {
+
+  ShenandoahHeap* _sh;
+
+public:
+  VerifyAfterUpdateRefsClosure() : _sh ( ShenandoahHeap::heap() ) {}
+
+  template<class T> void do_oop_nv(T* p) {
+    T heap_oop = oopDesc::load_heap_oop(p);
+    if (!oopDesc::is_null(heap_oop)) {
+      oop obj = oopDesc::decode_heap_oop_not_null(heap_oop);
+      guarantee(! _sh->heap_region_containing(obj)->is_in_collection_set(), "no live reference must point to from-space");
+      if (obj != oopDesc::bs()->resolve_oop(obj)) {
+        tty->print_cr("top-limit: %p, p: %p", _sh->heap_region_containing(p)->concurrent_iteration_safe_limit(), p);
+      }
+      guarantee(obj == oopDesc::bs()->resolve_oop(obj), "no live reference must point to forwarded object");
+      guarantee(obj->is_oop(), "is_oop");
+      guarantee(Metaspace::contains(obj->klass()), "klass pointer must go to metaspace");
+    }
+  }
+
+  void do_oop(oop* p)       { do_oop_nv(p); }
+  void do_oop(narrowOop* p) { do_oop_nv(p); }
+
+};
+
 void ShenandoahHeap::verify_heap_after_evacuation() {
 
   prepare_for_verify();
@@ -1803,6 +1892,18 @@ void ShenandoahHeap::verify_heap_after_evacuation() {
 
   IterateMarkedCurrentObjectsClosure marked_oops(&cl);
   object_iterate(&marked_oops);
+
+}
+
+void ShenandoahHeap::verify_heap_after_update_refs() {
+
+  prepare_for_verify();
+
+  VerifyAfterUpdateRefsClosure cl;
+
+  roots_iterate(&cl);
+
+  oop_iterate(&cl, true, true);
 
 }
 
@@ -1845,6 +1946,14 @@ bool ShenandoahHeap::is_evacuation_in_progress() {
   return _evacuation_in_progress;
 }
 
+bool ShenandoahHeap::is_update_references_in_progress() {
+  return _update_references_in_progress;
+}
+
+void ShenandoahHeap::set_update_references_in_progress(bool update_refs_in_progress) {
+  _update_references_in_progress = update_refs_in_progress;
+}
+
 void ShenandoahHeap::set_waiting_for_jni_before_gc(bool wait_for_jni) {
   _waiting_for_jni_before_gc = wait_for_jni;
   OrderAccess::storeload();
@@ -1861,7 +1970,7 @@ void ShenandoahHeap::post_allocation_collector_specific_setup(HeapWord* hw) {
   assert(! obj->has_displaced_mark(), "hopefully new objects don't have displaced mark");
   // tty->print_cr("post_allocation_collector_specific_setup:: %p", obj);
 
-  if (_concurrent_mark_in_progress) {
+  if (_concurrent_mark_in_progress || (ShenandoahUpdateRefsEarly && _evacuation_in_progress)) {
     mark_current_no_checks(obj);
   }
 }
@@ -1872,6 +1981,19 @@ void ShenandoahHeap::post_allocation_collector_specific_setup(HeapWord* hw) {
  * or if a competing thread succeeded in marking this object.
  */
 bool ShenandoahHeap::mark_current(oop obj) const {
+#ifdef ASSERT
+  if (obj != oopDesc::bs()->resolve_oop(obj)) {
+    tty->print_cr("heap region containing obj:");
+    ShenandoahHeapRegion* obj_region = heap_region_containing(obj);
+    obj_region->print();
+    tty->print_cr("obj has been marked prev: %d", is_marked_prev(obj));
+    tty->print_cr("heap region containing forwardee:");
+    ShenandoahHeapRegion* forward_region = heap_region_containing(oopDesc::bs()->resolve_oop(obj));
+    forward_region->print();    
+    tty->print_cr("fwd has been marked prev: %d", is_marked_prev(oopDesc::bs()->resolve_oop(obj)));
+  }
+#endif
+
   assert(obj == oopDesc::bs()->resolve_oop(obj), "only mark forwarded copy of objects");
   return mark_current_no_checks(obj);
 }
@@ -1882,6 +2004,10 @@ bool ShenandoahHeap::mark_current_no_checks(oop obj) const {
 
 bool ShenandoahHeap::isMarkedCurrent(oop obj) const {
   return _next_mark_bit_map->isMarked((HeapWord*) obj);
+}
+
+bool ShenandoahHeap::is_marked_prev(oop obj) const {
+  return _prev_mark_bit_map->isMarked((HeapWord*) obj);
 }
 
 void ShenandoahHeap::verify_copy(oop p,oop c){
@@ -1924,7 +2050,7 @@ oop ShenandoahHeap::evacuate_object(oop p, EvacuationAllocator* allocator) {
   if (result == (HeapWord*) p) {
     return_val = oop(copy);
 
-    if (! ShenandoahConcurrentUpdateRefs) {
+    if (ShenandoahUpdateRefsEarly) {
       mark_current(return_val);
     }
 

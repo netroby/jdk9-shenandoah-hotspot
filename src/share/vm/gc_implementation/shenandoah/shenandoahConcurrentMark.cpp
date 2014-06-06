@@ -46,7 +46,7 @@ public:
     ShenandoahMarkRefsClosure cl1(worker_id);
     ShenandoahMarkRefsNoUpdateClosure cl2(worker_id);
     OopsInGenClosure* cl;
-    if (ShenandoahConcurrentUpdateRefs) {
+    if (! ShenandoahUpdateRefsEarly) {
       cl = &cl1;
     } else {
       cl = &cl2;
@@ -162,7 +162,7 @@ void ShenandoahConcurrentMark::finishMarkFromRoots() {
   ShenandoahMarkRefsClosure cl1(0);
   ShenandoahMarkRefsNoUpdateClosure cl2(0);
   OopsInGenClosure* cl;
-  if (ShenandoahConcurrentUpdateRefs) {
+  if (! ShenandoahUpdateRefsEarly) {
     cl = &cl1;
   } else {
     cl = &cl2;

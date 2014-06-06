@@ -119,6 +119,20 @@ void ShenandoahHeapRegion::object_iterate(ObjectClosure* blk) {
   }
 }
 
+HeapWord* ShenandoahHeapRegion::object_iterate_careful(ObjectClosureCareful* blk) {
+  HeapWord * limit = concurrent_iteration_safe_limit();
+  assert(limit <= top(), "sanity check");
+  for (HeapWord* p = bottom() + BrooksPointer::BROOKS_POINTER_OBJ_SIZE; p < limit;) {
+    size_t size = blk->do_object_careful(oop(p));
+    if (size == 0) {
+      return p;  // failed at p
+    } else {
+      p += size + BrooksPointer::BROOKS_POINTER_OBJ_SIZE;
+    }
+  }
+  return NULL; // all done
+}
+
 void ShenandoahHeapRegion::oop_iterate(ExtendedOopClosure* cl, bool skip_unreachable_objects) {
   SkipUnreachableObjectToOopClosure cl2(cl, skip_unreachable_objects);
   object_iterate(&cl2);

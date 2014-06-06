@@ -119,7 +119,11 @@ public:
   static oopDesc* resolve_and_maybe_copy_oop_static(oopDesc* src);
   static oopDesc* resolve_and_maybe_copy_oop_static2(oopDesc* src);
 
+private:
+  bool need_update_refs_barrier();
+
 #ifndef CC_INTERP
+public:
   // TODO: The following should really live in an X86 specific subclass.
   virtual void compile_resolve_oop(MacroAssembler* masm, Register dst);
   virtual void compile_resolve_oop_not_null(MacroAssembler* masm, Register dst);

@@ -261,3 +261,10 @@ void ShenandoahHeapRegionSet::reclaim_humonguous_region_at(ShenandoahHeapRegion*
 
   ShenandoahHeap::heap()->decrease_used(size);
 }
+
+void ShenandoahHeapRegionSet::set_concurrent_iteration_safe_limits() {
+  for (ShenandoahHeapRegion** i = _regions; i < _next_free; i++) {
+    ShenandoahHeapRegion* region = *i;
+    region->set_concurrent_iteration_safe_limit(region->top());
+  }
+}

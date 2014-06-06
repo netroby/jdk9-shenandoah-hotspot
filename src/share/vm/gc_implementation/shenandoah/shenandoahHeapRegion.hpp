@@ -50,6 +50,9 @@ public:
   void oop_iterate(ExtendedOopClosure* cl, bool skip_unreachable_objects);
 
   void object_iterate(ObjectClosure* blk);
+
+  HeapWord* object_iterate_careful(ObjectClosureCareful* cl);
+
   HeapWord* block_start_const(const void* p) const;
 
   // Just before GC we need to fill the current region.

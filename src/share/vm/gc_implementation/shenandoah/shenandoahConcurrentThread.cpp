@@ -71,6 +71,16 @@ void ShenandoahConcurrentThread::run() {
           evacuation.doit();
 	}
 
+        if (ShenandoahUpdateRefsEarly) {
+          VM_ShenandoahUpdateRefs update_refs;
+          VMThread::execute(&update_refs);
+          if (ShenandoahConcurrentUpdateRefs) {
+            heap->update_references();
+          }
+        }
+
+        heap->reset_mark_bitmap();
+
       } else {
       Thread::current()->_ParkEvent->park(10) ;
       // yield();
