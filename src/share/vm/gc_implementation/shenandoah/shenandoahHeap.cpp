@@ -448,8 +448,6 @@ HeapWord* ShenandoahHeap::allocate_memory_work(size_t word_size) {
   if (result != NULL) {
     my_current_region->increase_live_data(word_size * HeapWordSize);
     increase_used(word_size * HeapWordSize);
-  } else {
-    tty->print_cr("no more regions 3");
   }
   return result;
 }
@@ -588,7 +586,7 @@ HeapWord* ShenandoahHeap::mem_allocate_locked(size_t size,
 
     return result;
   } else {
-    tty->print_cr("Out of memory. Requested number of words: %x used heap: %d, bytes allocated since last CM: %d", size, used(), _bytesAllocSinceCM);
+    tty->print_cr("Out of memory. Requested number of words: %d used heap: %d, bytes allocated since last CM: %d", size, used(), _bytesAllocSinceCM);
     MutexLockerEx ml(ShenandoahHeap_lock, true);
     {
       print_heap_regions();

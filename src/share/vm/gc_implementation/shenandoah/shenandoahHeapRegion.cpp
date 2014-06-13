@@ -82,6 +82,12 @@ void ShenandoahHeapRegion::print(outputStream* st) {
     st->print("A");
   if (is_in_collection_set())
     st->print("C");
+  if (is_humonguous_start()) {
+    st->print("H");
+  }
+  if (is_humonguous_continuation()) {
+    st->print("h");
+  }
   //else
     st->print(" ");
 
