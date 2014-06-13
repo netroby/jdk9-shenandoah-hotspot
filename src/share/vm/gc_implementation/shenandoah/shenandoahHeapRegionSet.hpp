@@ -18,13 +18,13 @@ private:
   ShenandoahHeapRegion** _concurrent_next_free;
 
   // Maximum size of the set.
-  const int _max_regions;
+  const size_t _max_regions;
 
   size_t _garbage_threshold;
   size_t _free_threshold;
 
-  void choose_collection_set(ShenandoahHeapRegionSet* region_set);
-  void choose_empty_regions(ShenandoahHeapRegionSet* region_set);
+  void choose_collection_set(ShenandoahHeapRegion** regions, size_t length);
+  void choose_free_set(ShenandoahHeapRegion** regions, size_t length);
 
 public:
   ShenandoahHeapRegionSet(size_t max_regions);
@@ -66,13 +66,6 @@ public:
   ShenandoahHeapRegion* claim_next();
 
   void choose_collection_and_free_sets(ShenandoahHeapRegionSet* col_set, ShenandoahHeapRegionSet* free_set);
-
-  //  ShenandoahHeapRegion** regions() { return _regions;}
-  // Sort from most free to least free.
-  void sortDescendingFree();
-
-  // Sort from most garbage to least garbage.
-  void sortDescendingGarbage();
 
   // Check for unreachable humonguous regions and reclaim them.
   void reclaim_humonguous_regions();

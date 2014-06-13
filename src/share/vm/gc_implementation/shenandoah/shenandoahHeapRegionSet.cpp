@@ -6,6 +6,7 @@ Copyright 2014 Red Hat, Inc. and/or its affiliates.
 #include "gc_implementation/shenandoah/shenandoahHeapRegion.hpp"
 #include "gc_implementation/shenandoah/shenandoahHeapRegionSet.hpp"
 #include "memory/resourceArea.hpp"
+#include "utilities/quickSort.hpp"
 
 ShenandoahHeapRegionSet::ShenandoahHeapRegionSet(size_t max_regions) :
   _max_regions(max_regions),
@@ -36,44 +37,23 @@ ShenandoahHeapRegionSet::~ShenandoahHeapRegionSet() {
   FREE_C_HEAP_ARRAY(ShenandoahHeapRegion*, _regions, mtGC);
 }
 
-int compareHeapRegionsByGarbage(ShenandoahHeapRegion** a, ShenandoahHeapRegion** b) {
-  if (*a == NULL) {
-    if (*b == NULL) {
+int compareHeapRegionsByGarbage(ShenandoahHeapRegion* a, ShenandoahHeapRegion* b) {
+  if (a == NULL) {
+    if (b == NULL) {
       return 0;
     } else {
       return 1;
     }
-  } else if (*b == NULL) {
+  } else if (b == NULL) {
     return -1;
   }
 
-  size_t garbage_a = (*a)->garbage();
-  size_t garbage_b = (*b)->garbage();
+  size_t garbage_a = a->garbage();
+  size_t garbage_b = b->garbage();
   
   if (garbage_a > garbage_b) 
     return -1;
   else if (garbage_a < garbage_b)
-    return 1;
-  else return 0;
-}
-
-int compareHeapRegionsByFree(ShenandoahHeapRegion** a, ShenandoahHeapRegion** b) {
-  if (*a == NULL) {
-    if (*b == NULL) {
-      return 0;
-    } else {
-      return 1;
-    }
-  } else if (*b == NULL) {
-    return -1;
-  }
-
-  size_t free_a = (*a)->free();
-  size_t free_b = (*b)->free();
-  
-  if (free_a > free_b) 
-    return -1;
-  else if (free_a < free_b)
     return 1;
   else return 0;
 }
@@ -142,41 +122,6 @@ ShenandoahHeapRegion** ShenandoahHeapRegionSet::limit_region(ShenandoahHeapRegio
   }
 }
 
-void ShenandoahHeapRegionSet::sortDescendingFree() {
-  ResourceMark rm;
-
-  GrowableArray<ShenandoahHeapRegion*>* rs = 
-    new GrowableArray<ShenandoahHeapRegion*>();
-  for (ShenandoahHeapRegion** i = _regions; i < _next_free; i++)
-    rs->append(*i);
-
-  rs->sort(compareHeapRegionsByFree);
-
-  int idx = 0;
-  for (ShenandoahHeapRegion** i = _regions; i < _next_free; i++) {
-    *i = rs->at(idx);
-    idx++;
-  }
-}
-   
-void ShenandoahHeapRegionSet::sortDescendingGarbage() {
-  ResourceMark rm;
-
-  GrowableArray<ShenandoahHeapRegion*>* rs = 
-    new GrowableArray<ShenandoahHeapRegion*>();
-
-  for (ShenandoahHeapRegion** i = _regions; i < _next_free; i++)
-    rs->append(*i);
-
-  rs->sort(compareHeapRegionsByGarbage);
-
-  int idx = 0;
-  for (ShenandoahHeapRegion** i = _regions; i < _next_free; i++) {
-    *i = rs->at(idx);
-    idx++;
-  }
-}
-  
 void ShenandoahHeapRegionSet::print() {
   for (ShenandoahHeapRegion** i = _regions; i < _next_free; i++) {
     if (i == _current) {
@@ -187,34 +132,54 @@ void ShenandoahHeapRegionSet::print() {
 }
 
 void ShenandoahHeapRegionSet::choose_collection_and_free_sets(ShenandoahHeapRegionSet* col_set, ShenandoahHeapRegionSet* free_set) {
-  choose_collection_set(col_set);
-  choose_empty_regions(free_set);
+  col_set->choose_collection_set(_regions, length());
+  free_set->choose_free_set(_regions, length());
 }
 
-void ShenandoahHeapRegionSet::choose_collection_set(ShenandoahHeapRegionSet* region_set) {
-  sortDescendingGarbage();
-  ShenandoahHeapRegion** r = _regions;
+void ShenandoahHeapRegionSet::choose_collection_set(ShenandoahHeapRegion** regions, size_t length) {
+
+  clear();
+
+  assert(length <= _max_regions, "must not blow up array");
+
+  ShenandoahHeapRegion** tmp = NEW_C_HEAP_ARRAY(ShenandoahHeapRegion*, length, mtGC);
+
+  memcpy(tmp, regions, sizeof(ShenandoahHeapRegion*) * length);
+
+  QuickSort::sort<ShenandoahHeapRegion*>(tmp, length, compareHeapRegionsByGarbage, false);
+
+  ShenandoahHeapRegion** r = tmp;
+  ShenandoahHeapRegion** end = tmp + length;
 
   // We don't want the current allocation region in the collection set because a) it is still being allocated into and b) This is where the write barriers will allocate their copies.
 
-  while (r < _next_free && (*r)->garbage() > _garbage_threshold) {
-    if (! ( (*r)->has_active_tlabs() || (*r)->is_current_allocation_region()
-            || (*r)->is_humonguous())) {
+  while (r < end) {
+    ShenandoahHeapRegion* region = *r;
+    if (region->garbage() > _garbage_threshold
+        && ! (region->has_active_tlabs() || region->is_current_allocation_region()
+              || region->is_humonguous())) {
 
-      region_set->append(*r);
-      (*r)->set_is_in_collection_set(true);
+      append(region);
+      region->set_is_in_collection_set(true);
     }
     r++;
   }
+
+  FREE_C_HEAP_ARRAY(ShenandoahHeapRegion*, tmp, mtGC);
+
 }
 
-void ShenandoahHeapRegionSet::choose_empty_regions(ShenandoahHeapRegionSet* region_set) {
-  sortDescendingFree();
+void ShenandoahHeapRegionSet::choose_free_set(ShenandoahHeapRegion** regions, size_t length) {
 
-  for (ShenandoahHeapRegion** r = _regions; r < _next_free; r++) {
+  clear();
+  ShenandoahHeapRegion** end = regions + length;
+
+  for (ShenandoahHeapRegion** r = regions; r < end; r++) {
     ShenandoahHeapRegion* region = *r;
-    if ((! region->is_in_collection_set()) && (! region->is_current_allocation_region())) {
-      region_set->append(region);;
+    if ((! region->is_in_collection_set())
+        && (! region->is_current_allocation_region())
+        && (! region->is_humonguous())) {
+      append(region);
     }
   }
 }  
