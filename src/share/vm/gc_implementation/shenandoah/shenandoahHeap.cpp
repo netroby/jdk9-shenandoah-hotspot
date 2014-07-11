@@ -978,6 +978,9 @@ class ShenandoahUpdateRootsClosure: public ExtendedOopClosure {
     Unimplemented();
   }
 
+  bool apply_to_weak_ref_discovered_field() {
+    return true;
+  }
 };
 
 void ShenandoahHeap::update_roots() {
@@ -985,7 +988,11 @@ void ShenandoahHeap::update_roots() {
   COMPILER2_PRESENT(DerivedPointerTable::clear());
 
   ShenandoahUpdateRootsClosure cl;
+  CodeBlobToOopClosure blobsCl(&cl, false);
   roots_iterate(&cl);
+
+  ref_processor_cm()->weak_oops_do(&cl);
+  process_weak_roots(&cl, &blobsCl);
 
   COMPILER2_PRESENT(DerivedPointerTable::update_pointers());
 }
@@ -1108,6 +1115,9 @@ public:
     Unimplemented();
   }
 
+  bool apply_to_weak_ref_discovered_field() {
+    return true;
+  }
 };
 
 
@@ -1116,7 +1126,11 @@ void ShenandoahHeap::evacuate_and_update_roots() {
   COMPILER2_PRESENT(DerivedPointerTable::clear());
 
   ShenandoahEvacuateUpdateRootsClosure cl;
+  CodeBlobToOopClosure blobsCl(&cl, false);
   roots_iterate(&cl);
+
+  ref_processor_cm()->weak_oops_do(&cl);
+  process_weak_roots(&cl, &blobsCl);
 
   COMPILER2_PRESENT(DerivedPointerTable::update_pointers());
 }
@@ -1230,7 +1244,6 @@ void ShenandoahHeap::roots_iterate(ExtendedOopClosure* cl) {
   ClassLoaderDataGraph::clear_claimed_marks();
 
   process_strong_roots(true, false, ScanningOption(so), cl, &blobsCl, &klassCl);
-  process_weak_roots(cl, &blobsCl);
 }
  
 void ShenandoahHeap::verify_evacuation(ShenandoahHeapRegion* from_region) {

@@ -394,7 +394,6 @@ public:
 
   void do_oop_work(oop* p) {  
     oop obj = *p;
-    obj = oopDesc::bs()->resolve_oop(obj);
     
     if (obj != NULL) {
       if (ShenandoahTraceWeakReferences) {
