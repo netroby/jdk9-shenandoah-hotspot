@@ -72,9 +72,9 @@ void ShenandoahConcurrentThread::run() {
 	}
 
         if (ShenandoahUpdateRefsEarly) {
-          VM_ShenandoahUpdateRefs update_refs;
-          VMThread::execute(&update_refs);
           if (ShenandoahConcurrentUpdateRefs) {
+            VM_ShenandoahUpdateRefs update_refs;
+            VMThread::execute(&update_refs);
             heap->update_references();
           }
         }

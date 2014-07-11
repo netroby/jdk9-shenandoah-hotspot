@@ -93,6 +93,12 @@ void VM_ShenandoahEvacuation::doit() {
 
   ShenandoahHeap *sh = ShenandoahHeap::heap();
   sh->do_evacuation();
+
+  if (! ShenandoahConcurrentUpdateRefs) {
+    assert(! ShenandoahConcurrentEvacuation, "turn off concurrent evacuation");
+    sh->prepare_for_update_references();
+    sh->update_references();
+  }
 }
 
 VM_Operation::VMOp_Type VM_ShenandoahVerifyHeapAfterUpdateRefs::type() const {
@@ -140,7 +146,5 @@ void VM_ShenandoahUpdateRefs::doit() {
 
   ShenandoahHeap *sh = ShenandoahHeap::heap();
   sh->prepare_for_update_references();
-  if (! ShenandoahConcurrentUpdateRefs) {
-    sh->update_references();
-  }
+  assert(ShenandoahConcurrentUpdateRefs, "only do this when concurrent update references is turned on");
 }
