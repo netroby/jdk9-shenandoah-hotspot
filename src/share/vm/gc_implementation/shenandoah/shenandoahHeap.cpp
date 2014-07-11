@@ -18,6 +18,7 @@ Copyright 2014 Red Hat, Inc. and/or its affiliates.
 #include "runtime/vmThread.hpp"
 #include "memory/iterator.hpp"
 #include "memory/oopFactory.hpp"
+#include "memory/referenceProcessor.hpp"
 #include "memory/universe.hpp"
 #include "utilities/copy.hpp"
 #include "gc_implementation/shared/vmGCOperations.hpp"
@@ -30,7 +31,7 @@ ShenandoahHeap* ShenandoahHeap::_pgc = NULL;
 void printHeapLocations(HeapWord* start, HeapWord* end) {
   HeapWord* cur = NULL;
   for (cur = start; cur < end; cur++) {
-    //    tty->print("%p : %p \n", cur);
+    tty->print("%p : %p \n", cur, *cur);
   }
 }
 
@@ -163,6 +164,7 @@ ShenandoahHeap::ShenandoahHeap(ShenandoahCollectorPolicy* policy) :
   _collection_set(NULL),
   _bytesAllocSinceCM(0),
   _max_workers((int) MAX2((uint)ParallelGCThreads, 1U)),
+  _ref_processor_cm(NULL),
   _mark_bit_map0(log2_intptr(MinObjAlignment)),
   _mark_bit_map1(log2_intptr(MinObjAlignment)),
   _default_gclab_size(1024){
@@ -190,6 +192,7 @@ void ShenandoahHeap::print_on(outputStream* st) const {
 
 void ShenandoahHeap::post_initialize() {
   _scm->initialize(workers());
+  ref_processing_init();
 }
 
 class CalculateUsedRegionClosure : public ShenandoahHeapRegionClosure {
@@ -586,7 +589,7 @@ HeapWord* ShenandoahHeap::mem_allocate_locked(size_t size,
 
     return result;
   } else {
-    tty->print_cr("Out of memory. Requested number of words: %d used heap: %d, bytes allocated since last CM: %d", size, used(), _bytesAllocSinceCM);
+    tty->print_cr("Out of memory. Requested number of words: %d used heap: %ld, bytes allocated since last CM: %ld", size, used(), _bytesAllocSinceCM);
     MutexLockerEx ml(ShenandoahHeap_lock, true);
     {
       print_heap_regions();
@@ -864,12 +867,14 @@ public:
 	_heap->print_all_refs("post-mark");
 	tty->print_cr("oop not marked, although referrer is marked: %p: in_heap: %d, is_marked: %d", 
 		      (HeapWord*) o, _heap->is_in(o), _heap->isMarkedCurrent(o));
+	printHeapLocations((HeapWord*) o, (HeapWord*) o + o->size());
 
         tty->print_cr("oop class: %s", o->klass()->internal_name());
 	if (_heap->is_in(p)) {
 	  oop referrer = oop(_heap->heap_region_containing(p)->block_start_const(p));
 	  tty->print("Referrer starts at addr %p\n", (HeapWord*) referrer);
 	  referrer->print();
+	  printHeapLocations((HeapWord*) referrer, (HeapWord*) referrer + referrer->size());
 	}
         tty->print_cr("heap region containing object:");
 	_heap->heap_region_containing(o)->print();
@@ -1227,7 +1232,7 @@ void ShenandoahHeap::roots_iterate(ExtendedOopClosure* cl) {
   process_strong_roots(true, false, ScanningOption(so), cl, &blobsCl, &klassCl);
   process_weak_roots(cl, &blobsCl);
 }
-
+ 
 void ShenandoahHeap::verify_evacuation(ShenandoahHeapRegion* from_region) {
 
   VerifyEvacuationClosure rootsCl(from_region);
@@ -1237,6 +1242,14 @@ void ShenandoahHeap::verify_evacuation(ShenandoahHeapRegion* from_region) {
 
 oop ShenandoahHeap::maybe_update_oop_ref(oop* p) {
 
+//   if (!is_in(p)) 
+//     tty->print("Maybe_update_oop_ref: %p isn't in the heap\n", p);
+//   else if (!heap_region_containing(p)->is_in_collection_set()) 
+//     tty->print("Maybe_update_oop_ref: %p is not in the collection set\n", p);
+//   else
+//     tty->print("Maybe_update_oop_ref: %p is in the collection set\n", p);
+  
+  
   assert((! is_in(p)) || (! heap_region_containing(p)->is_in_collection_set()), "never update refs in from-space"); 
 
   oop heap_oop = *p; // read p
@@ -1267,7 +1280,7 @@ oop ShenandoahHeap::maybe_update_oop_ref(oop* p) {
     }
     /*
       else {
-      tty->print_cr("not updating ref: %p", heap_oop);
+      tty->print_cr("not updating ref: %p", heap_oop);wh
       }
     */
   }
@@ -1410,7 +1423,7 @@ public:
         { // Just for debugging.
 	  gclog_or_tty->print_cr("Root location "PTR_FORMAT" "
 				 "verified "PTR_FORMAT, p, (void*) obj);
-	  obj->print_on(gclog_or_tty);
+	  //	  obj->print_on(gclog_or_tty);
         }
       }
       guarantee(obj->is_oop(), "is_oop");
@@ -1608,18 +1621,27 @@ oop ShenandoahHeap::oop_containing_oop_ptr(oop* p) {
 }
  */
 
-ShenandoahMarkRefsClosure::ShenandoahMarkRefsClosure(uint worker_id) :
+// ShenandoahMarkRefsClosure::ShenandoahMarkRefsClosure(uint worker_id) :
+//   ExtendedOopClosure(ShenandoahHeap::heap()->ref_processor_cm()),
+//   _worker_id(worker_id),
+//   _heap(ShenandoahHeap::heap()),
+//   _mark_objs(ShenandoahMarkObjsClosure(worker_id))
+// {
+
+ShenandoahMarkRefsClosure::ShenandoahMarkRefsClosure(uint worker_id) : 
+  ExtendedOopClosure(((ShenandoahHeap *) Universe::heap())->ref_processor_cm()),
   _worker_id(worker_id),
-  _heap(ShenandoahHeap::heap()),
+  _heap((ShenandoahHeap*) Universe::heap()),
   _mark_objs(ShenandoahMarkObjsClosure(worker_id))
 {
+
 }
 
 void ShenandoahMarkRefsClosure::do_oop_work(oop* p) {
   // We piggy-back reference updating to the marking tasks.
-  // tty->print_cr("marking oop ref: %p", p);
   oop* old = p;
   oop obj = _heap->maybe_update_oop_ref(p);
+
 #ifdef ASSERT
   if (ShenandoahTraceUpdates) {
     if (p != old) 
@@ -1633,8 +1655,16 @@ void ShenandoahMarkRefsClosure::do_oop_work(oop* p) {
   // assert(oopDesc::bs()->resolve_oop(obj) == *p, "we just updated the referrer");
   // assert(obj == NULL || ! _heap->heap_region_containing(obj)->is_dirty(), "must not point to dirty region");
 
-  _mark_objs.do_object(obj);
+
+  //  ShenandoahExtendedMarkObjsClosure cl(_heap->ref_processor_cm(), _worker_id);
+  //  ShenandoahMarkObjsClosure mocl(cl, _worker_id);
+
+  HandleMark hm;
+  if (obj != NULL) {
+    _mark_objs.do_object(obj);
+  }
 }
+
 
 void ShenandoahMarkRefsClosure::do_oop(narrowOop* p) {
   assert(false, "narrowOops not supported");
@@ -1645,6 +1675,7 @@ void ShenandoahMarkRefsClosure::do_oop(oop* p) {
 }
 
 ShenandoahMarkRefsNoUpdateClosure::ShenandoahMarkRefsNoUpdateClosure(uint worker_id) :
+  ExtendedOopClosure(((ShenandoahHeap *) Universe::heap())->ref_processor_cm()),
   _worker_id(worker_id),
   _heap(ShenandoahHeap::heap()),
   _mark_objs(ShenandoahMarkObjsClosure(worker_id))
@@ -1656,54 +1687,77 @@ void ShenandoahMarkRefsNoUpdateClosure::do_oop(narrowOop* p) {
 }
 
 void ShenandoahMarkRefsNoUpdateClosure::do_oop(oop* p) {
+  do_oop_work(p);
+}
+
+void ShenandoahMarkRefsNoUpdateClosure::do_oop_work(oop* p) {
   oop obj = *p;
   if (! oopDesc::is_null(obj)) {
-#ifdef ASSERT
-  if (obj != oopDesc::bs()->resolve_oop(obj)) {
-    tty->print_cr("heap region containing ref:");
-    ShenandoahHeapRegion* ref_region = _heap->heap_region_containing(p);
-    ref_region->print();
-    //tty->print_cr("obj has been marked prev: %d", _heap->is_marked_prev(obj));
-  }
-#endif
-  assert(obj == oopDesc::bs()->resolve_oop(obj), "only mark forwarded copy of objects");
+    // #ifdef ASSERT
+    if (obj != oopDesc::bs()->resolve_oop(obj)) {
+      HandleMark hm;
+      oop obj_prime = oopDesc::bs()->resolve_oop(obj);
+      tty->print("We've got one: obj = %p : obj_prime = %p\n", (HeapWord*) obj, (HeapWord*)obj_prime);
+      obj->print();
+      obj_prime->print();
+      printHeapLocations((HeapWord*) obj-16, (HeapWord*) obj + obj->size());
+      printHeapLocations((HeapWord*) obj_prime-16, (HeapWord*) obj_prime + obj->size());
+      tty->print_cr("heap region containing ref:");
+      ShenandoahHeapRegion* ref_region = _heap->heap_region_containing(p);
+      ref_region->print();
+      tty->print_cr("obj has been marked prev: %d", _heap->is_marked_prev(obj));
+    }
+    // #endif
+    assert(obj == oopDesc::bs()->resolve_oop(obj), "only mark forwarded copy of objects");
+    if (ShenandoahTraceConcurrentMarking) {
+      tty->print("Calling ShenandoahMarkRefsNoUpdateClosure on %p\n", (HeapWord*)obj);
+      printHeapLocations((HeapWord*) obj, (HeapWord*) obj + obj->size());
+    }
+
     _mark_objs.do_object(obj);
   }
 }
 
+
 ShenandoahMarkObjsClosure::ShenandoahMarkObjsClosure(uint worker_id) :
   _worker_id(worker_id),
-  _heap(ShenandoahHeap::heap()),
-  _concurrent_mark(_heap->concurrentMark()) {
+  _heap((ShenandoahHeap*)(Universe::heap())) 
+{
 }
 
 void ShenandoahMarkObjsClosure::do_object(oop obj) {
-  if (obj != NULL) {
+  ShenandoahConcurrentMark* scm = _heap->concurrentMark();
 
+  //  tty->print("Calling ShenandoahMarkObjsClosure on %p\n", obj);
+  if (obj != NULL) {
+    // TODO: The following resolution of obj is only ever needed when draining the SATB queues.
+    // Wrap this closure to avoid this call in usual marking.
+    obj = oopDesc::bs()->resolve_oop(obj);
+    
 #ifdef ASSERT
     if (_heap->heap_region_containing(obj)->is_in_collection_set()) {
       tty->print_cr("trying to mark obj: %p (%d) in dirty region: ", (HeapWord*) obj, _heap->isMarkedCurrent(obj));
-      _heap->heap_region_containing(obj)->print();
-      _heap->print_heap_regions();
+      //      _heap->heap_region_containing(obj)->print();
+      //      _heap->print_heap_regions();
     }
 #endif
     assert(! _heap->heap_region_containing(obj)->is_in_collection_set(), "we don't want to mark objects in from-space");
     assert(_heap->is_in(obj), "referenced objects must be in the heap. No?");
     if (_heap->mark_current(obj)) {
 #ifdef ASSERT
-      if (ShenandoahTraceConcurrentMarking)
-	tty->print_cr("marked obj: %p", (HeapWord*) obj);
+//       if (ShenandoahTraceConcurrentMarking)
+// 	tty->print_cr("marked obj: %p", (HeapWord*) obj);
 #endif
       // Calculate liveness of heap region containing object.
       ShenandoahHeapRegion* region = _heap->heap_region_containing(obj);
       region->increase_live_data((obj->size() + BrooksPointer::BROOKS_POINTER_OBJ_SIZE) * HeapWordSize);
-      _concurrent_mark->addTask(obj, _worker_id);
+      scm->addTask(obj, _worker_id);
     }
 #ifdef ASSERT
     else {
-      if (ShenandoahTraceConcurrentMarking) {
-        tty->print_cr("failed to mark obj (already marked): %p", (HeapWord*) obj);
-      }
+      //      if (ShenandoahTraceConcurrentMarking) {
+      //        tty->print_cr("failed to mark obj (already marked): %p", (HeapWord*) obj);
+      //      }
       assert(_heap->isMarkedCurrent(obj), "make sure object is marked");
     }
 #endif
@@ -1721,11 +1775,13 @@ void ShenandoahMarkObjsClosure::do_object(oop obj) {
     }
   }
   */
+
 }
+  
 
 void ShenandoahHeap::prepare_unmarked_root_objs() {
   assert(Thread::current()->is_VM_thread(), "can only do this in VMThread");
-  OopsInGenClosure* cl;
+  ExtendedOopClosure* cl;
   ShenandoahMarkRefsClosure rootsCl1(0);
   ShenandoahMarkRefsNoUpdateClosure rootsCl2(0);
   if (! ShenandoahUpdateRefsEarly) {
@@ -2134,3 +2190,55 @@ void ShenandoahHeap::compile_prepare_oop(MacroAssembler* masm, Register obj) {
   __ movptr(Address(obj, -1 * HeapWordSize), obj);
 }
 #endif
+
+bool  ShenandoahIsAliveClosure:: do_object_b(oop obj) { 
+    HeapWord* addr = (HeapWord*) obj;
+    ShenandoahHeap* sh = ShenandoahHeap::heap();
+
+    if (ShenandoahTraceWeakReferences) {
+
+      if (addr != NULL) {
+	if(sh->is_in(addr)) {
+	  if (sh->is_obj_ill(obj)) {
+	    HandleMark hm;
+	    tty->print("ShenandoahIsAliveClosure Found an ill object %p\n", (HeapWord*)obj);
+	    obj->print();
+	  }
+	  else 
+	    tty->print("found a healthy object %p\n", (HeapWord*)obj);
+
+	} else {
+	  tty->print("found an object outside the heap %p\n", (HeapWord*)obj);
+	}
+      } else {
+	tty->print("found a null object %p\n", (HeapWord*)obj);
+      }
+    }
+
+    return addr != NULL && (!sh->is_in(addr) || !sh->is_obj_ill(obj));
+}
+
+void ShenandoahHeap::ref_processing_init() {
+  SharedHeap::ref_processing_init();
+  MemRegion mr = reserved_region();
+
+  // Concurrent Mark ref processor
+  _ref_processor_cm =
+    new ReferenceProcessor(mr,    // span
+                           ParallelRefProcEnabled && (ParallelGCThreads > 1),
+                                // mt processing
+                           (int) ParallelGCThreads,
+                                // degree of mt processing
+                           (ParallelGCThreads > 1) || (ConcGCThreads > 1),
+                                // mt discovery
+                           (int) MAX2(ParallelGCThreads, ConcGCThreads),
+                                // degree of mt discovery
+                           false,
+                                // Reference discovery is not atomic
+			   &isAlive,
+                                // is alive closure
+                                // (for efficiency/performance)
+                           true);
+                                // Setting next fields of discovered
+                                // lists requires a barrier.
+}

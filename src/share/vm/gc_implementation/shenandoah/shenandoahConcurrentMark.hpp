@@ -34,6 +34,13 @@ public:
   bool drain_one_satb_buffer(uint worker_id);
   bool has_aborted() {return _aborted;}
   SharedOverflowMarkQueue* overflow_queue();
+  void weakRefsWork(bool clear_soft_refs, int worker_id);
+
+  bool try_queue(uint worker_id, ExtendedOopClosure* cl);
+  bool try_to_steal(uint worker_id, ExtendedOopClosure* cl, int *seed);
+  bool try_overflow_queue(uint worker_id, ExtendedOopClosure *cl);
+  bool try_draining_an_satb_buffer(uint worker_id);
+  void traverse_object(ExtendedOopClosure *cl, oop obj);
 
   void addTask(oop obj, int worker_id);
   //  oop popTask(int worker_id);

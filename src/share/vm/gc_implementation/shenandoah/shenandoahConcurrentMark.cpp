@@ -1,6 +1,6 @@
 /*
-Copyright 2014 Red Hat, Inc. and/or its affiliates.
- */
+  Copyright 2014 Red Hat, Inc. and/or its affiliates.
+*/
 /*
  * Copyright (c) 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -25,27 +25,32 @@ Copyright 2014 Red Hat, Inc. and/or its affiliates.
  *
  */
 
+#include "gc_implementation/shared/gcTimer.hpp"
 #include "gc_implementation/shenandoah/shenandoahBarrierSet.hpp"
 #include "gc_implementation/shenandoah/shenandoahConcurrentMark.hpp"
 #include "gc_implementation/shenandoah/shenandoahHeap.hpp"
 #include "gc_implementation/shenandoah/brooksPointer.hpp"
+#include "memory/referenceProcessor.hpp"
+#include "classfile/symbolTable.hpp"
 
 class SCMConcurrentMarkingTask : public AbstractGangTask {
 private:
   ShenandoahConcurrentMark* _cm;
   ParallelTaskTerminator* _terminator;
+  int _seed;
+
 public:
   SCMConcurrentMarkingTask(ShenandoahConcurrentMark* cm, ParallelTaskTerminator* terminator) :
-    AbstractGangTask("Root Region Scan"), _cm(cm), _terminator(terminator) {
+    AbstractGangTask("Root Region Scan"), _cm(cm), _terminator(terminator), _seed(17) {
   }
 
+      
   void work(uint worker_id) {
-    int seed = 17;
-    ShenandoahHeap* sh = (ShenandoahHeap*) Universe::heap();
 
     ShenandoahMarkRefsClosure cl1(worker_id);
     ShenandoahMarkRefsNoUpdateClosure cl2(worker_id);
-    OopsInGenClosure* cl;
+    ExtendedOopClosure* cl;
+
     if (! ShenandoahUpdateRefsEarly) {
       cl = &cl1;
     } else {
@@ -53,41 +58,59 @@ public:
     }
 
     while (true) {
-      oop obj;
-    
-      bool success = _cm->task_queues()->queue(worker_id)->pop_local(obj);
-      if (! success) {
-        // If our queue runs empty, drain some of the SATB buffers, then try again.
-        // tty->print_cr("draining SATB buffers while concurrently marking");
-	while (_cm->drain_one_satb_buffer(worker_id) && !success)
-	  success = _cm->task_queues()->queue(worker_id)->pop_local(obj);
+      if (!_cm->try_queue(worker_id,cl) &&
+	  !_cm->try_overflow_queue(worker_id, cl) &&
+	  !_cm->try_to_steal(worker_id, cl, &_seed) &&
+	  !_cm->try_draining_an_satb_buffer(worker_id)) {
+	if (_terminator->offer_termination()) break;
       }
-      if (! success) {
-        if (!_cm->task_queues()->steal(worker_id, &seed, obj)) {
-          obj = _cm->overflow_queue()->pop();
-          if (obj == NULL) {
-            if (_terminator->offer_termination())
-              break;  
-            else 
-              continue;
-          }
-        }
-      }
-      // We got one.
-
-      assert(obj->is_oop(), "Oops, not an oop");
-      assert(! sh->heap_region_containing(obj)->is_in_collection_set(), "we don't want to mark objects in from-space");
-      obj->oop_iterate(cl);
     }
   }
 };
 
-// We need to revisit this  CHF
-// class SCMTerminatorTerminator : public TerminatorTerminator  { // So good we named it twice
-//   bool should_exit_termination() {
-//     return true;
-//   }
-// };
+bool ShenandoahConcurrentMark::try_queue(uint worker_id, ExtendedOopClosure* cl) {
+  oop obj;
+  if (task_queues()->queue(worker_id)->pop_local(obj)) {
+    traverse_object(cl, obj);
+    return true;
+  } else 
+    return false;;
+}
+
+bool ShenandoahConcurrentMark::try_to_steal(uint worker_id, ExtendedOopClosure* cl, int *seed) {
+  oop obj;
+  if (task_queues()->steal(worker_id, seed, obj)) {
+    traverse_object(cl, obj);
+    return true;
+  } else 
+    return false;
+}
+
+bool ShenandoahConcurrentMark::try_overflow_queue(uint worker_id, ExtendedOopClosure* cl) {
+  oop obj = overflow_queue()->pop();
+  if (obj != NULL) {
+    traverse_object(cl, obj);
+    return true;
+  } else
+    return false;
+}
+
+bool ShenandoahConcurrentMark:: try_draining_an_satb_buffer(uint worker_id) {
+  return drain_one_satb_buffer(worker_id);
+}
+
+
+void ShenandoahConcurrentMark::traverse_object(ExtendedOopClosure* cl, oop obj) {
+  ShenandoahHeap* sh = (ShenandoahHeap*) Universe::heap();
+
+  assert(sh->is_in(obj), "Should only traverse objects in the heap");
+
+  if (obj != NULL) {
+    assert(obj->is_oop(), "Oops, not an oop");
+    assert(! sh->heap_region_containing(obj)->is_in_collection_set(), "we don't want to mark objects in from-space");
+    obj->oop_iterate(cl);
+  }
+}
 
 void ShenandoahConcurrentMark::initialize(FlexibleWorkGang* workers) {
   if (ShenandoahGCVerbose) 
@@ -113,6 +136,11 @@ void ShenandoahConcurrentMark::markFromRoots() {
   }
   ShenandoahHeap* sh = (ShenandoahHeap *) Universe::heap();
   ParallelTaskTerminator terminator(_max_worker_id, _task_queues);
+  ReferenceProcessor* rp = sh->ref_processor_cm();
+  
+  // enable ("weak") refs discovery
+  rp->enable_discovery(true /*verify_disabled*/, true /*verify_no_refs*/);
+  rp->setup_policy(false); // snapshot the soft ref policy to be used in this cycle
 
   
   SCMConcurrentMarkingTask markingTask = SCMConcurrentMarkingTask(this, &terminator);
@@ -121,9 +149,11 @@ void ShenandoahConcurrentMark::markFromRoots() {
   if (ShenandoahGCVerbose) {
     tty->print_cr("Finishing markFromRoots");
     tty->print_cr("RESUMING THE WORLD: after marking");
+    
     TASKQUEUE_STATS_ONLY(print_taskqueue_stats());
     TASKQUEUE_STATS_ONLY(reset_taskqueue_stats());
   }
+
 }
 
 class FinishDrainSATBBuffersTask : public AbstractGangTask {
@@ -161,7 +191,7 @@ void ShenandoahConcurrentMark::finishMarkFromRoots() {
   // Also drain our overflow queue.
   ShenandoahMarkRefsClosure cl1(0);
   ShenandoahMarkRefsNoUpdateClosure cl2(0);
-  OopsInGenClosure* cl;
+  ExtendedOopClosure* cl;
   if (! ShenandoahUpdateRefsEarly) {
     cl = &cl1;
   } else {
@@ -174,11 +204,14 @@ void ShenandoahConcurrentMark::finishMarkFromRoots() {
     obj = _overflow_queue->pop();
   }
 
+  weakRefsWork(true, 0);
+  
   // Finally mark everything else we've got in our queues during the previous steps.
   SCMConcurrentMarkingTask markingTask = SCMConcurrentMarkingTask(this, &terminator);
   sh->workers()->run_task(&markingTask);
 
   assert(_task_queues->queue(0)->is_empty(), "Should be empty");
+
   if (ShenandoahGCVerbose) {
     tty->print_cr("Finishing finishMarkFromRoots");
 #ifdef SLOWDEBUG
@@ -262,12 +295,12 @@ void ShenandoahConcurrentMark::addTask(oop obj, int q) {
   assert(sh->is_in((HeapWord*) obj), "Only push heap objects on the queue");
 #ifdef ASSERT
   if (ShenandoahTraceConcurrentMarking){
-    tty->print_cr("Adding object %p to marking queue %d\n", (HeapWord*) obj, q);
+    tty->print_cr("Adding object %p to marking queue %d", (HeapWord*) obj, q);
   }
 #endif
 
   if (!_task_queues->queue(q)->push(obj)) {
-    tty->print_cr("WARNING: Shenandoah mark queues overflown");
+    //    tty->print_cr("WARNING: Shenandoah mark queues overflown overflow_queue: obj = %p", (HeapWord*) obj);
     _overflow_queue->push(obj);
   }
 }
@@ -305,3 +338,121 @@ void ShenandoahConcurrentMark::reset_taskqueue_stats() {
   }
 }
 #endif // TASKQUEUE_STATS
+
+// Weak Reference Closures
+class ShenandoahCMDrainMarkingStackClosure: public VoidClosure {
+  ShenandoahHeap* _sh;
+  ShenandoahConcurrentMark* _scm;
+
+public:
+ShenandoahCMDrainMarkingStackClosure() {
+    _sh = (ShenandoahHeap*) Universe::heap();
+    _scm = _sh->concurrentMark();
+  }
+
+      
+  void do_void() {
+
+    ShenandoahMarkRefsClosure cl1(0);
+    ShenandoahMarkRefsNoUpdateClosure cl2(0);
+    ExtendedOopClosure* cl;
+
+    if (! ShenandoahUpdateRefsEarly) {
+      cl = &cl1;
+    } else {
+      cl = &cl2;
+    }
+
+    while (true) {
+      if (!_scm->try_queue(0,cl) &&
+	  !_scm->try_overflow_queue(0, cl) &&
+	  !_scm->try_draining_an_satb_buffer(0)) {
+	break;
+      }
+    }
+  }
+};
+
+
+class ShenandoahCMKeepAliveAndDrainClosure: public OopClosure {
+  uint _worker_id;
+  ShenandoahHeap* _sh;
+  ShenandoahConcurrentMark* _scm;
+
+public:
+  ShenandoahCMKeepAliveAndDrainClosure(uint worker_id) {
+    _worker_id = worker_id;
+    _sh = (ShenandoahHeap*) Universe::heap();
+    _scm = _sh->concurrentMark();
+  }
+
+  virtual void do_oop(oop* p){ do_oop_work(p);}
+  virtual void do_oop(narrowOop* p) {  
+    assert(false, "narrowOops Aren't implemented");
+  }
+
+
+  void do_oop_work(oop* p) {  
+    oop obj = *p;
+    obj = oopDesc::bs()->resolve_oop(obj);
+    
+    if (obj != NULL) {
+      if (ShenandoahTraceWeakReferences) {
+	gclog_or_tty->print_cr("\t[%u] we're looking at location "
+			       "*"PTR_FORMAT" = "PTR_FORMAT,
+			       _worker_id, p, (void*) obj);
+	obj->print();
+      }
+
+      _sh->mark_current(obj);
+      _scm->addTask(obj, _worker_id);
+    }
+    
+  }
+};
+
+class ShenandoahRefProcTaskExecutor : public AbstractRefProcTaskExecutor {
+
+public:
+
+  // Executes a task using worker threads.
+  virtual void execute(ProcessTask& task) {
+    assert(false, "Parallel Reference Processing not implemented");
+  }
+  virtual void execute(EnqueueTask& task) {
+    assert(false, "Parallel Reference Processing not implemented");
+  }
+};
+
+
+void ShenandoahConcurrentMark::weakRefsWork(bool clear_all_soft_refs, int worker_id) {
+   ShenandoahHeap* sh = (ShenandoahHeap*) Universe::heap();
+   ReferenceProcessor* rp = sh->ref_processor_cm();
+   ShenandoahIsAliveClosure is_alive;
+   ShenandoahCMKeepAliveAndDrainClosure keep_alive(worker_id);
+   ShenandoahCMDrainMarkingStackClosure complete_gc;
+   ShenandoahRefProcTaskExecutor par_task_executor;
+   bool processing_is_mt = false;
+   AbstractRefProcTaskExecutor* executor = (processing_is_mt ? &par_task_executor : NULL);
+
+
+   // no timing for now.
+   ConcurrentGCTimer gc_timer;
+
+   rp->process_discovered_references(&is_alive, &keep_alive, 
+				     &complete_gc, &par_task_executor, &gc_timer);
+   
+
+
+   rp->enqueue_discovered_references(executor);
+
+   rp->verify_no_references_recorded();
+   assert(!rp->discovery_enabled(), "Post condition");
+
+
+  // Now clean up stale oops in StringTable
+   StringTable::unlink(&is_alive);
+  // Clean up unreferenced symbols in symbol table.
+   SymbolTable::unlink();
+}
+

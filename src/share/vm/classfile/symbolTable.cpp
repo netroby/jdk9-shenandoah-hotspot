@@ -45,7 +45,7 @@ bool SymbolTable::_needs_rehashing = false;
 
 Symbol* SymbolTable::resolve_symbol(Symbol* sym) {
   // TODO: Casting Symbol* to oopDesc*/oop seems weird.
-  return (Symbol*) (oopDesc*) oopDesc::bs()->resolve_oop((oop) sym);
+  return (Symbol*) (oopDesc*) oopDesc::bs()->maybe_resolve_oop((oop) sym);
 }
 
 Symbol* SymbolTable::allocate_symbol(const u1* name, int len, bool c_heap, TRAPS) {

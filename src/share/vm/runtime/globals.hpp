@@ -1393,6 +1393,9 @@ class CommandLineFlags {
   develop(bool, ShenandoahTraceTLabs, false,                                \
           "Trace TLabs in Shenandoah Heap")                                 \
                                                                             \
+  develop(bool, ShenandoahTraceWeakReferences, false,                       \
+          "Trace Weak Reference Processing in Shenandoah Heap")             \
+                                                                            \
   develop(bool, ShenandoahGCVerbose, false,                                 \
           "Verbose information about the Shenandoah garbage collector")     \
                                                                             \

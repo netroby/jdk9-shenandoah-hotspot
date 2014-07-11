@@ -24,6 +24,13 @@ Copyright 2014 Red Hat, Inc. and/or its affiliates.
 class SpaceClosure;
 class EvacuationAllocator;
 
+class ShenandoahIsAliveClosure: public BoolObjectClosure {
+
+public:
+  bool do_object_b(oop obj);
+};
+
+
 class ShenandoahHeapRegionClosure : public StackObj {
   bool _complete;
   void incomplete() {_complete = false;}
@@ -202,10 +209,11 @@ public:
   bool mark_current(oop obj) const;
   bool mark_current_no_checks(oop obj) const;
   bool isMarkedCurrent(oop obj) const;
+  ReferenceProcessor* _ref_processor_cm;
   bool is_marked_prev(oop obj) const;
 
   bool is_obj_ill(const oop obj) {
-    return ! isMarkedCurrent(obj);
+    return !isMarkedCurrent(obj);
   }
 
   void reset_mark_bitmap();
@@ -269,8 +277,11 @@ public:
   void set_waiting_for_jni_before_gc(bool wait_for_jni);
   bool is_waiting_for_jni_before_gc();
 
-  void evacuate_and_update_roots();
 
+  ReferenceProcessor* ref_processor_cm() { return _ref_processor_cm;}	
+  virtual void ref_processing_init();
+  ShenandoahIsAliveClosure isAlive;
+  void evacuate_and_update_roots();
   void prepare_for_update_references();
 
   void update_references();
@@ -302,17 +313,22 @@ private:
   ShenandoahHeapRegion* get_current_region_for_allocation();
 };
 
+
+
+// Mark the object and add it to the queue to be scanned
 class ShenandoahMarkObjsClosure : public ObjectClosure {
   uint _worker_id;
   ShenandoahHeap* _heap;
-  ShenandoahConcurrentMark* _concurrent_mark;
 public: 
   ShenandoahMarkObjsClosure(uint worker_id);
-
   void do_object(oop p);
-};
+};  
 
-class ShenandoahMarkRefsClosure : public OopsInGenClosure {
+
+// Walks over all the objects in the generation updating any
+// references to from space.
+
+class ShenandoahMarkRefsClosure : public ExtendedOopClosure {
   uint _worker_id;
   ShenandoahHeap* _heap;
   ShenandoahMarkObjsClosure _mark_objs;
@@ -325,16 +341,18 @@ public:
   void do_oop(oop* p);
 };
 
-class ShenandoahMarkRefsNoUpdateClosure : public OopsInGenClosure {
+class ShenandoahMarkRefsNoUpdateClosure : public ExtendedOopClosure {
   uint _worker_id;
   ShenandoahHeap* _heap;
   ShenandoahMarkObjsClosure _mark_objs;
-
-public: 
+  
+public:
   ShenandoahMarkRefsNoUpdateClosure(uint worker_id);
 
+  void do_oop_work(oop* p);
   void do_oop(narrowOop* p);
   void do_oop(oop* p);
+
 };
 
 #endif // SHARE_VM_GC_IMPLEMENTATION_SHENANDOAH_SHENANDOAHHEAP_HPP

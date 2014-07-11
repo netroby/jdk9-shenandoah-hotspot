@@ -511,12 +511,13 @@ void DiscoveredListIterator::remove() {
 
 // Make the Reference object active again.
 void DiscoveredListIterator::make_active() {
+  BarrierSet* bs = oopDesc::bs();
+
   // For G1 we don't want to use set_next - it
   // will dirty the card for the next field of
   // the reference object and will fail
   // CT verification.
   if (UseG1GC || UseShenandoahGC) {
-    BarrierSet* bs = oopDesc::bs();
     HeapWord* next_addr = java_lang_ref_Reference::next_addr(_ref);
 
     if (UseCompressedOops) {
@@ -526,8 +527,16 @@ void DiscoveredListIterator::make_active() {
     }
     java_lang_ref_Reference::set_next_raw(_ref, NULL);
   } else {
-    java_lang_ref_Reference::set_next(_ref, NULL);
+
+//     if (UseShenandoahGC) {
+//       // For Shenandoah we don't want to write to an object that might still
+//       // be in from space.
+//       _ref = bs->resolve_and_maybe_copy_oop(_ref);
+//     }
+    java_lang_ref_Reference::set_next_raw(_ref, NULL);
   }
+
+
 }
 
 void DiscoveredListIterator::clear_referent() {
@@ -700,11 +709,12 @@ ReferenceProcessor::process_phase3(DiscoveredList&    refs_list,
 
 void
 ReferenceProcessor::clear_discovered_references(DiscoveredList& refs_list) {
+  BarrierSet* bs = oopDesc::bs();
   oop obj = NULL;
-  oop next = refs_list.head();
+  oop next = bs->resolve_and_maybe_copy_oop(refs_list.head());
   while (next != obj) {
     obj = next;
-    next = java_lang_ref_Reference::discovered(obj);
+    next = bs->resolve_and_maybe_copy_oop(java_lang_ref_Reference::discovered(obj));
     java_lang_ref_Reference::set_discovered_raw(obj, NULL);
   }
   refs_list.set_head(NULL);
@@ -790,6 +800,8 @@ private:
 };
 
 void ReferenceProcessor::set_discovered(oop ref, oop value) {
+  ref = oopDesc::bs()->resolve_and_maybe_copy_oop(ref);
+  value = oopDesc::bs()->resolve_and_maybe_copy_oop(value);
   if (_discovered_list_needs_barrier) {
     java_lang_ref_Reference::set_discovered(ref, value);
   } else {
@@ -1073,12 +1085,14 @@ ReferenceProcessor::add_to_discovered_list_mt(DiscoveredList& refs_list,
                                               oop             obj,
                                               HeapWord*       discovered_addr) {
   assert(_discovery_is_mt, "!_discovery_is_mt should have been handled by caller");
+
   // First we must make sure this object is only enqueued once. CAS in a non null
-  // discovered_addr.
-  oop current_head = refs_list.head();
+  // discovered_addr
+  obj = oopDesc::bs()->resolve_and_maybe_copy_oop(obj);
+  oop current_head = oopDesc::bs()->resolve_and_maybe_copy_oop(refs_list.head());
   // The last ref must have its discovered field pointing to itself.
   oop next_discovered = (current_head != NULL) ? current_head : obj;
-
+  
   // Note: In the case of G1, this specific pre-barrier is strictly
   // not necessary because the only case we are interested in
   // here is when *discovered_addr is NULL (see the CAS further below),
@@ -1086,21 +1100,26 @@ ReferenceProcessor::add_to_discovered_list_mt(DiscoveredList& refs_list,
   // elided this out for G1, but left in the test for some future
   // collector that might have need for a pre-barrier here, e.g.:-
   // _bs->write_ref_field_pre((oop* or narrowOop*)discovered_addr, next_discovered);
-  assert(!_discovered_list_needs_barrier || UseG1GC,
-         "Need to check non-G1 collector: "
-         "may need a pre-write-barrier for CAS from NULL below");
+
+  //  assert(!_discovered_list_needs_barrier || UseG1GC,
+  //         "Need to check non-G1 collector: "
+  //         "may need a pre-write-barrier for CAS from NULL below");
+  
+
+
   oop retest = oopDesc::atomic_compare_exchange_oop(next_discovered, discovered_addr,
                                                     NULL);
   if (retest == NULL) {
     // This thread just won the right to enqueue the object.
     // We have separate lists for enqueueing, so no synchronization
     // is necessary.
+
     refs_list.set_head(obj);
     refs_list.inc_length(1);
     if (_discovered_list_needs_barrier) {
       _bs->write_ref_field((void*)discovered_addr, next_discovered);
     }
-
+    
     if (TraceReferenceGC) {
       gclog_or_tty->print_cr("Discovered reference (mt) (" INTPTR_FORMAT ": %s)",
                              (void *)obj, obj->klass()->internal_name());
@@ -1156,6 +1175,8 @@ void ReferenceProcessor::verify_referent(oop obj) {
 //     and complexity in processing these references.
 //     We call this choice the "RefeferentBasedDiscovery" policy.
 bool ReferenceProcessor::discover_reference(oop obj, ReferenceType rt) {
+  obj = oopDesc::bs()->resolve_and_maybe_copy_oop(obj);
+
   // Make sure we are discovering refs (rather than processing discovered refs).
   if (!_discovering_refs || !RegisterReferences) {
     return false;
@@ -1178,8 +1199,11 @@ bool ReferenceProcessor::discover_reference(oop obj, ReferenceType rt) {
   // We only discover references whose referents are not (yet)
   // known to be strongly reachable.
   if (is_alive_non_header() != NULL) {
+
     verify_referent(obj);
+
     if (is_alive_non_header()->do_object_b(java_lang_ref_Reference::referent(obj))) {
+
       return false;  // referent is reachable
     }
   }
@@ -1218,7 +1242,7 @@ bool ReferenceProcessor::discover_reference(oop obj, ReferenceType rt) {
       // Check assumption that an object is not potentially
       // discovered twice except by concurrent collectors that potentially
       // trace the same Reference object twice.
-      assert(UseConcMarkSweepGC || UseG1GC,
+      assert(UseConcMarkSweepGC || UseG1GC || UseShenandoahGC,
              "Only possible with a concurrent marking collector");
       return true;
     }
@@ -1254,7 +1278,7 @@ bool ReferenceProcessor::discover_reference(oop obj, ReferenceType rt) {
     // updating the discovered reference list.  Otherwise, we do a raw store
     // here: the field will be visited later when processing the discovered
     // references.
-    oop current_head = list->head();
+    oop current_head = oopDesc::bs()->resolve_and_maybe_copy_oop(list->head());
     // The last ref must have its discovered field pointing to itself.
     oop next_discovered = (current_head != NULL) ? current_head : obj;
 
@@ -1262,11 +1286,13 @@ bool ReferenceProcessor::discover_reference(oop obj, ReferenceType rt) {
     // pre-value, we can safely elide the pre-barrier here for the case of G1.
     // e.g.:- _bs->write_ref_field_pre((oop* or narrowOop*)discovered_addr, next_discovered);
     assert(discovered == NULL, "control point invariant");
-    assert(!_discovered_list_needs_barrier || UseG1GC,
-           "For non-G1 collector, may need a pre-write-barrier for CAS from NULL below");
-    oop_store_raw(discovered_addr, next_discovered);
-    if (_discovered_list_needs_barrier) {
-      _bs->write_ref_field((void*)discovered_addr, next_discovered);
+    //    assert(!_discovered_list_needs_barrier || UseG1GC,
+    //	     "For non-G1 collector, may need a pre-write-barrier for CAS from NULL below");
+    if (!_discovered_list_needs_barrier || UseG1GC) {
+      oop_store_raw(discovered_addr, next_discovered);
+    } else if (_discovered_list_needs_barrier) {
+      oop_store((oop *) discovered_addr, next_discovered);
+      //      _bs->write_ref_field((void*)discovered_addr, next_discovered);
     }
     list->set_head(obj);
     list->inc_length(1);
