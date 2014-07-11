@@ -1242,14 +1242,6 @@ void ShenandoahHeap::verify_evacuation(ShenandoahHeapRegion* from_region) {
 
 oop ShenandoahHeap::maybe_update_oop_ref(oop* p) {
 
-//   if (!is_in(p)) 
-//     tty->print("Maybe_update_oop_ref: %p isn't in the heap\n", p);
-//   else if (!heap_region_containing(p)->is_in_collection_set()) 
-//     tty->print("Maybe_update_oop_ref: %p is not in the collection set\n", p);
-//   else
-//     tty->print("Maybe_update_oop_ref: %p is in the collection set\n", p);
-  
-  
   assert((! is_in(p)) || (! heap_region_containing(p)->is_in_collection_set()), "never update refs in from-space"); 
 
   oop heap_oop = *p; // read p
@@ -1280,7 +1272,7 @@ oop ShenandoahHeap::maybe_update_oop_ref(oop* p) {
     }
     /*
       else {
-      tty->print_cr("not updating ref: %p", heap_oop);wh
+      tty->print_cr("not updating ref: %p", heap_oop);
       }
     */
   }
@@ -1621,13 +1613,6 @@ oop ShenandoahHeap::oop_containing_oop_ptr(oop* p) {
 }
  */
 
-// ShenandoahMarkRefsClosure::ShenandoahMarkRefsClosure(uint worker_id) :
-//   ExtendedOopClosure(ShenandoahHeap::heap()->ref_processor_cm()),
-//   _worker_id(worker_id),
-//   _heap(ShenandoahHeap::heap()),
-//   _mark_objs(ShenandoahMarkObjsClosure(worker_id))
-// {
-
 ShenandoahMarkRefsClosure::ShenandoahMarkRefsClosure(uint worker_id) : 
   ExtendedOopClosure(((ShenandoahHeap *) Universe::heap())->ref_processor_cm()),
   _worker_id(worker_id),
@@ -1659,7 +1644,6 @@ void ShenandoahMarkRefsClosure::do_oop_work(oop* p) {
   //  ShenandoahExtendedMarkObjsClosure cl(_heap->ref_processor_cm(), _worker_id);
   //  ShenandoahMarkObjsClosure mocl(cl, _worker_id);
 
-  HandleMark hm;
   if (obj != NULL) {
     _mark_objs.do_object(obj);
   }
@@ -1693,21 +1677,12 @@ void ShenandoahMarkRefsNoUpdateClosure::do_oop(oop* p) {
 void ShenandoahMarkRefsNoUpdateClosure::do_oop_work(oop* p) {
   oop obj = *p;
   if (! oopDesc::is_null(obj)) {
-    // #ifdef ASSERT
+#ifdef ASSERT
     if (obj != oopDesc::bs()->resolve_oop(obj)) {
-      HandleMark hm;
       oop obj_prime = oopDesc::bs()->resolve_oop(obj);
       tty->print("We've got one: obj = %p : obj_prime = %p\n", (HeapWord*) obj, (HeapWord*)obj_prime);
-      obj->print();
-      obj_prime->print();
-      printHeapLocations((HeapWord*) obj-16, (HeapWord*) obj + obj->size());
-      printHeapLocations((HeapWord*) obj_prime-16, (HeapWord*) obj_prime + obj->size());
-      tty->print_cr("heap region containing ref:");
-      ShenandoahHeapRegion* ref_region = _heap->heap_region_containing(p);
-      ref_region->print();
-      tty->print_cr("obj has been marked prev: %d", _heap->is_marked_prev(obj));
     }
-    // #endif
+#endif
     assert(obj == oopDesc::bs()->resolve_oop(obj), "only mark forwarded copy of objects");
     if (ShenandoahTraceConcurrentMarking) {
       tty->print("Calling ShenandoahMarkRefsNoUpdateClosure on %p\n", (HeapWord*)obj);
@@ -1728,7 +1703,6 @@ ShenandoahMarkObjsClosure::ShenandoahMarkObjsClosure(uint worker_id) :
 void ShenandoahMarkObjsClosure::do_object(oop obj) {
   ShenandoahConcurrentMark* scm = _heap->concurrentMark();
 
-  //  tty->print("Calling ShenandoahMarkObjsClosure on %p\n", obj);
   if (obj != NULL) {
     // TODO: The following resolution of obj is only ever needed when draining the SATB queues.
     // Wrap this closure to avoid this call in usual marking.
@@ -1745,8 +1719,8 @@ void ShenandoahMarkObjsClosure::do_object(oop obj) {
     assert(_heap->is_in(obj), "referenced objects must be in the heap. No?");
     if (_heap->mark_current(obj)) {
 #ifdef ASSERT
-//       if (ShenandoahTraceConcurrentMarking)
-// 	tty->print_cr("marked obj: %p", (HeapWord*) obj);
+      if (ShenandoahTraceConcurrentMarking)
+ 	tty->print_cr("marked obj: %p", (HeapWord*) obj);
 #endif
       // Calculate liveness of heap region containing object.
       ShenandoahHeapRegion* region = _heap->heap_region_containing(obj);
@@ -1755,9 +1729,9 @@ void ShenandoahMarkObjsClosure::do_object(oop obj) {
     }
 #ifdef ASSERT
     else {
-      //      if (ShenandoahTraceConcurrentMarking) {
-      //        tty->print_cr("failed to mark obj (already marked): %p", (HeapWord*) obj);
-      //      }
+      if (ShenandoahTraceConcurrentMarking) {
+	tty->print_cr("failed to mark obj (already marked): %p", (HeapWord*) obj);
+      }
       assert(_heap->isMarkedCurrent(obj), "make sure object is marked");
     }
 #endif
@@ -1778,7 +1752,6 @@ void ShenandoahMarkObjsClosure::do_object(oop obj) {
 
 }
   
-
 void ShenandoahHeap::prepare_unmarked_root_objs() {
   assert(Thread::current()->is_VM_thread(), "can only do this in VMThread");
   ExtendedOopClosure* cl;
