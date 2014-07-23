@@ -1384,6 +1384,9 @@ class CommandLineFlags {
   develop(bool, ShenandoahTraceEvacuations, false,                          \
           "Trace Shenandoah Evacuations")                                   \
                                                                             \
+  develop(bool, ShenandoahTraceWritesToFromSpace, false,                    \
+          "Use Memory Protection to signal illegal writes to from space")   \
+                                                                            \
   develop(bool, ShenandoahTraceConcurrentMarking, false,                    \
           "Trace Concurrent Marking")                                       \
                                                                             \

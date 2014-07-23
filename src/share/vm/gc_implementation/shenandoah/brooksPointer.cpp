@@ -30,8 +30,12 @@ void BrooksPointer::set_forwardee(oop forwardee) {
 
 HeapWord* BrooksPointer::cas_forwardee(HeapWord* old, HeapWord* forwardee) {
   assert(ShenandoahHeap::heap()->is_in(forwardee), "forwardee must point to a heap address");
+  
+
+
   HeapWord* o = old;
   HeapWord* n = forwardee;
+  HeapWord* result;
 
 #ifdef ASSERT
   if (ShenandoahTraceBrooksPointers) {
@@ -39,8 +43,18 @@ HeapWord* BrooksPointer::cas_forwardee(HeapWord* old, HeapWord* forwardee) {
   }
 #endif
 
-  HeapWord* result =  (HeapWord*) (HeapWord*) Atomic::cmpxchg_ptr(n, _heap_word, o);
+  
+  if (ShenandoahTraceWritesToFromSpace) {
+    ShenandoahHeap* sh = (ShenandoahHeap*) Universe::heap();
+    ShenandoahHeapRegion* hr = sh->heap_region_containing(old);
 
+    hr->memProtectionOff();
+    result =  (HeapWord*) (HeapWord*) Atomic::cmpxchg_ptr(n, _heap_word, o);
+    hr->memProtectionOn();
+  } else {
+    result =  (HeapWord*) (HeapWord*) Atomic::cmpxchg_ptr(n, _heap_word, o);
+  }
+  
 #ifdef ASSERT
   if (ShenandoahTraceBrooksPointers) {
     tty->print("Result of CAS from %p to %p was %p read value was %p\n", o, n, result, *_heap_word);

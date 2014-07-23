@@ -113,6 +113,8 @@ extern Monitor* ProfileVM_lock;                  // a lock used for profiling th
 extern Mutex*   ProfilePrint_lock;               // a lock used to serialize the printing of profiles
 extern Mutex*   ExceptionCache_lock;             // a lock used to synchronize exception cache updates
 extern Mutex*   OsrList_lock;                    // a lock used to serialize access to OSR queues
+extern Mutex*   ShenandoahMemProtect_lock;       // ShenandoahGC uses this for  memory protection to verify operations on the heap.
+
 
 #ifndef PRODUCT
 extern Mutex*   FullGCALot_lock;                 // a lock to make FullGCALot MT safe

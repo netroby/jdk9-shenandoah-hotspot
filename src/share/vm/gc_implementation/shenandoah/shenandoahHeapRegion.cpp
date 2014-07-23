@@ -5,6 +5,7 @@ Copyright 2014 Red Hat, Inc. and/or its affiliates.
 #include "gc_implementation/shenandoah/shenandoahHeapRegion.hpp"
 #include "gc_implementation/shenandoah/shenandoahHeap.hpp"
 #include "memory/universe.hpp"
+#include "runtime/mutexLocker.hpp"
 
 size_t ShenandoahHeapRegion::RegionSizeShift = 23;
 size_t ShenandoahHeapRegion::RegionSizeBytes = 1 << ShenandoahHeapRegion::RegionSizeShift; // 1024 * 1024 * 8;
@@ -17,6 +18,7 @@ jint ShenandoahHeapRegion::initialize(HeapWord* start,
   liveData = 0;
   _is_in_collection_set = false;
   _region_number = index;
+  _mem_protection_reference_count = 1;
   return JNI_OK;
 }
 
@@ -59,8 +61,32 @@ bool ShenandoahHeapRegion::is_in_collection_set() {
   return _is_in_collection_set;
 }
 
+#include <sys/mman.h>
+
+void ShenandoahHeapRegion::memProtectionOn() {
+  MutexLockerEx ml(ShenandoahMemProtect_lock, true);
+  if (--_mem_protection_reference_count == 0)
+    mprotect(bottom(), top() - bottom(), PROT_READ);
+}
+
+void ShenandoahHeapRegion::memProtectionOff() {
+  MutexLockerEx ml(ShenandoahMemProtect_lock, true);
+    if (_mem_protection_reference_count++ == 0)
+      mprotect(bottom(), top() - bottom(), PROT_WRITE | PROT_READ);
+}
+
 void ShenandoahHeapRegion::set_is_in_collection_set(bool b) {
   _is_in_collection_set = b;
+
+  if (ShenandoahTraceWritesToFromSpace) {    
+    if (b) {
+      assert(_mem_protection_reference_count == 1, "We should only have 1 referer at this time");
+      memProtectionOn();
+    } else {
+      assert(_mem_protection_reference_count == 0, "We shouldn't have any referers at this time");
+      memProtectionOff();
+    }
+  }
 }
 
 bool ShenandoahHeapRegion::is_current_allocation_region() {

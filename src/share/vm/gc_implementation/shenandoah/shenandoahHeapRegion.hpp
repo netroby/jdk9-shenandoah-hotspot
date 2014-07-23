@@ -77,6 +77,10 @@ public:
   void decrease_active_tlab_count();
   bool has_active_tlabs();
 
+  void memProtectionOn();
+  void memProtectionOff();
+  volatile jint  _mem_protection_reference_count;
+
   static ByteSize is_in_collection_set_offset();
 };
 
