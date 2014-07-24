@@ -71,7 +71,7 @@ bool ShenandoahHeapRegion::is_in_collection_set() {
 void ShenandoahHeapRegion::memProtectionOn() {
   assert(! _mem_protected, "needs to be unprotected");
   _mem_protected = true;
-  os::protect_memory((char*) bottom(), end() - bottom(), os::MEM_PROT_READ);
+  os::protect_memory((char*) bottom(), end() - bottom(), os::MEM_PROT_NONE);
 }
 
 void ShenandoahHeapRegion::memProtectionOff() {

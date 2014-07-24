@@ -1128,15 +1128,16 @@ public:
 void ShenandoahHeap::evacuate_and_update_roots() {
 
   COMPILER2_PRESENT(DerivedPointerTable::clear());
-
+  
   ShenandoahEvacuateUpdateRootsClosure cl;
   CodeBlobToOopClosure blobsCl(&cl, false);
   roots_iterate(&cl);
 
   ref_processor_cm()->weak_oops_do(&cl);
   process_weak_roots(&cl, &blobsCl);
-
+  
   COMPILER2_PRESENT(DerivedPointerTable::update_pointers());
+
 }
 
 
@@ -2124,11 +2125,31 @@ void ShenandoahHeap::copy_object(oop p, HeapWord* s) {
 }
 
 oop ShenandoahHeap::evacuate_object(oop p, EvacuationAllocator* allocator) {
+  ShenandoahHeapRegion* hr;
+  size_t required;
 
-  size_t required = BrooksPointer::BROOKS_POINTER_OBJ_SIZE + p->size();
+  if (ShenandoahTraceWritesToFromSpace) {
+    hr = heap_region_containing(p);
+    MutexLockerEx ml(ShenandoahMemProtect_lock, true);    
+    hr->memProtectionOff();    
+    required  = BrooksPointer::BROOKS_POINTER_OBJ_SIZE + p->size();
+    hr->memProtectionOn();    
+  } else {
+    required  = BrooksPointer::BROOKS_POINTER_OBJ_SIZE + p->size();
+  }
+
   HeapWord* filler = allocator->allocate(required);
   HeapWord* copy = filler + BrooksPointer::BROOKS_POINTER_OBJ_SIZE;
-  copy_object(p, filler);
+  
+  if (ShenandoahTraceWritesToFromSpace) {
+    MutexLockerEx ml(ShenandoahMemProtect_lock, true);
+    hr->memProtectionOff();
+    copy_object(p, filler);
+    hr->memProtectionOn();      
+  } else {
+    copy_object(p, filler);    
+  }
+
   HeapWord* result = BrooksPointer::get(p).cas_forwardee((HeapWord*) p, copy);
 
   oop return_val;

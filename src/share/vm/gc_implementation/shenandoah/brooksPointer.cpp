@@ -5,7 +5,6 @@ Copyright 2014 Red Hat, Inc. and/or its affiliates.
 #include "gc_interface/collectedHeap.hpp"
 #include "memory/universe.hpp"
 #include "gc_implementation/shenandoah/brooksPointer.hpp"
-#include "gc_implementation/shenandoah/shenandoahHeap.hpp"
 #include "gc_implementation/shenandoah/shenandoahBarrierSet.hpp"
 
 BrooksPointer::BrooksPointer(HeapWord** hw) : _heap_word(hw) {}

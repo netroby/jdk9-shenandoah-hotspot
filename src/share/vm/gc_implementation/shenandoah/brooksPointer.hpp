@@ -7,6 +7,7 @@ Copyright 2014 Red Hat, Inc. and/or its affiliates.
 
 #include "oops/oop.hpp"
 #include "utilities/globalDefinitions.hpp"
+#include "gc_implementation/shenandoah/shenandoahHeap.hpp"
 
 class BrooksPointer {
 
@@ -24,7 +25,20 @@ public:
   bool check_forwardee_is_in_heap(oop forwardee);
   
   inline oop get_forwardee() {
-    oop forwardee = (oop) (*_heap_word);
+    oop forwardee;
+
+    if (ShenandoahTraceWritesToFromSpace) {
+      ShenandoahHeap* sh = (ShenandoahHeap*) Universe::heap();
+      ShenandoahHeapRegion* hr = sh->heap_region_containing(_heap_word);
+     
+      MutexLockerEx ml(ShenandoahMemProtect_lock, true); 
+      hr->memProtectionOff();
+      forwardee = (oop) (*_heap_word);
+      hr->memProtectionOn();
+    } else {
+      forwardee = (oop) (*_heap_word);
+    }
+
     assert(check_forwardee_is_in_heap(forwardee), "forwardee must be in heap");
     assert(forwardee->is_oop(), "forwardee must be valid oop");
     return forwardee;
