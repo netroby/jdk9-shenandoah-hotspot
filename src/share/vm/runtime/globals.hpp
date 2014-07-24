@@ -1375,6 +1375,15 @@ class CommandLineFlags {
   develop(bool, ShenandoahDumpHeapAfterConcurrentMark, false,               \
           "Dump the ShenanodahHeap After Each Concurrent Mark")             \
                                                                             \
+  develop(bool, ShenandoahTracePhases, false,                               \
+          "Trace Shenandoah GC phases")                                     \
+                                                                            \
+  develop(bool, ShenandoahTraceJNICritical, false,                          \
+          "Trace Shenandoah stalls for JNI critical regions")               \
+                                                                            \
+  develop(bool, ShenandoahTraceHumonguous, false,                           \
+          "Trace Shenandoah humonguous objects")                            \
+                                                                            \
   develop(bool, ShenandoahTraceAllocations, false,                          \
           "Trace Shenandoah Allocations")                                   \
                                                                             \

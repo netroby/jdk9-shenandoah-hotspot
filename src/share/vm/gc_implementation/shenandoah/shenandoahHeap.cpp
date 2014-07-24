@@ -456,6 +456,10 @@ HeapWord* ShenandoahHeap::allocate_memory_work(size_t word_size) {
 }
 
 HeapWord* ShenandoahHeap::allocate_large_memory(size_t words) {
+  if (ShenandoahTraceHumonguous) {
+    gclog_or_tty->print_cr("allocating humonguous object of size: %d words", words);
+  }
+
   uint required_regions = (words * HeapWordSize) / ShenandoahHeapRegion::RegionSizeBytes  + 1;
   assert(required_regions <= _max_regions, "sanity check");
 
@@ -490,8 +494,8 @@ HeapWord* ShenandoahHeap::allocate_large_memory(size_t words) {
 }
 
 bool ShenandoahHeap::find_contiguous_free_regions(uint num_free_regions, ShenandoahHeapRegion** free_regions) {
-  if (ShenandoahGCVerbose) {
-    tty->print_cr("trying to find %u contiguous free regions", num_free_regions);
+  if (ShenandoahTraceHumonguous) {
+    gclog_or_tty->print_cr("trying to find %u contiguous free regions", num_free_regions);
   }
   uint free_regions_index = 0;
   for (uint regions_index = 0; regions_index < _num_regions; regions_index++) {
@@ -514,19 +518,19 @@ bool ShenandoahHeap::find_contiguous_free_regions(uint num_free_regions, Shenand
     free_regions_index++;
 
     if (free_regions_index == num_free_regions) {
-      if (ShenandoahGCVerbose) {
-        tty->print_cr("found %u contiguous free regions:", num_free_regions);
+      if (ShenandoahTraceHumonguous) {
+        gclog_or_tty->print_cr("found %u contiguous free regions:", num_free_regions);
         for (uint i = 0; i < num_free_regions; i++) {
-          tty->print("%u: " , i);
-          free_regions[i]->print();
+          gclog_or_tty->print("%u: " , i);
+          free_regions[i]->print(gclog_or_tty);
         }
       }
       return true;
     }
 
   }
-  if (ShenandoahGCVerbose) {
-    tty->print_cr("failed to find %u free regions", num_free_regions);
+  if (ShenandoahTraceHumonguous) {
+    gclog_or_tty->print_cr("failed to find %u free regions", num_free_regions);
   }
   return false;
 }
@@ -1973,11 +1977,34 @@ bool ShenandoahHeap::concurrent_mark_in_progress() {
 }
 
 void ShenandoahHeap::set_concurrent_mark_in_progress(bool in_progress) {
+  if (ShenandoahTracePhases) {
+    if (in_progress) {
+      gclog_or_tty->print_cr("Shenandoah starting concurrent marking");
+    } else {
+      gclog_or_tty->print_cr("Shenandoah finishing concurrent marking");
+    }
+  }
+
   _concurrent_mark_in_progress = in_progress;
   JavaThread::satb_mark_queue_set().set_active_all_threads(in_progress, ! in_progress);
 }
 
 void ShenandoahHeap::set_evacuation_in_progress(bool in_progress) {
+  if (ShenandoahTracePhases) {
+    if (ShenandoahConcurrentEvacuation) {
+      if (in_progress) {
+        gclog_or_tty->print_cr("Shenandoah starting concurrent evacuation");
+      } else {
+        gclog_or_tty->print_cr("Shenandoah finishing concurrent evacuation");
+      }
+    } else {
+      if (in_progress) {
+        gclog_or_tty->print_cr("Shenandoah starting non-concurrent evacuation");
+      } else {
+        gclog_or_tty->print_cr("Shenandoah finishing non-concurrent evacuation");
+      }
+    }
+  }
   _evacuation_in_progress = in_progress;
   OrderAccess::storeload();
 }
@@ -1991,10 +2018,28 @@ bool ShenandoahHeap::is_update_references_in_progress() {
 }
 
 void ShenandoahHeap::set_update_references_in_progress(bool update_refs_in_progress) {
+  if (ShenandoahTracePhases && ShenandoahUpdateRefsEarly) {
+    if (ShenandoahConcurrentUpdateRefs) {
+      if (update_refs_in_progress) {
+        gclog_or_tty->print_cr("Shenandoah starting concurrent reference-updating");
+      } else {
+        gclog_or_tty->print_cr("Shenandoah finishing concurrent reference-updating");
+      }
+    } else {
+      if (update_refs_in_progress) {
+        gclog_or_tty->print_cr("Shenandoah starting non-concurrent reference-updating");
+      } else {
+        gclog_or_tty->print_cr("Shenandoah finishing non-concurrent reference-updating");
+      }
+    }
+  }
   _update_references_in_progress = update_refs_in_progress;
 }
 
 void ShenandoahHeap::set_waiting_for_jni_before_gc(bool wait_for_jni) {
+  if (ShenandoahTraceJNICritical) {
+    gclog_or_tty->print_cr("Shenandoah GC waiting for JNI critical region: %s", wait_for_jni ? "true" : "false");
+  }
   _waiting_for_jni_before_gc = wait_for_jni;
   OrderAccess::storeload();
 }

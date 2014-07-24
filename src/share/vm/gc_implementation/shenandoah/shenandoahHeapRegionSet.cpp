@@ -202,9 +202,9 @@ void ShenandoahHeapRegionSet::reclaim_humonguous_regions() {
 
 void ShenandoahHeapRegionSet::reclaim_humonguous_region_at(ShenandoahHeapRegion** r) {
   assert((*r)->is_humonguous_start(), "reclaim regions starting with the first one");
-  if (ShenandoahGCVerbose) {
-    tty->print_cr("recycling humonguous region:");
-    (*r)->print();
+  if (ShenandoahTraceHumonguous) {
+    gclog_or_tty->print_cr("recycling humonguous region:");
+    (*r)->print(gclog_or_tty);
   }
 
   oop humonguous_obj = oop((*r)->bottom() + BrooksPointer::BROOKS_POINTER_OBJ_SIZE);
@@ -214,9 +214,9 @@ void ShenandoahHeapRegionSet::reclaim_humonguous_region_at(ShenandoahHeapRegion*
   for (ShenandoahHeapRegion** i = r + 1; i < _next_free; i++) {
     ShenandoahHeapRegion* region = *i;
     if (region->is_humonguous_continuation()) {
-      if (ShenandoahGCVerbose) {
-        tty->print_cr("recycling humonguous region:");
-        region->print();
+      if (ShenandoahTraceHumonguous) {
+        gclog_or_tty->print_cr("recycling humonguous region:");
+        region->print(gclog_or_tty);
       }
       region->recycle();
     } else {
