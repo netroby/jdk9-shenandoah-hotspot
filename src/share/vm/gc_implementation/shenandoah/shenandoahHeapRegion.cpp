@@ -6,6 +6,7 @@ Copyright 2014 Red Hat, Inc. and/or its affiliates.
 #include "gc_implementation/shenandoah/shenandoahHeap.hpp"
 #include "memory/universe.hpp"
 #include "runtime/mutexLocker.hpp"
+#include "runtime/os.hpp"
 
 size_t ShenandoahHeapRegion::RegionSizeShift = 23;
 size_t ShenandoahHeapRegion::RegionSizeBytes = 1 << ShenandoahHeapRegion::RegionSizeShift; // 1024 * 1024 * 8;
@@ -18,7 +19,9 @@ jint ShenandoahHeapRegion::initialize(HeapWord* start,
   liveData = 0;
   _is_in_collection_set = false;
   _region_number = index;
-  _mem_protection_reference_count = 1;
+#ifdef ASSERT
+  _mem_protected = false;
+#endif
   return JNI_OK;
 }
 
@@ -63,30 +66,39 @@ bool ShenandoahHeapRegion::is_in_collection_set() {
 
 #include <sys/mman.h>
 
+#ifdef ASSERT
+
 void ShenandoahHeapRegion::memProtectionOn() {
-  MutexLockerEx ml(ShenandoahMemProtect_lock, true);
-  if (--_mem_protection_reference_count == 0)
-    mprotect(bottom(), top() - bottom(), PROT_READ);
+  assert(! _mem_protected, "needs to be unprotected");
+  _mem_protected = true;
+  os::protect_memory((char*) bottom(), end() - bottom(), os::MEM_PROT_READ);
 }
 
 void ShenandoahHeapRegion::memProtectionOff() {
-  MutexLockerEx ml(ShenandoahMemProtect_lock, true);
-    if (_mem_protection_reference_count++ == 0)
-      mprotect(bottom(), top() - bottom(), PROT_WRITE | PROT_READ);
+  assert(_mem_protected, "needs to be protected");
+  _mem_protected = false;
+  os::protect_memory((char*) bottom(), end() - bottom(), os::MEM_PROT_RW);
 }
+
+#endif
 
 void ShenandoahHeapRegion::set_is_in_collection_set(bool b) {
   _is_in_collection_set = b;
 
+
+#ifdef ASSERT
   if (ShenandoahTraceWritesToFromSpace) {    
     if (b) {
-      assert(_mem_protection_reference_count == 1, "We should only have 1 referer at this time");
       memProtectionOn();
     } else {
-      assert(_mem_protection_reference_count == 0, "We shouldn't have any referers at this time");
-      memProtectionOff();
+      if (! is_humonguous()) {
+        memProtectionOff();
+      } else {
+        assert(! _mem_protected, "Needs to be unprotected");
+      }
     }
   }
+#endif
 }
 
 bool ShenandoahHeapRegion::is_current_allocation_region() {

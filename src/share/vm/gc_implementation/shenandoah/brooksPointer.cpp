@@ -48,6 +48,7 @@ HeapWord* BrooksPointer::cas_forwardee(HeapWord* old, HeapWord* forwardee) {
     ShenandoahHeap* sh = (ShenandoahHeap*) Universe::heap();
     ShenandoahHeapRegion* hr = sh->heap_region_containing(old);
 
+    MutexLockerEx ml(ShenandoahMemProtect_lock, true);
     hr->memProtectionOff();
     result =  (HeapWord*) (HeapWord*) Atomic::cmpxchg_ptr(n, _heap_word, o);
     hr->memProtectionOn();

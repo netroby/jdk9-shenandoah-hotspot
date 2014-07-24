@@ -25,6 +25,10 @@ private:
   bool _humonguous_start;
   bool _humonguous_continuation;
 
+#ifdef ASSERT
+  bool _mem_protected;
+#endif
+
 public:
   jint initialize(HeapWord* start, size_t regionSize, int index);
 
@@ -77,9 +81,10 @@ public:
   void decrease_active_tlab_count();
   bool has_active_tlabs();
 
+#ifdef ASSERT
   void memProtectionOn();
   void memProtectionOff();
-  volatile jint  _mem_protection_reference_count;
+#endif
 
   static ByteSize is_in_collection_set_offset();
 };
