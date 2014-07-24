@@ -4172,7 +4172,7 @@ Node* GraphKit::shenandoah_read_barrier_runtime(Node* obj) {
                                  OptoRuntime::shenandoah_barrier_Type(),
                                  CAST_FROM_FN_PTR(address, ShenandoahBarrierSet::resolve_oop_static),
                                  "shenandoah_read_barrier",
-                                 obj_type->is_ptr()->add_offset(-8),
+                                 NULL,
                                  obj);
 
   Node* result = _gvn.transform(new (C) ProjNode(call, TypeFunc::Parms + 0));
