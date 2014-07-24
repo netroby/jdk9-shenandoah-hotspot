@@ -1263,8 +1263,9 @@ const TypeFunc *OptoRuntime::dtrace_object_alloc_Type() {
 
 /**
  * oop resolve_and_maybe_copy_oop_static(oop obj)
+ * oop resolve_oop_static(oop obj)
  */
-const TypeFunc* OptoRuntime::shenandoah_write_barrier_Type() {
+const TypeFunc* OptoRuntime::shenandoah_barrier_Type() {
   // create input type (domain)
   const Type** fields = TypeTuple::fields(1);
   fields[TypeFunc::Parms+0] = TypeOopPtr::BOTTOM;

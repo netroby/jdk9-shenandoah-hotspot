@@ -310,7 +310,7 @@ private:
   static const TypeFunc* dtrace_object_alloc_Type();
 
   // Shenandoah support
-  static const TypeFunc* shenandoah_write_barrier_Type();
+  static const TypeFunc* shenandoah_barrier_Type();
 
 # ifdef ENABLE_ZAP_DEAD_LOCALS
   static const TypeFunc* zap_dead_locals_Type();

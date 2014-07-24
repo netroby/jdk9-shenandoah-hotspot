@@ -4166,6 +4166,20 @@ Node* GraphKit::make_shenandoah_read_barrier(Node* ctrl, Node* obj, const Type* 
   return bp_load;
 }
 
+Node* GraphKit::shenandoah_read_barrier_runtime(Node* obj) {
+  const Type* obj_type = _gvn.type(obj);
+  Node *call = make_runtime_call(RC_LEAF | RC_NO_IO,
+                                 OptoRuntime::shenandoah_barrier_Type(),
+                                 CAST_FROM_FN_PTR(address, ShenandoahBarrierSet::resolve_oop_static),
+                                 "shenandoah_read_barrier",
+                                 obj_type->is_ptr()->add_offset(-8),
+                                 obj);
+
+  Node* result = _gvn.transform(new (C) ProjNode(call, TypeFunc::Parms + 0));
+  Node* result_cast = _gvn.transform(new (C) CheckCastPPNode(control(), result, obj_type));
+  return result_cast;
+}
+
 Node* GraphKit::shenandoah_read_barrier(Node* obj) {
 
   if (UseShenandoahGC && ShenandoahReadBarrier) {
@@ -4175,6 +4189,10 @@ Node* GraphKit::shenandoah_read_barrier(Node* obj) {
     // Fast path 1: We know it's NULL, so simply return it.
     if (obj_type->higher_equal(TypePtr::NULL_PTR)) {
       return obj;
+    }
+
+    if (ShenandoahTraceWritesToFromSpace) {
+      return shenandoah_read_barrier_runtime(obj);
     }
 
     // Do the null-check.
@@ -4244,7 +4262,7 @@ Node* GraphKit::make_shenandoah_write_barrier(Node* ctrl, Node* obj, const Type*
   // Evacuation path.
   set_control(iffalse);
   Node *call = make_runtime_call(RC_LEAF | RC_NO_IO,
-                                 OptoRuntime::shenandoah_write_barrier_Type(),
+                                 OptoRuntime::shenandoah_barrier_Type(),
                                  CAST_FROM_FN_PTR(address, ShenandoahBarrierSet::resolve_and_maybe_copy_oop_static),
                                  "shenandoah_write_barrier",
                                  obj_type->is_ptr()->add_offset(-8),

@@ -869,6 +869,7 @@ class GraphKit : public Phase {
   Node* shenandoah_write_barrier(Node* obj);
 
 private:
+  Node* shenandoah_read_barrier_runtime(Node* obj);
   Node* make_shenandoah_read_barrier(Node* ctrl, Node* obj, const Type* type);
   Node* make_shenandoah_write_barrier(Node* ctrl, Node* obj, const Type* type);
 };
