@@ -106,7 +106,7 @@ void ShenandoahHeapRegion::set_is_in_collection_set(bool b) {
       if (! is_humonguous()) {
         memProtectionOff();
       } else {
-        assert(! _mem_protection_level == 1, "Needs to be unprotected");
+        assert(_mem_protection_level == 1, "Needs to be unprotected");
       }
     }
   }

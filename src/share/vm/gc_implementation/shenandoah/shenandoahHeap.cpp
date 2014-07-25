@@ -1047,16 +1047,8 @@ public:
 
     while (region != NULL) {
       if (! (region->is_in_collection_set() || region->is_humonguous_continuation())) {
-        if (ShenandoahTraceWritesToFromSpace) {
-          VerifyMutexLocker ml(ShenandoahMemProtect_lock, true);
-          region->memProtectionOff();
-          HeapWord* failed = region->object_iterate_careful(&_update_refs_cl);
-          assert(failed == NULL, "careful iteration is implemented safe for now in Shenandaoh");
-          region->memProtectionOn();
-        } else {
-          HeapWord* failed = region->object_iterate_careful(&_update_refs_cl);
-          assert(failed == NULL, "careful iteration is implemented safe for now in Shenandaoh");
-        }
+        HeapWord* failed = region->object_iterate_careful(&_update_refs_cl);
+        assert(failed == NULL, "careful iteration is implemented safe for now in Shenandaoh");
       }
       region = _regions->claim_next();
     }
