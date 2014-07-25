@@ -98,7 +98,7 @@ Mutex*   ProfilePrint_lock            = NULL;
 Mutex*   ExceptionCache_lock          = NULL;
 Monitor* ObjAllocPost_lock            = NULL;
 Mutex*   OsrList_lock                 = NULL;
-Mutex*   ShenandoahMemProtect_lock    = NULL;
+Monitor* ShenandoahMemProtect_lock    = NULL;
 #ifndef PRODUCT
 Mutex*   FullGCALot_lock              = NULL;
 #endif
@@ -204,7 +204,7 @@ void mutex_init() {
     def(SATB_Q_CBL_mon             , Monitor, nonleaf,     true );
     def(Shared_SATB_Q_lock         , Mutex,   nonleaf,     true );
     def(ShenandoahHeap_lock        , Monitor, special,     false);
-    def(ShenandoahMemProtect_lock  , Mutex,   special,     false);
+    def(ShenandoahMemProtect_lock  , Monitor, native,      false);
   }
   def(ParGCRareEvent_lock          , Mutex  , leaf     ,   true );
   def(DerivedPointerTableGC_lock   , Mutex,   leaf,        true );

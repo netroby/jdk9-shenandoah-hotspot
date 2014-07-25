@@ -30,11 +30,13 @@ public:
     if (ShenandoahTraceWritesToFromSpace) {
       ShenandoahHeap* sh = (ShenandoahHeap*) Universe::heap();
       ShenandoahHeapRegion* hr = sh->heap_region_containing(_heap_word);
-     
-      MutexLockerEx ml(ShenandoahMemProtect_lock, true); 
-      hr->memProtectionOff();
-      forwardee = (oop) (*_heap_word);
-      hr->memProtectionOn();
+
+      {
+        VerifyMutexLocker ml(ShenandoahMemProtect_lock, true); 
+        hr->memProtectionOff();
+        forwardee = (oop) (*_heap_word);
+        hr->memProtectionOn();
+      }
     } else {
       forwardee = (oop) (*_heap_word);
     }

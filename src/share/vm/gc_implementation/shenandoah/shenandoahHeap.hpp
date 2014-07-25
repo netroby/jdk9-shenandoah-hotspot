@@ -311,6 +311,8 @@ private:
   ShenandoahHeapRegion* check_grow_heap(ShenandoahHeapRegion* current);
   ShenandoahHeapRegion* get_next_region_for_allocation();
   ShenandoahHeapRegion* get_current_region_for_allocation();
+
+  void set_from_region_protection(bool protect);
 };
 
 

@@ -45,6 +45,9 @@
 oop* HandleArea::allocate_handle(oop obj) {
   assert(_handle_mark_nesting > 1, "memory leak: allocating handle outside HandleMark");
   assert(_no_handle_mark_nesting == 0, "allocating handle inside NoHandleMark");
+  if (ShenandoahTraceWritesToFromSpace) {
+    obj = oopDesc::bs()->resolve_oop(obj);
+  }
   assert(obj->is_oop(), err_msg("not an oop: " INTPTR_FORMAT, (intptr_t*) obj));
   return real_allocate_handle(obj);
 }

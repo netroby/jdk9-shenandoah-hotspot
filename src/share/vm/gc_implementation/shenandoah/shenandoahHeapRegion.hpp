@@ -26,7 +26,7 @@ private:
   bool _humonguous_continuation;
 
 #ifdef ASSERT
-  bool _mem_protected;
+  int _mem_protection_level;
 #endif
 
 public:

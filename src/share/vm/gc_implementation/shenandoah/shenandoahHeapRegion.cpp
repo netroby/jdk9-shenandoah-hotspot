@@ -20,7 +20,7 @@ jint ShenandoahHeapRegion::initialize(HeapWord* start,
   _is_in_collection_set = false;
   _region_number = index;
 #ifdef ASSERT
-  _mem_protected = false;
+  _mem_protection_level = 1; // Off, level 1.
 #endif
   return JNI_OK;
 }
@@ -69,15 +69,27 @@ bool ShenandoahHeapRegion::is_in_collection_set() {
 #ifdef ASSERT
 
 void ShenandoahHeapRegion::memProtectionOn() {
-  assert(! _mem_protected, "needs to be unprotected");
-  _mem_protected = true;
-  os::protect_memory((char*) bottom(), end() - bottom(), os::MEM_PROT_NONE);
+  /*
+  tty->print_cr("protect memory on region level: %d", _mem_protection_level);
+  print(tty);
+  */
+  assert(_mem_protection_level >= 1, "invariant");
+  _mem_protection_level--;
+  if (_mem_protection_level == 0) {
+    os::protect_memory((char*) bottom(), end() - bottom(), os::MEM_PROT_NONE);
+  }
 }
 
 void ShenandoahHeapRegion::memProtectionOff() {
-  assert(_mem_protected, "needs to be protected");
-  _mem_protected = false;
-  os::protect_memory((char*) bottom(), end() - bottom(), os::MEM_PROT_RW);
+  /*
+  tty->print_cr("unprotect memory on region level: %d", _mem_protection_level);
+  print(tty);
+  */
+  assert(_mem_protection_level >= 0, "invariant");
+  if (_mem_protection_level == 0) {
+    os::protect_memory((char*) bottom(), end() - bottom(), os::MEM_PROT_RW);
+  }
+  _mem_protection_level++;
 }
 
 #endif
@@ -94,7 +106,7 @@ void ShenandoahHeapRegion::set_is_in_collection_set(bool b) {
       if (! is_humonguous()) {
         memProtectionOff();
       } else {
-        assert(! _mem_protected, "Needs to be unprotected");
+        assert(! _mem_protection_level == 1, "Needs to be unprotected");
       }
     }
   }
@@ -159,7 +171,14 @@ void ShenandoahHeapRegion::object_iterate(ObjectClosure* blk) {
   HeapWord* p = bottom() + BrooksPointer::BROOKS_POINTER_OBJ_SIZE;
   while (p < top()) {
     blk->do_object(oop(p));
-    p += oop(p)->size() + BrooksPointer::BROOKS_POINTER_OBJ_SIZE;
+    if (ShenandoahTraceWritesToFromSpace) {
+      VerifyMutexLocker ml(ShenandoahMemProtect_lock, true);
+      memProtectionOff();
+      p += oop(p)->size() + BrooksPointer::BROOKS_POINTER_OBJ_SIZE;
+      memProtectionOn();
+    } else {
+      p += oop(p)->size() + BrooksPointer::BROOKS_POINTER_OBJ_SIZE;
+    }
   }
 }
 

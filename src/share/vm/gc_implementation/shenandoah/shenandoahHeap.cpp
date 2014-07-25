@@ -1013,6 +1013,7 @@ public:
 
   size_t do_object_careful(oop p) {
     assert(ShenandoahHeap::heap()->is_in(p), "only update objects in heap (where else?)");
+
     if (_heap->isMarkedCurrent(p)) {
       p->oop_iterate(&_refs_cl);
     }
@@ -1046,8 +1047,16 @@ public:
 
     while (region != NULL) {
       if (! (region->is_in_collection_set() || region->is_humonguous_continuation())) {
-        HeapWord* failed = region->object_iterate_careful(&_update_refs_cl);
-        assert(failed == NULL, "careful iteration is implemented safe for now in Shenandaoh");
+        if (ShenandoahTraceWritesToFromSpace) {
+          VerifyMutexLocker ml(ShenandoahMemProtect_lock, true);
+          region->memProtectionOff();
+          HeapWord* failed = region->object_iterate_careful(&_update_refs_cl);
+          assert(failed == NULL, "careful iteration is implemented safe for now in Shenandaoh");
+          region->memProtectionOn();
+        } else {
+          HeapWord* failed = region->object_iterate_careful(&_update_refs_cl);
+          assert(failed == NULL, "careful iteration is implemented safe for now in Shenandaoh");
+        }
       }
       region = _regions->claim_next();
     }
@@ -1060,8 +1069,19 @@ void ShenandoahHeap::prepare_for_update_references() {
   ShenandoahHeapRegionSet regions = ShenandoahHeapRegionSet(_num_regions, _ordered_regions, _num_regions);
   regions.set_concurrent_iteration_safe_limits();
 
-  // We need to update the roots so that they are ok for C2 when returning from the safepoint.
-  update_roots();
+  if (ShenandoahTraceWritesToFromSpace) {
+    VerifyMutexLocker ml(ShenandoahMemProtect_lock, true);
+    set_from_region_protection(false);
+
+    // We need to update the roots so that they are ok for C2 when returning from the safepoint.
+    update_roots();
+
+    set_from_region_protection(true);
+
+  } else {
+    // We need to update the roots so that they are ok for C2 when returning from the safepoint.
+    update_roots();
+  }
 
   set_update_references_in_progress(true);
 }
@@ -1129,6 +1149,10 @@ void ShenandoahHeap::evacuate_and_update_roots() {
 
   COMPILER2_PRESENT(DerivedPointerTable::clear());
   
+  if (ShenandoahTraceWritesToFromSpace) {
+    set_from_region_protection(false);
+  }
+
   ShenandoahEvacuateUpdateRootsClosure cl;
   CodeBlobToOopClosure blobsCl(&cl, false);
   roots_iterate(&cl);
@@ -1136,6 +1160,10 @@ void ShenandoahHeap::evacuate_and_update_roots() {
   ref_processor_cm()->weak_oops_do(&cl);
   process_weak_roots(&cl, &blobsCl);
   
+  if (ShenandoahTraceWritesToFromSpace) {
+    set_from_region_protection(true);
+  }
+
   COMPILER2_PRESENT(DerivedPointerTable::update_pointers());
 
 }
@@ -2130,10 +2158,12 @@ oop ShenandoahHeap::evacuate_object(oop p, EvacuationAllocator* allocator) {
 
   if (ShenandoahTraceWritesToFromSpace) {
     hr = heap_region_containing(p);
-    MutexLockerEx ml(ShenandoahMemProtect_lock, true);    
-    hr->memProtectionOff();    
-    required  = BrooksPointer::BROOKS_POINTER_OBJ_SIZE + p->size();
-    hr->memProtectionOn();    
+    {
+      VerifyMutexLocker ml(ShenandoahMemProtect_lock, true);
+      hr->memProtectionOff();    
+      required  = BrooksPointer::BROOKS_POINTER_OBJ_SIZE + p->size();
+      hr->memProtectionOn();    
+    }
   } else {
     required  = BrooksPointer::BROOKS_POINTER_OBJ_SIZE + p->size();
   }
@@ -2142,10 +2172,10 @@ oop ShenandoahHeap::evacuate_object(oop p, EvacuationAllocator* allocator) {
   HeapWord* copy = filler + BrooksPointer::BROOKS_POINTER_OBJ_SIZE;
   
   if (ShenandoahTraceWritesToFromSpace) {
-    MutexLockerEx ml(ShenandoahMemProtect_lock, true);
+    VerifyMutexLocker ml(ShenandoahMemProtect_lock, true);
     hr->memProtectionOff();
     copy_object(p, filler);
-    hr->memProtectionOn();      
+    hr->memProtectionOn();
   } else {
     copy_object(p, filler);    
   }
@@ -2293,4 +2323,17 @@ void ShenandoahHeap::ref_processing_init() {
                            true);
                                 // Setting next fields of discovered
                                 // lists requires a barrier.
+}
+
+void ShenandoahHeap::set_from_region_protection(bool protect) {
+  for (uint i = 0; i < _num_regions; i++) {
+    ShenandoahHeapRegion* region = _ordered_regions[i];
+    if (region != NULL && region->is_in_collection_set()) {
+      if (protect) {
+        region->memProtectionOn();
+      } else {
+        region->memProtectionOff();
+      }
+    }
+  }
 }

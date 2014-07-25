@@ -113,7 +113,7 @@ extern Monitor* ProfileVM_lock;                  // a lock used for profiling th
 extern Mutex*   ProfilePrint_lock;               // a lock used to serialize the printing of profiles
 extern Mutex*   ExceptionCache_lock;             // a lock used to synchronize exception cache updates
 extern Mutex*   OsrList_lock;                    // a lock used to serialize access to OSR queues
-extern Mutex*   ShenandoahMemProtect_lock;       // ShenandoahGC uses this for  memory protection to verify operations on the heap.
+extern Monitor* ShenandoahMemProtect_lock;       // ShenandoahGC uses this for  memory protection to verify operations on the heap.
 
 
 #ifndef PRODUCT
@@ -357,13 +357,17 @@ class VerifyMutexLocker: StackObj {
   Monitor * _mutex;
   bool   _reentrant;
  public:
-  VerifyMutexLocker(Monitor * mutex) {
+  VerifyMutexLocker(Monitor * mutex, bool no_safepoint_check = !Mutex::_no_safepoint_check_flag) {
     _mutex     = mutex;
     _reentrant = mutex->owned_by_self();
     if (!_reentrant) {
       // We temp. diable strict safepoint checking, while we require the lock
       FlagSetting fs(StrictSafepointChecks, false);
-      _mutex->lock();
+      if (no_safepoint_check == Mutex::_no_safepoint_check_flag) {
+        _mutex->lock_without_safepoint_check();
+      } else {
+        _mutex->lock();
+      }
     }
   }
 

@@ -1149,6 +1149,10 @@ Node* GraphKit::load_array_length(Node* array) {
   AllocateArrayNode* alloc = AllocateArrayNode::Ideal_array_allocation(array, &_gvn);
   Node *alen;
   if (alloc == NULL) {
+    if (ShenandoahTraceWritesToFromSpace) {
+      array = shenandoah_read_barrier(array);
+    }
+
     Node *r_adr = basic_plus_adr(array, arrayOopDesc::length_offset_in_bytes());
     alen = _gvn.transform( new (C) LoadRangeNode(0, immutable_memory(), r_adr, TypeInt::POS));
   } else {
@@ -4158,6 +4162,9 @@ Node* GraphKit::cast_array_to_stable(Node* ary, const TypeAryPtr* ary_type) {
 
 Node* GraphKit::make_shenandoah_read_barrier(Node* ctrl, Node* obj, const Type* obj_type) {
 
+  if (ShenandoahTraceWritesToFromSpace) {
+    return shenandoah_read_barrier_runtime(obj);
+  }
   // Construct the address of the brooks ptr and the load.
   Node* bp_addr = basic_plus_adr(obj, -0x8);
   const TypePtr* adr_type = bp_addr->bottom_type()->is_ptr();
@@ -4189,10 +4196,6 @@ Node* GraphKit::shenandoah_read_barrier(Node* obj) {
     // Fast path 1: We know it's NULL, so simply return it.
     if (obj_type->higher_equal(TypePtr::NULL_PTR)) {
       return obj;
-    }
-
-    if (ShenandoahTraceWritesToFromSpace) {
-      return shenandoah_read_barrier_runtime(obj);
     }
 
     // Do the null-check.

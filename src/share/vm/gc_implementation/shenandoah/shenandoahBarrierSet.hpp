@@ -15,7 +15,19 @@ private:
   static inline oop get_shenandoah_forwardee_helper(oop p) {
     assert(UseShenandoahGC, "must only be called when Shenandoah is used.");
     assert(Universe::heap()->is_in(p), "We shouldn't be calling this on objects not in the heap");
-    return oop( *((HeapWord**) ((HeapWord*) p) - 1)); //;
+    oop forwardee;
+    if (ShenandoahTraceWritesToFromSpace) {
+      ShenandoahHeapRegion* region = ShenandoahHeap::heap()->heap_region_containing(p);
+      {
+        VerifyMutexLocker ml(ShenandoahMemProtect_lock, true); 
+        region->memProtectionOff();
+        forwardee = oop( *((HeapWord**) ((HeapWord*) p) - 1));
+        region->memProtectionOn();
+      }
+    } else {
+      forwardee = oop( *((HeapWord**) ((HeapWord*) p) - 1));
+    }
+    return forwardee;
   }
 
 public:
