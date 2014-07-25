@@ -19,7 +19,6 @@ private:
     if (ShenandoahTraceWritesToFromSpace) {
       ShenandoahHeapRegion* region = ShenandoahHeap::heap()->heap_region_containing(p);
       {
-        VerifyMutexLocker ml(ShenandoahMemProtect_lock, true); 
         region->memProtectionOff();
         forwardee = oop( *((HeapWord**) ((HeapWord*) p) - 1));
         region->memProtectionOn();

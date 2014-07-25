@@ -73,9 +73,10 @@ void ShenandoahHeapRegion::memProtectionOn() {
   tty->print_cr("protect memory on region level: %d", _mem_protection_level);
   print(tty);
   */
+  MutexLockerEx ml(ShenandoahMemProtect_lock, true);
   assert(_mem_protection_level >= 1, "invariant");
-  _mem_protection_level--;
-  if (_mem_protection_level == 0) {
+
+  if (--_mem_protection_level == 0) {
     os::protect_memory((char*) bottom(), end() - bottom(), os::MEM_PROT_NONE);
   }
 }
@@ -85,11 +86,11 @@ void ShenandoahHeapRegion::memProtectionOff() {
   tty->print_cr("unprotect memory on region level: %d", _mem_protection_level);
   print(tty);
   */
+  MutexLockerEx ml(ShenandoahMemProtect_lock, true);
   assert(_mem_protection_level >= 0, "invariant");
-  if (_mem_protection_level == 0) {
+  if (_mem_protection_level++ == 0) {
     os::protect_memory((char*) bottom(), end() - bottom(), os::MEM_PROT_RW);
   }
-  _mem_protection_level++;
 }
 
 #endif
@@ -172,7 +173,6 @@ void ShenandoahHeapRegion::object_iterate(ObjectClosure* blk) {
   while (p < top()) {
     blk->do_object(oop(p));
     if (ShenandoahTraceWritesToFromSpace) {
-      VerifyMutexLocker ml(ShenandoahMemProtect_lock, true);
       memProtectionOff();
       p += oop(p)->size() + BrooksPointer::BROOKS_POINTER_OBJ_SIZE;
       memProtectionOn();

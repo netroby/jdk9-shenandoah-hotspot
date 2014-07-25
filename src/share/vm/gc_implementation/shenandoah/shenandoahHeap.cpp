@@ -1062,7 +1062,6 @@ void ShenandoahHeap::prepare_for_update_references() {
   regions.set_concurrent_iteration_safe_limits();
 
   if (ShenandoahTraceWritesToFromSpace) {
-    VerifyMutexLocker ml(ShenandoahMemProtect_lock, true);
     set_from_region_protection(false);
 
     // We need to update the roots so that they are ok for C2 when returning from the safepoint.
@@ -2151,7 +2150,6 @@ oop ShenandoahHeap::evacuate_object(oop p, EvacuationAllocator* allocator) {
   if (ShenandoahTraceWritesToFromSpace) {
     hr = heap_region_containing(p);
     {
-      VerifyMutexLocker ml(ShenandoahMemProtect_lock, true);
       hr->memProtectionOff();    
       required  = BrooksPointer::BROOKS_POINTER_OBJ_SIZE + p->size();
       hr->memProtectionOn();    
@@ -2164,7 +2162,6 @@ oop ShenandoahHeap::evacuate_object(oop p, EvacuationAllocator* allocator) {
   HeapWord* copy = filler + BrooksPointer::BROOKS_POINTER_OBJ_SIZE;
   
   if (ShenandoahTraceWritesToFromSpace) {
-    VerifyMutexLocker ml(ShenandoahMemProtect_lock, true);
     hr->memProtectionOff();
     copy_object(p, filler);
     hr->memProtectionOn();

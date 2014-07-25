@@ -32,7 +32,6 @@ public:
       ShenandoahHeapRegion* hr = sh->heap_region_containing(_heap_word);
 
       {
-        VerifyMutexLocker ml(ShenandoahMemProtect_lock, true); 
         hr->memProtectionOff();
         forwardee = (oop) (*_heap_word);
         hr->memProtectionOn();
