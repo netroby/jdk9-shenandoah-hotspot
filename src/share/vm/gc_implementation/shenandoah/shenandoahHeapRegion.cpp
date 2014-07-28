@@ -172,6 +172,7 @@ void ShenandoahHeapRegion::object_iterate(ObjectClosure* blk) {
   HeapWord* p = bottom() + BrooksPointer::BROOKS_POINTER_OBJ_SIZE;
   while (p < top()) {
     blk->do_object(oop(p));
+#ifdef ASSERT
     if (ShenandoahTraceWritesToFromSpace) {
       memProtectionOff();
       p += oop(p)->size() + BrooksPointer::BROOKS_POINTER_OBJ_SIZE;
@@ -179,6 +180,9 @@ void ShenandoahHeapRegion::object_iterate(ObjectClosure* blk) {
     } else {
       p += oop(p)->size() + BrooksPointer::BROOKS_POINTER_OBJ_SIZE;
     }
+#else
+      p += oop(p)->size() + BrooksPointer::BROOKS_POINTER_OBJ_SIZE;
+#endif
   }
 }
 

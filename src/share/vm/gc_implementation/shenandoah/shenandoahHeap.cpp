@@ -2147,6 +2147,7 @@ oop ShenandoahHeap::evacuate_object(oop p, EvacuationAllocator* allocator) {
   ShenandoahHeapRegion* hr;
   size_t required;
 
+#ifdef ASSERT
   if (ShenandoahTraceWritesToFromSpace) {
     hr = heap_region_containing(p);
     {
@@ -2157,10 +2158,14 @@ oop ShenandoahHeap::evacuate_object(oop p, EvacuationAllocator* allocator) {
   } else {
     required  = BrooksPointer::BROOKS_POINTER_OBJ_SIZE + p->size();
   }
+#else
+    required  = BrooksPointer::BROOKS_POINTER_OBJ_SIZE + p->size();
+#endif
 
   HeapWord* filler = allocator->allocate(required);
   HeapWord* copy = filler + BrooksPointer::BROOKS_POINTER_OBJ_SIZE;
   
+#ifdef ASSERT
   if (ShenandoahTraceWritesToFromSpace) {
     hr->memProtectionOff();
     copy_object(p, filler);
@@ -2168,6 +2173,9 @@ oop ShenandoahHeap::evacuate_object(oop p, EvacuationAllocator* allocator) {
   } else {
     copy_object(p, filler);    
   }
+#else 
+    copy_object(p, filler);    
+#endif
 
   HeapWord* result = BrooksPointer::get(p).cas_forwardee((HeapWord*) p, copy);
 
@@ -2314,6 +2322,7 @@ void ShenandoahHeap::ref_processing_init() {
                                 // lists requires a barrier.
 }
 
+#ifdef ASSERT
 void ShenandoahHeap::set_from_region_protection(bool protect) {
   for (uint i = 0; i < _num_regions; i++) {
     ShenandoahHeapRegion* region = _ordered_regions[i];
@@ -2326,3 +2335,4 @@ void ShenandoahHeap::set_from_region_protection(bool protect) {
     }
   }
 }
+#endif
