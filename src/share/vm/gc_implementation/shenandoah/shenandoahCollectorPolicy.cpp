@@ -381,8 +381,10 @@ HeapWord* ShenandoahCollectorPolicy::satisfy_failed_allocation(size_t size, bool
 }
 
 void ShenandoahCollectorPolicy::initialize_alignments() {
-  _space_alignment = Arguments::conservative_max_heap_alignment();
-  _heap_alignment = Arguments::conservative_max_heap_alignment();
+  
+  // This is expected by our algorithm for ShenandoahHeap::heap_region_containing().
+  _space_alignment = ShenandoahHeapRegion::RegionSizeBytes;
+  _heap_alignment = ShenandoahHeapRegion::RegionSizeBytes;
 }
 
 void ShenandoahCollectorPolicy::post_heap_initialize() {
