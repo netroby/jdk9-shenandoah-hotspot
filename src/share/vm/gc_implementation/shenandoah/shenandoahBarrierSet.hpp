@@ -16,6 +16,7 @@ private:
     assert(UseShenandoahGC, "must only be called when Shenandoah is used.");
     assert(Universe::heap()->is_in(p), "We shouldn't be calling this on objects not in the heap");
     oop forwardee;
+#ifdef ASSERT
     if (ShenandoahTraceWritesToFromSpace) {
       ShenandoahHeapRegion* region = ShenandoahHeap::heap()->heap_region_containing(p);
       {
@@ -26,6 +27,9 @@ private:
     } else {
       forwardee = oop( *((HeapWord**) ((HeapWord*) p) - 1));
     }
+#else
+    forwardee = oop( *((HeapWord**) ((HeapWord*) p) - 1));
+#endif
     return forwardee;
   }
 

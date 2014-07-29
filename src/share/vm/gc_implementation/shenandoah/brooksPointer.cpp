@@ -42,7 +42,7 @@ HeapWord* BrooksPointer::cas_forwardee(HeapWord* old, HeapWord* forwardee) {
   }
 #endif
 
-  
+#ifdef ASSERT  
   if (ShenandoahTraceWritesToFromSpace) {
     ShenandoahHeap* sh = (ShenandoahHeap*) Universe::heap();
     ShenandoahHeapRegion* hr = sh->heap_region_containing(old);
@@ -55,6 +55,9 @@ HeapWord* BrooksPointer::cas_forwardee(HeapWord* old, HeapWord* forwardee) {
   } else {
     result =  (HeapWord*) (HeapWord*) Atomic::cmpxchg_ptr(n, _heap_word, o);
   }
+#else 
+  result =  (HeapWord*) (HeapWord*) Atomic::cmpxchg_ptr(n, _heap_word, o);
+#endif
   
 #ifdef ASSERT
   if (ShenandoahTraceBrooksPointers) {

@@ -27,6 +27,7 @@ public:
   inline oop get_forwardee() {
     oop forwardee;
 
+#ifdef ASSERT
     if (ShenandoahTraceWritesToFromSpace) {
       ShenandoahHeap* sh = (ShenandoahHeap*) Universe::heap();
       ShenandoahHeapRegion* hr = sh->heap_region_containing(_heap_word);
@@ -39,6 +40,9 @@ public:
     } else {
       forwardee = (oop) (*_heap_word);
     }
+#else
+    forwardee = (oop)(*_heap_word);
+#endif
 
     assert(check_forwardee_is_in_heap(forwardee), "forwardee must be in heap");
     assert(forwardee->is_oop(), "forwardee must be valid oop");
