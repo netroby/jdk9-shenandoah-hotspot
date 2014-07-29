@@ -181,7 +181,7 @@ public:
   void gc_prologue(bool b);
   void gc_epilogue(bool b);
 
-  void heap_region_iterate(ShenandoahHeapRegionClosure* blk, bool skip_dirty_regions = false) const;
+  void heap_region_iterate(ShenandoahHeapRegionClosure* blk, bool skip_dirty_regions = false, bool skip_humonguous_continuation = false) const;
   ShenandoahHeapRegion* heap_region_containing(const void* addr) const;  
 
 /**
@@ -238,7 +238,7 @@ public:
 				ShenandoahAllocRegion *alloc_region);
   void verify_evacuated_region(ShenandoahHeapRegion* from_region);
 
-  void print_heap_regions();
+  void print_heap_regions(outputStream* st = tty) const;
 
   void print_all_refs(const char* prefix);
 

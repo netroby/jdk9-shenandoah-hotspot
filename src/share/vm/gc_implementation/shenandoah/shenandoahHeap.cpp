@@ -185,9 +185,8 @@ void ShenandoahHeap::reset_mark_bitmap() {
 void ShenandoahHeap::print_on(outputStream* st) const {
   st->print("Shenandoah Heap");
   st->print(" total = " SIZE_FORMAT " K, used " SIZE_FORMAT " K ", capacity()/ K, used() /K);
-  st->print("Region size = " SIZE_FORMAT "K, ", ShenandoahHeapRegion::RegionSizeBytes / K);
-  PrintHeapRegionsClosure cl(st);
-  heap_region_iterate(&cl);
+  st->print("Region size = " SIZE_FORMAT "K \n", ShenandoahHeapRegion::RegionSizeBytes / K);
+  print_heap_regions(st);
 }
 
 void ShenandoahHeap::post_initialize() {
@@ -798,8 +797,8 @@ ShenandoahHeapRegionSet* ShenandoahHeap::free_regions() {
   return _free_regions;
 }
 
-void ShenandoahHeap::print_heap_regions()  {
-  PrintHeapRegionsClosure pc1;
+void ShenandoahHeap::print_heap_regions(outputStream* st) const {
+  PrintHeapRegionsClosure pc1(st);
   heap_region_iterate(&pc1);
 }
 
@@ -1224,8 +1223,7 @@ void ShenandoahHeap::parallel_evacuate() {
     _free_regions->print();
 
     tty->print_cr("finished parallel_evacuate");
-    PrintHeapRegionsClosure pc2;
-    heap_region_iterate(&pc2);
+    print_heap_regions();
 
     tty->print_cr("all regions after evacuation:");
     print_heap_regions();
@@ -1527,7 +1525,7 @@ public:
 
 void ShenandoahHeap::object_iterate(ObjectClosure* cl) {
   ShenandoahIterateObjectClosureRegionClosure blk(cl);
-  heap_region_iterate(&blk);
+  heap_region_iterate(&blk, false, true);
 }
 
 void ShenandoahHeap::safe_object_iterate(ObjectClosure* cl) {
@@ -1551,13 +1549,13 @@ public:
 
 void ShenandoahHeap::oop_iterate(ExtendedOopClosure* cl, bool skip_dirty_regions, bool skip_unreachable_objects) {
   ShenandoahIterateOopClosureRegionClosure blk(cl, skip_unreachable_objects);
-  heap_region_iterate(&blk, skip_dirty_regions);
+  heap_region_iterate(&blk, skip_dirty_regions, true);
 }
 
 void ShenandoahHeap::oop_iterate(MemRegion mr, 
 				 ExtendedOopClosure* cl) {
   ShenandoahIterateOopClosureRegionClosure blk(mr, cl);
-  heap_region_iterate(&blk);
+  heap_region_iterate(&blk, false, true);
 }
 
 void  ShenandoahHeap::object_iterate_since_last_GC(ObjectClosure* cl) {
@@ -1603,14 +1601,18 @@ void  ShenandoahHeap::gc_epilogue(bool b) {
 
 // Apply blk->doHeapRegion() on all committed regions in address order,
 // terminating the iteration early if doHeapRegion() returns true.
-void ShenandoahHeap::heap_region_iterate(ShenandoahHeapRegionClosure* blk, bool skip_dirty_regions) const {
+void ShenandoahHeap::heap_region_iterate(ShenandoahHeapRegionClosure* blk, bool skip_dirty_regions, bool skip_humonguous_continuation) const {
   for (size_t i = 0; i < _num_regions; i++) {
     ShenandoahHeapRegion* current  = _ordered_regions[i];
-    if (current->is_humonguous_continuation()) {
+    if (skip_humonguous_continuation && current->is_humonguous_continuation()) {
       continue;
     }
-    if ( !(skip_dirty_regions && current->is_in_collection_set()) && blk->doHeapRegion(current)) 
+    if (skip_dirty_regions && current->is_in_collection_set()) {
+      continue;
+    }
+    if (blk->doHeapRegion(current)) { 
       return;
+    }
   }
 }
 
@@ -1976,8 +1978,7 @@ void ShenandoahHeap::stop_concurrent_marking() {
   set_concurrent_mark_in_progress(false);
 
   if (ShenandoahGCVerbose) {
-    PrintHeapRegionsClosure pc;
-    heap_region_iterate(&pc);
+    print_heap_regions();
   }
 
 #ifdef ASSERT
