@@ -42,7 +42,7 @@ public:
   virtual bool should_start_concurrent_mark(size_t used, size_t capacity) const=0;
   virtual void choose_collection_and_free_sets(ShenandoahHeapRegionSet* region_set, 
                                                ShenandoahHeapRegionSet* collection_set, 
-                                               ShenandoahHeapRegionSet* free_set) const=0;
+                                               ShenandoahHeapRegionSet* free_set) =0;
   void print_tracing_info();
 };
 
@@ -119,7 +119,7 @@ public:
   }
   virtual void choose_collection_and_free_sets(ShenandoahHeapRegionSet* region_set,
                                                ShenandoahHeapRegionSet* collection_set,
-                                               ShenandoahHeapRegionSet* free_set) const {
+                                               ShenandoahHeapRegionSet* free_set) {
     region_set->set_garbage_threshold(8);
     region_set->choose_collection_and_free_sets(collection_set, free_set);
   }
@@ -142,7 +142,7 @@ public:
   }
   void choose_collection_and_free_sets(ShenandoahHeapRegionSet* region_set,
                                        ShenandoahHeapRegionSet* collection_set,
-                                       ShenandoahHeapRegionSet* free_set) const {
+                                       ShenandoahHeapRegionSet* free_set) {
     region_set->set_garbage_threshold(ShenandoahHeapRegion::RegionSizeBytes / 2);
     region_set->choose_collection_and_free_sets(collection_set, free_set);
   }
@@ -168,7 +168,7 @@ public:
 
   virtual void choose_collection_and_free_sets(ShenandoahHeapRegionSet* region_set,
                                                ShenandoahHeapRegionSet* collection_set,
-                                               ShenandoahHeapRegionSet* free_set) const {
+                                               ShenandoahHeapRegionSet* free_set) {
     region_set->choose_collection_and_free_sets(collection_set, free_set);
   }
 };
@@ -199,7 +199,7 @@ public:
 
   virtual void choose_collection_and_free_sets(ShenandoahHeapRegionSet* region_set,
                                                ShenandoahHeapRegionSet* collection_set,
-                                               ShenandoahHeapRegionSet* free_set) const {
+                                               ShenandoahHeapRegionSet* free_set) {
     region_set->choose_collection_and_free_sets(collection_set, free_set);
   }
 };
@@ -263,10 +263,110 @@ public:
 
   virtual void choose_collection_and_free_sets(ShenandoahHeapRegionSet* region_set,
                                                ShenandoahHeapRegionSet* collection_set,
-                                               ShenandoahHeapRegionSet* free_set) const
+                                               ShenandoahHeapRegionSet* free_set)
   {
     region_set->set_garbage_threshold(ShenandoahHeapRegion::RegionSizeBytes * _garbage_threshold_factor);
     region_set->choose_collection_and_free_sets(collection_set, free_set);
+  }
+
+  void set_used_threshold(uintx used_threshold) {
+    this->_used_threshold_factor = get_percent(used_threshold);
+    this->_used_threshold = used_threshold;
+  }
+
+  void set_garbage_threshold(uintx garbage_threshold) {
+    this->_garbage_threshold_factor = get_percent(garbage_threshold);
+    this->_garbage_threshold = _garbage_threshold;
+  }
+
+  void set_allocation_threshold(uintx allocationThreshold) {
+    this->_allocation_threshold_factor = get_percent(allocationThreshold);
+    this->_allocation_threshold = allocationThreshold;
+  }
+
+  uintx get_allocation_threshold() {
+    return this->_allocation_threshold;
+  }
+
+  uintx get_garbage_threshold() {
+    return this->_garbage_threshold;
+  }
+
+  uintx get_used_threshold() {
+    return this->_used_threshold;
+  }
+};
+
+
+class AdaptiveHeuristics : public ShenandoahHeuristics {
+private:
+  size_t _max_live_data;
+  double _used_threshold_factor;
+  double _garbage_threshold_factor;
+  double _allocation_threshold_factor;
+
+  uintx _used_threshold;
+  uintx _garbage_threshold;
+  uintx _allocation_threshold;
+
+public:
+  AdaptiveHeuristics() : ShenandoahHeuristics() {
+    if (PrintGCDetails) {
+      tty->print_cr("Initializing dynamic heuristics");
+    }
+
+    _max_live_data = 0;
+
+    _used_threshold = 0;
+    _garbage_threshold = 0;
+    _allocation_threshold = 0;
+
+    _used_threshold_factor = 0.;
+    _garbage_threshold_factor = 0.1;
+    _allocation_threshold_factor = 0.;
+  }
+
+  virtual ~AdaptiveHeuristics() {}
+
+  virtual bool should_start_concurrent_mark(size_t used, size_t capacity) const {
+
+    ShenandoahHeap* _heap = ShenandoahHeap::heap();
+    bool shouldStartConcurrentMark = false;
+
+    size_t max_live_data = _max_live_data;
+    if (max_live_data == 0) {
+      max_live_data = capacity * 0.2; // Very generous initial value.
+    } else {
+      max_live_data *= 1.3; // Add some wiggle room.
+    }
+    size_t max_cycle_allocated = _heap->_max_allocated_gc;
+    if (max_cycle_allocated == 0) {
+      max_cycle_allocated = capacity * 0.3; // Very generous.
+    } else {
+      max_cycle_allocated *= 1.3; // Add 20% wiggle room. Should be enough.
+    }
+    size_t threshold = _heap->capacity() - max_cycle_allocated - max_live_data;
+    if (used > threshold)
+    {
+      shouldStartConcurrentMark = true;
+    }
+
+    return shouldStartConcurrentMark;
+  }
+
+  virtual void choose_collection_and_free_sets(ShenandoahHeapRegionSet* region_set,
+                                               ShenandoahHeapRegionSet* collection_set,
+                                               ShenandoahHeapRegionSet* free_set)
+  {
+    size_t bytes_alloc = ShenandoahHeap::heap()->_bytesAllocSinceCM;
+    size_t min_garbage =  bytes_alloc/* * 1.1*/;
+    region_set->set_garbage_threshold(ShenandoahHeapRegion::RegionSizeBytes * _garbage_threshold_factor);
+    region_set->choose_collection_and_free_sets_min_garbage(collection_set, free_set, min_garbage);
+    /*
+    tty->print_cr("garbage to be collected: %u", collection_set->garbage());
+    tty->print_cr("objects to be evacuated: %u", collection_set->live_data());
+    */
+    _max_live_data = MAX2(_max_live_data, collection_set->live_data());
   }
 
   void set_used_threshold(uintx used_threshold) {
@@ -341,6 +441,11 @@ ShenandoahCollectorPolicy::ShenandoahCollectorPolicy() {
         tty->print_cr("Shenandoah heuristics: dynamic");
       }
       _heuristics = configureDynamicHeuristics();
+    } else if (strcmp(ShenandoahGCHeuristics, "adaptive") == 0) {
+      if (ShenandoahLogConfig) {
+        tty->print_cr("Shenandoah heuristics: adaptive");
+      }
+      _heuristics = new AdaptiveHeuristics();
     } else {
       fatal("Unknown -XX:ShenandoahGCHeuristics option");
     }

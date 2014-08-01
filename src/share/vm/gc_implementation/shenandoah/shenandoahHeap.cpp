@@ -163,6 +163,10 @@ ShenandoahHeap::ShenandoahHeap(ShenandoahCollectorPolicy* policy) :
   _free_regions(NULL),
   _collection_set(NULL),
   _bytesAllocSinceCM(0),
+  _bytes_allocated_since_last_cm(0),
+  _max_allocated_gc(0),
+  _allocated_last_gc(0),
+  _used_start_gc(0),
   _max_workers((int) MAX2((uint)ParallelGCThreads, 1U)),
   _ref_processor_cm(NULL),
   _mark_bit_map0(log2_intptr(MinObjAlignment)),
@@ -703,6 +707,10 @@ void ShenandoahHeap::verify_evacuated_region(ShenandoahHeapRegion* from_region) 
 void ShenandoahHeap::parallel_evacuate_region(ShenandoahHeapRegion* from_region, 
 					      ShenandoahAllocRegion *alloc_region) {
 
+  if (from_region->getLiveData() == 0) {
+    return;
+  }
+
   ParallelEvacuateRegionObjectClosure evacuate_region(this, alloc_region);
   
 #ifdef ASSERT
@@ -968,6 +976,9 @@ void ShenandoahHeap::prepare_for_concurrent_evacuation() {
   _free_regions->clear();
   _shenandoah_policy->choose_collection_and_free_sets(&regions, _collection_set, _free_regions);
 
+
+  _bytesAllocSinceCM = 0;
+
 }
 
 class ShenandoahUpdateRootsClosure: public ExtendedOopClosure {
@@ -1087,6 +1098,14 @@ void ShenandoahHeap::update_references() {
   } else {
     update_roots.doit();
   }
+
+  _allocated_last_gc = used() - _used_start_gc;
+  size_t max_allocated_gc = MAX2(_max_allocated_gc, _allocated_last_gc);
+  /*
+  tty->print_cr("prev max_allocated_gc: %d, new max_allocated_gc: %d, allocated_last_gc: %d diff %f", _max_allocated_gc, max_allocated_gc, _allocated_last_gc, ((double) max_allocated_gc/ (double) _allocated_last_gc));
+  */
+  _max_allocated_gc = max_allocated_gc;
+
 
   if (ShenandoahVerify) {
     VM_ShenandoahVerifyHeapAfterUpdateRefs verify_after_update_refs;
@@ -1834,7 +1853,7 @@ void ShenandoahHeap::start_concurrent_marking() {
   }
 
   _shenandoah_policy->record_bytes_allocated(_bytesAllocSinceCM);
-  _bytesAllocSinceCM = 0;
+  _used_start_gc = used();
 
 #ifdef ASSERT
   if (ShenandoahDumpHeapBeforeConcurrentMark) {

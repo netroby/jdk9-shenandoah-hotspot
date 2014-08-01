@@ -24,6 +24,7 @@ private:
   size_t _free_threshold;
 
   void choose_collection_set(ShenandoahHeapRegion** regions, size_t length);
+  void choose_collection_set_min_garbage(ShenandoahHeapRegion** regions, size_t length, size_t min_garbage);
   void choose_free_set(ShenandoahHeapRegion** regions, size_t length);
 
 public:
@@ -47,6 +48,10 @@ public:
   size_t available_regions();
   void print();
 
+  size_t garbage();
+  size_t used();
+  size_t live_data();
+
   /**
    * Returns a pointer to the current region.
    */
@@ -66,6 +71,7 @@ public:
   ShenandoahHeapRegion* claim_next();
 
   void choose_collection_and_free_sets(ShenandoahHeapRegionSet* col_set, ShenandoahHeapRegionSet* free_set);
+  void choose_collection_and_free_sets_min_garbage(ShenandoahHeapRegionSet* col_set, ShenandoahHeapRegionSet* free_set, size_t min_garbage);
 
   // Check for unreachable humonguous regions and reclaim them.
   void reclaim_humonguous_regions();

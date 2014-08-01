@@ -92,6 +92,10 @@ private:
 
 public:
   size_t _bytesAllocSinceCM;
+  size_t _bytes_allocated_since_last_cm;
+  size_t _max_allocated_gc;
+  size_t _allocated_last_gc;
+  size_t _used_start_gc;
 
 public:
   ShenandoahHeap(ShenandoahCollectorPolicy* policy);

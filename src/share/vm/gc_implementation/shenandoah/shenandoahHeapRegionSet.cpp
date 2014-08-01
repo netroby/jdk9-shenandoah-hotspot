@@ -136,6 +136,11 @@ void ShenandoahHeapRegionSet::choose_collection_and_free_sets(ShenandoahHeapRegi
   free_set->choose_free_set(_regions, length());
 }
 
+void ShenandoahHeapRegionSet::choose_collection_and_free_sets_min_garbage(ShenandoahHeapRegionSet* col_set, ShenandoahHeapRegionSet* free_set, size_t min_garbage) {
+  col_set->choose_collection_set_min_garbage(_regions, length(), min_garbage);
+  free_set->choose_free_set(_regions, length());
+}
+
 void ShenandoahHeapRegionSet::choose_collection_set(ShenandoahHeapRegion** regions, size_t length) {
 
   clear();
@@ -170,6 +175,45 @@ void ShenandoahHeapRegionSet::choose_collection_set(ShenandoahHeapRegion** regio
   FREE_C_HEAP_ARRAY(ShenandoahHeapRegion*, tmp, mtGC);
 
 }
+
+void ShenandoahHeapRegionSet::choose_collection_set_min_garbage(ShenandoahHeapRegion** regions, size_t length, size_t min_garbage) {
+
+  clear();
+
+  assert(length <= _max_regions, "must not blow up array");
+
+  ShenandoahHeapRegion** tmp = NEW_C_HEAP_ARRAY(ShenandoahHeapRegion*, length, mtGC);
+
+  memcpy(tmp, regions, sizeof(ShenandoahHeapRegion*) * length);
+
+  QuickSort::sort<ShenandoahHeapRegion*>(tmp, length, compareHeapRegionsByGarbage, false);
+
+  ShenandoahHeapRegion** r = tmp;
+  ShenandoahHeapRegion** end = tmp + length;
+
+  // We don't want the current allocation region in the collection set because a) it is still being allocated into and b) This is where the write barriers will allocate their copies.
+
+  size_t garbage = 0;
+  while (r < end && garbage < min_garbage) {
+    ShenandoahHeapRegion* region = *r;
+    if (region->garbage() > _garbage_threshold
+        && ! (region->has_active_tlabs() || region->is_current_allocation_region()
+              || region->is_humonguous())) {
+
+      append(region);
+      garbage += region->garbage();
+      region->set_is_in_collection_set(true);
+    }
+    r++;
+  }
+
+  FREE_C_HEAP_ARRAY(ShenandoahHeapRegion*, tmp, mtGC);
+
+  /*
+  tty->print_cr("choosen region with %u garbage given %u min_garbage", garbage, min_garbage);
+  */
+}
+
 
 void ShenandoahHeapRegionSet::choose_free_set(ShenandoahHeapRegion** regions, size_t length) {
 
@@ -236,4 +280,31 @@ void ShenandoahHeapRegionSet::set_concurrent_iteration_safe_limits() {
     ShenandoahHeapRegion* region = *i;
     region->set_concurrent_iteration_safe_limit(region->top());
   }
+}
+
+size_t ShenandoahHeapRegionSet::garbage() {
+  size_t garbage = 0;
+  for (ShenandoahHeapRegion** i = _regions; i < _next_free; i++) {
+    ShenandoahHeapRegion* region = *i;
+    garbage += region->garbage();
+  }
+  return garbage;
+}
+
+size_t ShenandoahHeapRegionSet::used() {
+  size_t used = 0;
+  for (ShenandoahHeapRegion** i = _regions; i < _next_free; i++) {
+    ShenandoahHeapRegion* region = *i;
+    used += region->used();
+  }
+  return used;
+}
+
+size_t ShenandoahHeapRegionSet::live_data() {
+  size_t live = 0;
+  for (ShenandoahHeapRegion** i = _regions; i < _next_free; i++) {
+    ShenandoahHeapRegion* region = *i;
+    live += region->getLiveData();
+  }
+  return live;
 }
