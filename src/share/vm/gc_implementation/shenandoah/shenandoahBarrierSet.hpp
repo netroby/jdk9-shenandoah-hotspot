@@ -114,7 +114,10 @@ public:
         }
     }
 #endif
-    assert(ShenandoahHeap::heap()->is_in(result) && result->is_oop(), "resolved oop must be a valid oop in the heap");
+    if (! ShenandoahTraceWritesToFromSpace) {
+      // is_oop() would trigger a SEGFAULT when we're checking from-space-access.
+      assert(ShenandoahHeap::heap()->is_in(result) && result->is_oop(), "resolved oop must be a valid oop in the heap");
+    }
     return result;
   }
 

@@ -1170,7 +1170,16 @@ void ShenandoahHeap::do_evacuation() {
     // the hotspot compilers, especially C2, that allows it to
     // do optimizations like lifting barriers outside of a loop.
 
-    update_roots();
+    if (ShenandoahTraceWritesToFromSpace) {
+      set_from_region_protection(false);
+
+      update_roots();
+
+      set_from_region_protection(true);
+
+    } else {
+      update_roots();
+    }
   }
 
   set_evacuation_in_progress(false);

@@ -474,11 +474,6 @@ void ShenandoahBarrierSet::compile_resolve_oop_runtime(MacroAssembler* masm, Reg
 void ShenandoahBarrierSet::compile_resolve_oop(MacroAssembler* masm, Register dst) {
   if (ShenandoahReadBarrier) {
 
-    if (ShenandoahTraceWritesToFromSpace) {
-      compile_resolve_oop_runtime(masm, dst);
-      return;
-    }
-
     Label is_null;
     __ testptr(dst, dst);
     __ jcc(Assembler::zero, is_null);
