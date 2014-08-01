@@ -285,7 +285,7 @@ bool  ShenandoahHeap::is_scavengable(const void* p) {
 }
 
 HeapWord* ShenandoahHeap::allocate_new_tlab(size_t word_size) {
-  HeapWord* result = allocate_memory(word_size);
+  HeapWord* result = allocate_memory(word_size, false);
 
   if (result != NULL) {
     if (_concurrent_mark_in_progress || (ShenandoahUpdateRefsEarly && _evacuation_in_progress)) {
@@ -315,7 +315,7 @@ void ShenandoahHeap::retire_tlab_at(HeapWord* start) {
 }
 
 HeapWord* ShenandoahHeap::allocate_new_gclab(size_t word_size) {
-  HeapWord* result = allocate_memory(word_size);
+  HeapWord* result = allocate_memory(word_size, true);
   assert(! heap_region_containing(result)->is_in_collection_set(), "Never allocate in dirty region");
   if (result != NULL) {
     if (ShenandoahTraceTLabs) {
@@ -372,34 +372,35 @@ public:
 
 };
 
-HeapWord* ShenandoahHeap::allocate_memory(size_t word_size) {
+HeapWord* ShenandoahHeap::allocate_memory(size_t word_size, bool evacuation) {
   MutexLockerEx ml(ShenandoahHeap_lock, true);
   {
-    return allocate_memory_work(word_size);
+    return allocate_memory_work(word_size, evacuation);
   }
 }
 
-ShenandoahHeapRegion* ShenandoahHeap::check_skip_humonguous(ShenandoahHeapRegion* region) {
+ShenandoahHeapRegion* ShenandoahHeap::check_skip_humonguous(ShenandoahHeapRegion* region, bool evacuation) {
   while (region != NULL && region->is_humonguous()) {
-    region = _free_regions->get_next();
+    region = _free_regions->get_next(evacuation);
   }
   return region;
 }
 
-ShenandoahHeapRegion* ShenandoahHeap::get_next_region_skip_humonguous() {
-  ShenandoahHeapRegion* next = _free_regions->get_next();
-  return check_skip_humonguous(next);
+ShenandoahHeapRegion* ShenandoahHeap::get_next_region_skip_humonguous(bool evacuation) {
+  ShenandoahHeapRegion* next = _free_regions->get_next(evacuation);
+  return check_skip_humonguous(next, evacuation);
 }
 
-ShenandoahHeapRegion* ShenandoahHeap::get_current_region_skip_humonguous() {
-  ShenandoahHeapRegion* current = _free_regions->current();
-  return check_skip_humonguous(current);
+ShenandoahHeapRegion* ShenandoahHeap::get_current_region_skip_humonguous(bool evacuation) {
+  ShenandoahHeapRegion* current = _free_regions->current(evacuation);
+  return check_skip_humonguous(current, evacuation);
 }
 
-ShenandoahHeapRegion* ShenandoahHeap::check_grow_heap(ShenandoahHeapRegion* current) {
+
+ShenandoahHeapRegion* ShenandoahHeap::check_grow_heap(ShenandoahHeapRegion* current, bool evacuation) {
   if (current == NULL) {
     if (grow_heap_by()) {
-      current = _free_regions->get_next();
+      current = _free_regions->get_next(evacuation);
       assert(current != NULL, "After successfully growing the heap we should have a region");
       assert(! current->is_humonguous(), "new region must not be humonguous");
     } else {
@@ -409,23 +410,25 @@ ShenandoahHeapRegion* ShenandoahHeap::check_grow_heap(ShenandoahHeapRegion* curr
   return current;
 }
 
-ShenandoahHeapRegion* ShenandoahHeap::get_current_region_for_allocation() {
-  ShenandoahHeapRegion* current = get_current_region_skip_humonguous();
-  return check_grow_heap(current);
+ShenandoahHeapRegion* ShenandoahHeap::get_current_region(bool evacuation) {
+  ShenandoahHeapRegion* current = get_current_region_skip_humonguous(evacuation);
+  return check_grow_heap(current, evacuation);
 }
 
-ShenandoahHeapRegion* ShenandoahHeap::get_next_region_for_allocation() {
-  ShenandoahHeapRegion* current = get_next_region_skip_humonguous();
-  return check_grow_heap(current);
+ShenandoahHeapRegion* ShenandoahHeap::get_next_region(bool evacuation) {
+  ShenandoahHeapRegion* current = get_next_region_skip_humonguous(evacuation);
+  return check_grow_heap(current, evacuation);
 }
 
-HeapWord* ShenandoahHeap::allocate_memory_work(size_t word_size) {
+
+HeapWord* ShenandoahHeap::allocate_memory_work(size_t word_size, bool evacuation) {
 
   if (word_size * HeapWordSize > ShenandoahHeapRegion::RegionSizeBytes) {
+    assert(! evacuation, "no evacuation of humonguous objects");
     return allocate_large_memory(word_size);
   }
 
-  ShenandoahHeapRegion* my_current_region = get_current_region_for_allocation();
+  ShenandoahHeapRegion* my_current_region = get_current_region(evacuation);
   if (my_current_region == NULL) {
     return NULL; // No more room to make a new region. OOM.
   }
@@ -444,7 +447,7 @@ HeapWord* ShenandoahHeap::allocate_memory_work(size_t word_size) {
   result = my_current_region->par_allocate(word_size);
   while (result == NULL && my_current_region != NULL) {
     // 2nd attempt. Try next region.
-    my_current_region = get_next_region_for_allocation();
+    my_current_region = get_next_region(evacuation);
     if (my_current_region == NULL) {
       return NULL; // No more room to make a new region. OOM.
     }
@@ -576,7 +579,7 @@ HeapWord* ShenandoahHeap::mem_allocate_locked(size_t size,
   // This was used for allocation while holding the Heap_lock.
   // HeapWord* filler = allocate_memory(BrooksPointer::BROOKS_POINTER_OBJ_SIZE + size);
 
-  HeapWord* filler = allocate_memory(BrooksPointer::BROOKS_POINTER_OBJ_SIZE + size);
+  HeapWord* filler = allocate_memory(BrooksPointer::BROOKS_POINTER_OBJ_SIZE + size, false);
   HeapWord* result = filler + BrooksPointer::BROOKS_POINTER_OBJ_SIZE;
   if (filler != NULL) {
     initialize_brooks_ptr(filler, result);
@@ -1001,20 +1004,19 @@ void ShenandoahHeap::update_roots() {
 }
 
 class ShenandoahUpdateObjectsClosure : public ObjectClosureCareful {
-  ShenandoahUpdateRootsClosure _refs_cl;
   ShenandoahHeap* _heap;
 
 public:
   ShenandoahUpdateObjectsClosure() :
-    _refs_cl(ShenandoahUpdateRootsClosure()),
     _heap(ShenandoahHeap::heap()) {
   }
 
   size_t do_object_careful(oop p) {
+    ShenandoahUpdateRootsClosure refs_cl;
     assert(ShenandoahHeap::heap()->is_in(p), "only update objects in heap (where else?)");
 
     if (_heap->isMarkedCurrent(p)) {
-      p->oop_iterate(&_refs_cl);
+      p->oop_iterate(&refs_cl);
     }
     return p->size();
   }
@@ -1032,21 +1034,20 @@ public:
 class ParallelUpdateRefsTask : public AbstractGangTask {
 private:
   ShenandoahHeapRegionSet* _regions;
-  ShenandoahUpdateObjectsClosure _update_refs_cl;
 
 public:
   ParallelUpdateRefsTask(ShenandoahHeapRegionSet* regions) :
     AbstractGangTask("Parallel Update References Task"), 
-  _regions(regions),
-    _update_refs_cl(ShenandoahUpdateObjectsClosure()) {
+  _regions(regions) {
   }
 
   void work(uint worker_id) {
+    ShenandoahUpdateObjectsClosure update_refs_cl;
     ShenandoahHeapRegion* region = _regions->claim_next();
 
     while (region != NULL) {
       if (! (region->is_in_collection_set() || region->is_humonguous_continuation())) {
-        HeapWord* failed = region->object_iterate_careful(&_update_refs_cl);
+        HeapWord* failed = region->object_iterate_careful(&update_refs_cl);
         assert(failed == NULL, "careful iteration is implemented safe for now in Shenandaoh");
       }
       region = _regions->claim_next();
@@ -1368,7 +1369,7 @@ bool ShenandoahHeap::supports_tlab_allocation() const {
 
 
 size_t  ShenandoahHeap::unsafe_max_tlab_alloc(Thread *thread) const {
-  ShenandoahHeapRegion* current = _free_regions->current();
+  ShenandoahHeapRegion* current = _free_regions->current(true);
   if (current == NULL) {
     return MinTLABSize;
   } else {
@@ -2265,7 +2266,7 @@ oop ShenandoahHeap::evacuate_object(oop p, Thread* thread) {
   bool alloc_from_gclab = true;
   HeapWord* filler = allocate_from_gclab(thread, required);
   if (filler == NULL) {
-    filler = allocate_memory(required);
+    filler = allocate_memory(required, true);
     alloc_from_gclab = false;
   }
 

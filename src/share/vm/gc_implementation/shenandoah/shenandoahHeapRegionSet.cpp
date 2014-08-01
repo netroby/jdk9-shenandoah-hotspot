@@ -14,7 +14,9 @@ ShenandoahHeapRegionSet::ShenandoahHeapRegionSet(size_t max_regions) :
   _garbage_threshold(ShenandoahHeapRegion::RegionSizeBytes / 2),
   _free_threshold(ShenandoahHeapRegion::RegionSizeBytes / 2) {
 
-  _current = &_regions[0];
+  _next = &_regions[0];
+  _current_allocation = NULL;
+  _current_evacuation = NULL;
   _next_free = &_regions[0];
   _concurrent_next_free = _next_free;
 }
@@ -28,7 +30,9 @@ ShenandoahHeapRegionSet::ShenandoahHeapRegionSet(size_t max_regions, ShenandoahH
   // Make copy of the regions array so that we can sort without destroying the original.
   memcpy(_regions, regions, sizeof(ShenandoahHeapRegion*) * num_regions);
 
-  _current = &_regions[0];
+  _next = &_regions[0];
+  _current_allocation = NULL;
+  _current_evacuation = NULL;
   _next_free = &_regions[num_regions];
   _concurrent_next_free = _next_free;
 }
@@ -58,8 +62,13 @@ int compareHeapRegionsByGarbage(ShenandoahHeapRegion* a, ShenandoahHeapRegion* b
   else return 0;
 }
 
-ShenandoahHeapRegion* ShenandoahHeapRegionSet::current() {
-  return *(limit_region(_current));
+ShenandoahHeapRegion* ShenandoahHeapRegionSet::current(bool evacuation) {
+  ShenandoahHeapRegion** current = evacuation ? _current_evacuation : _current_allocation;
+  if (current == NULL) {
+    return get_next(evacuation);
+  } else {
+    return *(limit_region(current));
+  }
 }
 
 size_t ShenandoahHeapRegionSet::length() {
@@ -89,13 +98,15 @@ void ShenandoahHeapRegionSet::append(ShenandoahHeapRegion* region) {
 }
 
 void ShenandoahHeapRegionSet::clear() {
-  _current = _regions;
+  _current_allocation = NULL;
+  _current_evacuation = NULL;
+  _next = _regions;
   _next_free = _regions;
   _concurrent_next_free = _regions;
 }
 
 ShenandoahHeapRegion* ShenandoahHeapRegionSet::claim_next() {
-  ShenandoahHeapRegion** next = (ShenandoahHeapRegion**) Atomic::add_ptr(sizeof(ShenandoahHeapRegion**), &_current);
+  ShenandoahHeapRegion** next = (ShenandoahHeapRegion**) Atomic::add_ptr(sizeof(ShenandoahHeapRegion**), &_next);
   next--;
   if (next < _next_free) {
     return *next;
@@ -104,10 +115,16 @@ ShenandoahHeapRegion* ShenandoahHeapRegionSet::claim_next() {
   }
 }
 
-ShenandoahHeapRegion* ShenandoahHeapRegionSet::get_next() {
-  ShenandoahHeapRegion** next = _current + 1;
+ShenandoahHeapRegion* ShenandoahHeapRegionSet::get_next(bool evacuation) {
+
+  ShenandoahHeapRegion** next = _next;
   if (next < _next_free) {
-    _current = next;
+    if (evacuation) {
+      _current_evacuation = next;
+    } else {
+      _current_allocation = next;
+    }
+    _next++;
     return *next;
   } else {
     return NULL;
@@ -124,8 +141,14 @@ ShenandoahHeapRegion** ShenandoahHeapRegionSet::limit_region(ShenandoahHeapRegio
 
 void ShenandoahHeapRegionSet::print() {
   for (ShenandoahHeapRegion** i = _regions; i < _next_free; i++) {
-    if (i == _current) {
-      tty->print_cr("-->");
+    if (i == _current_allocation) {
+      tty->print_cr("A->");
+    }
+    if (i == _current_evacuation) {
+      tty->print_cr("E->");
+    }
+    if (i == _next) {
+      tty->print_cr("N->");
     }
     (*i)->print();
   }

@@ -2004,6 +2004,9 @@ void JavaThread::cleanup_failed_attach_current_thread() {
   if (UseG1GC || UseShenandoahGC) {
     flush_barrier_queues();
   }
+  if (UseShenandoahGC && UseTLAB) {
+    gclab().make_parsable(true);
+  }
 #endif // INCLUDE_ALL_GCS
 
   Threads::remove(this);

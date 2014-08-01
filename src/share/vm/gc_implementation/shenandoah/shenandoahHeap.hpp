@@ -99,7 +99,7 @@ public:
   HeapWord* allocate_new_tlab(size_t word_size);
   void retire_tlab_at(HeapWord* start);
 
-  HeapWord* allocate_memory(size_t word_size);
+  HeapWord* allocate_memory(size_t word_size, bool evacuation);
 
   bool find_contiguous_free_regions(uint num_free_regions, ShenandoahHeapRegion** free_regions);
   bool allocate_contiguous_free_regions(uint num_free_regions, ShenandoahHeapRegion** free_regions);
@@ -305,14 +305,14 @@ private:
   void verify_live();
   void verify_liveness_after_concurrent_mark();
 
-  HeapWord* allocate_memory_work(size_t word_size);
+  HeapWord* allocate_memory_work(size_t word_size, bool evacuation);
   HeapWord* allocate_large_memory(size_t word_size);
-  ShenandoahHeapRegion* check_skip_humonguous(ShenandoahHeapRegion* region);
-  ShenandoahHeapRegion* get_next_region_skip_humonguous();
-  ShenandoahHeapRegion* get_current_region_skip_humonguous();
-  ShenandoahHeapRegion* check_grow_heap(ShenandoahHeapRegion* current);
-  ShenandoahHeapRegion* get_next_region_for_allocation();
-  ShenandoahHeapRegion* get_current_region_for_allocation();
+  ShenandoahHeapRegion* check_skip_humonguous(ShenandoahHeapRegion* region, bool evacuation);
+  ShenandoahHeapRegion* get_next_region_skip_humonguous(bool evacuation);
+  ShenandoahHeapRegion* get_current_region_skip_humonguous(bool evacuation);
+  ShenandoahHeapRegion* check_grow_heap(ShenandoahHeapRegion* current, bool evacuation);
+  ShenandoahHeapRegion* get_next_region(bool evacuation);
+  ShenandoahHeapRegion* get_current_region(bool evacuation);
 
   void set_from_region_protection(bool protect);
 };
