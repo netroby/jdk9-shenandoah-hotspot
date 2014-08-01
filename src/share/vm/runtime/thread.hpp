@@ -259,6 +259,7 @@ class Thread: public ThreadShadow {
   friend class GC_locker;
 
   ThreadLocalAllocBuffer _tlab;                 // Thread-local eden
+  ThreadLocalAllocBuffer _gclab;                // Thread-local allocation buffer for GC (e.g. evacuation)
   jlong _allocated_bytes;                       // Cumulative number of bytes allocated on
                                                 // the Java heap
 
@@ -436,6 +437,9 @@ class Thread: public ThreadShadow {
       tlab().initialize();
     }
   }
+
+  // Thread-Local GC Allocation Buffer (GCLAB) support
+  ThreadLocalAllocBuffer& gclab()                { return _gclab; }
 
   jlong allocated_bytes()               { return _allocated_bytes; }
   void set_allocated_bytes(jlong value) { _allocated_bytes = value; }
@@ -629,6 +633,8 @@ public:
   TLAB_FIELD_OFFSET(slow_allocations)
 
 #undef TLAB_FIELD_OFFSET
+
+  static ByteSize gclab_start_offset()         { return byte_offset_of(Thread, _gclab) + ThreadLocalAllocBuffer::start_offset(); }
 
   static ByteSize allocated_bytes_offset()       { return byte_offset_of(Thread, _allocated_bytes ); }
 

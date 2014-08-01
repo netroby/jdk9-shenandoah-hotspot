@@ -4,7 +4,6 @@ Copyright 2014 Red Hat, Inc. and/or its affiliates.
 #ifndef SHARE_VM_GC_IMPLEMENTATION_SHENANDOAH_SHENANDOAHHEAP_HPP
 #define SHARE_VM_GC_IMPLEMENTATION_SHENANDOAH_SHENANDOAHHEAP_HPP
 
-#include "gc_implementation/shenandoah/shenandoahAllocRegion.hpp"
 #include "gc_implementation/shenandoah/shenandoahCollectorPolicy.hpp"
 #include "gc_implementation/shenandoah/shenandoahConcurrentMark.hpp"
 #include "gc_implementation/shenandoah/shenandoahConcurrentThread.hpp"
@@ -22,7 +21,6 @@ Copyright 2014 Red Hat, Inc. and/or its affiliates.
 
 
 class SpaceClosure;
-class EvacuationAllocator;
 
 class ShenandoahIsAliveClosure: public BoolObjectClosure {
 
@@ -79,7 +77,6 @@ private:
 #ifndef NDEBUG
   uint _numAllocs;
 #endif
-  size_t _default_gclab_size;
   WorkGangBarrierSync barrierSync;
   int _max_workers;
   volatile size_t _used;
@@ -101,16 +98,11 @@ public:
   ShenandoahHeap(ShenandoahCollectorPolicy* policy);
   HeapWord* allocate_new_tlab(size_t word_size);
   void retire_tlab_at(HeapWord* start);
-  HeapWord* allocate_new_gclab(size_t word_size);
 
   HeapWord* allocate_memory(size_t word_size);
 
   bool find_contiguous_free_regions(uint num_free_regions, ShenandoahHeapRegion** free_regions);
   bool allocate_contiguous_free_regions(uint num_free_regions, ShenandoahHeapRegion** free_regions);
-
-  HeapWord* allocate_new_gclab() { 
-    return allocate_new_gclab(_default_gclab_size);
-  }
 
   // For now we are ignoring eden.
   inline bool should_alloc_in_eden(size_t size) { return false;}
@@ -144,6 +136,9 @@ public:
   void do_full_collection(bool clear_all_soft_refs);
   AdaptiveSizePolicy* size_policy();
   ShenandoahCollectorPolicy* collector_policy() const;
+
+  void ensure_parsability(bool retire_tlabs);
+
   void oop_iterate(ExtendedOopClosure* cl, bool skip_dirty_regions,
                    bool skip_unreachable_objects);
   void oop_iterate(ExtendedOopClosure* cl) {
@@ -238,15 +233,14 @@ public:
 
   oop maybe_update_oop_ref(oop* p);
   void evacuate_region(ShenandoahHeapRegion* from_region, ShenandoahHeapRegion* to_region);
-  void parallel_evacuate_region(ShenandoahHeapRegion* from_region,
-				ShenandoahAllocRegion *alloc_region);
+  void parallel_evacuate_region(ShenandoahHeapRegion* from_region);
   void verify_evacuated_region(ShenandoahHeapRegion* from_region);
 
   void print_heap_regions(outputStream* st = tty) const;
 
   void print_all_refs(const char* prefix);
 
-  oop  evacuate_object(oop src, EvacuationAllocator* allocator);
+  oop  evacuate_object(oop src, Thread* thread);
   bool is_in_collection_set(oop* p) {
     return heap_region_containing(p)->is_in_collection_set();
   }
@@ -300,6 +294,10 @@ private:
 
   void verify_evacuation(ShenandoahHeapRegion* from_region);
   void set_concurrent_mark_in_progress(bool in_progress);
+
+  HeapWord* allocate_new_gclab(size_t word_size);
+  HeapWord* allocate_from_gclab(Thread* thread, size_t size);
+  HeapWord* allocate_from_gclab_slow(Thread* thread, size_t size);
 
 
 private:

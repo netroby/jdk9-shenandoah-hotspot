@@ -193,7 +193,8 @@ void ThreadLocalAllocBuffer::initialize(HeapWord* start,
   invariants();
 }
 
-void ThreadLocalAllocBuffer::initialize() {
+void ThreadLocalAllocBuffer::initialize(bool gclab) {
+  _gclab = gclab;
   initialize(NULL,                    // start
              NULL,                    // top
              NULL);                   // end
@@ -308,9 +309,15 @@ void ThreadLocalAllocBuffer::verify() {
 }
 
 Thread* ThreadLocalAllocBuffer::myThread() {
-  return (Thread*)(((char *)this) +
-                   in_bytes(start_offset()) -
-                   in_bytes(Thread::tlab_start_offset()));
+  ByteSize gclab_offset = Thread::gclab_start_offset();
+  ByteSize tlab_offset = Thread::tlab_start_offset();
+  ByteSize offs = _gclab ? gclab_offset : tlab_offset;
+  Thread* thread = (Thread*)(((char *)this) +
+                   in_bytes(start_offset()) - in_bytes(offs));
+#ifdef ASSERT
+  assert(this == (_gclab ? &thread->gclab() : &thread->tlab()), "must be");
+#endif
+  return thread;
 }
 
 size_t ThreadLocalAllocBuffer::end_reserve() {

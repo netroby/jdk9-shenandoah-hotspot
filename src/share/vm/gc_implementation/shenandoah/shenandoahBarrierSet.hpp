@@ -6,11 +6,9 @@ Copyright 2014 Red Hat, Inc. and/or its affiliates.
 
 #include "memory/barrierSet.hpp"
 #include "gc_implementation/shenandoah/shenandoahHeap.hpp"
-#include "gc_implementation/shenandoah/shenandoahEvacuation.hpp"
 
 class ShenandoahBarrierSet: public BarrierSet {
 private:
-  EvacuationAllocator* _allocator;
 
   static inline oop get_shenandoah_forwardee_helper(oop p) {
     assert(UseShenandoahGC, "must only be called when Shenandoah is used.");

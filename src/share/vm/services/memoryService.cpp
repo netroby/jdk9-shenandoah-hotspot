@@ -203,6 +203,7 @@ void MemoryService::add_g1_heap_info(G1CollectedHeap* g1h) {
 void MemoryService::add_shenandoah_heap_info(ShenandoahHeap* pgch) {
   assert(UseShenandoahGC, "sanity");
   _major_gc_manager = MemoryManager::get_shenandoah_memory_manager();
+  _minor_gc_manager = MemoryManager::get_shenandoah_memory_manager();
   _managers_list->append(_major_gc_manager);
   add_shenandoah_memory_pool(pgch, _major_gc_manager);
 }

@@ -294,6 +294,18 @@ Thread::Thread() {
            "bug in forced alignment of thread objects");
   }
 #endif /* ASSERT */
+
+  /*
+  if (UseShenandoahGC) {
+    tty->print_cr("is_Worker_thread: %d, is_Java_thread: %d", is_Worker_thread(), is_Java_thread());
+  }
+  */
+  if (UseShenandoahGC /* && (is_Worker_thread() || is_Java_thread()) */) {
+    gclab().initialize(true);
+    // We need to initialize all tlabs here, it'll be done again for JavaThreads later,
+    // but it shouldn't hurt.
+    tlab().initialize();
+  }
 }
 
 void Thread::initialize_thread_local_storage() {
@@ -1922,6 +1934,9 @@ void JavaThread::exit(bool destroy_vm, ExitType exit_type) {
   // added to the thread's dirty card queue as a result are not lost.
   if (UseG1GC || UseShenandoahGC) {
     flush_barrier_queues();
+  }
+  if (UseShenandoahGC && UseTLAB) {
+    gclab().make_parsable(true);
   }
 #endif // INCLUDE_ALL_GCS
 

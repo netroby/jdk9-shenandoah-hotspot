@@ -53,6 +53,7 @@ private:
   unsigned  _slow_refill_waste;
   unsigned  _gc_waste;
   unsigned  _slow_allocations;
+  bool      _gclab;
 
   AdaptiveWeightedAverage _allocation_fraction;  // fraction of eden allocated in tlabs
 
@@ -153,7 +154,7 @@ public:
   static void resize_all_tlabs();
 
   void fill(HeapWord* start, HeapWord* top, size_t new_size);
-  void initialize();
+  void initialize(bool gclab = false);
 
   static size_t refill_waste_limit_increment()   { return TLABWasteIncrement; }
 

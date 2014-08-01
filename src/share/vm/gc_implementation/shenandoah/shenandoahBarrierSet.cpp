@@ -6,7 +6,6 @@ Copyright 2014 Red Hat, Inc. and/or its affiliates.
 #include "asm/macroAssembler.hpp"
 #include "gc_implementation/g1/g1SATBCardTableModRefBS.hpp"
 #include "gc_implementation/shenandoah/brooksPointer.hpp"
-#include "gc_implementation/shenandoah/shenandoahEvacuation.hpp"
 #include "gc_implementation/shenandoah/shenandoahHeap.hpp"
 #include "gc_implementation/shenandoah/shenandoahBarrierSet.hpp"
 #include "memory/universe.hpp"
@@ -35,11 +34,6 @@ public:
 
 ShenandoahBarrierSet::ShenandoahBarrierSet() {
   _kind = BarrierSet::ShenandoahBarrierSet;
-  if (UseTLAB) {
-    _allocator = new TLABAllocator();
-  } else {
-    _allocator = new HeapAllocator();
-  }
 }
 
 void ShenandoahBarrierSet::print_on(outputStream* st) const {
@@ -284,7 +278,8 @@ oop ShenandoahBarrierSet::resolve_and_maybe_copy_oop_work2(oop src) {
   assert(src != NULL, "only evacuated non NULL oops");
   assert(sh->heap_region_containing(src)->is_in_collection_set(), "only evacuate objects in collection set");
   assert(! sh->heap_region_containing(src)->is_humonguous(), "never evacuate humonguous objects");
-  oop dst = sh->evacuate_object(src, _allocator);
+  // TODO: Consider passing thread from caller.
+  oop dst = sh->evacuate_object(src, Thread::current());
 #ifdef ASSERT
     if (ShenandoahTraceEvacuations) {
       tty->print("src = %p dst = %p src = %p src-2 = %p\n",

@@ -13,7 +13,6 @@ Copyright 2014 Red Hat, Inc. and/or its affiliates.
 #include "gc_implementation/shenandoah/brooksPointer.hpp"
 #include "gc_implementation/shenandoah/shenandoahHeap.hpp"
 #include "gc_implementation/shenandoah/shenandoahBarrierSet.hpp"
-#include "gc_implementation/shenandoah/shenandoahEvacuation.hpp"
 #include "gc_implementation/shenandoah/vm_operations_shenandoah.hpp"
 #include "runtime/vmThread.hpp"
 #include "memory/iterator.hpp"
@@ -170,8 +169,7 @@ ShenandoahHeap::ShenandoahHeap(ShenandoahCollectorPolicy* policy) :
   _max_workers((int) MAX2((uint)ParallelGCThreads, 1U)),
   _ref_processor_cm(NULL),
   _mark_bit_map0(log2_intptr(MinObjAlignment)),
-  _mark_bit_map1(log2_intptr(MinObjAlignment)),
-  _default_gclab_size(1024){
+  _mark_bit_map1(log2_intptr(MinObjAlignment)) {
   _pgc = this;
   _scm = new ShenandoahConcurrentMark();
   _used = 0;
@@ -320,8 +318,11 @@ HeapWord* ShenandoahHeap::allocate_new_gclab(size_t word_size) {
   HeapWord* result = allocate_memory(word_size);
   assert(! heap_region_containing(result)->is_in_collection_set(), "Never allocate in dirty region");
   if (result != NULL) {
-    if (ShenandoahGCVerbose)
+    if (ShenandoahTraceTLabs) {
       tty->print("allocating new gclab of size %d at addr %p\n", word_size, result);
+    }
+    heap_region_containing(result)->increase_active_tlab_count();
+
   }
   return result;
 }
@@ -645,13 +646,10 @@ HeapWord*  ShenandoahHeap::mem_allocate(size_t size,
 class ParallelEvacuateRegionObjectClosure : public ObjectClosure {
 private:
   ShenandoahHeap* _heap;
-  GCLABAllocator _allocator;
-
+  Thread* _thread;
   public:
-  ParallelEvacuateRegionObjectClosure(ShenandoahHeap* heap, 
-				      ShenandoahAllocRegion* allocRegion) :
-    _heap(heap),
-    _allocator(GCLABAllocator(allocRegion)) { 
+  ParallelEvacuateRegionObjectClosure(ShenandoahHeap* heap) :
+    _heap(heap), _thread(Thread::current()) { 
   }
 
   void do_object(oop p) {
@@ -663,12 +661,8 @@ private:
 #endif
 
     if (_heap->isMarkedCurrent(p)) {
-      _heap->evacuate_object(p, &_allocator);
+      _heap->evacuate_object(p, _thread);
     }
-  }
-
-  size_t wasted() {
-    return _allocator.waste();
   }
 };
       
@@ -704,14 +698,13 @@ void ShenandoahHeap::verify_evacuated_region(ShenandoahHeapRegion* from_region) 
   from_region->object_iterate(&verify_evacuation);
 }
 
-void ShenandoahHeap::parallel_evacuate_region(ShenandoahHeapRegion* from_region, 
-					      ShenandoahAllocRegion *alloc_region) {
+void ShenandoahHeap::parallel_evacuate_region(ShenandoahHeapRegion* from_region) {
 
   if (from_region->getLiveData() == 0) {
     return;
   }
 
-  ParallelEvacuateRegionObjectClosure evacuate_region(this, alloc_region);
+  ParallelEvacuateRegionObjectClosure evacuate_region(this);
   
 #ifdef ASSERT
   if (ShenandoahGCVerbose) {
@@ -725,7 +718,7 @@ void ShenandoahHeap::parallel_evacuate_region(ShenandoahHeapRegion* from_region,
     verify_evacuated_region(from_region);
   }
   if (ShenandoahGCVerbose) {
-    tty->print("parallel_evacuate_region after from_region = %d: Wasted %d bytes free_regions = %d\n", from_region->region_number(), evacuate_region.wasted(), _free_regions->available_regions());
+    tty->print("parallel_evacuate_region after from_region = %d: free_regions = %d\n", from_region->region_number(), _free_regions->available_regions());
   }
 #endif
 }
@@ -748,7 +741,6 @@ public:
   void work(uint worker_id) {
 
     ShenandoahHeapRegion* from_hr = _cs->claim_next();
-    ShenandoahAllocRegion allocRegion = ShenandoahAllocRegion();
 
     while (from_hr != NULL) {
       if (ShenandoahGCVerbose) {
@@ -760,13 +752,11 @@ public:
 
       // Not sure if the check is worth it or not.
       if (from_hr->getLiveData() != 0) {
-	_sh->parallel_evacuate_region(from_hr, &allocRegion);
+	_sh->parallel_evacuate_region(from_hr);
       }
 
       from_hr = _cs->claim_next();
     }
-
-    allocRegion.fill_region();
 
     if (ShenandoahGCVerbose) 
       tty->print("Thread %d entering barrier sync\n", worker_id);
@@ -1064,6 +1054,38 @@ public:
   }
 };
 
+class RetireTLABClosure : public ThreadClosure {
+private:
+  bool _retire;
+
+public:
+  RetireTLABClosure(bool retire) : _retire(retire) {
+  }
+
+  void do_thread(Thread* thread) {
+    thread->tlab().make_parsable(_retire);
+    thread->gclab().make_parsable(_retire);
+  }
+};
+
+void ShenandoahHeap::ensure_parsability(bool retire_tlabs) {
+  assert(SafepointSynchronize::is_at_safepoint() ||
+         !is_init_completed(),
+         "Should only be called at a safepoint or at start-up"
+         " otherwise concurrent mutator activity may make heap "
+         " unparsable again");
+  const bool use_tlab = UseTLAB;
+  // The main thread starts allocating via a TLAB even before it
+  // has added itself to the threads list at vm boot-up.
+  assert(!use_tlab || Threads::first() != NULL,
+         "Attempt to fill tlabs before main thread has been added"
+         " to threads list is doomed to failure!");
+
+
+  RetireTLABClosure cl(retire_tlabs);
+  Threads::threads_do(&cl);
+}
+
 void ShenandoahHeap::prepare_for_update_references() {
   ensure_parsability(true);
 
@@ -1127,11 +1149,10 @@ void ShenandoahHeap::update_references() {
 class ShenandoahEvacuateUpdateRootsClosure: public ExtendedOopClosure {
 private:
   ShenandoahHeap* _heap;
-  HeapAllocator _allocator;
+  Thread* _thread;
 public:
   ShenandoahEvacuateUpdateRootsClosure() :
-    _heap(ShenandoahHeap::heap()),
-    _allocator(HeapAllocator()) {
+    _heap(ShenandoahHeap::heap()), _thread(Thread::current()) {
   }
 
   void do_oop(oop* p) {
@@ -1139,7 +1160,7 @@ public:
 
     oop obj = *p;
     if (obj != NULL && _heap->heap_region_containing(obj)->is_in_collection_set()) {
-      *p = _heap->evacuate_object(*p, &_allocator);
+      *p = _heap->evacuate_object(*p, _thread);
     }
   }
 
@@ -1440,11 +1461,11 @@ void ShenandoahHeap::prepare_for_verify() {
 }
 
 void ShenandoahHeap::print_gc_threads_on(outputStream* st) const {
-  st->print_cr("Not yet implemented: ShenandoahHeap::print_gc_threads_on()");
+  workers()->print_worker_threads_on(st);
 }
 
 void ShenandoahHeap::gc_threads_do(ThreadClosure* tcl) const {
-  // Ignore this for now.  No gc threads.
+  workers()->threads_do(tcl);
 }
 
 void ShenandoahHeap::print_tracing_info() const {
@@ -1847,9 +1868,7 @@ void ShenandoahHeap::start_concurrent_marking() {
   set_concurrent_mark_in_progress(true);
   // We need to reset all TLABs because we'd lose marks on all objects allocated in them.
   if (UseTLAB) {
-    for (JavaThread* t = Threads::first(); t; t = t->next()) {
-      t->tlab().make_parsable(true);
-    }
+    ensure_parsability(true);
   }
 
   _shenandoah_policy->record_bytes_allocated(_bytesAllocSinceCM);
@@ -2171,7 +2190,58 @@ void ShenandoahHeap::copy_object(oop p, HeapWord* s) {
 #endif
 }
 
-oop ShenandoahHeap::evacuate_object(oop p, EvacuationAllocator* allocator) {
+HeapWord* ShenandoahHeap::allocate_from_gclab(Thread* thread, size_t size) {
+  HeapWord* obj = thread->gclab().allocate(size);
+  if (obj != NULL) {
+    return obj;
+  }
+  // Otherwise...
+  return allocate_from_gclab_slow(thread, size);
+}
+
+HeapWord* ShenandoahHeap::allocate_from_gclab_slow(Thread* thread, size_t size) {
+  // Retain tlab and allocate object in shared space if
+  // the amount free in the tlab is too large to discard.
+  if (thread->gclab().free() > thread->gclab().refill_waste_limit()) {
+    thread->gclab().record_slow_allocation(size);
+    return NULL;
+  }
+
+  // Discard tlab and allocate a new one.
+  // To minimize fragmentation, the last TLAB may be smaller than the rest.
+  size_t new_gclab_size = thread->gclab().compute_size(size);
+
+  thread->gclab().clear_before_allocation();
+
+  if (new_gclab_size == 0) {
+    return NULL;
+  }
+
+  // Allocate a new TLAB...
+  HeapWord* obj = allocate_new_gclab(new_gclab_size);
+  fill_with_object(obj, size);
+  if (obj == NULL) {
+    return NULL;
+  }
+
+  if (ZeroTLAB) {
+    // ..and clear it.
+    Copy::zero_to_words(obj, new_gclab_size);
+  } else {
+    // ...and zap just allocated object.
+#ifdef ASSERT
+    // Skip mangling the space corresponding to the object header to
+    // ensure that the returned space is not considered parsable by
+    // any concurrent GC thread.
+    size_t hdr_size = oopDesc::header_size();
+    Copy::fill_to_words(obj + hdr_size, new_gclab_size - hdr_size, badHeapWordVal);
+#endif // ASSERT
+  }
+  thread->gclab().fill(obj, obj + size, new_gclab_size);
+  return obj;
+}
+
+oop ShenandoahHeap::evacuate_object(oop p, Thread* thread) {
   ShenandoahHeapRegion* hr;
   size_t required;
 
@@ -2192,7 +2262,13 @@ oop ShenandoahHeap::evacuate_object(oop p, EvacuationAllocator* allocator) {
 
   assert(! heap_region_containing(p)->is_humonguous(), "never evacuate humonguous objects");
 
-  HeapWord* filler = allocator->allocate(required);
+  bool alloc_from_gclab = true;
+  HeapWord* filler = allocate_from_gclab(thread, required);
+  if (filler == NULL) {
+    filler = allocate_memory(required);
+    alloc_from_gclab = false;
+  }
+
   HeapWord* copy = filler + BrooksPointer::BROOKS_POINTER_OBJ_SIZE;
   
 #ifdef ASSERT
@@ -2223,7 +2299,9 @@ oop ShenandoahHeap::evacuate_object(oop p, EvacuationAllocator* allocator) {
     }
 #endif
   }  else {
-    allocator->rollback(filler, required);
+    if (alloc_from_gclab) {
+      thread->gclab().rollback(required);
+    }
 #ifdef ASSERT
     if (ShenandoahTraceEvacuations) {
       tty->print("Copy of %p to %p \n", (HeapWord*) p, copy);
