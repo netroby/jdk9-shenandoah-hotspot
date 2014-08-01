@@ -1160,9 +1160,19 @@ bool LibraryCallKit::inline_string_compareTo() {
 //------------------------------inline_string_equals------------------------
 bool LibraryCallKit::inline_string_equals() {
   Node* receiver = null_check_receiver();
+
+  if (ShenandoahTraceWritesToFromSpace) {
+    receiver = shenandoah_read_barrier(receiver);
+  }
+
   // NOTE: Do not null check argument for String.equals() because spec
   // allows to specify NULL as argument.
   Node* argument = this->argument(1);
+
+  if (ShenandoahTraceWritesToFromSpace) {
+    argument = shenandoah_read_barrier(argument);
+  }
+
   if (stopped()) {
     return true;
   }
@@ -1211,6 +1221,11 @@ bool LibraryCallKit::inline_string_equals() {
 
     // Get start addr of receiver
     Node* receiver_val    = load_String_value(no_ctrl, receiver);
+
+    if (ShenandoahTraceWritesToFromSpace) {
+      receiver_val = shenandoah_read_barrier(receiver_val);
+    }
+
     Node* receiver_offset = load_String_offset(no_ctrl, receiver);
     Node* receiver_start = array_element_address(receiver_val, receiver_offset, T_CHAR);
 
@@ -1219,6 +1234,11 @@ bool LibraryCallKit::inline_string_equals() {
 
     // Get start addr of argument
     Node* argument_val    = load_String_value(no_ctrl, argument);
+
+    if (ShenandoahTraceWritesToFromSpace) {
+      argument_val = shenandoah_read_barrier(argument_val);
+    }
+
     Node* argument_offset = load_String_offset(no_ctrl, argument);
     Node* argument_start = array_element_address(argument_val, argument_offset, T_CHAR);
 
@@ -3431,6 +3451,11 @@ bool LibraryCallKit::inline_native_Class_query(vmIntrinsics::ID id) {
   enum { _normal_path = 1, _prim_path = 2, PATH_LIMIT };
 
   Node* mirror = argument(0);
+
+  if (ShenandoahTraceWritesToFromSpace) {
+    mirror = shenandoah_read_barrier(mirror);
+  }
+
   Node* obj    = top();
 
   switch (id) {
@@ -3438,6 +3463,9 @@ bool LibraryCallKit::inline_native_Class_query(vmIntrinsics::ID id) {
     // nothing is an instance of a primitive type
     prim_return_value = intcon(0);
     obj = argument(1);
+    if (ShenandoahTraceWritesToFromSpace) {
+      obj = shenandoah_read_barrier(obj);
+    }
     break;
   case vmIntrinsics::_getModifiers:
     prim_return_value = intcon(JVM_ACC_ABSTRACT | JVM_ACC_FINAL | JVM_ACC_PUBLIC);
@@ -3617,6 +3645,12 @@ bool LibraryCallKit::inline_native_subtype_check() {
   Node* args[2];                // two java.lang.Class mirrors: superc, subc
   args[0] = argument(0);
   args[1] = argument(1);
+
+  if (ShenandoahTraceWritesToFromSpace) {
+    args[0] = shenandoah_read_barrier(args[0]);
+    args[1] = shenandoah_read_barrier(args[1]);
+  }
+
   Node* klasses[2];             // corresponding Klasses: superk, subk
   klasses[0] = klasses[1] = top();
 
@@ -4053,6 +4087,10 @@ bool LibraryCallKit::inline_native_hashcode(bool is_virtual, bool is_static) {
     obj = null_check_oop(obj, &null_ctl);
     result_reg->init_req(_null_path, null_ctl);
     result_val->init_req(_null_path, _gvn.intcon(0));
+  }
+
+  if (ShenandoahTraceWritesToFromSpace) {
+    obj = shenandoah_read_barrier(obj);
   }
 
   // Unconditionally null?  Then return right away.
@@ -5883,6 +5921,10 @@ bool LibraryCallKit::inline_reference_get() {
   // Get the argument:
   Node* reference_obj = null_check_receiver();
   if (stopped()) return true;
+
+  if (ShenandoahTraceWritesToFromSpace) {
+    reference_obj = shenandoah_read_barrier(reference_obj);
+  }
 
   Node* adr = basic_plus_adr(reference_obj, reference_obj, referent_offset);
 

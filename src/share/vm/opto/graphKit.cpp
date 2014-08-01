@@ -1139,6 +1139,9 @@ Node* GraphKit::load_object_klass(Node* obj) {
   // Special-case a fresh allocation to avoid building nodes:
   Node* akls = AllocateNode::Ideal_klass(obj, &_gvn);
   if (akls != NULL)  return akls;
+  if (ShenandoahTraceWritesToFromSpace) {
+    obj = shenandoah_read_barrier(obj);
+  }
   Node* k_adr = basic_plus_adr(obj, oopDesc::klass_offset_in_bytes());
   return _gvn.transform( LoadKlassNode::make(_gvn, immutable_memory(), k_adr, TypeInstPtr::KLASS) );
 }
@@ -1727,6 +1730,9 @@ void GraphKit::set_arguments_for_java_call(CallJavaNode* call) {
   uint nargs = call->method()->arg_size();
   for (uint i = 0; i < nargs; i++) {
     Node* arg = argument(i);
+    if (ShenandoahTraceWritesToFromSpace && call->is_CallDynamicJava() && i == 0) {
+      arg = shenandoah_read_barrier(arg);
+    }
     call->init_req(i + TypeFunc::Parms, arg);
   }
 }
@@ -2907,6 +2913,10 @@ Node* GraphKit::gen_instanceof(Node* obj, Node* superklass, bool safe_for_replac
     }
   }
 
+  if (ShenandoahTraceWritesToFromSpace) {
+    not_null_obj = shenandoah_read_barrier(not_null_obj);
+  }
+
   // Load the object's klass
   Node* obj_klass = load_object_klass(not_null_obj);
 
@@ -2986,6 +2996,10 @@ Node* GraphKit::gen_checkcast(Node *obj, Node* superklass,
   // Null check; get casted pointer; set region slot 3
   Node* null_ctl = top();
   Node* not_null_obj = null_check_oop(obj, &null_ctl, never_see_null, safe_for_replace);
+
+  if (ShenandoahTraceWritesToFromSpace) {
+    not_null_obj = shenandoah_read_barrier(not_null_obj);
+  }
 
   // If not_null_obj is dead, only null-path is taken
   if (stopped()) {              // Doing instance-of on a NULL?
