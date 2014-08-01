@@ -4176,15 +4176,14 @@ Node* GraphKit::make_shenandoah_read_barrier(Node* ctrl, Node* obj, const Type* 
 Node* GraphKit::shenandoah_read_barrier_runtime(Node* obj) {
   const Type* obj_type = _gvn.type(obj);
   Node *call = make_runtime_call(RC_LEAF | RC_NO_IO,
-                                 OptoRuntime::shenandoah_barrier_Type(),
+                                 OptoRuntime::shenandoah_barrier_Type(obj_type),
                                  CAST_FROM_FN_PTR(address, ShenandoahBarrierSet::resolve_oop_static),
                                  "shenandoah_read_barrier",
                                  NULL,
                                  obj);
 
   Node* result = _gvn.transform(new (C) ProjNode(call, TypeFunc::Parms + 0));
-  Node* result_cast = _gvn.transform(new (C) CheckCastPPNode(control(), result, obj_type));
-  return result_cast;
+  return result;
 }
 
 Node* GraphKit::shenandoah_read_barrier(Node* obj) {
@@ -4265,17 +4264,16 @@ Node* GraphKit::make_shenandoah_write_barrier(Node* ctrl, Node* obj, const Type*
   // Evacuation path.
   set_control(iffalse);
   Node *call = make_runtime_call(RC_LEAF | RC_NO_IO,
-                                 OptoRuntime::shenandoah_barrier_Type(),
+                                 OptoRuntime::shenandoah_barrier_Type(obj_type),
                                  CAST_FROM_FN_PTR(address, ShenandoahBarrierSet::resolve_and_maybe_copy_oop_static),
                                  "shenandoah_write_barrier",
                                  obj_type->is_ptr()->add_offset(-8),
                                  obj);
 
   Node* result = _gvn.transform(new (C) ProjNode(call, TypeFunc::Parms + 0));
-  Node* result_cast = _gvn.transform(new (C) CheckCastPPNode(control(), result, obj_type));
 
   region->init_req(_evac_path, control());
-  phi->init_req(_evac_path, result_cast);
+  phi->init_req(_evac_path, result);
 
   // Return final merged results
   set_control( _gvn.transform(region) );
