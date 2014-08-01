@@ -611,6 +611,11 @@ void TemplateTable::wide_aload() {
 void TemplateTable::index_check(Register array, Register index) {
   // destroys rbx
   // check array
+
+  if (ShenandoahTraceWritesToFromSpace) {
+    oopDesc::bs()->compile_resolve_oop(_masm, array);
+  }
+
   __ null_check(array, arrayOopDesc::length_offset_in_bytes());
   // sign extend index for use by indexed load
   __ movl2ptr(index, index);
@@ -3560,7 +3565,11 @@ void TemplateTable::instanceof() {
   __ pop_ptr(rdx); // restore receiver
   __ verify_oop(rdx);
   __ load_klass(rdx, rdx);
-  __ jmpb(resolved);
+  if (ShenandoahTraceWritesToFromSpace) {
+    __ jmp(resolved);
+  } else {
+    __ jmpb(resolved);
+  }
 
   // Get superklass in rax and subklass in rdx
   __ bind(quicked);
