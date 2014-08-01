@@ -159,6 +159,8 @@ void ShenandoahHeapRegionSet::choose_collection_set(ShenandoahHeapRegion** regio
         && ! (region->has_active_tlabs() || region->is_current_allocation_region()
               || region->is_humonguous())) {
 
+      assert(! region->is_humonguous(), "no humonguous regions in collection set");
+
       append(region);
       region->set_is_in_collection_set(true);
     }
@@ -202,29 +204,31 @@ void ShenandoahHeapRegionSet::reclaim_humonguous_regions() {
 
 void ShenandoahHeapRegionSet::reclaim_humonguous_region_at(ShenandoahHeapRegion** r) {
   assert((*r)->is_humonguous_start(), "reclaim regions starting with the first one");
-  if (ShenandoahTraceHumonguous) {
-    gclog_or_tty->print_cr("recycling humonguous region:");
-    (*r)->print(gclog_or_tty);
-  }
 
   oop humonguous_obj = oop((*r)->bottom() + BrooksPointer::BROOKS_POINTER_OBJ_SIZE);
-  size_t size = humonguous_obj->size();
+  size_t size = humonguous_obj->size() + BrooksPointer::BROOKS_POINTER_OBJ_SIZE;
+  uint required_regions = (size * HeapWordSize) / ShenandoahHeapRegion::RegionSizeBytes  + 1;
 
-  (*r)->recycle();
-  for (ShenandoahHeapRegion** i = r + 1; i < _next_free; i++) {
-    ShenandoahHeapRegion* region = *i;
-    if (region->is_humonguous_continuation()) {
-      if (ShenandoahTraceHumonguous) {
-        gclog_or_tty->print_cr("recycling humonguous region:");
-        region->print(gclog_or_tty);
-      }
-      region->recycle();
-    } else {
-      break;
-    }
+  if (ShenandoahTraceHumonguous) {
+    tty->print_cr("reclaiming %d humonguous regions for object of size: %d words", required_regions, size);
   }
 
-  ShenandoahHeap::heap()->decrease_used(size);
+  assert((*r)->getLiveData() == 0, "liveness must be zero");
+
+  for (ShenandoahHeapRegion** i = r; i < r + required_regions; i++) {
+    ShenandoahHeapRegion* region = *i;
+
+    assert(i == r ? region->is_humonguous_start() : region->is_humonguous_continuation(),
+           "expect correct humonguous start or continuation");
+
+    if (ShenandoahTraceHumonguous) {
+      region->print();
+    }
+
+    region->recycle();
+  }
+
+  ShenandoahHeap::heap()->decrease_used(size * HeapWordSize);
 }
 
 void ShenandoahHeapRegionSet::set_concurrent_iteration_safe_limits() {

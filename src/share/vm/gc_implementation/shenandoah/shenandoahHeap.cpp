@@ -444,6 +444,8 @@ HeapWord* ShenandoahHeap::allocate_memory_work(size_t word_size) {
       return NULL; // No more room to make a new region. OOM.
     }
     assert(my_current_region != NULL, "should have a region at this point");
+    assert(! my_current_region->is_in_collection_set(), "never get targetted regions in free-lists");
+    assert(! my_current_region->is_humonguous(), "never attempt to allocate from humonguous object regions");
     result = my_current_region->par_allocate(word_size);
   }
 
@@ -473,18 +475,15 @@ HeapWord* ShenandoahHeap::allocate_large_memory(size_t words) {
     result = NULL; // Throw OOM, we cannot allocate the huge object.
   } else {
     // Initialize huge object flags in the regions.
-    size_t live = words;
-    free_regions[0]->set_humonguous_start(true);
-    free_regions[0]->set_top(free_regions[0]->end());
-    size_t region_live_data = MIN2(ShenandoahHeapRegion::RegionSizeBytes, live * HeapWordSize);
-    free_regions[0]->increase_live_data(region_live_data);
-    live -= region_live_data;
-    for (uint i = 1; i < required_regions; i++) {
-      free_regions[i]->set_humonguous_continuation(true);
+    size_t live = words * HeapWordSize;
+    free_regions[0]->increase_live_data(live);
+    for (uint i = 0; i < required_regions; i++) {
+      if (i == 0) {
+        free_regions[0]->set_humonguous_start(true);
+      } else {
+        free_regions[i]->set_humonguous_continuation(true);
+      }
       free_regions[i]->set_top(free_regions[i]->end());
-      region_live_data = MIN2(ShenandoahHeapRegion::RegionSizeBytes, live * HeapWordSize);
-      free_regions[i]->increase_live_data(region_live_data);
-      live -= region_live_data;
     }
     result = free_regions[0]->bottom();
     increase_used(words * HeapWordSize);
@@ -2171,6 +2170,8 @@ oop ShenandoahHeap::evacuate_object(oop p, EvacuationAllocator* allocator) {
 #else
     required  = BrooksPointer::BROOKS_POINTER_OBJ_SIZE + p->size();
 #endif
+
+  assert(! heap_region_containing(p)->is_humonguous(), "never evacuate humonguous objects");
 
   HeapWord* filler = allocator->allocate(required);
   HeapWord* copy = filler + BrooksPointer::BROOKS_POINTER_OBJ_SIZE;

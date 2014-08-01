@@ -274,9 +274,6 @@ oop ShenandoahBarrierSet::resolve_and_maybe_copy_oop_work(oop src) {
 
   if (sh->heap_region_containing(src)->is_in_collection_set()) {
     return resolve_and_maybe_copy_oop_work2(src);
-    oop dst = sh->evacuate_object(src, _allocator);
-    assert(sh->is_in(dst), "result should be in the heap");
-    return dst;
   } else {
     return src;
   }
@@ -285,6 +282,8 @@ oop ShenandoahBarrierSet::resolve_and_maybe_copy_oop_work(oop src) {
 oop ShenandoahBarrierSet::resolve_and_maybe_copy_oop_work2(oop src) {
   ShenandoahHeap *sh = (ShenandoahHeap*) Universe::heap();
   assert(src != NULL, "only evacuated non NULL oops");
+  assert(sh->heap_region_containing(src)->is_in_collection_set(), "only evacuate objects in collection set");
+  assert(! sh->heap_region_containing(src)->is_humonguous(), "never evacuate humonguous objects");
   oop dst = sh->evacuate_object(src, _allocator);
 #ifdef ASSERT
     if (ShenandoahTraceEvacuations) {
