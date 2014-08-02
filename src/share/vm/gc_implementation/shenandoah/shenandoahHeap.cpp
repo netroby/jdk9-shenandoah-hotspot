@@ -846,6 +846,9 @@ public:
 void ShenandoahHeap::print_all_refs(const char* prefix) {
   tty->print_cr("printing all references in the heap");
   tty->print_cr("root references:");
+
+  prepare_for_verify();
+
   PrintAllRefsOopClosure cl(prefix);
   roots_iterate(&cl);
 
