@@ -27,6 +27,9 @@ class VM_ShenandoahFinishMark: public VM_Operation {
   virtual VMOp_Type type() const;
   virtual void doit();
 
+  virtual bool doit_prologue();
+  virtual void doit_epilogue();
+
   virtual const char* name() const;
 
 };

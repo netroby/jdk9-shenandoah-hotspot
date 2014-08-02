@@ -288,6 +288,9 @@ public:
 
   void update_roots();
 
+  void acquire_pending_refs_lock();
+  void release_pending_refs_lock();
+
 private:
 
   bool grow_heap_by();

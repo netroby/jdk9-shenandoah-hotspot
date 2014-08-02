@@ -2448,3 +2448,11 @@ void ShenandoahHeap::set_from_region_protection(bool protect) {
   }
 }
 #endif
+
+void ShenandoahHeap::acquire_pending_refs_lock() {
+  _concurrent_gc_thread->slt()->manipulatePLL(SurrogateLockerThread::acquirePLL);
+}
+
+void ShenandoahHeap::release_pending_refs_lock() {
+  _concurrent_gc_thread->slt()->manipulatePLL(SurrogateLockerThread::releaseAndNotifyPLL);
+}

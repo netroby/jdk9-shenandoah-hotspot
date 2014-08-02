@@ -23,12 +23,17 @@ class ShenandoahConcurrentThread: public ConcurrentGCThread {
 
   int _epoch;
 
+  static SurrogateLockerThread* _slt;
+
   void sleepBeforeNextCycle();
 
  public:
   // Constructor
   ShenandoahConcurrentThread();
   ~ShenandoahConcurrentThread();
+
+  static void makeSurrogateLockerThread(TRAPS);
+  static SurrogateLockerThread* slt() { return _slt; }
 
   // Printing
   void print_on(outputStream* st) const;

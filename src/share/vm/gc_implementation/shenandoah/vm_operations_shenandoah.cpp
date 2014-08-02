@@ -36,8 +36,19 @@ const char* VM_ShenandoahFinishMark::name() const {
   return "Shenandoah Finish Mark";
 }
 
-void VM_ShenandoahFinishMark::doit() {
+bool VM_ShenandoahFinishMark::doit_prologue() {
   ShenandoahHeap *sh = (ShenandoahHeap*) Universe::heap();
+  sh->acquire_pending_refs_lock();
+  return true;
+}
+
+void VM_ShenandoahFinishMark::doit_epilogue() {
+  ShenandoahHeap *sh = ShenandoahHeap::heap();
+  sh->release_pending_refs_lock();
+}
+
+void VM_ShenandoahFinishMark::doit() {
+  ShenandoahHeap *sh = ShenandoahHeap::heap();
   if (ShenandoahGCVerbose)
     tty->print("vm_ShenandoahFinalMark\n");
 

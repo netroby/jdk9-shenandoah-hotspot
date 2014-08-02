@@ -99,6 +99,7 @@
 #include "gc_implementation/concurrentMarkSweep/concurrentMarkSweepThread.hpp"
 #include "gc_implementation/g1/concurrentMarkThread.inline.hpp"
 #include "gc_implementation/parallelScavenge/pcTasks.hpp"
+#include "gc_implementation/shenandoah/shenandoahConcurrentThread.hpp"
 #endif // INCLUDE_ALL_GCS
 #ifdef COMPILER1
 #include "c1/c1_Compiler.hpp"
@@ -3610,9 +3611,11 @@ jint Threads::create_vm(JavaVMInitArgs* args, bool* canTryAgain) {
   // Support for ConcurrentMarkSweep. This should be cleaned up
   // and better encapsulated. The ugly nested if test would go away
   // once things are properly refactored. XXX YSR
-  if (UseConcMarkSweepGC || UseG1GC) {
+  if (UseConcMarkSweepGC || UseG1GC || UseShenandoahGC) {
     if (UseConcMarkSweepGC) {
       ConcurrentMarkSweepThread::makeSurrogateLockerThread(THREAD);
+    } else if (UseShenandoahGC) {
+      ShenandoahConcurrentThread::makeSurrogateLockerThread(THREAD);
     } else {
       ConcurrentMarkThread::makeSurrogateLockerThread(THREAD);
     }

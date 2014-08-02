@@ -9,6 +9,8 @@ Copyright 2014 Red Hat, Inc. and/or its affiliates.
 #include "memory/universe.hpp"
 #include "runtime/vmThread.hpp"
 
+SurrogateLockerThread* ShenandoahConcurrentThread::_slt = NULL;
+
 ShenandoahConcurrentThread::ShenandoahConcurrentThread() :
   ConcurrentGCThread(),
   _epoch(0),
@@ -147,4 +149,11 @@ void ShenandoahConcurrentThread::safepoint_synchronize() {
 void ShenandoahConcurrentThread::safepoint_desynchronize() {
   assert(UseShenandoahGC, "just checking");
   _sts.resume_all();
+}
+
+void ShenandoahConcurrentThread::makeSurrogateLockerThread(TRAPS) {
+  assert(UseShenandoahGC, "SLT thread needed only for concurrent GC");
+  assert(THREAD->is_Java_thread(), "must be a Java thread");
+  assert(_slt == NULL, "SLT already created");
+  _slt = SurrogateLockerThread::make(THREAD);
 }
