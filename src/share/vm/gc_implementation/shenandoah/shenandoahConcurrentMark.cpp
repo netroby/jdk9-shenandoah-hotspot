@@ -379,11 +379,14 @@ class ShenandoahCMKeepAliveAndDrainClosure: public OopClosure {
   ShenandoahHeap* _sh;
   ShenandoahConcurrentMark* _scm;
 
+  size_t _ref_count;
+
 public:
   ShenandoahCMKeepAliveAndDrainClosure(uint worker_id) {
     _worker_id = worker_id;
     _sh = (ShenandoahHeap*) Universe::heap();
     _scm = _sh->concurrentMark();
+    _ref_count = 0;
   }
 
   virtual void do_oop(oop* p){ do_oop_work(p);}
@@ -396,7 +399,7 @@ public:
     oop obj = *p;
     
     if (obj != NULL) {
-      if (ShenandoahTraceWeakReferences) {
+      if (Verbose && ShenandoahTraceWeakReferences) {
 	gclog_or_tty->print_cr("\t[%u] we're looking at location "
 			       "*"PTR_FORMAT" = "PTR_FORMAT,
 			       _worker_id, p, (void*) obj);
@@ -405,9 +408,13 @@ public:
 
       _sh->mark_current(obj);
       _scm->addTask(obj, _worker_id);
-    }
-    
+
+      _ref_count++;
+    }    
   }
+
+  size_t ref_count() { return _ref_count; }
+
 };
 
 class ShenandoahRefProcTaskExecutor : public AbstractRefProcTaskExecutor {
@@ -438,12 +445,23 @@ void ShenandoahConcurrentMark::weakRefsWork(bool clear_all_soft_refs, int worker
    // no timing for now.
    ConcurrentGCTimer gc_timer;
 
+   if (ShenandoahTraceWeakReferences) {
+     gclog_or_tty->print_cr("start processing references");
+   }
+
    rp->process_discovered_references(&is_alive, &keep_alive, 
 				     &complete_gc, &par_task_executor, &gc_timer);
    
-
+   if (ShenandoahTraceWeakReferences) {
+     gclog_or_tty->print_cr("finished processing references, processed %d refs", keep_alive.ref_count());
+     gclog_or_tty->print_cr("start enqueuing references");
+   }
 
    rp->enqueue_discovered_references(executor);
+
+   if (ShenandoahTraceWeakReferences) {
+     gclog_or_tty->print_cr("finished enqueueing references");
+   }
 
    rp->verify_no_references_recorded();
    assert(!rp->discovery_enabled(), "Post condition");
