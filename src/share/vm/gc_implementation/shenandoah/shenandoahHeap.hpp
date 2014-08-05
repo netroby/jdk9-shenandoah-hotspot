@@ -79,6 +79,7 @@ private:
 #endif
   WorkGangBarrierSync barrierSync;
   int _max_workers;
+  int _max_conc_workers;
   volatile size_t _used;
 
   CMBitMap _mark_bit_map0;

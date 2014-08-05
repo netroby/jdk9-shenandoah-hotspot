@@ -167,12 +167,14 @@ ShenandoahHeap::ShenandoahHeap(ShenandoahCollectorPolicy* policy) :
   _allocated_last_gc(0),
   _used_start_gc(0),
   _max_workers((int) MAX2((uint)ParallelGCThreads, 1U)),
+  _max_conc_workers((int) MAX2((uint)ShenandoahConcurrentGCThreads, 1U)),
   _ref_processor_cm(NULL),
   _mark_bit_map0(log2_intptr(MinObjAlignment)),
   _mark_bit_map1(log2_intptr(MinObjAlignment)) {
   _pgc = this;
   _scm = new ShenandoahConcurrentMark();
   _used = 0;
+  
 }
 
 void ShenandoahHeap::reset_mark_bitmap() {
@@ -2420,9 +2422,9 @@ void ShenandoahHeap::ref_processing_init() {
                                 // mt processing
                            (int) ParallelGCThreads,
                                 // degree of mt processing
-                           (ParallelGCThreads > 1) || (ConcGCThreads > 1),
+                           (ParallelGCThreads > 1) || (ShenandoahConcurrentGCThreads > 1),
                                 // mt discovery
-                           (int) MAX2(ParallelGCThreads, ConcGCThreads),
+                           (int) MAX2(ParallelGCThreads, ShenandoahConcurrentGCThreads),
                                 // degree of mt discovery
                            false,
                                 // Reference discovery is not atomic

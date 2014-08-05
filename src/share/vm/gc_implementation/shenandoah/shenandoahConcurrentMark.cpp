@@ -117,7 +117,7 @@ void ShenandoahConcurrentMark::initialize(FlexibleWorkGang* workers) {
     tty->print("ActiveWorkers  = %d total workers = %d\n", 
 	     workers->active_workers(), 
 	     workers->total_workers());
-  _max_worker_id = MAX2((uint)ParallelGCThreads, 1U);
+  _max_worker_id = MAX2((uint)ShenandoahConcurrentGCThreads, 1U);
   _task_queues = new SCMObjToScanQueueSet((int) _max_worker_id);
   _overflow_queue = new SharedOverflowMarkQueue();
 
