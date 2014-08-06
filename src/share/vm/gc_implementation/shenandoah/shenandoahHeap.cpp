@@ -174,6 +174,9 @@ ShenandoahHeap::ShenandoahHeap(ShenandoahCollectorPolicy* policy) :
   _pgc = this;
   _scm = new ShenandoahConcurrentMark();
   _used = 0;
+  _conc_workers = new FlexibleWorkGang("ShenandoahConcWorkers", _max_conc_workers, false, true);
+  _conc_workers->initialize_workers();
+  _conc_workers->set_active_workers(_max_conc_workers);
   
 }
 
@@ -194,7 +197,7 @@ void ShenandoahHeap::print_on(outputStream* st) const {
 }
 
 void ShenandoahHeap::post_initialize() {
-  _scm->initialize(workers());
+  _scm->initialize();
   ref_processing_init();
 }
 
@@ -1118,7 +1121,7 @@ void ShenandoahHeap::update_references() {
 
   ShenandoahHeapRegionSet regions = ShenandoahHeapRegionSet(_num_regions, _ordered_regions, _num_regions);
   ParallelUpdateRefsTask task = ParallelUpdateRefsTask(&regions);
-  workers()->run_task(&task);
+  conc_workers()->run_task(&task);
 
   VM_ShenandoahUpdateRootRefs update_roots;
   if (ShenandoahConcurrentUpdateRefs) {
@@ -1262,11 +1265,11 @@ void ShenandoahHeap::parallel_evacuate() {
     _collection_set->print();
   }
 
-  barrierSync.set_n_workers(_max_workers);
+  barrierSync.set_n_workers(_max_conc_workers);
   
   ParallelEvacuationTask evacuationTask = ParallelEvacuationTask(this, _collection_set, &barrierSync);
 
-  workers()->run_task(&evacuationTask);
+  conc_workers()->run_task(&evacuationTask);
 
   if (ShenandoahGCVerbose) {
 
@@ -1472,6 +1475,7 @@ void ShenandoahHeap::print_gc_threads_on(outputStream* st) const {
 
 void ShenandoahHeap::gc_threads_do(ThreadClosure* tcl) const {
   workers()->threads_do(tcl);
+  conc_workers()->threads_do(tcl);
 }
 
 void ShenandoahHeap::print_tracing_info() const {

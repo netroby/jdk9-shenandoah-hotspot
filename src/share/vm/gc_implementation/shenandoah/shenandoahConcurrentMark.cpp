@@ -112,11 +112,7 @@ void ShenandoahConcurrentMark::traverse_object(ExtendedOopClosure* cl, oop obj) 
   }
 }
 
-void ShenandoahConcurrentMark::initialize(FlexibleWorkGang* workers) {
-  if (ShenandoahGCVerbose) 
-    tty->print("ActiveWorkers  = %d total workers = %d\n", 
-	     workers->active_workers(), 
-	     workers->total_workers());
+void ShenandoahConcurrentMark::initialize() {
   _max_worker_id = MAX2((uint)ShenandoahConcurrentGCThreads, 1U);
   _task_queues = new SCMObjToScanQueueSet((int) _max_worker_id);
   _overflow_queue = new SharedOverflowMarkQueue();
@@ -144,7 +140,7 @@ void ShenandoahConcurrentMark::markFromRoots() {
 
   
   SCMConcurrentMarkingTask markingTask = SCMConcurrentMarkingTask(this, &terminator);
-  sh->workers()->run_task(&markingTask);
+  sh->conc_workers()->run_task(&markingTask);
   
   if (ShenandoahGCVerbose) {
     tty->print_cr("Finishing markFromRoots");
@@ -185,7 +181,7 @@ void ShenandoahConcurrentMark::finishMarkFromRoots() {
     ShenandoahHeap::StrongRootsScope srs(sh);
     // drain_satb_buffers(0, true);
     FinishDrainSATBBuffersTask drain_satb_buffers(this, &terminator);
-    sh->workers()->run_task(&drain_satb_buffers);
+    sh->conc_workers()->run_task(&drain_satb_buffers);
   }
 
   // Also drain our overflow queue.
@@ -208,7 +204,7 @@ void ShenandoahConcurrentMark::finishMarkFromRoots() {
   
   // Finally mark everything else we've got in our queues during the previous steps.
   SCMConcurrentMarkingTask markingTask = SCMConcurrentMarkingTask(this, &terminator);
-  sh->workers()->run_task(&markingTask);
+  sh->conc_workers()->run_task(&markingTask);
 
   assert(_task_queues->queue(0)->is_empty(), "Should be empty");
 
@@ -397,7 +393,7 @@ public:
 
   void do_oop_work(oop* p) {  
     oop obj = *p;
-    
+
     if (obj != NULL) {
       if (Verbose && ShenandoahTraceWeakReferences) {
 	gclog_or_tty->print_cr("\t[%u] we're looking at location "

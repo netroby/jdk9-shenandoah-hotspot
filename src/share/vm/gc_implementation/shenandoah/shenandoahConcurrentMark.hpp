@@ -51,7 +51,7 @@ public:
   SCMObjToScanQueueSet* task_queues() { return _task_queues;}
 
   // We need to do this later when the heap is already created.
-  void initialize(FlexibleWorkGang* workers);
+  void initialize();
 
 #if TASKQUEUE_STATS
   static void print_taskqueue_stats_hdr(outputStream* const st = gclog_or_tty);
