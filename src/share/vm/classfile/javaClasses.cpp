@@ -2970,6 +2970,9 @@ void java_lang_ClassLoader::compute_offsets() {
 }
 
 oop java_lang_ClassLoader::parent(oop loader) {
+  if (ShenandoahTraceWritesToFromSpace) {
+    loader = oopDesc::bs()->resolve_oop(loader);
+  }
   assert(is_instance(loader), "loader must be oop");
   return loader->obj_field(parent_offset);
 }

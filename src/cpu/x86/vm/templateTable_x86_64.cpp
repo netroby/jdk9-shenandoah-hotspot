@@ -3483,6 +3483,9 @@ void TemplateTable::anewarray() {
 
 void TemplateTable::arraylength() {
   transition(atos, itos);
+  if (ShenandoahTraceWritesToFromSpace) {
+    oopDesc::bs()->compile_resolve_oop(_masm, rax);
+  }
   __ null_check(rax, arrayOopDesc::length_offset_in_bytes());
   __ movl(rax, Address(rax, arrayOopDesc::length_offset_in_bytes()));
 }
