@@ -21,17 +21,26 @@ public:
   virtual const char* name() const;
 };
 
-class VM_ShenandoahFinishMark: public VM_Operation {
+class VM_ShenandoahReferenceOperation : public VM_Operation {
+  bool doit_prologue();
+  void doit_epilogue();
+
+};
+
+class VM_ShenandoahFinishMark: public VM_ShenandoahReferenceOperation {
 
  public:
-  virtual VMOp_Type type() const;
-  virtual void doit();
+  VMOp_Type type() const;
+  void doit();
+  const char* name() const;
 
-  virtual bool doit_prologue();
-  virtual void doit_epilogue();
+};
 
-  virtual const char* name() const;
-
+class VM_ShenandoahFullGC : public VM_Operation {
+ public:
+  VMOp_Type type() const;
+  void doit();
+  const char* name() const;
 };
 
 class VM_ShenandoahVerifyHeapAfterEvacuation: public VM_Operation {

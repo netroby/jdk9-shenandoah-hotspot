@@ -15,7 +15,9 @@ ShenandoahConcurrentThread::ShenandoahConcurrentThread() :
   ConcurrentGCThread(),
   _epoch(0),
   _concurrent_mark_started(false),
-  _concurrent_mark_in_progress(false)
+  _concurrent_mark_in_progress(false),
+  _waiting_for_jni_critical(false),
+  _do_full_gc(false)
 {
   //  create_and_start();
 }
@@ -34,6 +36,34 @@ public:
   }
 };
 
+void ShenandoahConcurrentThread::notify_jni_critical() {
+
+  assert(_waiting_for_jni_critical, "must be waiting for jni critical notification");  
+
+  // tty->print_cr("doing GC after JNI critical");
+
+  ShenandoahHeap* heap = ShenandoahHeap::heap();
+
+  if (_do_full_gc) {
+    VM_ShenandoahFullGC full_gc;
+    VMThread::execute(&full_gc);
+  } else {
+    heap->set_evacuation_in_progress(true);
+
+    // We need to do non-concurrent marking right now, before we release the flag below.
+    // The GC background thread is waiting on it and would start another marking
+    // cycle otherwise.
+    if (! ShenandoahConcurrentEvacuation) {
+      VM_ShenandoahEvacuation evacuation;
+      VMThread::execute(&evacuation);
+    }
+
+  }
+  MonitorLockerEx ml(ShenandoahJNICritical_lock);
+  _waiting_for_jni_critical = false;
+  ml.notify_all();
+}
+
 void ShenandoahConcurrentThread::run() {
   initialize_in_thread();
 
@@ -41,7 +71,19 @@ void ShenandoahConcurrentThread::run() {
   ShenandoahHeap* heap = ShenandoahHeap::heap();
 
   while (!_should_terminate) {
-    if (heap->shenandoahPolicy()->should_start_concurrent_mark(heap->used(),
+    if (_do_full_gc) {
+      {
+        MonitorLockerEx ml(ShenandoahJNICritical_lock, true);
+        VM_ShenandoahFullGC full_gc;
+        VMThread::execute(&full_gc);
+        while (_waiting_for_jni_critical) {
+          ml.wait(true);
+        }
+      }
+      MonitorLockerEx ml(ShenandoahFullGC_lock);
+      _do_full_gc = false;
+      ml.notify_all();
+    } else if (heap->shenandoahPolicy()->should_start_concurrent_mark(heap->used(),
 							       heap->capacity())) 
       {
 
@@ -61,9 +103,11 @@ void ShenandoahConcurrentThread::run() {
 
         }
 
-        // Wait if necessary for JNI critical regions to be cleared. See ShenandoahHeap::collect().
-        while (heap->is_waiting_for_jni_before_gc()) {
-          Thread::current()->_ParkEvent->park(1) ;
+        {
+          MonitorLockerEx ml(ShenandoahJNICritical_lock, true);
+          while (_waiting_for_jni_critical) {
+            ml.wait(true);
+          }
         }
 
         // If we're not concurrently evacuating, evacuation is done
@@ -90,6 +134,17 @@ void ShenandoahConcurrentThread::run() {
   }
 }
 
+void ShenandoahConcurrentThread::do_full_gc() {
+
+  assert(Thread::current()->is_Java_thread(), "expect Java thread here");
+
+  MonitorLockerEx ml(ShenandoahFullGC_lock);
+  _do_full_gc = true;
+  while (_do_full_gc) {
+    ml.wait();
+  }
+  assert(_do_full_gc == false, "expect full GC to have completed");
+}
 
 void ShenandoahConcurrentThread::print() const {
   print_on(tty);

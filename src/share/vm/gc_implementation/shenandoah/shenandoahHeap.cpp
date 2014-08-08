@@ -158,7 +158,6 @@ ShenandoahHeap::ShenandoahHeap(ShenandoahCollectorPolicy* policy) :
   _shenandoah_policy(policy), 
   _concurrent_mark_in_progress(false),
   _evacuation_in_progress(false),
-  _waiting_for_jni_before_gc(false),
   _free_regions(NULL),
   _collection_set(NULL),
   _bytesAllocSinceCM(0),
@@ -1002,11 +1001,8 @@ void ShenandoahHeap::update_roots() {
   COMPILER2_PRESENT(DerivedPointerTable::clear());
 
   ShenandoahUpdateRootsClosure cl;
-  CodeBlobToOopClosure blobsCl(&cl, false);
   roots_iterate(&cl);
-
-  ref_processor_cm()->weak_oops_do(&cl);
-  process_weak_roots(&cl, &blobsCl);
+  weak_roots_iterate(&cl);
 
   COMPILER2_PRESENT(DerivedPointerTable::update_pointers());
 }
@@ -1192,11 +1188,9 @@ void ShenandoahHeap::evacuate_and_update_roots() {
   }
 
   ShenandoahEvacuateUpdateRootsClosure cl;
-  CodeBlobToOopClosure blobsCl(&cl, false);
-  roots_iterate(&cl);
 
-  ref_processor_cm()->weak_oops_do(&cl);
-  process_weak_roots(&cl, &blobsCl);
+  roots_iterate(&cl);
+  weak_roots_iterate(&cl);
   
   if (ShenandoahTraceWritesToFromSpace) {
     set_from_region_protection(true);
@@ -1324,7 +1318,13 @@ void ShenandoahHeap::roots_iterate(ExtendedOopClosure* cl) {
 
   process_strong_roots(true, false, ScanningOption(so), cl, &blobsCl, &klassCl);
 }
- 
+
+void ShenandoahHeap::weak_roots_iterate(ExtendedOopClosure* cl) {
+  ref_processor_cm()->weak_oops_do(cl);
+  CodeBlobToOopClosure blobsCl(cl, false);
+  process_weak_roots(cl, &blobsCl);
+}
+
 void ShenandoahHeap::verify_evacuation(ShenandoahHeapRegion* from_region) {
 
   VerifyEvacuationClosure rootsCl(from_region);
@@ -1406,22 +1406,15 @@ size_t ShenandoahHeap::unsafe_max_alloc() {
 }
 
 void ShenandoahHeap::collect(GCCause::Cause cause) {
-  if (cause == GCCause::_gc_locker) {
-    assert(is_waiting_for_jni_before_gc(), "must be waiting for JNI, why enter this otherwise?");
-
-    // This kicks off concurrent marking in the GC background thread.
-    set_evacuation_in_progress(true);
-
-    // We need to do non-concurrent marking right now, before we release the flag below.
-    // The GC background thread is waiting on it and would start another marking
-    // cycle otherwise.
-    if (! ShenandoahConcurrentEvacuation) {
-      VM_ShenandoahEvacuation evacuation;
-      VMThread::execute(&evacuation);
+  if (GCCause::is_user_requested_gc(cause)) {
+    if (! DisableExplicitGC) {
+      if (ShenandoahTraceFullGC) {
+        gclog_or_tty->print_cr("Shenandoah-full-gc: requested full GC");
+      }
+      _concurrent_gc_thread->do_full_gc();
     }
-
-    // The GC background thread is waiting on this flag. Get it going again.
-    set_waiting_for_jni_before_gc(false);
+  } else if (cause == GCCause::_gc_locker) {
+    _concurrent_gc_thread->notify_jni_critical();
   }
 }
 
@@ -1581,8 +1574,23 @@ public:
   }
 };
 
+class ShenandoahIterateObjectClosureCarefulRegionClosure: public ShenandoahHeapRegionClosure {
+  ObjectClosureCareful* _cl;
+public:
+  ShenandoahIterateObjectClosureCarefulRegionClosure(ObjectClosureCareful* cl) : _cl(cl) {}
+  bool doHeapRegion(ShenandoahHeapRegion* r) {
+    r->object_iterate_careful(_cl);
+    return false;
+  }
+};
+
 void ShenandoahHeap::object_iterate(ObjectClosure* cl) {
   ShenandoahIterateObjectClosureRegionClosure blk(cl);
+  heap_region_iterate(&blk, false, true);
+}
+
+void ShenandoahHeap::object_iterate_careful(ObjectClosureCareful* cl) {
+  ShenandoahIterateObjectClosureCarefulRegionClosure blk(cl);
   heap_region_iterate(&blk, false, true);
 }
 
@@ -2024,7 +2032,7 @@ void ShenandoahHeap::verify_heap_after_update_refs() {
   VerifyAfterUpdateRefsClosure cl;
 
   roots_iterate(&cl);
-
+  weak_roots_iterate(&cl);
   oop_iterate(&cl, true, true);
 
 }
@@ -2111,18 +2119,6 @@ void ShenandoahHeap::set_update_references_in_progress(bool update_refs_in_progr
     }
   }
   _update_references_in_progress = update_refs_in_progress;
-}
-
-void ShenandoahHeap::set_waiting_for_jni_before_gc(bool wait_for_jni) {
-  if (ShenandoahTraceJNICritical) {
-    gclog_or_tty->print_cr("Shenandoah GC waiting for JNI critical region: %s", wait_for_jni ? "true" : "false");
-  }
-  _waiting_for_jni_before_gc = wait_for_jni;
-  OrderAccess::storeload();
-}
-
-bool ShenandoahHeap::is_waiting_for_jni_before_gc() {
-  return _waiting_for_jni_before_gc;
 }
 
 void ShenandoahHeap::post_allocation_collector_specific_setup(HeapWord* hw) {
@@ -2461,4 +2457,12 @@ void ShenandoahHeap::acquire_pending_refs_lock() {
 
 void ShenandoahHeap::release_pending_refs_lock() {
   _concurrent_gc_thread->slt()->manipulatePLL(SurrogateLockerThread::releaseAndNotifyPLL);
+}
+
+ShenandoahHeapRegion** ShenandoahHeap::heap_regions() {
+  return _ordered_regions;
+}
+
+size_t ShenandoahHeap::num_regions() {
+  return _num_regions;
 }

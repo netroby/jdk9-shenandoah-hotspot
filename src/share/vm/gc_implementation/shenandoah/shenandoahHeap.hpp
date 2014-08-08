@@ -148,9 +148,10 @@ public:
   }
 
   void roots_iterate(ExtendedOopClosure* cl);
-
+  void weak_roots_iterate(ExtendedOopClosure* cl);
   
   void object_iterate(ObjectClosure* cl);
+  void object_iterate_careful(ObjectClosureCareful* cl);
   void object_iterate_no_from_space(ObjectClosure* cl);
   void safe_object_iterate(ObjectClosure* cl);
 
@@ -200,16 +201,20 @@ public:
 
   volatile unsigned int _evacuation_in_progress;
   volatile bool _update_references_in_progress;
-  volatile bool _waiting_for_jni_before_gc;
 
   bool should_start_concurrent_marking();
   void start_concurrent_marking();
   void stop_concurrent_marking();
   ShenandoahConcurrentMark* concurrentMark() { return _scm;}
+  ShenandoahConcurrentThread* concurrent_thread() { return _concurrent_gc_thread; }
   size_t bump_object_age(HeapWord* start, HeapWord* end);
   bool mark_current(oop obj) const;
   bool mark_current_no_checks(oop obj) const;
   bool isMarkedCurrent(oop obj) const;
+  bool is_marked_current(oop obj) const {
+    // TODO: Fix naming of called method.
+    return isMarkedCurrent(obj);
+  }
   ReferenceProcessor* _ref_processor_cm;
   bool is_marked_prev(oop obj) const;
 
@@ -274,10 +279,6 @@ public:
   bool is_update_references_in_progress();
   void set_update_references_in_progress(bool update_refs_in_progress);
 
-  void set_waiting_for_jni_before_gc(bool wait_for_jni);
-  bool is_waiting_for_jni_before_gc();
-
-
   ReferenceProcessor* ref_processor_cm() { return _ref_processor_cm;}	
   virtual void ref_processing_init();
   ShenandoahIsAliveClosure isAlive;
@@ -294,6 +295,9 @@ public:
   void release_pending_refs_lock();
 
   FlexibleWorkGang* conc_workers() const {return _conc_workers;}
+
+  ShenandoahHeapRegion** heap_regions();
+  size_t num_regions();
 
 private:
 

@@ -92,6 +92,7 @@
   template(HeapIterateOperation)                  \
   template(ReportJavaOutOfMemory)                 \
   template(JFRCheckpoint)                         \
+  template(ShenandoahFullGC)                      \
   template(ShenandoahInitMark)                    \
   template(ShenandoahFinishMark)                  \
   template(ShenandoahVerifyHeapAfterEvacuation)   \

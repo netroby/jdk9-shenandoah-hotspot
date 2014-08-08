@@ -24,6 +24,10 @@ public:
 
   bool check_forwardee_is_in_heap(oop forwardee);
   
+  inline oop get_forwardee_raw() {
+    return oop(*_heap_word);
+  }
+
   inline oop get_forwardee() {
     oop forwardee;
 
@@ -38,10 +42,10 @@ public:
         hr->memProtectionOn();
       }
     } else {
-      forwardee = (oop) (*_heap_word);
+      forwardee = get_forwardee_raw();
     }
 #else
-    forwardee = (oop)(*_heap_word);
+    forwardee = get_forwardee_raw();
 #endif
 
     assert(check_forwardee_is_in_heap(forwardee), "forwardee must be in heap");

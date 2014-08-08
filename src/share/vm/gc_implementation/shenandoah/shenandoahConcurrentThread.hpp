@@ -21,9 +21,13 @@ class ShenandoahConcurrentThread: public ConcurrentGCThread {
   volatile bool                    _concurrent_mark_in_progress;
   volatile bool                    _concurrent_mark_aborted;
 
+  volatile bool _waiting_for_jni_critical;
+
   int _epoch;
 
   static SurrogateLockerThread* _slt;
+
+  bool _do_full_gc;
 
   void sleepBeforeNextCycle();
 
@@ -51,6 +55,13 @@ class ShenandoahConcurrentThread: public ConcurrentGCThread {
   bool cm_has_aborted() { return _concurrent_mark_aborted;}
   void clear_cm_aborted() { _concurrent_mark_aborted = false;}
 
+  void do_full_gc();
+
+  void set_waiting_for_jni_before_gc(bool wait) {
+    _waiting_for_jni_critical = wait;
+  }
+
+  void notify_jni_critical();
 
   // This flag returns true from the moment a marking cycle is
   // initiated (during the initial-mark pause when started() is set)

@@ -1,6 +1,7 @@
 /*
 Copyright 2014 Red Hat, Inc. and/or its affiliates.
  */
+#include "gc_implementation/shenandoah/shenandoahMarkCompact.hpp"
 #include "gc_implementation/shenandoah/vm_operations_shenandoah.hpp"
 #include "gc_implementation/shenandoah/shenandoahHeap.hpp"
 #include "memory/gcLocker.hpp"
@@ -36,13 +37,34 @@ const char* VM_ShenandoahFinishMark::name() const {
   return "Shenandoah Finish Mark";
 }
 
-bool VM_ShenandoahFinishMark::doit_prologue() {
+VM_Operation::VMOp_Type VM_ShenandoahFullGC::type() const {
+  return VMOp_ShenandoahFullGC;
+}
+
+void VM_ShenandoahFullGC::doit() {
+
+  if (! GC_locker::check_active_before_gc()) {
+    ShenandoahMarkCompact mark_compact;
+    mark_compact.do_mark_compact();
+  } else {
+    // This makes the GC background thread wait, and kick off evacuation as
+    // soon as JNI notifies us that critical regions have all been left.
+    ShenandoahHeap::heap()->concurrent_thread()->set_waiting_for_jni_before_gc(true);
+  }
+}
+
+const char* VM_ShenandoahFullGC::name() const {
+  return "Shenandoah Full GC";
+}
+
+
+bool VM_ShenandoahReferenceOperation::doit_prologue() {
   ShenandoahHeap *sh = (ShenandoahHeap*) Universe::heap();
   sh->acquire_pending_refs_lock();
   return true;
 }
 
-void VM_ShenandoahFinishMark::doit_epilogue() {
+void VM_ShenandoahReferenceOperation::doit_epilogue() {
   ShenandoahHeap *sh = ShenandoahHeap::heap();
   sh->release_pending_refs_lock();
 }
@@ -70,7 +92,7 @@ void VM_ShenandoahFinishMark::doit() {
   } else {
     // This makes the GC background thread wait, and kick off evacuation as
     // soon as JNI notifies us that critical regions have all been left.
-    sh->set_waiting_for_jni_before_gc(true);
+    sh->concurrent_thread()->set_waiting_for_jni_before_gc(true);
   }
 
 }
