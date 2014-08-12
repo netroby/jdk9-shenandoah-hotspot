@@ -163,6 +163,8 @@ void VM_ShenandoahUpdateRootRefs::doit() {
 
   ShenandoahHeap *sh = ShenandoahHeap::heap();
   sh->update_roots();
+
+  sh->recycle_dirty_regions();
 }
 
 VM_Operation::VMOp_Type VM_ShenandoahUpdateRefs::type() const {

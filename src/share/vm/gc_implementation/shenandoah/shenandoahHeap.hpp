@@ -299,6 +299,8 @@ public:
   ShenandoahHeapRegion** heap_regions();
   size_t num_regions();
 
+  void recycle_dirty_regions();
+
 private:
 
   bool grow_heap_by();

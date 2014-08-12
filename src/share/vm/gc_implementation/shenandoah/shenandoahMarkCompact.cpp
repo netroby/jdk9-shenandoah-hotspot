@@ -288,7 +288,7 @@ void ShenandoahMarkCompact::finish_compaction(HeapWord* last_addr, HeapWord* las
   for (uint i = 0; i < num_regions; i++) {
     ShenandoahHeapRegion* region = regions[i];
     if (region->bottom() > total_last_addr) {
-      region->recycle();
+      region->reset();
     }
   }
 }

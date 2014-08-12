@@ -292,7 +292,7 @@ void ShenandoahHeapRegionSet::reclaim_humonguous_region_at(ShenandoahHeapRegion*
       region->print();
     }
 
-    region->recycle();
+    region->reset();
   }
 
   ShenandoahHeap::heap()->decrease_used(size * HeapWordSize);

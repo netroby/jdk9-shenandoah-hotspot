@@ -92,19 +92,18 @@ void ShenandoahHeapRegion::memProtectionOff() {
 #endif
 
 void ShenandoahHeapRegion::set_is_in_collection_set(bool b) {
-  _is_in_collection_set = b;
+  assert(! is_humonguous(), "never ever enter a humonguous region into the collection set");
 
+  _is_in_collection_set = b;
 
 #ifdef ASSERT
   if (ShenandoahTraceWritesToFromSpace) {    
     if (b) {
       memProtectionOn();
+      assert(_mem_protection_level == 0, "need to be protected here");
     } else {
-      if (! is_humonguous()) {
-        memProtectionOff();
-      } else {
-        assert(_mem_protection_level == 1, "Needs to be unprotected");
-      }
+      assert(_mem_protection_level == 0, "need to be protected here");
+      memProtectionOff();
     }
   }
 #endif
@@ -247,12 +246,22 @@ bool ShenandoahHeapRegion::is_humonguous_continuation() {
   return _humonguous_continuation;
 }
 
-void ShenandoahHeapRegion::recycle() {
+void ShenandoahHeapRegion::do_reset() {
   Space::initialize(reserved, true, false);
   clearLiveData();
-  set_is_in_collection_set(false);
   _humonguous_start = false;
   _humonguous_continuation = false;
+}
+
+void ShenandoahHeapRegion::recycle() {
+  do_reset();
+  set_is_in_collection_set(false);
+}
+
+void ShenandoahHeapRegion::reset() {
+  assert(_mem_protection_level == 1, "needs to be unprotected here");
+  do_reset();
+  _is_in_collection_set = false;
 }
 
 HeapWord* ShenandoahHeapRegion::block_start_const(const void* p) const {

@@ -50,6 +50,7 @@ public:
   size_t garbage();
 
   void recycle();
+  void reset();
 
   void oop_iterate(ExtendedOopClosure* cl, bool skip_unreachable_objects);
 
@@ -87,6 +88,9 @@ public:
 #endif
 
   static ByteSize is_in_collection_set_offset();
+
+private:
+  void do_reset();
 };
 
 

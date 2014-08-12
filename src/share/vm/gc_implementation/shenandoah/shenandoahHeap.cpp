@@ -797,6 +797,11 @@ public:
   }
 };
 
+void ShenandoahHeap::recycle_dirty_regions() {
+  RecycleDirtyRegionsClosure cl;
+  heap_region_iterate(&cl);
+}
+
 ShenandoahHeapRegionSet* ShenandoahHeap::free_regions() {
   return _free_regions;
 }
@@ -958,8 +963,7 @@ void ShenandoahHeap::verify_heap_after_marking() {
 void ShenandoahHeap::prepare_for_concurrent_evacuation() {
 
   if (! ShenandoahUpdateRefsEarly) {
-    RecycleDirtyRegionsClosure cl;
-    heap_region_iterate(&cl);
+    recycle_dirty_regions();
   }
 
   // NOTE: This needs to be done during a stop the world pause, because
@@ -1142,9 +1146,6 @@ void ShenandoahHeap::update_references() {
       verify_after_update_refs.doit();
     }
   }
-
-  RecycleDirtyRegionsClosure recycle;
-  heap_region_iterate(&recycle);
 
   set_update_references_in_progress(false);
 
