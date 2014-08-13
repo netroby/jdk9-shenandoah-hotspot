@@ -478,7 +478,7 @@ void ShenandoahBarrierSet::compile_resolve_oop(MacroAssembler* masm, Register ds
 
 void ShenandoahBarrierSet::compile_resolve_oop_not_null(MacroAssembler* masm, Register dst) {
   if (ShenandoahReadBarrier) {
-    if (ShenandoahTraceWritesToFromSpace) {
+    if (ShenandoahVerifyReadsToFromSpace) {
       compile_resolve_oop_runtime(masm, dst);
       return;
     }

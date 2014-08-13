@@ -612,7 +612,7 @@ void TemplateTable::index_check(Register array, Register index) {
   // destroys rbx
   // check array
 
-  if (ShenandoahTraceWritesToFromSpace) {
+  if (ShenandoahVerifyReadsToFromSpace) {
     oopDesc::bs()->compile_resolve_oop(_masm, array);
   }
 
@@ -3483,7 +3483,7 @@ void TemplateTable::anewarray() {
 
 void TemplateTable::arraylength() {
   transition(atos, itos);
-  if (ShenandoahTraceWritesToFromSpace) {
+  if (ShenandoahVerifyReadsToFromSpace) {
     oopDesc::bs()->compile_resolve_oop(_masm, rax);
   }
   __ null_check(rax, arrayOopDesc::length_offset_in_bytes());
@@ -3568,7 +3568,7 @@ void TemplateTable::instanceof() {
   __ pop_ptr(rdx); // restore receiver
   __ verify_oop(rdx);
   __ load_klass(rdx, rdx);
-  if (ShenandoahTraceWritesToFromSpace) {
+  if (ShenandoahVerifyReadsToFromSpace) {
     __ jmp(resolved);
   } else {
     __ jmpb(resolved);
@@ -3688,7 +3688,7 @@ void TemplateTable::monitorenter() {
                                      // starting with top-most entry
     __ lea(c_rarg2, monitor_block_bot); // points to word before bottom
                                      // of monitor block
-    if (UseShenandoahGC && ShenandoahTraceWritesToFromSpace) {
+    if (UseShenandoahGC && ShenandoahVerifyReadsToFromSpace) {
       __ jmp(entry);
     } else {
       __ jmpb(entry);
@@ -3790,7 +3790,7 @@ void TemplateTable::monitorexit() {
                                      // starting with top-most entry
     __ lea(c_rarg2, monitor_block_bot); // points to word before bottom
                                      // of monitor block
-    if (UseShenandoahGC && ShenandoahTraceWritesToFromSpace) {
+    if (UseShenandoahGC && ShenandoahVerifyReadsToFromSpace) {
       __ jmp(entry);
     } else {
       __ jmpb(entry);

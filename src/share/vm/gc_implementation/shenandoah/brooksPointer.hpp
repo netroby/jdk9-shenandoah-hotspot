@@ -32,7 +32,7 @@ public:
     oop forwardee;
 
 #ifdef ASSERT
-    if (ShenandoahTraceWritesToFromSpace) {
+    if (ShenandoahVerifyReadsToFromSpace) {
       ShenandoahHeap* sh = (ShenandoahHeap*) Universe::heap();
       ShenandoahHeapRegion* hr = sh->heap_region_containing(_heap_word);
 

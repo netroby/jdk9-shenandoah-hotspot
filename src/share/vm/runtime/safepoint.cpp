@@ -1058,7 +1058,7 @@ void ThreadSafepointState::handle_polling_page_exception() {
       // the other registers. In order to preserve it over GCs we need
       // to keep it in a handle.
       oop result = caller_fr.saved_oop_result(&map);
-      if (ShenandoahTraceWritesToFromSpace) {
+      if (ShenandoahVerifyReadsToFromSpace) {
         result = oopDesc::bs()->resolve_oop(result);
       }
       assert(result == NULL || result->is_oop(), "must be oop");

@@ -73,7 +73,14 @@ void ShenandoahHeapRegion::memProtectionOn() {
   assert(_mem_protection_level >= 1, "invariant");
 
   if (--_mem_protection_level == 0) {
-    os::protect_memory((char*) bottom(), end() - bottom(), os::MEM_PROT_NONE);
+    if (ShenandoahVerifyWritesToFromSpace) {
+      assert(! ShenandoahVerifyReadsToFromSpace, "can't verify from-space reads when verifying from-space writes");
+      os::protect_memory((char*) bottom(), end() - bottom(), os::MEM_PROT_READ);
+    } else {
+      assert(ShenandoahVerifyReadsToFromSpace, "need to be verifying reads here");
+      assert(! ShenandoahConcurrentEvacuation, "concurrent evacuation needs to be turned off for verifying from-space-reads");
+      os::protect_memory((char*) bottom(), end() - bottom(), os::MEM_PROT_NONE);
+    }
   }
 }
 
@@ -97,7 +104,7 @@ void ShenandoahHeapRegion::set_is_in_collection_set(bool b) {
   _is_in_collection_set = b;
 
 #ifdef ASSERT
-  if (ShenandoahTraceWritesToFromSpace) {    
+  if (ShenandoahVerifyWritesToFromSpace || ShenandoahVerifyReadsToFromSpace) {    
     if (b) {
       memProtectionOn();
       assert(_mem_protection_level == 0, "need to be protected here");
@@ -168,7 +175,7 @@ void ShenandoahHeapRegion::object_iterate(ObjectClosure* blk) {
   while (p < top()) {
     blk->do_object(oop(p));
 #ifdef ASSERT
-    if (ShenandoahTraceWritesToFromSpace) {
+    if (ShenandoahVerifyReadsToFromSpace) {
       memProtectionOff();
       p += oop(p)->size() + BrooksPointer::BROOKS_POINTER_OBJ_SIZE;
       memProtectionOn();

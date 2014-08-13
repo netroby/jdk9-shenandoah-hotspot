@@ -144,7 +144,7 @@ class java_lang_String : AllStatic {
       return java_string->int_field(count_offset);
     } else {
       oop value = java_string->obj_field(value_offset);
-      if (ShenandoahTraceWritesToFromSpace) {
+      if (ShenandoahVerifyReadsToFromSpace) {
         value = oopDesc::bs()->resolve_oop(value);
       }
       return ((typeArrayOop) value)->length();

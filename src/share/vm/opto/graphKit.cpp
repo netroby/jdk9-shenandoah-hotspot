@@ -1139,7 +1139,7 @@ Node* GraphKit::load_object_klass(Node* obj) {
   // Special-case a fresh allocation to avoid building nodes:
   Node* akls = AllocateNode::Ideal_klass(obj, &_gvn);
   if (akls != NULL)  return akls;
-  if (ShenandoahTraceWritesToFromSpace) {
+  if (ShenandoahVerifyReadsToFromSpace) {
     obj = shenandoah_read_barrier(obj);
   }
   Node* k_adr = basic_plus_adr(obj, oopDesc::klass_offset_in_bytes());
@@ -1152,7 +1152,7 @@ Node* GraphKit::load_array_length(Node* array) {
   AllocateArrayNode* alloc = AllocateArrayNode::Ideal_array_allocation(array, &_gvn);
   Node *alen;
   if (alloc == NULL) {
-    if (ShenandoahTraceWritesToFromSpace) {
+    if (ShenandoahVerifyReadsToFromSpace) {
       array = shenandoah_read_barrier(array);
     }
 
@@ -1730,7 +1730,7 @@ void GraphKit::set_arguments_for_java_call(CallJavaNode* call) {
   uint nargs = call->method()->arg_size();
   for (uint i = 0; i < nargs; i++) {
     Node* arg = argument(i);
-    if (ShenandoahTraceWritesToFromSpace && call->is_CallDynamicJava() && i == 0) {
+    if (ShenandoahVerifyReadsToFromSpace && call->is_CallDynamicJava() && i == 0) {
       arg = shenandoah_read_barrier(arg);
     }
     call->init_req(i + TypeFunc::Parms, arg);
@@ -2913,7 +2913,7 @@ Node* GraphKit::gen_instanceof(Node* obj, Node* superklass, bool safe_for_replac
     }
   }
 
-  if (ShenandoahTraceWritesToFromSpace) {
+  if (ShenandoahVerifyReadsToFromSpace) {
     not_null_obj = shenandoah_read_barrier(not_null_obj);
   }
 
@@ -2997,7 +2997,7 @@ Node* GraphKit::gen_checkcast(Node *obj, Node* superklass,
   Node* null_ctl = top();
   Node* not_null_obj = null_check_oop(obj, &null_ctl, never_see_null, safe_for_replace);
 
-  if (ShenandoahTraceWritesToFromSpace) {
+  if (ShenandoahVerifyReadsToFromSpace) {
     not_null_obj = shenandoah_read_barrier(not_null_obj);
   }
 
@@ -4176,7 +4176,7 @@ Node* GraphKit::cast_array_to_stable(Node* ary, const TypeAryPtr* ary_type) {
 
 Node* GraphKit::make_shenandoah_read_barrier(Node* ctrl, Node* obj, const Type* obj_type) {
 
-  if (ShenandoahTraceWritesToFromSpace) {
+  if (ShenandoahVerifyReadsToFromSpace) {
     return shenandoah_read_barrier_runtime(obj);
   }
   // Construct the address of the brooks ptr and the load.

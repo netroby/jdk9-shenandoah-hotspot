@@ -1161,7 +1161,7 @@ bool LibraryCallKit::inline_string_compareTo() {
 bool LibraryCallKit::inline_string_equals() {
   Node* receiver = null_check_receiver();
 
-  if (ShenandoahTraceWritesToFromSpace) {
+  if (ShenandoahVerifyReadsToFromSpace) {
     receiver = shenandoah_read_barrier(receiver);
   }
 
@@ -1169,7 +1169,7 @@ bool LibraryCallKit::inline_string_equals() {
   // allows to specify NULL as argument.
   Node* argument = this->argument(1);
 
-  if (ShenandoahTraceWritesToFromSpace) {
+  if (ShenandoahVerifyReadsToFromSpace) {
     argument = shenandoah_read_barrier(argument);
   }
 
@@ -1222,7 +1222,7 @@ bool LibraryCallKit::inline_string_equals() {
     // Get start addr of receiver
     Node* receiver_val    = load_String_value(no_ctrl, receiver);
 
-    if (ShenandoahTraceWritesToFromSpace) {
+    if (ShenandoahVerifyReadsToFromSpace) {
       receiver_val = shenandoah_read_barrier(receiver_val);
     }
 
@@ -1235,7 +1235,7 @@ bool LibraryCallKit::inline_string_equals() {
     // Get start addr of argument
     Node* argument_val    = load_String_value(no_ctrl, argument);
 
-    if (ShenandoahTraceWritesToFromSpace) {
+    if (ShenandoahVerifyReadsToFromSpace) {
       argument_val = shenandoah_read_barrier(argument_val);
     }
 
@@ -3452,7 +3452,7 @@ bool LibraryCallKit::inline_native_Class_query(vmIntrinsics::ID id) {
 
   Node* mirror = argument(0);
 
-  if (ShenandoahTraceWritesToFromSpace) {
+  if (ShenandoahVerifyReadsToFromSpace) {
     mirror = shenandoah_read_barrier(mirror);
   }
 
@@ -3463,7 +3463,7 @@ bool LibraryCallKit::inline_native_Class_query(vmIntrinsics::ID id) {
     // nothing is an instance of a primitive type
     prim_return_value = intcon(0);
     obj = argument(1);
-    if (ShenandoahTraceWritesToFromSpace) {
+    if (ShenandoahVerifyReadsToFromSpace) {
       obj = shenandoah_read_barrier(obj);
     }
     break;
@@ -3646,7 +3646,7 @@ bool LibraryCallKit::inline_native_subtype_check() {
   args[0] = argument(0);
   args[1] = argument(1);
 
-  if (ShenandoahTraceWritesToFromSpace) {
+  if (ShenandoahVerifyReadsToFromSpace) {
     args[0] = shenandoah_read_barrier(args[0]);
     args[1] = shenandoah_read_barrier(args[1]);
   }
@@ -4089,7 +4089,7 @@ bool LibraryCallKit::inline_native_hashcode(bool is_virtual, bool is_static) {
     result_val->init_req(_null_path, _gvn.intcon(0));
   }
 
-  if (ShenandoahTraceWritesToFromSpace) {
+  if (ShenandoahVerifyReadsToFromSpace) {
     obj = shenandoah_read_barrier(obj);
   }
 
@@ -5922,7 +5922,7 @@ bool LibraryCallKit::inline_reference_get() {
   Node* reference_obj = null_check_receiver();
   if (stopped()) return true;
 
-  if (ShenandoahTraceWritesToFromSpace) {
+  if (ShenandoahVerifyReadsToFromSpace) {
     reference_obj = shenandoah_read_barrier(reference_obj);
   }
 

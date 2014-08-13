@@ -2850,7 +2850,7 @@ void MacroAssembler::null_check(Register reg, int offset) {
     // accessing M[reg] w/o changing any (non-CC) registers
     // NOTE: cmpl is plenty here to provoke a segv
 
-    if (ShenandoahTraceWritesToFromSpace) {
+    if (ShenandoahVerifyReadsToFromSpace) {
       oopDesc::bs()->compile_resolve_oop(this, reg);
     }
 
@@ -4813,7 +4813,7 @@ void MacroAssembler::restore_cpu_control_state_after_jni() {
 
 
 void MacroAssembler::load_klass(Register dst, Register src) {
-  if (ShenandoahTraceWritesToFromSpace) {
+  if (ShenandoahVerifyReadsToFromSpace) {
     oopDesc::bs()->compile_resolve_oop(this, src);
   }
 #ifdef _LP64

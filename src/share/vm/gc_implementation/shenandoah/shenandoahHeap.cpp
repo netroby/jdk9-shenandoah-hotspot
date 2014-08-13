@@ -1101,7 +1101,7 @@ void ShenandoahHeap::prepare_for_update_references() {
   ShenandoahHeapRegionSet regions = ShenandoahHeapRegionSet(_num_regions, _ordered_regions, _num_regions);
   regions.set_concurrent_iteration_safe_limits();
 
-  if (ShenandoahTraceWritesToFromSpace) {
+  if (ShenandoahVerifyReadsToFromSpace) {
     set_from_region_protection(false);
 
     // We need to update the roots so that they are ok for C2 when returning from the safepoint.
@@ -1184,7 +1184,7 @@ void ShenandoahHeap::evacuate_and_update_roots() {
 
   COMPILER2_PRESENT(DerivedPointerTable::clear());
   
-  if (ShenandoahTraceWritesToFromSpace) {
+  if (ShenandoahVerifyReadsToFromSpace) {
     set_from_region_protection(false);
   }
 
@@ -1193,7 +1193,7 @@ void ShenandoahHeap::evacuate_and_update_roots() {
   roots_iterate(&cl);
   weak_roots_iterate(&cl);
   
-  if (ShenandoahTraceWritesToFromSpace) {
+  if (ShenandoahVerifyReadsToFromSpace) {
     set_from_region_protection(true);
   }
 
@@ -1213,7 +1213,7 @@ void ShenandoahHeap::do_evacuation() {
     // the hotspot compilers, especially C2, that allows it to
     // do optimizations like lifting barriers outside of a loop.
 
-    if (ShenandoahTraceWritesToFromSpace) {
+    if (ShenandoahVerifyReadsToFromSpace) {
       set_from_region_protection(false);
 
       update_roots();
@@ -2253,7 +2253,7 @@ oop ShenandoahHeap::evacuate_object(oop p, Thread* thread) {
   size_t required;
 
 #ifdef ASSERT
-  if (ShenandoahTraceWritesToFromSpace) {
+  if (ShenandoahVerifyReadsToFromSpace) {
     hr = heap_region_containing(p);
     {
       hr->memProtectionOff();    
@@ -2279,7 +2279,7 @@ oop ShenandoahHeap::evacuate_object(oop p, Thread* thread) {
   HeapWord* copy = filler + BrooksPointer::BROOKS_POINTER_OBJ_SIZE;
   
 #ifdef ASSERT
-  if (ShenandoahTraceWritesToFromSpace) {
+  if (ShenandoahVerifyReadsToFromSpace) {
     hr->memProtectionOff();
     copy_object(p, filler);
     hr->memProtectionOn();

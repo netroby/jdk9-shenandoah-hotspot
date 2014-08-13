@@ -43,7 +43,7 @@ HeapWord* BrooksPointer::cas_forwardee(HeapWord* old, HeapWord* forwardee) {
 #endif
 
 #ifdef ASSERT  
-  if (ShenandoahTraceWritesToFromSpace) {
+  if (ShenandoahVerifyWritesToFromSpace || ShenandoahVerifyReadsToFromSpace) {
     ShenandoahHeap* sh = (ShenandoahHeap*) Universe::heap();
     ShenandoahHeapRegion* hr = sh->heap_region_containing(old);
 

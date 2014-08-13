@@ -15,7 +15,7 @@ private:
     assert(Universe::heap()->is_in(p), "We shouldn't be calling this on objects not in the heap");
     oop forwardee;
 #ifdef ASSERT
-    if (ShenandoahTraceWritesToFromSpace) {
+    if (ShenandoahVerifyReadsToFromSpace) {
       ShenandoahHeapRegion* region = ShenandoahHeap::heap()->heap_region_containing(p);
       {
         region->memProtectionOff();
@@ -112,7 +112,7 @@ public:
         }
     }
 #endif
-    if (! ShenandoahTraceWritesToFromSpace) {
+    if (! ShenandoahVerifyReadsToFromSpace) {
       // is_oop() would trigger a SEGFAULT when we're checking from-space-access.
       assert(ShenandoahHeap::heap()->is_in(result) && result->is_oop(), "resolved oop must be a valid oop in the heap");
     }

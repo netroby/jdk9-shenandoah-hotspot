@@ -144,7 +144,7 @@ void Parse::array_store_check() {
   Node *idx = peek(1);
   Node *ary = peek(2);
 
-  if (ShenandoahTraceWritesToFromSpace) {
+  if (ShenandoahVerifyReadsToFromSpace) {
     obj = shenandoah_read_barrier(obj);
     ary = shenandoah_read_barrier(ary);
   }
