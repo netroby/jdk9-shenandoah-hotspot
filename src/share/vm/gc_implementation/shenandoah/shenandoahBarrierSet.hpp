@@ -119,7 +119,7 @@ public:
     return result;
   }
 
-  static inline oopDesc* resolve_oop_static(oopDesc* p) {
+  static inline oop resolve_oop_static(oop p) {
     if (((HeapWord*) p) != NULL) {
       return resolve_oop_static_not_null(p);
     } else {

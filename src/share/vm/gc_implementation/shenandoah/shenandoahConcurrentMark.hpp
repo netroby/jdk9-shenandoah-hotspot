@@ -29,7 +29,7 @@ public:
   void scanRootRegions();
   void markFromRoots();
   void checkpointRootsFinal();
-  void finishMarkFromRoots();
+  void finishMarkFromRoots(bool full_gc = false);
   void drain_satb_buffers(uint worker_id, bool remark = false);
   bool drain_one_satb_buffer(uint worker_id);
   bool has_aborted() {return _aborted;}

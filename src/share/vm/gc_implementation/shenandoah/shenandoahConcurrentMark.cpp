@@ -166,7 +166,7 @@ public:
   }
 };
 
-void ShenandoahConcurrentMark::finishMarkFromRoots() {
+void ShenandoahConcurrentMark::finishMarkFromRoots(bool full_gc) {
   if (ShenandoahGCVerbose) {
     tty->print_cr("Starting finishMarkFromRoots");
   }
@@ -174,7 +174,11 @@ void ShenandoahConcurrentMark::finishMarkFromRoots() {
   ShenandoahHeap* sh = (ShenandoahHeap *) Universe::heap();
 
   // Trace any (new) unmarked root references.
-  sh->prepare_unmarked_root_objs();
+  if (full_gc) {
+    sh->prepare_unmarked_root_objs_no_derived_ptrs();
+  } else {
+    sh->prepare_unmarked_root_objs();
+  }
 
   ParallelTaskTerminator terminator(_max_worker_id, _task_queues);
   {
@@ -392,7 +396,15 @@ public:
 
 
   void do_oop_work(oop* p) {  
-    oop obj = *p;
+
+    oop obj;
+    if (! ShenandoahUpdateRefsEarly) {
+      obj = _sh->maybe_update_oop_ref(p);
+    } else {
+      obj = oopDesc::load_heap_oop(p);
+    }
+
+    assert(obj == oopDesc::bs()->resolve_oop(obj), "only get updated oops in weak ref processing");
 
     if (obj != NULL) {
       if (Verbose && ShenandoahTraceWeakReferences) {

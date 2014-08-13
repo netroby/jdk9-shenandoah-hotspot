@@ -475,6 +475,8 @@ void DiscoveredListIterator::load_ptrs(DEBUG_ONLY(bool allow_null_referent)) {
   _next = discovered;
   _referent_addr = java_lang_ref_Reference::referent_addr(_ref);
   _referent = java_lang_ref_Reference::referent(_ref);
+  _referent = oopDesc::bs()->resolve_oop(_referent);
+
   assert(Universe::heap()->is_in_reserved_or_null(_referent),
          "Wrong oop found in java.lang.Reference object");
   assert(allow_null_referent ?
@@ -1088,8 +1090,7 @@ ReferenceProcessor::add_to_discovered_list_mt(DiscoveredList& refs_list,
 
   // First we must make sure this object is only enqueued once. CAS in a non null
   // discovered_addr
-  obj = oopDesc::bs()->resolve_and_maybe_copy_oop(obj);
-  oop current_head = oopDesc::bs()->resolve_and_maybe_copy_oop(refs_list.head());
+  oop current_head = refs_list.head();
   // The last ref must have its discovered field pointing to itself.
   oop next_discovered = (current_head != NULL) ? current_head : obj;
   
@@ -1175,7 +1176,6 @@ void ReferenceProcessor::verify_referent(oop obj) {
 //     and complexity in processing these references.
 //     We call this choice the "RefeferentBasedDiscovery" policy.
 bool ReferenceProcessor::discover_reference(oop obj, ReferenceType rt) {
-  obj = oopDesc::bs()->resolve_and_maybe_copy_oop(obj);
 
   // Make sure we are discovering refs (rather than processing discovered refs).
   if (!_discovering_refs || !RegisterReferences) {
@@ -1278,7 +1278,8 @@ bool ReferenceProcessor::discover_reference(oop obj, ReferenceType rt) {
     // updating the discovered reference list.  Otherwise, we do a raw store
     // here: the field will be visited later when processing the discovered
     // references.
-    oop current_head = oopDesc::bs()->resolve_and_maybe_copy_oop(list->head());
+    oop current_head = list->head();
+
     // The last ref must have its discovered field pointing to itself.
     oop next_discovered = (current_head != NULL) ? current_head : obj;
 

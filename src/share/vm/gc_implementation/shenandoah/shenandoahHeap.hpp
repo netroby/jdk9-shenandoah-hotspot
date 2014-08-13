@@ -231,6 +231,7 @@ public:
   // Prepares unmarked root objects by marking them and putting
   // them into the marking task queue.
   void prepare_unmarked_root_objs();
+  void prepare_unmarked_root_objs_no_derived_ptrs();
 
   void prepare_for_concurrent_evacuation();
   void do_evacuation();

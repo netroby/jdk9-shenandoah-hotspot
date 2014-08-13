@@ -1857,8 +1857,22 @@ void ShenandoahMarkObjsClosure::do_object(oop obj) {
   */
 
 }
-  
+
 void ShenandoahHeap::prepare_unmarked_root_objs() {
+
+  if (! ShenandoahUpdateRefsEarly) {
+    COMPILER2_PRESENT(DerivedPointerTable::clear());
+  }
+
+  prepare_unmarked_root_objs_no_derived_ptrs();
+
+  if (! ShenandoahUpdateRefsEarly) {
+    COMPILER2_PRESENT(DerivedPointerTable::update_pointers());
+  }
+
+}
+
+void ShenandoahHeap::prepare_unmarked_root_objs_no_derived_ptrs() {
   assert(Thread::current()->is_VM_thread(), "can only do this in VMThread");
   ExtendedOopClosure* cl;
   ShenandoahMarkRefsClosure rootsCl1(0);
@@ -1907,11 +1921,7 @@ void ShenandoahHeap::start_concurrent_marking() {
 
   // oopDesc::_debug = true;
 
-  COMPILER2_PRESENT(DerivedPointerTable::clear());
-
   prepare_unmarked_root_objs();
-
-  COMPILER2_PRESENT(DerivedPointerTable::update_pointers());
 
   //  print_all_refs("pre-mark2");
 }
@@ -2386,6 +2396,12 @@ void ShenandoahHeap::compile_prepare_oop(MacroAssembler* masm, Register obj) {
 #endif
 
 bool  ShenandoahIsAliveClosure:: do_object_b(oop obj) { 
+
+  if (! ShenandoahUpdateRefsEarly) {
+    obj = ShenandoahBarrierSet::resolve_oop_static(obj);
+  }
+  assert(obj == ShenandoahBarrierSet::resolve_oop_static(obj), "needs to be in to-space");
+
     HeapWord* addr = (HeapWord*) obj;
     ShenandoahHeap* sh = ShenandoahHeap::heap();
 
