@@ -478,10 +478,6 @@ HeapWord* CollectedHeap::allocate_new_tlab(size_t size) {
   return NULL;
 }
 
-void CollectedHeap::retire_tlab_at(HeapWord* start) {
-  // Default impl does nothing.
-}
-
 void CollectedHeap::ensure_parsability(bool retire_tlabs) {
   // The second disjunct in the assertion below makes a concession
   // for the start-up verification done while the VM is being

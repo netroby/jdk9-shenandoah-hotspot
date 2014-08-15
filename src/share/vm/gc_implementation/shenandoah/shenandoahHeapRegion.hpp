@@ -19,8 +19,6 @@ private:
   volatile size_t liveData;
   MemRegion reserved;
   bool _is_in_collection_set;
-  bool _is_current_allocation_region;
-  volatile jint active_tlab_count;
 
   bool _humonguous_start;
   bool _humonguous_continuation;
@@ -67,20 +65,12 @@ public:
 
   void set_is_in_collection_set(bool b);
 
-  bool is_current_allocation_region();
-
-  void set_is_current_allocation_region(bool b);
-
   void set_humonguous_start(bool start);
   void set_humonguous_continuation(bool continuation);
 
   bool is_humonguous();
   bool is_humonguous_start();
   bool is_humonguous_continuation();
-
-  void increase_active_tlab_count();
-  void decrease_active_tlab_count();
-  bool has_active_tlabs();
 
 #ifdef ASSERT
   void memProtectionOn();

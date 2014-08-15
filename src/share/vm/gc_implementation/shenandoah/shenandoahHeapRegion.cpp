@@ -116,14 +116,6 @@ void ShenandoahHeapRegion::set_is_in_collection_set(bool b) {
 #endif
 }
 
-bool ShenandoahHeapRegion::is_current_allocation_region() {
-  return _is_current_allocation_region;
-}
-
-void ShenandoahHeapRegion::set_is_current_allocation_region(bool b) {
-  _is_current_allocation_region = b;
-}
-
 ByteSize ShenandoahHeapRegion::is_in_collection_set_offset() {
   return byte_offset_of(ShenandoahHeapRegion, _is_in_collection_set);
 }
@@ -131,8 +123,6 @@ ByteSize ShenandoahHeapRegion::is_in_collection_set_offset() {
 void ShenandoahHeapRegion::print(outputStream* st) {
   st->print("ShenandoahHeapRegion: %p/%d ", this, _region_number);
 
-  if (is_current_allocation_region()) 
-    st->print("A");
   if (is_in_collection_set())
     st->print("C");
   if (is_humonguous_start()) {
@@ -144,8 +134,8 @@ void ShenandoahHeapRegion::print(outputStream* st) {
   //else
     st->print(" ");
 
-  st->print("live = %u garbage = %u bottom = %p end = %p top = %p active_tlabs: %d\n", 
-            getLiveData(), garbage(), bottom(), end(), top(), active_tlab_count);
+  st->print("live = %u garbage = %u bottom = %p end = %p top = %p\n", 
+            getLiveData(), garbage(), bottom(), end(), top());
 }
 
 
@@ -216,21 +206,6 @@ void ShenandoahHeapRegion::fill_region() {
     sh->fill_with_object(obj, end() - obj);
     sh->initialize_brooks_ptr(filler, obj);
   } 
-}
-
-void ShenandoahHeapRegion::increase_active_tlab_count() {
-  assert(active_tlab_count >= 0, "never have negative tlab count");
-  Atomic::inc(&active_tlab_count);
-}
-
-void ShenandoahHeapRegion::decrease_active_tlab_count() {
-  Atomic::dec(&active_tlab_count);
-  assert(active_tlab_count >= 0, err_msg("never have negative tlab count %d", active_tlab_count));
-}
-
-bool ShenandoahHeapRegion::has_active_tlabs() {
-  assert(active_tlab_count >= 0, "never have negative tlab count");
-  return active_tlab_count != 0;
 }
 
 void ShenandoahHeapRegion::set_humonguous_start(bool start) {

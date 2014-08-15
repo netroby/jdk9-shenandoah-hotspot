@@ -99,7 +99,6 @@ public:
 public:
   ShenandoahHeap(ShenandoahCollectorPolicy* policy);
   HeapWord* allocate_new_tlab(size_t word_size);
-  void retire_tlab_at(HeapWord* start);
 
   HeapWord* allocate_memory(size_t word_size, bool evacuation);
 
@@ -202,7 +201,6 @@ public:
   volatile unsigned int _evacuation_in_progress;
   volatile bool _update_references_in_progress;
 
-  bool should_start_concurrent_marking();
   void start_concurrent_marking();
   void stop_concurrent_marking();
   ShenandoahConcurrentMark* concurrentMark() { return _scm;}

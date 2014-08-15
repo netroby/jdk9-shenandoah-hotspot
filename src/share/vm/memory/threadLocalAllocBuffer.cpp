@@ -115,10 +115,6 @@ void ThreadLocalAllocBuffer::make_parsable(bool retire) {
     HeapWord* obj = Universe::heap()->tlab_post_allocation_setup(top(), false);
     CollectedHeap::fill_with_object(obj, hard_end(), retire);
 
-    if (retire) {
-      Universe::heap()->retire_tlab_at(start());
-    }
-
     if (retire || ZeroTLAB) {  // "Reset" the TLAB
       set_start(NULL);
       set_top(NULL);

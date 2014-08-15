@@ -18,7 +18,6 @@ ShenandoahHeapRegionSet::ShenandoahHeapRegionSet(size_t max_regions) :
   _current_allocation = NULL;
   _current_evacuation = NULL;
   _next_free = &_regions[0];
-  _concurrent_next_free = _next_free;
 }
 
 ShenandoahHeapRegionSet::ShenandoahHeapRegionSet(size_t max_regions, ShenandoahHeapRegion** regions, size_t num_regions) :
@@ -34,7 +33,6 @@ ShenandoahHeapRegionSet::ShenandoahHeapRegionSet(size_t max_regions, ShenandoahH
   _current_allocation = NULL;
   _current_evacuation = NULL;
   _next_free = &_regions[num_regions];
-  _concurrent_next_free = _next_free;
 }
 
 ShenandoahHeapRegionSet::~ShenandoahHeapRegionSet() {
@@ -81,20 +79,14 @@ size_t ShenandoahHeapRegionSet::available_regions() {
 
 void ShenandoahHeapRegionSet::append(ShenandoahHeapRegion* region) {
   assert(_next_free < _regions + _max_regions, "need space for additional regions");
+  assert(Thread::current()->is_VM_thread() || ! Universe::is_fully_initialized(), "only append regions to list while world is stopped");
 
   // Grab next slot.
-  ShenandoahHeapRegion** next_free = ((ShenandoahHeapRegion**) Atomic::add_ptr(sizeof(ShenandoahHeapRegion**), &_concurrent_next_free)) - 1;
+  ShenandoahHeapRegion** next_free = _next_free;
+  _next_free++;
 
   // Insert new region into slot.
   *next_free = region;
-
-  // Make slot visible to other threads.
-  while (true) {
-    ShenandoahHeapRegion** prev = (ShenandoahHeapRegion**) Atomic::cmpxchg_ptr(next_free + 1, &_next_free, next_free);
-    if (prev == next_free) { // CAS succeeded.
-      break;
-    } // else CAS failed. A concurrent thread also inserts and we need to wait for it to update its slot.
-  }
 }
 
 void ShenandoahHeapRegionSet::clear() {
@@ -102,7 +94,6 @@ void ShenandoahHeapRegionSet::clear() {
   _current_evacuation = NULL;
   _next = _regions;
   _next_free = _regions;
-  _concurrent_next_free = _regions;
 }
 
 ShenandoahHeapRegion* ShenandoahHeapRegionSet::claim_next() {
@@ -183,12 +174,10 @@ void ShenandoahHeapRegionSet::choose_collection_set(ShenandoahHeapRegion** regio
 
   while (r < end) {
     ShenandoahHeapRegion* region = *r;
-    if (region->garbage() > _garbage_threshold
-        && ! (region->has_active_tlabs() || region->is_current_allocation_region()
-              || region->is_humonguous())) {
+    assert(! region->is_current_allocation_region(), "no current allocation region here");
+    if (region->garbage() > _garbage_threshold && ! region->is_humonguous()) {
 
       assert(! region->is_humonguous(), "no humonguous regions in collection set");
-
       append(region);
       region->set_is_in_collection_set(true);
     }
@@ -219,10 +208,8 @@ void ShenandoahHeapRegionSet::choose_collection_set_min_garbage(ShenandoahHeapRe
   size_t garbage = 0;
   while (r < end && garbage < min_garbage) {
     ShenandoahHeapRegion* region = *r;
-    if (region->garbage() > _garbage_threshold
-        && ! (region->has_active_tlabs() || region->is_current_allocation_region()
-              || region->is_humonguous())) {
-
+    assert(! region->is_current_allocation_region(), "no current allocation region here");
+    if (region->garbage() > _garbage_threshold && ! region->is_humonguous()) {
       append(region);
       garbage += region->garbage();
       region->set_is_in_collection_set(true);
@@ -246,7 +233,6 @@ void ShenandoahHeapRegionSet::choose_free_set(ShenandoahHeapRegion** regions, si
   for (ShenandoahHeapRegion** r = regions; r < end; r++) {
     ShenandoahHeapRegion* region = *r;
     if ((! region->is_in_collection_set())
-        && (! region->is_current_allocation_region())
         && (! region->is_humonguous())) {
       append(region);
     }

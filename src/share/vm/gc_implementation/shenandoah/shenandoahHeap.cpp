@@ -223,12 +223,14 @@ size_t ShenandoahHeap::used() const {
 }
 
 void ShenandoahHeap::increase_used(size_t bytes) {
-  Atomic::add_ptr(bytes, &_used);
+  _used += bytes;
+  // Atomic::add_ptr(bytes, &_used);
 }
 
 void ShenandoahHeap::decrease_used(size_t bytes) {
   assert(_used - bytes >= 0, "never decrease heap size by more than we've left");
-  Atomic::add_ptr(-bytes, &_used);
+  _used -= bytes;
+  // Atomic::add_ptr(-bytes, &_used);
 }
 
 size_t ShenandoahHeap::capacity() const {
@@ -299,7 +301,6 @@ HeapWord* ShenandoahHeap::allocate_new_tlab(size_t word_size) {
     }
     assert(! heap_region_containing(result)->is_in_collection_set(), "Never allocate in dirty region");
     _bytesAllocSinceCM += word_size * HeapWordSize;
-    heap_region_containing(result)->increase_active_tlab_count();
 
 #ifdef ASSERT
     if (ShenandoahTraceTLabs)
@@ -310,14 +311,6 @@ HeapWord* ShenandoahHeap::allocate_new_tlab(size_t word_size) {
   return result;
 }
 
-void ShenandoahHeap::retire_tlab_at(HeapWord* start) {
-#ifdef ASSERT
-  if (ShenandoahTraceTLabs)
-    tty->print_cr("retiring tlab at: %p", start);
-#endif 
-  heap_region_containing(start)->decrease_active_tlab_count();
-}
-
 HeapWord* ShenandoahHeap::allocate_new_gclab(size_t word_size) {
   HeapWord* result = allocate_memory(word_size, true);
   assert(! heap_region_containing(result)->is_in_collection_set(), "Never allocate in dirty region");
@@ -325,7 +318,6 @@ HeapWord* ShenandoahHeap::allocate_new_gclab(size_t word_size) {
     if (ShenandoahTraceTLabs) {
       tty->print("allocating new gclab of size %d at addr %p\n", word_size, result);
     }
-    heap_region_containing(result)->increase_active_tlab_count();
 
   }
   return result;
@@ -965,6 +957,8 @@ void ShenandoahHeap::prepare_for_concurrent_evacuation() {
   if (! ShenandoahUpdateRefsEarly) {
     recycle_dirty_regions();
   }
+
+  ensure_parsability(true);
 
   // NOTE: This needs to be done during a stop the world pause, because
   // putting regions into the collection set concurrently with Java threads
@@ -2064,10 +2058,6 @@ void ShenandoahHeap::stop_concurrent_marking() {
 #endif
 }
 
-bool ShenandoahHeap::should_start_concurrent_marking() {
-  return ! Atomic::cmpxchg(true, &_concurrent_mark_in_progress, false);
-}
-
 bool ShenandoahHeap::concurrent_mark_in_progress() {
   return _concurrent_mark_in_progress;
 }
@@ -2102,7 +2092,6 @@ void ShenandoahHeap::set_evacuation_in_progress(bool in_progress) {
     }
   }
   _evacuation_in_progress = in_progress;
-  OrderAccess::storeload();
 }
 
 bool ShenandoahHeap::is_evacuation_in_progress() {
@@ -2379,10 +2368,6 @@ int ShenandoahHeap::ensure_new_regions(int new_regions) {
   assert(success, "should always be able to expand by requested size");
 
   _num_regions = new_num_regions;
-
-  // We need a memory barrier here to prevent subsequent threads from loading
-  // a cached value of _num_regions.
-  OrderAccess::storeload();
 
   return num_regions;
 

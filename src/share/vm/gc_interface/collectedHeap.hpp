@@ -198,9 +198,6 @@ class CollectedHeap : public CHeapObj<mtInternal> {
     return _filler_array_max_size;
   }
 
-  // Signals the GC that a TLAB is full and about to be retired.
-  virtual void retire_tlab_at(HeapWord* start);
-
   // TLAB Post-allocation setup, specific to GC.
   virtual HeapWord* tlab_post_allocation_setup(HeapWord* obj, bool new_obj = true);
 
