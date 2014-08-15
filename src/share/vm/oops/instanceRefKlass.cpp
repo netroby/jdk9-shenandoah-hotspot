@@ -253,7 +253,7 @@ int InstanceRefKlass::oop_adjust_pointers(oop obj) {
   ReferenceProcessor* rp = closure->_ref_processor;                             \
   if (!oopDesc::is_null(heap_oop)) {                                            \
     oop referent = oopDesc::decode_heap_oop_not_null(heap_oop);                 \
-    if ((rp != NULL) && !referent->is_gc_marked() &&	                        \
+    if ((rp != NULL) && (UseShenandoahGC || !referent->is_gc_marked()) &&       \
         rp->discover_reference(obj, reference_type())) {                        \
       return size;                                                              \
     } else if (contains(referent_addr)) {                                       \
