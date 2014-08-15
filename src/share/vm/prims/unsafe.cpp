@@ -652,6 +652,7 @@ UNSAFE_ENTRY(void, Unsafe_SetMemory2(JNIEnv *env, jobject unsafe, jobject obj, j
     THROW(vmSymbols::java_lang_IllegalArgumentException());
   }
   oop base = JNIHandles::resolve(obj);
+  base = oopDesc::bs()->resolve_and_maybe_copy_oop(base);
   void* p = index_oop_from_field_offset_long(base, offset);
   Copy::fill_to_memory_atomic(p, sz, value);
 UNSAFE_END
@@ -681,6 +682,7 @@ UNSAFE_ENTRY(void, Unsafe_CopyMemory2(JNIEnv *env, jobject unsafe, jobject srcOb
   }
   oop srcp = JNIHandles::resolve(srcObj);
   oop dstp = JNIHandles::resolve(dstObj);
+  dstp = oopDesc::bs()->resolve_and_maybe_copy_oop(dstp);
   if (dstp != NULL && !dstp->is_typeArray()) {
     // NYI:  This works only for non-oop arrays at present.
     // Generalizing it would be reasonable, but requires card marking.
@@ -1137,7 +1139,7 @@ UNSAFE_ENTRY(void, Unsafe_MonitorEnter(JNIEnv *env, jobject unsafe, jobject jobj
     if (jobj == NULL) {
       THROW(vmSymbols::java_lang_NullPointerException());
     }
-    Handle obj(thread, JNIHandles::resolve_non_null(jobj));
+    Handle obj(thread, oopDesc::bs()->resolve_and_maybe_copy_oop(JNIHandles::resolve_non_null(jobj)));
     ObjectSynchronizer::jni_enter(obj, CHECK);
   }
 UNSAFE_END
@@ -1149,7 +1151,7 @@ UNSAFE_ENTRY(jboolean, Unsafe_TryMonitorEnter(JNIEnv *env, jobject unsafe, jobje
     if (jobj == NULL) {
       THROW_(vmSymbols::java_lang_NullPointerException(), JNI_FALSE);
     }
-    Handle obj(thread, JNIHandles::resolve_non_null(jobj));
+    Handle obj(thread, oopDesc::bs()->resolve_and_maybe_copy_oop(JNIHandles::resolve_non_null(jobj)));
     bool res = ObjectSynchronizer::jni_try_enter(obj, CHECK_0);
     return (res ? JNI_TRUE : JNI_FALSE);
   }
@@ -1162,7 +1164,7 @@ UNSAFE_ENTRY(void, Unsafe_MonitorExit(JNIEnv *env, jobject unsafe, jobject jobj)
     if (jobj == NULL) {
       THROW(vmSymbols::java_lang_NullPointerException());
     }
-    Handle obj(THREAD, JNIHandles::resolve_non_null(jobj));
+    Handle obj(THREAD, oopDesc::bs()->resolve_and_maybe_copy_oop(JNIHandles::resolve_non_null(jobj)));
     ObjectSynchronizer::jni_exit(obj(), CHECK);
   }
 UNSAFE_END
@@ -1297,7 +1299,7 @@ UNSAFE_ENTRY(jint, Unsafe_Loadavg(JNIEnv *env, jobject unsafe, jdoubleArray load
   double la[max_nelem];
   jint ret;
 
-  typeArrayOop a = typeArrayOop(JNIHandles::resolve_non_null(loadavg));
+  typeArrayOop a = typeArrayOop(oopDesc::bs()->resolve_and_maybe_copy_oop(JNIHandles::resolve_non_null(loadavg)));
   assert(a->is_typeArray(), "must be type array");
 
   if (nelem < 0 || nelem > max_nelem || a->length() < nelem) {

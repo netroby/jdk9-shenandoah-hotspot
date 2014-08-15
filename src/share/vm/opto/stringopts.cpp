@@ -1588,6 +1588,8 @@ void PhaseStringOpts::replace_string_concat(StringConcat* sc) {
     AllocateArrayNode* char_alloc = AllocateArrayNode::Ideal_array_allocation(char_array, _gvn);
     char_alloc->maybe_set_complete(_gvn);
 
+    char_array = __ shenandoah_write_barrier(char_array);
+
     // Now copy the string representations into the final char[]
     Node* start = __ intcon(0);
     for (int argi = 0; argi < sc->num_arguments(); argi++) {

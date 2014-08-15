@@ -670,6 +670,10 @@ JNI_QUICK_ENTRY(jboolean, jni_IsAssignableFrom(JNIEnv *env, jclass sub, jclass s
 #endif /* USDT2 */
   oop sub_mirror   = JNIHandles::resolve_non_null(sub);
   oop super_mirror = JNIHandles::resolve_non_null(super);
+
+  sub_mirror = oopDesc::bs()->resolve_and_maybe_copy_oop(sub_mirror);
+  super_mirror = oopDesc::bs()->resolve_and_maybe_copy_oop(super_mirror);
+
   if (java_lang_Class::is_primitive(sub_mirror) ||
       java_lang_Class::is_primitive(super_mirror)) {
     jboolean ret = (sub_mirror == super_mirror);

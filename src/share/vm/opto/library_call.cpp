@@ -1275,6 +1275,10 @@ bool LibraryCallKit::inline_string_equals() {
 bool LibraryCallKit::inline_array_equals() {
   Node* arg1 = argument(0);
   Node* arg2 = argument(1);
+
+  arg1 = shenandoah_read_barrier(arg1);
+  arg2 = shenandoah_read_barrier(arg2);
+
   set_result(_gvn.transform(new (C) AryEqNode(control(), memory(TypeAryPtr::CHARS), arg1, arg2)));
   return true;
 }
@@ -3643,13 +3647,11 @@ bool LibraryCallKit::inline_native_Class_query(vmIntrinsics::ID id) {
 bool LibraryCallKit::inline_native_subtype_check() {
   // Pull both arguments off the stack.
   Node* args[2];                // two java.lang.Class mirrors: superc, subc
-  args[0] = argument(0);
-  args[1] = argument(1);
-
-  if (ShenandoahVerifyReadsToFromSpace) {
-    args[0] = shenandoah_read_barrier(args[0]);
-    args[1] = shenandoah_read_barrier(args[1]);
-  }
+  // We need write barriers here, because for primitive types we later compare
+  // the two Class objects using ==, and those would give false negatives
+  // if one obj is in from-space, and one in to-space.
+  args[0] = shenandoah_write_barrier(argument(0));
+  args[1] = shenandoah_write_barrier(argument(1));
 
   Node* klasses[2];             // corresponding Klasses: superk, subk
   klasses[0] = klasses[1] = top();
@@ -3957,6 +3959,10 @@ bool LibraryCallKit::inline_array_copyOf(bool is_copyOfRange) {
       newcopy = new_array(klass_node, length, 0);  // no argments to push
 
       original = shenandoah_read_barrier(original);
+      // new_array can trigger a safepoint on the slow-path, which means
+      // in an unlikely worst case, the newcopy object already gets evacuated. Therefore,
+      // we need a write-barrier on it.
+      newcopy = shenandoah_write_barrier(newcopy);
 
       // Generate a direct call to the right arraycopy function(s).
       // We know the copy is disjoint but we might not know if the
@@ -4455,6 +4461,8 @@ void LibraryCallKit::copy_to_clone(Node* obj, Node* alloc_obj, Node* obj_size, b
     alloc->initialization()->set_complete_with_arraycopy();
   }
 
+  alloc_obj = shenandoah_write_barrier(alloc_obj);
+
   // Copy the fastest available way.
   // TODO: generate fields copies for small objects instead.
   Node* src  = obj;
@@ -4613,6 +4621,7 @@ bool LibraryCallKit::inline_native_clone(bool is_virtual) {
           set_control(is_obja);
 
           obj = shenandoah_read_barrier(obj);
+          alloc_obj = shenandoah_write_barrier(alloc_obj);
 
           // Generate a direct call to the right arraycopy function(s).
           bool disjoint_bases = true;

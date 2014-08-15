@@ -1809,7 +1809,7 @@ JRT_ENTRY(void, SharedRuntime::slow_arraycopy_C(oopDesc* src,  jint src_pos,
   }
 
   src = oopDesc::bs()->resolve_oop(src);
-  dest = oopDesc::bs()->resolve_oop(dest);
+  dest = oopDesc::bs()->resolve_and_maybe_copy_oop(dest);
 
   // Do the copy.  The casts to arrayOop are necessary to the copy_array API,
   // even though the copy_array API also performs dynamic checks to ensure

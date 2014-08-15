@@ -603,6 +603,9 @@ static inline intptr_t get_next_hash(Thread * Self, oop obj) {
 }
 //
 intptr_t ObjectSynchronizer::FastHashCode (Thread * Self, oop obj) {
+
+  obj = oopDesc::bs()->resolve_and_maybe_copy_oop(obj);
+
   if (UseBiasedLocking) {
     // NOTE: many places throughout the JVM do not expect a safepoint
     // to be taken here, in particular most operations on perm gen
