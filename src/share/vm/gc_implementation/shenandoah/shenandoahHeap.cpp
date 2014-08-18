@@ -1638,10 +1638,15 @@ void  ShenandoahHeap::space_iterate(SpaceClosure* cl) {
   heap_region_iterate(&blk);
 }
 
-ShenandoahHeapRegion*
-ShenandoahHeap::heap_region_containing(const void* addr) const {
+uint ShenandoahHeap::heap_region_index_containing(const void* addr) const {
   uintptr_t region_start = ((uintptr_t) addr) & ~(ShenandoahHeapRegion::RegionSizeBytes - 1);
   uintptr_t index = (region_start - (uintptr_t) _first_region_bottom) >> ShenandoahHeapRegion::RegionSizeShift;
+  return index;
+}
+
+ShenandoahHeapRegion*
+ShenandoahHeap::heap_region_containing(const void* addr) const {
+  uint index = heap_region_index_containing(addr);
   ShenandoahHeapRegion* result = _ordered_regions[index];
   assert(addr >= result->bottom() && addr < result->end(), "address must be in found region");
   return result;
@@ -1790,23 +1795,34 @@ void ShenandoahMarkRefsNoUpdateClosure::do_oop_work(oop* p) {
     }
 
     _mark_objs.do_object(obj);
+
   }
 }
 
 
 ShenandoahMarkObjsClosure::ShenandoahMarkObjsClosure(uint worker_id) :
   _worker_id(worker_id),
-  _heap((ShenandoahHeap*)(Universe::heap())) 
+  _heap((ShenandoahHeap*)(Universe::heap())),
+  _live_data(NEW_C_HEAP_ARRAY(size_t, _heap->num_regions(), mtGC))
 {
+  Copy::zero_to_bytes(_live_data, _heap->num_regions() * sizeof(size_t));
+}
+
+ShenandoahMarkObjsClosure::~ShenandoahMarkObjsClosure() {
+  // Merge liveness data back into actual regions.
+  ShenandoahHeapRegion** regions = _heap->heap_regions();
+  for (uint i = 0; i < _heap->num_regions(); i++) {
+    regions[i]->increase_live_data(_live_data[i]);
+  }
+  FREE_C_HEAP_ARRAY(size_t, _live_data, mtGC);
 }
 
 void ShenandoahMarkObjsClosure::do_object(oop obj) {
   ShenandoahConcurrentMark* scm = _heap->concurrentMark();
 
   if (obj != NULL) {
-    // TODO: The following resolution of obj is only ever needed when draining the SATB queues.
-    // Wrap this closure to avoid this call in usual marking.
-    obj = oopDesc::bs()->resolve_oop(obj);
+
+    assert(obj == oopDesc::bs()->resolve_oop(obj), "needs to be in to-space");
     
 #ifdef ASSERT
     if (_heap->heap_region_containing(obj)->is_in_collection_set()) {
@@ -1822,9 +1838,11 @@ void ShenandoahMarkObjsClosure::do_object(oop obj) {
       if (ShenandoahTraceConcurrentMarking)
  	tty->print_cr("marked obj: %p", (HeapWord*) obj);
 #endif
+      
       // Calculate liveness of heap region containing object.
-      ShenandoahHeapRegion* region = _heap->heap_region_containing(obj);
-      region->increase_live_data((obj->size() + BrooksPointer::BROOKS_POINTER_OBJ_SIZE) * HeapWordSize);
+      uint region_idx  = _heap->heap_region_index_containing(obj);
+      _live_data[region_idx] += (obj->size() + BrooksPointer::BROOKS_POINTER_OBJ_SIZE) * HeapWordSize;
+
       scm->addTask(obj, _worker_id);
     }
 #ifdef ASSERT

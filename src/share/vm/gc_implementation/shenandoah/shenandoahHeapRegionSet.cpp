@@ -174,7 +174,6 @@ void ShenandoahHeapRegionSet::choose_collection_set(ShenandoahHeapRegion** regio
 
   while (r < end) {
     ShenandoahHeapRegion* region = *r;
-    assert(! region->is_current_allocation_region(), "no current allocation region here");
     if (region->garbage() > _garbage_threshold && ! region->is_humonguous()) {
 
       assert(! region->is_humonguous(), "no humonguous regions in collection set");
@@ -208,7 +207,6 @@ void ShenandoahHeapRegionSet::choose_collection_set_min_garbage(ShenandoahHeapRe
   size_t garbage = 0;
   while (r < end && garbage < min_garbage) {
     ShenandoahHeapRegion* region = *r;
-    assert(! region->is_current_allocation_region(), "no current allocation region here");
     if (region->garbage() > _garbage_threshold && ! region->is_humonguous()) {
       append(region);
       garbage += region->garbage();

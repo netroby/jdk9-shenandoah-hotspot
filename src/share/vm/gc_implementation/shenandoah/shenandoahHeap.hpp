@@ -184,6 +184,7 @@ public:
 
   void heap_region_iterate(ShenandoahHeapRegionClosure* blk, bool skip_dirty_regions = false, bool skip_humonguous_continuation = false) const;
   ShenandoahHeapRegion* heap_region_containing(const void* addr) const;  
+  uint heap_region_index_containing(const void* addr) const;  
 
 /**
  * Maybe we need that at some point...
@@ -335,8 +336,10 @@ private:
 class ShenandoahMarkObjsClosure : public ObjectClosure {
   uint _worker_id;
   ShenandoahHeap* _heap;
+  size_t* _live_data;
 public: 
   ShenandoahMarkObjsClosure(uint worker_id);
+  ~ShenandoahMarkObjsClosure();
   void do_object(oop p);
 };  
 
@@ -361,7 +364,7 @@ class ShenandoahMarkRefsNoUpdateClosure : public ExtendedOopClosure {
   uint _worker_id;
   ShenandoahHeap* _heap;
   ShenandoahMarkObjsClosure _mark_objs;
-  
+
 public:
   ShenandoahMarkRefsNoUpdateClosure(uint worker_id);
 
