@@ -211,36 +211,6 @@ private:
   }
 };
 
-class ShenandoahMarkRootsTask : public AbstractGangTask {
-public:
-  ShenandoahMarkRootsTask() :
-    AbstractGangTask("Shenandoah update roots task") {
-  }
-
-  void work(uint worker_id) {
-    // tty->print_cr("start mark roots worker: %d", worker_id);
-    ExtendedOopClosure* cl;
-    ShenandoahMarkRefsClosure rootsCl1(worker_id);
-    ShenandoahMarkRefsNoUpdateClosure rootsCl2(worker_id);
-    if (! ShenandoahUpdateRefsEarly) {
-      cl = &rootsCl1;
-    } else {
-      cl = &rootsCl2;
-    }
-
-    CodeBlobToOopClosure blobsCl(cl, true);
-    KlassToOopClosure klassCl(cl);
-
-    const int so = SharedHeap::SO_AllClasses | SharedHeap::SO_Strings | SharedHeap::SO_CodeCache;
-
-    ShenandoahHeap* heap = ShenandoahHeap::heap();
-    ResourceMark m;
-    heap->process_strong_roots(false, false, SharedHeap::ScanningOption(so), cl, &blobsCl, &klassCl);
-
-    // tty->print_cr("finish mark roots worker: %d", worker_id);
-  }
-};
-
 class SCMConcurrentMarkingTask : public AbstractGangTask {
 private:
   ShenandoahConcurrentMark* _cm;
@@ -293,13 +263,15 @@ void ShenandoahConcurrentMark::prepare_unmarked_root_objs() {
 void ShenandoahConcurrentMark::prepare_unmarked_root_objs_no_derived_ptrs() {
   assert(Thread::current()->is_VM_thread(), "can only do this in VMThread");
 
-  ShenandoahHeap* heap = ShenandoahHeap::heap();
-  heap->set_n_termination(heap->workers()->active_workers()); // Prepare for parallel processing.
-  ClassLoaderDataGraph::clear_claimed_marks();
-  SharedHeap::StrongRootsScope strong_roots_scope(heap, true);
-  ShenandoahMarkRootsTask mark_roots;
-  heap->workers()->run_task(&mark_roots);
-  heap->set_n_termination(0); // Prepare for serial processing in later calls to process_strong_roots().
+  ExtendedOopClosure* cl;
+  ShenandoahMarkRefsClosure rootsCl1(0);
+  ShenandoahMarkRefsNoUpdateClosure rootsCl2(0);
+  if (! ShenandoahUpdateRefsEarly) {
+    cl = &rootsCl1;
+  } else {
+    cl = &rootsCl2;
+  }
+  ShenandoahHeap::heap()->roots_iterate(cl);
 }
 
 
