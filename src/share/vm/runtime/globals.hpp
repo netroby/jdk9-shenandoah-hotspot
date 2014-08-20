@@ -1423,6 +1423,9 @@ class CommandLineFlags {
   develop(bool, ShenandoahVerify, false,                                    \
           "Verify the  Shenandoah garbage collector")                       \
                                                                             \
+  product(bool, ShenandoahParallelRootScan, false,                          \
+          "Turn on/off parallel root scanning in Shenandoah")               \
+                                                                            \
   product(bool, ShenandoahConcurrentEvacuation, true,                       \
           "Turn on/off concurrent evacuation in Shenandoah")                \
                                                                             \

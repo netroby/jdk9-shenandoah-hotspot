@@ -1302,7 +1302,7 @@ public:
 
 void ShenandoahHeap::roots_iterate(ExtendedOopClosure* cl) {
 
-  assert(Thread::current()->is_VM_thread(), "Only iterate roots while world is stopped");
+  assert(SafepointSynchronize::is_at_safepoint(), "Only iterate roots while world is stopped");
 
   CodeBlobToOopClosure blobsCl(cl, false);
   KlassToOopClosure klassCl(cl);
