@@ -103,6 +103,12 @@ void ShenandoahHeapRegion::set_is_in_collection_set(bool b) {
 
   _is_in_collection_set = b;
 
+  if (b) {
+    // tty->print_cr("registering region in fast-cset");
+    // print();
+    ShenandoahHeap::heap()->register_region_with_in_cset_fast_test(this);
+  }
+
 #ifdef ASSERT
   if (ShenandoahVerifyWritesToFromSpace || ShenandoahVerifyReadsToFromSpace) {    
     if (b) {

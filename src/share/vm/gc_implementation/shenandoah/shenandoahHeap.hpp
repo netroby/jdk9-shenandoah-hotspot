@@ -89,6 +89,10 @@ private:
   CMBitMap _mark_bit_map1;
   CMBitMap* _prev_mark_bit_map;
 
+  bool* _in_cset_fast_test;
+  bool* _in_cset_fast_test_base;
+  uint _in_cset_fast_test_length;
+
 public:
   size_t _bytesAllocSinceCM;
   size_t _bytes_allocated_since_last_cm;
@@ -246,7 +250,7 @@ public:
   void print_heap_locations(HeapWord* start, HeapWord* end);
 
   oop  evacuate_object(oop src, Thread* thread);
-  bool is_in_collection_set(oop* p) {
+  bool is_in_collection_set(const void* p) {
     return heap_region_containing(p)->is_in_collection_set();
   }
   
@@ -298,6 +302,38 @@ public:
   size_t num_regions();
 
   void recycle_dirty_regions();
+
+  void register_region_with_in_cset_fast_test(ShenandoahHeapRegion* r) {
+    assert(_in_cset_fast_test_base != NULL, "sanity");
+    assert(r->is_in_collection_set(), "invariant");
+    uint index = r->region_number();
+    assert(index < _in_cset_fast_test_length, "invariant");
+    assert(!_in_cset_fast_test_base[index], "invariant");
+    _in_cset_fast_test_base[index] = true;
+  }
+
+  bool in_cset_fast_test(oop obj) {
+    assert(_in_cset_fast_test != NULL, "sanity");
+    if (is_in((HeapWord*) obj)) {
+      // no need to subtract the bottom of the heap from obj,
+      // _in_cset_fast_test is biased
+      uintx index = cast_from_oop<uintx>(obj) >> ShenandoahHeapRegion::RegionSizeShift;
+      bool ret = _in_cset_fast_test[index];
+      // let's make sure the result is consistent with what the slower
+      // test returns
+      assert( ret || !is_in_collection_set(obj), "sanity");
+      assert(!ret ||  is_in_collection_set(obj), "sanity");
+      return ret;
+    } else {
+      return false;
+    }
+  }
+
+  void clear_cset_fast_test() {
+    assert(_in_cset_fast_test_base != NULL, "sanity");
+    memset(_in_cset_fast_test_base, false,
+           (size_t) _in_cset_fast_test_length * sizeof(bool));
+  }
 
 private:
 

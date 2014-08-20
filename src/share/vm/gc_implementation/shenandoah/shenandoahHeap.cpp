@@ -148,6 +148,14 @@ jint ShenandoahHeap::initialize() {
 
   // TODO: Implement swapping of mark bitmaps.
 
+  // Initialize fast collection set test structure.
+  _in_cset_fast_test_length = _max_regions;
+  _in_cset_fast_test_base =
+                   NEW_C_HEAP_ARRAY(bool, (size_t) _in_cset_fast_test_length, mtGC);
+  _in_cset_fast_test = _in_cset_fast_test_base -
+               ((uintx) pgc_rs.base() >> ShenandoahHeapRegion::RegionSizeShift);
+  clear_cset_fast_test();
+
   _concurrent_gc_thread = new ShenandoahConcurrentThread();
   _concurrent_gc_thread->start();
   return JNI_OK;
@@ -168,6 +176,8 @@ ShenandoahHeap::ShenandoahHeap(ShenandoahCollectorPolicy* policy) :
   _max_workers((int) MAX2((uint)ParallelGCThreads, 1U)),
   _max_conc_workers((int) MAX2((uint)ShenandoahConcurrentGCThreads, 1U)),
   _ref_processor_cm(NULL),
+  _in_cset_fast_test(NULL),
+  _in_cset_fast_test_base(NULL),
   _mark_bit_map0(log2_intptr(MinObjAlignment)),
   _mark_bit_map1(log2_intptr(MinObjAlignment)) {
   _pgc = this;
@@ -792,6 +802,7 @@ public:
 void ShenandoahHeap::recycle_dirty_regions() {
   RecycleDirtyRegionsClosure cl;
   heap_region_iterate(&cl);
+  clear_cset_fast_test();
 }
 
 ShenandoahHeapRegionSet* ShenandoahHeap::free_regions() {
@@ -1159,7 +1170,7 @@ public:
     assert(_heap->is_evacuation_in_progress(), "Only do this when evacuation is in progress");
 
     oop obj = *p;
-    if (obj != NULL && _heap->heap_region_containing(obj)->is_in_collection_set()) {
+    if (obj != NULL && _heap->in_cset_fast_test(obj)) {
       *p = _heap->evacuate_object(*p, _thread);
     }
   }
