@@ -23,7 +23,7 @@ void VM_ShenandoahInitMark::doit() {
   sh->shenandoahPolicy()->record_init_mark_end();
 
   if (! ShenandoahConcurrentMarking) {
-    sh->concurrentMark()->markFromRoots();
+    sh->concurrentMark()->mark_from_roots();
     VM_ShenandoahFinishMark finishMark;
     finishMark.doit();
   }
@@ -75,7 +75,7 @@ void VM_ShenandoahFinishMark::doit() {
     tty->print("vm_ShenandoahFinalMark\n");
 
   sh->shenandoahPolicy()->record_final_mark_start();  
-  sh->concurrentMark()->finishMarkFromRoots();
+  sh->concurrentMark()->finish_mark_from_roots();
   sh->stop_concurrent_marking();
   sh->prepare_for_concurrent_evacuation();
   sh->shenandoahPolicy()->record_final_mark_end();    

@@ -26,16 +26,6 @@ ShenandoahConcurrentThread::~ShenandoahConcurrentThread() {
   // This is here so that super is called.
 }
 
-class SCMCheckpointRootsFinalClosure : public VoidClosure {
-  ShenandoahConcurrentMark* _scm;
-public:
-  SCMCheckpointRootsFinalClosure(ShenandoahConcurrentMark* scm) : _scm(scm) {}
-  
-  void do_void() {
-    _scm->checkpointRootsFinal();
-  }
-};
-
 void ShenandoahConcurrentThread::notify_jni_critical() {
 
   assert(_waiting_for_jni_critical, "must be waiting for jni critical notification");  
@@ -96,7 +86,7 @@ void ShenandoahConcurrentThread::run() {
 	VMThread::execute(&initMark);
 
         if (ShenandoahConcurrentMarking) {
-          ShenandoahHeap::heap()->concurrentMark()->markFromRoots();
+          ShenandoahHeap::heap()->concurrentMark()->mark_from_roots();
 
           VM_ShenandoahFinishMark finishMark;
           VMThread::execute(&finishMark);

@@ -27,18 +27,18 @@ Copyright 2014 Red Hat, Inc. and/or its affiliates.
 
 ShenandoahHeap* ShenandoahHeap::_pgc = NULL;
 
-void printHeapLocations(HeapWord* start, HeapWord* end) {
+void ShenandoahHeap::print_heap_locations(HeapWord* start, HeapWord* end) {
   HeapWord* cur = NULL;
   for (cur = start; cur < end; cur++) {
     tty->print("%p : %p \n", cur, *cur);
   }
 }
 
-void printHeapObjects(HeapWord* start, HeapWord* end) {
+void ShenandoahHeap::print_heap_objects(HeapWord* start, HeapWord* end) {
   HeapWord* cur = NULL;
   for (cur = start; cur < end; cur = cur + oop(cur)->size()) {
     oop(cur)->print();
-    printHeapLocations(cur, cur + oop(cur)->size());
+    print_heap_locations(cur, cur + oop(cur)->size());
   }
 }
 
@@ -61,7 +61,7 @@ public:
     tty->print("Region %d top = "PTR_FORMAT" used = %x free = %x\n", 
 	       r->region_number(), r->top(), r->used(), r->free());
     
-    printHeapObjects(r->bottom(), r->top());
+    ShenandoahHeap::heap()->print_heap_objects(r->bottom(), r->top());
     return false;
   }
 };
@@ -874,14 +874,14 @@ public:
 	_heap->print_all_refs("post-mark");
 	tty->print_cr("oop not marked, although referrer is marked: %p: in_heap: %d, is_marked: %d", 
 		      (HeapWord*) o, _heap->is_in(o), _heap->isMarkedCurrent(o));
-	printHeapLocations((HeapWord*) o, (HeapWord*) o + o->size());
+	_heap->print_heap_locations((HeapWord*) o, (HeapWord*) o + o->size());
 
         tty->print_cr("oop class: %s", o->klass()->internal_name());
 	if (_heap->is_in(p)) {
 	  oop referrer = oop(_heap->heap_region_containing(p)->block_start_const(p));
 	  tty->print("Referrer starts at addr %p\n", (HeapWord*) referrer);
 	  referrer->print();
-	  printHeapLocations((HeapWord*) referrer, (HeapWord*) referrer + referrer->size());
+	  _heap->print_heap_locations((HeapWord*) referrer, (HeapWord*) referrer + referrer->size());
 	}
         tty->print_cr("heap region containing object:");
 	_heap->heap_region_containing(o)->print();
@@ -1718,185 +1718,6 @@ oop ShenandoahHeap::oop_containing_oop_ptr(oop* p) {
 }
  */
 
-ShenandoahMarkRefsClosure::ShenandoahMarkRefsClosure(uint worker_id) : 
-  ExtendedOopClosure(((ShenandoahHeap *) Universe::heap())->ref_processor_cm()),
-  _worker_id(worker_id),
-  _heap((ShenandoahHeap*) Universe::heap()),
-  _mark_objs(ShenandoahMarkObjsClosure(worker_id))
-{
-
-}
-
-void ShenandoahMarkRefsClosure::do_oop_work(oop* p) {
-  // We piggy-back reference updating to the marking tasks.
-  oop* old = p;
-  oop obj = _heap->maybe_update_oop_ref(p);
-
-#ifdef ASSERT
-  if (ShenandoahTraceUpdates) {
-    if (p != old) 
-      tty->print("Update %p => %p  to %p => %p\n", p, (HeapWord*) *p, old, (HeapWord*) *old);
-  }
-#endif
-
-  // NOTE: We used to assert the following here. This does not always work because
-  // a concurrent Java thread could change the the field after we updated it.
-  // oop obj = oopDesc::load_heap_oop(p);
-  // assert(oopDesc::bs()->resolve_oop(obj) == *p, "we just updated the referrer");
-  // assert(obj == NULL || ! _heap->heap_region_containing(obj)->is_dirty(), "must not point to dirty region");
-
-
-  //  ShenandoahExtendedMarkObjsClosure cl(_heap->ref_processor_cm(), _worker_id);
-  //  ShenandoahMarkObjsClosure mocl(cl, _worker_id);
-
-  if (obj != NULL) {
-    _mark_objs.do_object(obj);
-  }
-}
-
-
-void ShenandoahMarkRefsClosure::do_oop(narrowOop* p) {
-  assert(false, "narrowOops not supported");
-}
-
-void ShenandoahMarkRefsClosure::do_oop(oop* p) {
-  do_oop_work(p);
-}
-
-ShenandoahMarkRefsNoUpdateClosure::ShenandoahMarkRefsNoUpdateClosure(uint worker_id) :
-  ExtendedOopClosure(((ShenandoahHeap *) Universe::heap())->ref_processor_cm()),
-  _worker_id(worker_id),
-  _heap(ShenandoahHeap::heap()),
-  _mark_objs(ShenandoahMarkObjsClosure(worker_id))
-{
-}
-
-void ShenandoahMarkRefsNoUpdateClosure::do_oop(narrowOop* p) {
-  assert(false, "narrowOops not supported");
-}
-
-void ShenandoahMarkRefsNoUpdateClosure::do_oop(oop* p) {
-  do_oop_work(p);
-}
-
-void ShenandoahMarkRefsNoUpdateClosure::do_oop_work(oop* p) {
-  oop obj = *p;
-  if (! oopDesc::is_null(obj)) {
-#ifdef ASSERT
-    if (obj != oopDesc::bs()->resolve_oop(obj)) {
-      oop obj_prime = oopDesc::bs()->resolve_oop(obj);
-      tty->print("We've got one: obj = %p : obj_prime = %p\n", (HeapWord*) obj, (HeapWord*)obj_prime);
-    }
-#endif
-    assert(obj == oopDesc::bs()->resolve_oop(obj), "only mark forwarded copy of objects");
-    if (ShenandoahTraceConcurrentMarking) {
-      tty->print("Calling ShenandoahMarkRefsNoUpdateClosure on %p\n", (HeapWord*)obj);
-      printHeapLocations((HeapWord*) obj, (HeapWord*) obj + obj->size());
-    }
-
-    _mark_objs.do_object(obj);
-
-  }
-}
-
-
-ShenandoahMarkObjsClosure::ShenandoahMarkObjsClosure(uint worker_id) :
-  _worker_id(worker_id),
-  _heap((ShenandoahHeap*)(Universe::heap())),
-  _live_data(NEW_C_HEAP_ARRAY(size_t, _heap->num_regions(), mtGC))
-{
-  Copy::zero_to_bytes(_live_data, _heap->num_regions() * sizeof(size_t));
-}
-
-ShenandoahMarkObjsClosure::~ShenandoahMarkObjsClosure() {
-  // Merge liveness data back into actual regions.
-  ShenandoahHeapRegion** regions = _heap->heap_regions();
-  for (uint i = 0; i < _heap->num_regions(); i++) {
-    regions[i]->increase_live_data(_live_data[i]);
-  }
-  FREE_C_HEAP_ARRAY(size_t, _live_data, mtGC);
-}
-
-void ShenandoahMarkObjsClosure::do_object(oop obj) {
-  ShenandoahConcurrentMark* scm = _heap->concurrentMark();
-
-  if (obj != NULL) {
-
-    assert(obj == oopDesc::bs()->resolve_oop(obj), "needs to be in to-space");
-    
-#ifdef ASSERT
-    if (_heap->heap_region_containing(obj)->is_in_collection_set()) {
-      tty->print_cr("trying to mark obj: %p (%d) in dirty region: ", (HeapWord*) obj, _heap->isMarkedCurrent(obj));
-      //      _heap->heap_region_containing(obj)->print();
-      //      _heap->print_heap_regions();
-    }
-#endif
-    assert(! _heap->heap_region_containing(obj)->is_in_collection_set(), "we don't want to mark objects in from-space");
-    assert(_heap->is_in(obj), "referenced objects must be in the heap. No?");
-    if (_heap->mark_current(obj)) {
-#ifdef ASSERT
-      if (ShenandoahTraceConcurrentMarking)
- 	tty->print_cr("marked obj: %p", (HeapWord*) obj);
-#endif
-      
-      // Calculate liveness of heap region containing object.
-      uint region_idx  = _heap->heap_region_index_containing(obj);
-      _live_data[region_idx] += (obj->size() + BrooksPointer::BROOKS_POINTER_OBJ_SIZE) * HeapWordSize;
-
-      scm->addTask(obj, _worker_id);
-    }
-#ifdef ASSERT
-    else {
-      if (ShenandoahTraceConcurrentMarking) {
-	tty->print_cr("failed to mark obj (already marked): %p", (HeapWord*) obj);
-      }
-      assert(_heap->isMarkedCurrent(obj), "make sure object is marked");
-    }
-#endif
-
-    /*
-    else {
-      tty->print_cr("already marked object %p, %d", obj, getMark(obj)->age());
-    }
-    */
-  }
-  /*
-  else {
-    if (obj != NULL) {
-      tty->print_cr("not marking root object because it's not in heap: %p", obj);
-    }
-  }
-  */
-
-}
-
-void ShenandoahHeap::prepare_unmarked_root_objs() {
-
-  if (! ShenandoahUpdateRefsEarly) {
-    COMPILER2_PRESENT(DerivedPointerTable::clear());
-  }
-
-  prepare_unmarked_root_objs_no_derived_ptrs();
-
-  if (! ShenandoahUpdateRefsEarly) {
-    COMPILER2_PRESENT(DerivedPointerTable::update_pointers());
-  }
-
-}
-
-void ShenandoahHeap::prepare_unmarked_root_objs_no_derived_ptrs() {
-  assert(Thread::current()->is_VM_thread(), "can only do this in VMThread");
-  ExtendedOopClosure* cl;
-  ShenandoahMarkRefsClosure rootsCl1(0);
-  ShenandoahMarkRefsNoUpdateClosure rootsCl2(0);
-  if (! ShenandoahUpdateRefsEarly) {
-    cl = &rootsCl1;
-  } else {
-    cl = &rootsCl2;
-  }
-  roots_iterate(cl);
-}
-
 class ClearLivenessClosure : public ShenandoahHeapRegionClosure {
   ShenandoahHeap* sh;
 public:
@@ -1933,7 +1754,7 @@ void ShenandoahHeap::start_concurrent_marking() {
 
   // oopDesc::_debug = true;
 
-  prepare_unmarked_root_objs();
+  concurrentMark()->prepare_unmarked_root_objs();
 
   //  print_all_refs("pre-mark2");
 }

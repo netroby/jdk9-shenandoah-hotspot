@@ -227,11 +227,6 @@ public:
 
   void mark_object_live(oop obj, bool enqueue);
 
-  // Prepares unmarked root objects by marking them and putting
-  // them into the marking task queue.
-  void prepare_unmarked_root_objs();
-  void prepare_unmarked_root_objs_no_derived_ptrs();
-
   void prepare_for_concurrent_evacuation();
   void do_evacuation();
   void parallel_evacuate();
@@ -246,6 +241,9 @@ public:
   void print_heap_regions(outputStream* st = tty) const;
 
   void print_all_refs(const char* prefix);
+
+  void print_heap_objects(HeapWord* start, HeapWord* end);
+  void print_heap_locations(HeapWord* start, HeapWord* end);
 
   oop  evacuate_object(oop src, Thread* thread);
   bool is_in_collection_set(oop* p) {
@@ -328,50 +326,6 @@ private:
   ShenandoahHeapRegion* get_current_region(bool evacuation);
 
   void set_from_region_protection(bool protect);
-};
-
-
-
-// Mark the object and add it to the queue to be scanned
-class ShenandoahMarkObjsClosure : public ObjectClosure {
-  uint _worker_id;
-  ShenandoahHeap* _heap;
-  size_t* _live_data;
-public: 
-  ShenandoahMarkObjsClosure(uint worker_id);
-  ~ShenandoahMarkObjsClosure();
-  void do_object(oop p);
-};  
-
-
-// Walks over all the objects in the generation updating any
-// references to from space.
-
-class ShenandoahMarkRefsClosure : public ExtendedOopClosure {
-  uint _worker_id;
-  ShenandoahHeap* _heap;
-  ShenandoahMarkObjsClosure _mark_objs;
-
-public: 
-  ShenandoahMarkRefsClosure(uint worker_id);
-
-  void do_oop_work(oop* p);
-  void do_oop(narrowOop* p);
-  void do_oop(oop* p);
-};
-
-class ShenandoahMarkRefsNoUpdateClosure : public ExtendedOopClosure {
-  uint _worker_id;
-  ShenandoahHeap* _heap;
-  ShenandoahMarkObjsClosure _mark_objs;
-
-public:
-  ShenandoahMarkRefsNoUpdateClosure(uint worker_id);
-
-  void do_oop_work(oop* p);
-  void do_oop(narrowOop* p);
-  void do_oop(oop* p);
-
 };
 
 #endif // SHARE_VM_GC_IMPLEMENTATION_SHENANDOAH_SHENANDOAHHEAP_HPP
