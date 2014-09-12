@@ -314,6 +314,8 @@ inline void oopDesc::obj_field_put(int offset, oop value) {
   if (forwarded_copy != this)
     return forwarded_copy->obj_field_put(offset, value);
 
+  value = oopDesc::bs()->resolve_oop(value);
+
   UseCompressedOops ? oop_store(obj_field_addr<narrowOop>(offset), value) :
                       oop_store(obj_field_addr<oop>(offset),       value);
 }
@@ -323,10 +325,19 @@ inline Metadata* oopDesc::metadata_field(int offset) const {
 }
 
 inline void oopDesc::metadata_field_put(int offset, Metadata* value) {
+  oopDesc* forwarded_copy = oopDesc::bs()->resolve_and_maybe_copy_oop(this);
+  if (forwarded_copy != this) {
+    return forwarded_copy->metadata_field_put(offset, value);
+  }
   *metadata_field_addr(offset) = value;
 }
 
 inline void oopDesc::obj_field_put_raw(int offset, oop value) {
+  oopDesc* forwarded_copy = oopDesc::bs()->resolve_and_maybe_copy_oop(this);
+  if (forwarded_copy != this) {
+    return forwarded_copy->obj_field_put_raw(offset, value);
+  }
+  value = oopDesc::bs()->resolve_oop(value);
   UseCompressedOops ?
     encode_store_heap_oop(obj_field_addr<narrowOop>(offset), value) :
     encode_store_heap_oop(obj_field_addr<oop>(offset),       value);
@@ -338,31 +349,85 @@ inline void oopDesc::obj_field_put_volatile(int offset, oop value) {
 }
 
 inline jbyte oopDesc::byte_field(int offset) const                  { return (jbyte) *byte_field_addr(offset);    }
-inline void oopDesc::byte_field_put(int offset, jbyte contents)     { *byte_field_addr(offset) = (jint) contents; }
+inline void oopDesc::byte_field_put(int offset, jbyte contents)     {
+  oopDesc* forwarded_copy = oopDesc::bs()->resolve_and_maybe_copy_oop(this);
+  if (forwarded_copy != this) {
+    return forwarded_copy->byte_field_put(offset, contents);
+  }
+ *byte_field_addr(offset) = (jint) contents;
+}
 
 inline jboolean oopDesc::bool_field(int offset) const               { return (jboolean) *bool_field_addr(offset); }
-inline void oopDesc::bool_field_put(int offset, jboolean contents)  { *bool_field_addr(offset) = (jint) contents; }
+inline void oopDesc::bool_field_put(int offset, jboolean contents)  {
+  oopDesc* forwarded_copy = oopDesc::bs()->resolve_and_maybe_copy_oop(this);
+  if (forwarded_copy != this) {
+    return forwarded_copy->bool_field_put(offset, contents);
+  }
+ *bool_field_addr(offset) = (jint) contents;
+}
 
 inline jchar oopDesc::char_field(int offset) const                  { return (jchar) *char_field_addr(offset);    }
-inline void oopDesc::char_field_put(int offset, jchar contents)     { *char_field_addr(offset) = (jint) contents; }
+inline void oopDesc::char_field_put(int offset, jchar contents)     {
+  oopDesc* forwarded_copy = oopDesc::bs()->resolve_and_maybe_copy_oop(this);
+  if (forwarded_copy != this) {
+    return forwarded_copy->char_field_put(offset, contents);
+  }
+ *char_field_addr(offset) = (jint) contents;
+}
 
 inline jint oopDesc::int_field(int offset) const                    { return *int_field_addr(offset);        }
-inline void oopDesc::int_field_put(int offset, jint contents)       { *int_field_addr(offset) = contents;    }
+inline void oopDesc::int_field_put(int offset, jint contents)       {
+  oopDesc* forwarded_copy = oopDesc::bs()->resolve_and_maybe_copy_oop(this);
+  if (forwarded_copy != this) {
+    return forwarded_copy->int_field_put(offset, contents);
+  }
+ *int_field_addr(offset) = contents;
+}
 
 inline jshort oopDesc::short_field(int offset) const                { return (jshort) *short_field_addr(offset);  }
-inline void oopDesc::short_field_put(int offset, jshort contents)   { *short_field_addr(offset) = (jint) contents;}
+inline void oopDesc::short_field_put(int offset, jshort contents)   {
+  oopDesc* forwarded_copy = oopDesc::bs()->resolve_and_maybe_copy_oop(this);
+  if (forwarded_copy != this) {
+    return forwarded_copy->short_field_put(offset, contents);
+  }
+ *short_field_addr(offset) = (jint) contents;
+}
 
 inline jlong oopDesc::long_field(int offset) const                  { return *long_field_addr(offset);       }
-inline void oopDesc::long_field_put(int offset, jlong contents)     { *long_field_addr(offset) = contents;   }
+inline void oopDesc::long_field_put(int offset, jlong contents)     {
+  oopDesc* forwarded_copy = oopDesc::bs()->resolve_and_maybe_copy_oop(this);
+  if (forwarded_copy != this) {
+    return forwarded_copy->long_field_put(offset, contents);
+  }
+ *long_field_addr(offset) = contents;
+}
 
 inline jfloat oopDesc::float_field(int offset) const                { return *float_field_addr(offset);      }
-inline void oopDesc::float_field_put(int offset, jfloat contents)   { *float_field_addr(offset) = contents;  }
+inline void oopDesc::float_field_put(int offset, jfloat contents)   {
+  oopDesc* forwarded_copy = oopDesc::bs()->resolve_and_maybe_copy_oop(this);
+  if (forwarded_copy != this) {
+    return forwarded_copy->float_field_put(offset, contents);
+  }
+ *float_field_addr(offset) = contents;
+}
 
 inline jdouble oopDesc::double_field(int offset) const              { return *double_field_addr(offset);     }
-inline void oopDesc::double_field_put(int offset, jdouble contents) { *double_field_addr(offset) = contents; }
+inline void oopDesc::double_field_put(int offset, jdouble contents) {
+  oopDesc* forwarded_copy = oopDesc::bs()->resolve_and_maybe_copy_oop(this);
+  if (forwarded_copy != this) {
+    return forwarded_copy->double_field_put(offset, contents);
+  }
+ *double_field_addr(offset) = contents;
+}
 
 inline address oopDesc::address_field(int offset) const              { return *address_field_addr(offset);     }
-inline void oopDesc::address_field_put(int offset, address contents) { *address_field_addr(offset) = contents; }
+inline void oopDesc::address_field_put(int offset, address contents) {
+  oopDesc* forwarded_copy = oopDesc::bs()->resolve_and_maybe_copy_oop(this);
+  if (forwarded_copy != this) {
+    return forwarded_copy->address_field_put(offset, contents);
+  }
+ *address_field_addr(offset) = contents;
+}
 
 inline oop oopDesc::obj_field_acquire(int offset) const {
   return UseCompressedOops ?
@@ -374,6 +439,9 @@ inline oop oopDesc::obj_field_acquire(int offset) const {
 inline void oopDesc::release_obj_field_put(int offset, oop value) {
   oopDesc* forwarded_copy =
     (oopDesc*) oopDesc::bs()->resolve_and_maybe_copy_oop(this);
+
+  value = oopDesc::bs()->resolve_oop(value);
+
   if (forwarded_copy != this)
     return forwarded_copy->release_obj_field_put(offset, value);
 
@@ -383,31 +451,85 @@ inline void oopDesc::release_obj_field_put(int offset, oop value) {
 }
 
 inline jbyte oopDesc::byte_field_acquire(int offset) const                  { return OrderAccess::load_acquire(byte_field_addr(offset));     }
-inline void oopDesc::release_byte_field_put(int offset, jbyte contents)     { OrderAccess::release_store(byte_field_addr(offset), contents); }
+inline void oopDesc::release_byte_field_put(int offset, jbyte contents)     {
+  oopDesc* forwarded_copy = oopDesc::bs()->resolve_and_maybe_copy_oop(this);
+  if (forwarded_copy != this) {
+    return forwarded_copy->release_bool_field_put(offset, contents);
+  }
+ OrderAccess::release_store(byte_field_addr(offset), contents);
+}
 
 inline jboolean oopDesc::bool_field_acquire(int offset) const               { return OrderAccess::load_acquire(bool_field_addr(offset));     }
-inline void oopDesc::release_bool_field_put(int offset, jboolean contents)  { OrderAccess::release_store(bool_field_addr(offset), contents); }
+inline void oopDesc::release_bool_field_put(int offset, jboolean contents)  {
+  oopDesc* forwarded_copy = oopDesc::bs()->resolve_and_maybe_copy_oop(this);
+  if (forwarded_copy != this) {
+    return forwarded_copy->release_bool_field_put(offset, contents);
+  }
+ OrderAccess::release_store(bool_field_addr(offset), contents);
+}
 
 inline jchar oopDesc::char_field_acquire(int offset) const                  { return OrderAccess::load_acquire(char_field_addr(offset));     }
-inline void oopDesc::release_char_field_put(int offset, jchar contents)     { OrderAccess::release_store(char_field_addr(offset), contents); }
+inline void oopDesc::release_char_field_put(int offset, jchar contents)     {
+  oopDesc* forwarded_copy = oopDesc::bs()->resolve_and_maybe_copy_oop(this);
+  if (forwarded_copy != this) {
+    return forwarded_copy->release_char_field_put(offset, contents);
+  }
+ OrderAccess::release_store(char_field_addr(offset), contents);
+}
 
 inline jint oopDesc::int_field_acquire(int offset) const                    { return OrderAccess::load_acquire(int_field_addr(offset));      }
-inline void oopDesc::release_int_field_put(int offset, jint contents)       { OrderAccess::release_store(int_field_addr(offset), contents);  }
+inline void oopDesc::release_int_field_put(int offset, jint contents)       {
+  oopDesc* forwarded_copy = oopDesc::bs()->resolve_and_maybe_copy_oop(this);
+  if (forwarded_copy != this) {
+    return forwarded_copy->release_int_field_put(offset, contents);
+  }
+ OrderAccess::release_store(int_field_addr(offset), contents);
+}
 
 inline jshort oopDesc::short_field_acquire(int offset) const                { return (jshort)OrderAccess::load_acquire(short_field_addr(offset)); }
-inline void oopDesc::release_short_field_put(int offset, jshort contents)   { OrderAccess::release_store(short_field_addr(offset), contents);     }
+inline void oopDesc::release_short_field_put(int offset, jshort contents)   {
+  oopDesc* forwarded_copy = oopDesc::bs()->resolve_and_maybe_copy_oop(this);
+  if (forwarded_copy != this) {
+    return forwarded_copy->release_short_field_put(offset, contents);
+  }
+ OrderAccess::release_store(short_field_addr(offset), contents);
+}
 
 inline jlong oopDesc::long_field_acquire(int offset) const                  { return OrderAccess::load_acquire(long_field_addr(offset));       }
-inline void oopDesc::release_long_field_put(int offset, jlong contents)     { OrderAccess::release_store(long_field_addr(offset), contents);   }
+inline void oopDesc::release_long_field_put(int offset, jlong contents)     {
+  oopDesc* forwarded_copy = oopDesc::bs()->resolve_and_maybe_copy_oop(this);
+  if (forwarded_copy != this) {
+    return forwarded_copy->release_long_field_put(offset, contents);
+  }
+ OrderAccess::release_store(long_field_addr(offset), contents);
+}
 
 inline jfloat oopDesc::float_field_acquire(int offset) const                { return OrderAccess::load_acquire(float_field_addr(offset));      }
-inline void oopDesc::release_float_field_put(int offset, jfloat contents)   { OrderAccess::release_store(float_field_addr(offset), contents);  }
+inline void oopDesc::release_float_field_put(int offset, jfloat contents)   {
+  oopDesc* forwarded_copy = oopDesc::bs()->resolve_and_maybe_copy_oop(this);
+  if (forwarded_copy != this) {
+    return forwarded_copy->release_float_field_put(offset, contents);
+  }
+ OrderAccess::release_store(float_field_addr(offset), contents);
+}
 
 inline jdouble oopDesc::double_field_acquire(int offset) const              { return OrderAccess::load_acquire(double_field_addr(offset));     }
-inline void oopDesc::release_double_field_put(int offset, jdouble contents) { OrderAccess::release_store(double_field_addr(offset), contents); }
+inline void oopDesc::release_double_field_put(int offset, jdouble contents) {
+  oopDesc* forwarded_copy = oopDesc::bs()->resolve_and_maybe_copy_oop(this);
+  if (forwarded_copy != this) {
+    return forwarded_copy->release_double_field_put(offset, contents);
+  }
+ OrderAccess::release_store(double_field_addr(offset), contents);
+}
 
 inline address oopDesc::address_field_acquire(int offset) const             { return (address) OrderAccess::load_ptr_acquire(address_field_addr(offset)); }
-inline void oopDesc::release_address_field_put(int offset, address contents) { OrderAccess::release_store_ptr(address_field_addr(offset), contents); }
+inline void oopDesc::release_address_field_put(int offset, address contents) {
+  oopDesc* forwarded_copy = oopDesc::bs()->resolve_and_maybe_copy_oop(this);
+  if (forwarded_copy != this) {
+    return forwarded_copy->release_address_field_put(offset, contents);
+  }
+ OrderAccess::release_store_ptr(address_field_addr(offset), contents);
+}
 
 inline int oopDesc::size_given_klass(Klass* klass)  {
   int lh = klass->layout_helper();
