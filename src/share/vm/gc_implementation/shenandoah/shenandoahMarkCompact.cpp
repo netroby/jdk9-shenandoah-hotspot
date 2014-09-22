@@ -25,8 +25,6 @@ void ShenandoahMarkCompact::do_mark_compact() {
 
   assert(Thread::current()->is_VM_thread(), "Do full GC only while world is stopped");
 
-  COMPILER2_PRESENT(DerivedPointerTable::clear());
-
   if (ShenandoahTraceFullGC) {
     gclog_or_tty->print_cr("Shenandoah-full-gc: phase 1: marking the heap");
   }
@@ -46,8 +44,6 @@ void ShenandoahMarkCompact::do_mark_compact() {
     gclog_or_tty->print_cr("Shenandoah-full-gc: phase 4: compacting objects");
   }
   phase4_compact_objects();
-
-  COMPILER2_PRESENT(DerivedPointerTable::update_pointers());
 
   oopDesc::set_bs(old_bs);
 
@@ -131,8 +127,8 @@ private:
 
     // Required space is object size plus brooks pointer.
     size_t obj_size = p->size() + BrooksPointer::BROOKS_POINTER_OBJ_SIZE;
-    assert((*_current_region)->end() > _next_free_address, "expect next address to be within region");
-    if (obj_size > (size_t) ((*_current_region)->end() - _next_free_address)) {
+    assert((*_current_region)->end() >= _next_free_address, "expect next address to be within region");
+    if (_next_free_address + obj_size >= (*_current_region)->end()) {
       // tty->print_cr("skipping to next region. obj_size=%d, current-region-end: %p, _next_free_addr: %p, free: %d", obj_size, (*_current_region)->end(), _next_free_address, ((*_current_region)->end() - _next_free_address));
       // Skip to next region.
       _current_region = _next_region;
@@ -163,6 +159,7 @@ class ShenandoahMarkCompactUpdateRefsClosure : public ExtendedOopClosure {
   void do_oop(oop* p) {
     oop obj = oopDesc::load_heap_oop(p);
     if (! oopDesc::is_null(obj)) {
+      assert(ShenandoahHeap::heap()->is_marked_current(obj), "only update references to marked objects");
       assert(obj->is_oop(), "expect oop");
       oop new_obj = BrooksPointer::get(obj).get_forwardee_raw();
       assert((HeapWord*) new_obj <= (HeapWord*) obj, "new object location must be down in the heap");
@@ -177,9 +174,12 @@ class ShenandoahMarkCompactUpdateRefsClosure : public ExtendedOopClosure {
 };
 
 void ShenandoahMarkCompact::phase3_update_references() {
+
+  COMPILER2_PRESENT(DerivedPointerTable::clear());
+
   ShenandoahMarkCompactUpdateRefsClosure cl;
-  // tty->print_cr("updating roots");
-  CodeBlobToOopClosure blobsCl(&cl, false);
+
+  // tty->print_cr("updating strong roots");
   KlassToOopClosure klassCl(&cl);
   ClassLoaderDataGraph::clear_claimed_marks();
   _heap->process_strong_roots(true, false, SharedHeap::SO_AllClasses, &cl, NULL, &klassCl);
@@ -187,6 +187,9 @@ void ShenandoahMarkCompact::phase3_update_references() {
   _heap->weak_roots_iterate(&cl);
   // tty->print_cr("updating heap references");
   _heap->oop_iterate(&cl, false, true);
+
+  COMPILER2_PRESENT(DerivedPointerTable::update_pointers());
+
 }
 
 class ShenandoahCompactObjectsClosure : public ObjectClosureCareful {
@@ -214,17 +217,19 @@ public:
       HeapWord* old_addr = (HeapWord*) p;
       HeapWord* new_addr = (HeapWord*) BrooksPointer::get(p).get_forwardee_raw();
       assert(new_addr <= old_addr, "new location must not be higher up in the heap");
-      // tty->print_cr("copying object from %p to %p", old_addr, new_addr);
-      if (new_addr + obj_size < old_addr) {
-        Copy::disjoint_words(old_addr, new_addr, obj_size);
-      } else {
-        Copy::conjoint_words(old_addr, new_addr, obj_size);
-      }
+      // tty->print_cr("copying object size %d from %p to %p", obj_size, old_addr, new_addr);
       oop new_obj = oop(new_addr);
-      BrooksPointer::get(new_obj).set_forwardee(new_obj);
+      if (new_addr != old_addr) {
+        if (new_addr + obj_size < old_addr) {
+          Copy::disjoint_words(old_addr, new_addr, obj_size);
+        } else {
+          Copy::conjoint_words(old_addr, new_addr, obj_size);
+        }
+        BrooksPointer::get(new_obj).set_forwardee(new_obj);
+      }
 
       if (_heap->heap_region_containing(p)->is_humonguous_start()) {
-        finish_humonguous_regions(new_obj);
+        finish_humonguous_regions(oop(old_addr), new_obj);
       } else {
         assert(! _heap->heap_region_containing(p)->is_humonguous(), "expect non-humonguous object");
         maybe_finish_region((HeapWord*) new_obj);
@@ -233,9 +238,26 @@ public:
     return obj_size;
   }
 
-  void finish_humonguous_regions(oop new_obj) {
+  void finish_humonguous_regions(oop old_obj, oop new_obj) {
+    // tty->print_cr("finish humonguous object: %p -> %p", old_obj, new_obj);
     size_t obj_size = new_obj->size();
     size_t required_regions = (obj_size * HeapWordSize) / ShenandoahHeapRegion::RegionSizeBytes + 1;
+
+    // First clear humonguous flags from old regions.
+    for (uint i = 0; i < required_regions; i++) {
+      HeapWord* ptr = ((HeapWord*) old_obj) + i * (ShenandoahHeapRegion::RegionSizeBytes / HeapWordSize);
+      ShenandoahHeapRegion* region = _heap->heap_region_containing(ptr);
+      if (i == 0) {
+        assert(region->is_humonguous_start(), "humonguous-start expected");
+        assert(! region->is_humonguous_continuation(), "no humonguous-continuation expected");
+        region->set_humonguous_start(false);
+      } else {
+        assert(! region->is_humonguous_start(), "no humonguous-start expected");
+        assert(region->is_humonguous_continuation(), "humonguous-continuation expected");
+        region->set_humonguous_continuation(false);
+      }
+    }
+
     size_t remaining_size = obj_size + BrooksPointer::BROOKS_POINTER_OBJ_SIZE;
     for (uint i = 0; i < required_regions; i++) {
       HeapWord* ptr = ((HeapWord*) new_obj) + i * (ShenandoahHeapRegion::RegionSizeBytes / HeapWordSize);
