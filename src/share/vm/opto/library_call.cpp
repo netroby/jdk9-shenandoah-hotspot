@@ -2581,6 +2581,13 @@ bool LibraryCallKit::inline_unsafe_access(bool is_native_ptr, bool is_store, Bas
   if (!is_native_ptr) {
     // The base is either a Java object or a value produced by Unsafe.staticFieldBase
     Node* base = argument(1);  // type: oop
+    if (UseShenandoahGC) {
+      // Note: if we don't null-check here, we generate a read barrier with a built-in
+      // null-check. This will later be attempted to be split on the phi, which
+      // results in a load on a NULL-based address on the null-path, which blows up.
+      // It will go away when we do late-insertion of read barriers.
+      base = null_check(base);
+    }
     if (is_store) {
       base = shenandoah_write_barrier(base);
     } else {
