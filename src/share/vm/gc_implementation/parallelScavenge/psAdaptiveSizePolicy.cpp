@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2002, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2002, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -23,6 +23,7 @@
  */
 
 #include "precompiled.hpp"
+#include "gc_implementation/parallelScavenge/parallelScavengeHeap.hpp"
 #include "gc_implementation/parallelScavenge/psAdaptiveSizePolicy.hpp"
 #include "gc_implementation/parallelScavenge/psGCAdaptivePolicyCounters.hpp"
 #include "gc_implementation/parallelScavenge/psScavenge.hpp"
@@ -33,6 +34,8 @@
 #include "utilities/top.hpp"
 
 #include <math.h>
+
+PRAGMA_FORMAT_MUTE_WARNINGS_FOR_GCC
 
 PSAdaptiveSizePolicy::PSAdaptiveSizePolicy(size_t init_eden_size,
                                            size_t init_promo_size,
@@ -74,6 +77,38 @@ PSAdaptiveSizePolicy::PSAdaptiveSizePolicy(size_t init_eden_size,
   _major_timer.start();
 
   _old_gen_policy_is_ready = false;
+}
+
+size_t PSAdaptiveSizePolicy::calculate_free_based_on_live(size_t live, uintx ratio_as_percentage) {
+  // We want to calculate how much free memory there can be based on the
+  // amount of live data currently in the old gen. Using the formula:
+  // ratio * (free + live) = free
+  // Some equation solving later we get:
+  // free = (live * ratio) / (1 - ratio)
+
+  const double ratio = ratio_as_percentage / 100.0;
+  const double ratio_inverse = 1.0 - ratio;
+  const double tmp = live * ratio;
+  size_t free = (size_t)(tmp / ratio_inverse);
+
+  return free;
+}
+
+size_t PSAdaptiveSizePolicy::calculated_old_free_size_in_bytes() const {
+  size_t free_size = (size_t)(_promo_size + avg_promoted()->padded_average());
+  size_t live = ParallelScavengeHeap::heap()->old_gen()->used_in_bytes();
+
+  if (MinHeapFreeRatio != 0) {
+    size_t min_free = calculate_free_based_on_live(live, MinHeapFreeRatio);
+    free_size = MAX2(free_size, min_free);
+  }
+
+  if (MaxHeapFreeRatio != 100) {
+    size_t max_free = calculate_free_based_on_live(live, MaxHeapFreeRatio);
+    free_size = MIN2(max_free, free_size);
+  }
+
+  return free_size;
 }
 
 void PSAdaptiveSizePolicy::major_collection_begin() {
@@ -346,7 +381,7 @@ void PSAdaptiveSizePolicy::compute_eden_space_size(
       gclog_or_tty->print_cr(
             "PSAdaptiveSizePolicy::compute_eden_space_size: gc time limit"
             " gc_cost: %f "
-            " GCTimeLimit: %d",
+            " GCTimeLimit: " UINTX_FORMAT,
             gc_cost(), GCTimeLimit);
     }
   }
@@ -482,7 +517,7 @@ void PSAdaptiveSizePolicy::compute_old_gen_free_space(
   //   adjust down the total heap size.  Adjust down the larger of the
   //   generations.
 
-  // Add some checks for a threshhold for a change.  For example,
+  // Add some checks for a threshold for a change.  For example,
   // a change less than the necessary alignment is probably not worth
   // attempting.
 
@@ -553,7 +588,7 @@ void PSAdaptiveSizePolicy::compute_old_gen_free_space(
       gclog_or_tty->print_cr(
             "PSAdaptiveSizePolicy::compute_old_gen_free_space: gc time limit"
             " gc_cost: %f "
-            " GCTimeLimit: %d",
+            " GCTimeLimit: " UINTX_FORMAT,
             gc_cost(), GCTimeLimit);
     }
   }
@@ -1000,7 +1035,7 @@ size_t PSAdaptiveSizePolicy::adjust_promo_for_footprint(
       "AdaptiveSizePolicy::adjust_promo_for_footprint "
       "adjusting tenured gen for footprint. "
       "starting promo size " SIZE_FORMAT
-      " reduced promo size " SIZE_FORMAT,
+      " reduced promo size " SIZE_FORMAT
       " promo delta " SIZE_FORMAT,
       desired_promo_size, reduced_size, change );
   }
@@ -1161,7 +1196,7 @@ uint PSAdaptiveSizePolicy::compute_survivor_space_size_and_threshold(
     // We use the tenuring threshold to equalize the cost of major
     // and minor collections.
     // ThresholdTolerance is used to indicate how sensitive the
-    // tenuring threshold is to differences in cost betweent the
+    // tenuring threshold is to differences in cost between the
     // collection types.
 
     // Get the times of interest. This involves a little work, so
@@ -1292,3 +1327,18 @@ bool PSAdaptiveSizePolicy::print_adaptive_size_policy_on(outputStream* st)
                           st,
                           PSScavenge::tenuring_threshold());
 }
+
+#ifndef PRODUCT
+
+void TestOldFreeSpaceCalculation_test() {
+  assert(PSAdaptiveSizePolicy::calculate_free_based_on_live(100, 20) == 25, "Calculation of free memory failed");
+  assert(PSAdaptiveSizePolicy::calculate_free_based_on_live(100, 50) == 100, "Calculation of free memory failed");
+  assert(PSAdaptiveSizePolicy::calculate_free_based_on_live(100, 60) == 150, "Calculation of free memory failed");
+  assert(PSAdaptiveSizePolicy::calculate_free_based_on_live(100, 75) == 300, "Calculation of free memory failed");
+  assert(PSAdaptiveSizePolicy::calculate_free_based_on_live(400, 20) == 100, "Calculation of free memory failed");
+  assert(PSAdaptiveSizePolicy::calculate_free_based_on_live(400, 50) == 400, "Calculation of free memory failed");
+  assert(PSAdaptiveSizePolicy::calculate_free_based_on_live(400, 60) == 600, "Calculation of free memory failed");
+  assert(PSAdaptiveSizePolicy::calculate_free_based_on_live(400, 75) == 1200, "Calculation of free memory failed");
+}
+
+#endif /* !PRODUCT */

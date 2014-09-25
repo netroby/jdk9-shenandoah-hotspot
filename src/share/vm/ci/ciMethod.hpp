@@ -68,9 +68,11 @@ class ciMethod : public ciMetadata {
   int _max_locals;
   vmIntrinsics::ID _intrinsic_id;
   int _handler_count;
+  int _nmethod_age;
   int _interpreter_invocation_count;
   int _interpreter_throwout_count;
   int _instructions_size;
+  int _size_of_parameters;
 
   bool _uses_monitors;
   bool _balanced_monitors;
@@ -166,6 +168,11 @@ class ciMethod : public ciMetadata {
   int exception_table_length() const             { check_is_loaded(); return _handler_count; }
   int interpreter_invocation_count() const       { check_is_loaded(); return _interpreter_invocation_count; }
   int interpreter_throwout_count() const         { check_is_loaded(); return _interpreter_throwout_count; }
+  int size_of_parameters() const                 { check_is_loaded(); return _size_of_parameters; }
+  int nmethod_age() const                        { check_is_loaded(); return _nmethod_age; }
+
+  // Should the method be compiled with an age counter?
+  bool profile_aging() const;
 
   // Code size for inlining decisions.
   int code_size_for_inlining();
@@ -234,14 +241,13 @@ class ciMethod : public ciMetadata {
   ciCallProfile call_profile_at_bci(int bci);
   int           interpreter_call_site_count(int bci);
 
-  // Does type profiling provide a useful type at this point?
-  ciKlass*      argument_profiled_type(int bci, int i);
-  ciKlass*      parameter_profiled_type(int i);
-  ciKlass*      return_profiled_type(int bci);
+  // Does type profiling provide any useful information at this point?
+  bool          argument_profiled_type(int bci, int i, ciKlass*& type, bool& maybe_null);
+  bool          parameter_profiled_type(int i, ciKlass*& type, bool& maybe_null);
+  bool          return_profiled_type(int bci, ciKlass*& type, bool& maybe_null);
 
   ciField*      get_field_at_bci( int bci, bool &will_link);
   ciMethod*     get_method_at_bci(int bci, bool &will_link, ciSignature* *declared_signature);
-
   // Given a certain calling environment, find the monomorphic target
   // for the call.  Return NULL if the call is not monomorphic in
   // its calling environment.
@@ -263,6 +269,8 @@ class ciMethod : public ciMetadata {
   bool should_print_assembly();
   bool break_at_execute();
   bool has_option(const char *option);
+  template<typename T>
+  bool has_option_value(const char* option, T& value);
   bool can_be_compiled();
   bool can_be_osr_compiled(int entry_bci);
   void set_not_compilable(const char* reason = NULL);
@@ -310,9 +318,12 @@ class ciMethod : public ciMetadata {
   bool is_accessor    () const;
   bool is_initializer () const;
   bool can_be_statically_bound() const           { return _can_be_statically_bound; }
-  void dump_replay_data(outputStream* st);
   bool is_boxing_method() const;
   bool is_unboxing_method() const;
+
+  // Replay data methods
+  void dump_name_as_ascii(outputStream* st);
+  void dump_replay_data(outputStream* st);
 
   // Print the bytecodes of this method.
   void print_codes_on(outputStream* st);

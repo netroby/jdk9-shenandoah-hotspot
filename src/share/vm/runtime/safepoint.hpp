@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -59,7 +59,7 @@ class SafepointSynchronize : AllStatic {
  public:
   enum SynchronizeState {
       _not_synchronized = 0,                   // Threads not synchronized at a safepoint
-                                               // Keep this value 0. See the coment in do_call_back()
+                                               // Keep this value 0. See the comment in do_call_back()
       _synchronizing    = 1,                   // Synchronizing in progress
       _synchronized     = 2                    // All Java threads are stopped at a safepoint. Only VM thread is running
   };
@@ -91,7 +91,7 @@ class SafepointSynchronize : AllStatic {
   } SafepointStats;
 
  private:
-  static volatile SynchronizeState _state;     // Threads might read this flag directly, without acquireing the Threads_lock
+  static volatile SynchronizeState _state;     // Threads might read this flag directly, without acquiring the Threads_lock
   static volatile int _waiting_to_block;       // number of threads we are waiting for to block
   static int _current_jni_active_count;        // Counts the number of active critical natives during the safepoint
 
@@ -106,7 +106,7 @@ public:
 private:
   static long       _end_of_last_safepoint;     // Time of last safepoint in milliseconds
 
-  // statistics
+  // Statistics
   static jlong            _safepoint_begin_time;     // time when safepoint begins
   static SafepointStats*  _safepoint_stats;          // array of SafepointStats struct
   static int              _cur_stat_index;           // current index to the above array
@@ -155,7 +155,7 @@ public:
     _current_jni_active_count++;
   }
 
-  // Called when a thread volantary blocks
+  // Called when a thread voluntarily blocks
   static void   block(JavaThread *thread);
   static void   signal_thread_at_safepoint()              { _waiting_to_block--; }
 
@@ -172,9 +172,9 @@ public:
   static bool is_cleanup_needed();
   static void do_cleanup_tasks();
 
-  // debugging
+  // Debugging
   static void print_state()                                PRODUCT_RETURN;
-  static void safepoint_msg(const char* format, ...)       PRODUCT_RETURN;
+  static void safepoint_msg(const char* format, ...) ATTRIBUTE_PRINTF(1, 2) PRODUCT_RETURN;
 
   static void deferred_initialize_stat();
   static void print_stat_on_exit();
@@ -183,7 +183,7 @@ public:
   static void set_is_at_safepoint()                        { _state = _synchronized; }
   static void set_is_not_at_safepoint()                    { _state = _not_synchronized; }
 
-  // assembly support
+  // Assembly support
   static address address_of_state()                        { return (address)&_state; }
 
   static address safepoint_counter_addr()                  { return (address)&_safepoint_counter; }
@@ -240,7 +240,7 @@ class ThreadSafepointState: public CHeapObj<mtInternal> {
   static void create(JavaThread *thread);
   static void destroy(JavaThread *thread);
 
-  void safepoint_msg(const char* format, ...) {
+  void safepoint_msg(const char* format, ...) ATTRIBUTE_PRINTF(2, 3) {
     if (ShowSafepointMsgs) {
       va_list ap;
       va_start(ap, format);

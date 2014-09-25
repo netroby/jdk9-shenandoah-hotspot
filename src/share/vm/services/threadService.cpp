@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2003, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2003, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -29,13 +29,17 @@
 #include "memory/oopFactory.hpp"
 #include "oops/instanceKlass.hpp"
 #include "oops/oop.inline.hpp"
+#include "runtime/atomic.inline.hpp"
 #include "runtime/handles.inline.hpp"
 #include "runtime/init.hpp"
 #include "runtime/thread.hpp"
 #include "runtime/vframe.hpp"
+#include "runtime/thread.inline.hpp"
 #include "runtime/vmThread.hpp"
 #include "runtime/vm_operations.hpp"
 #include "services/threadService.hpp"
+
+PRAGMA_FORMAT_MUTE_WARNINGS_FOR_GCC
 
 // TODO: we need to define a naming convention for perf counters
 // to distinguish counters for:
@@ -663,17 +667,15 @@ void ConcurrentLocksDump::dump_at_safepoint() {
   // dump all locked concurrent locks
   assert(SafepointSynchronize::is_at_safepoint(), "all threads are stopped");
 
-  if (JDK_Version::is_gte_jdk16x_version()) {
-    ResourceMark rm;
+  ResourceMark rm;
 
-    GrowableArray<oop>* aos_objects = new GrowableArray<oop>(INITIAL_ARRAY_SIZE);
+  GrowableArray<oop>* aos_objects = new GrowableArray<oop>(INITIAL_ARRAY_SIZE);
 
-    // Find all instances of AbstractOwnableSynchronizer
-    HeapInspection::find_instances_at_safepoint(SystemDictionary::abstract_ownable_synchronizer_klass(),
+  // Find all instances of AbstractOwnableSynchronizer
+  HeapInspection::find_instances_at_safepoint(SystemDictionary::abstract_ownable_synchronizer_klass(),
                                                 aos_objects);
-    // Build a map of thread to its owned AQS locks
-    build_map(aos_objects);
-  }
+  // Build a map of thread to its owned AQS locks
+  build_map(aos_objects);
 }
 
 

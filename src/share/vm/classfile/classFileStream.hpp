@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -25,22 +25,8 @@
 #ifndef SHARE_VM_CLASSFILE_CLASSFILESTREAM_HPP
 #define SHARE_VM_CLASSFILE_CLASSFILESTREAM_HPP
 
+#include "utilities/bytes.hpp"
 #include "utilities/top.hpp"
-#ifdef TARGET_ARCH_x86
-# include "bytes_x86.hpp"
-#endif
-#ifdef TARGET_ARCH_sparc
-# include "bytes_sparc.hpp"
-#endif
-#ifdef TARGET_ARCH_zero
-# include "bytes_zero.hpp"
-#endif
-#ifdef TARGET_ARCH_arm
-# include "bytes_arm.hpp"
-#endif
-#ifdef TARGET_ARCH_ppc
-# include "bytes_ppc.hpp"
-#endif
 
 // Input stream for reading .class file
 //
@@ -53,20 +39,20 @@ class ClassFileStream: public ResourceObj {
   u1*   _buffer_start; // Buffer bottom
   u1*   _buffer_end;   // Buffer top (one past last element)
   u1*   _current;      // Current buffer position
-  char* _source;       // Source of stream (directory name, ZIP/JAR archive name)
+  const char* _source; // Source of stream (directory name, ZIP/JAR archive name)
   bool  _need_verify;  // True if verification is on for the class file
 
   void truncated_file_error(TRAPS);
  public:
   // Constructor
-  ClassFileStream(u1* buffer, int length, char* source);
+  ClassFileStream(u1* buffer, int length, const char* source);
 
   // Buffer access
   u1* buffer() const           { return _buffer_start; }
   int length() const           { return _buffer_end - _buffer_start; }
   u1* current() const          { return _current; }
   void set_current(u1* pos)    { _current = pos; }
-  char* source() const         { return _source; }
+  const char* source() const   { return _source; }
   void set_verify(bool flag)   { _need_verify = flag; }
 
   void check_truncated_file(bool b, TRAPS) {

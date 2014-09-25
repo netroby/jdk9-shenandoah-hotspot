@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1999, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1999, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -26,6 +26,9 @@
 #define OS_BSD_VM_OS_BSD_HPP
 
 // Bsd_OS defines the interface to Bsd operating systems
+
+// Information about the protection of the page at address '0' on this os.
+static bool zero_page_read_protected() { return true; }
 
 /* pthread_getattr_np comes with BsdThreads-0.9-7 on RedHat 7.1 */
 typedef int (*pthread_getattr_func_type) (pthread_t, pthread_attr_t *);
@@ -55,7 +58,13 @@ class Bsd {
   // For signal flags diagnostics
   static int sigflags[MAXSIGNUM];
 
+#ifdef __APPLE__
+  // mach_absolute_time
+  static mach_timebase_info_data_t _timebase_info;
+  static volatile uint64_t         _max_abstime;
+#else
   static int (*_clock_gettime)(clockid_t, struct timespec *);
+#endif
 
   static GrowableArray<int>* _cpu_to_node;
 
@@ -131,14 +140,6 @@ class Bsd {
   // Real-time clock functions
   static void clock_init(void);
 
-  static inline bool supports_monotonic_clock() {
-    return _clock_gettime != NULL;
-  }
-
-  static int clock_gettime(clockid_t clock_id, struct timespec *tp) {
-    return _clock_gettime ? _clock_gettime(clock_id, tp) : -1;
-  }
-
   // Stack repair handling
 
   // none present
@@ -190,16 +191,16 @@ public:
 
 class PlatformEvent : public CHeapObj<mtInternal> {
   private:
-    double CachePad [4] ;   // increase odds that _mutex is sole occupant of cache line
-    volatile int _Event ;
-    volatile int _nParked ;
-    pthread_mutex_t _mutex  [1] ;
-    pthread_cond_t  _cond   [1] ;
-    double PostPad  [2] ;
-    Thread * _Assoc ;
+    double CachePad[4];   // increase odds that _mutex is sole occupant of cache line
+    volatile int _Event;
+    volatile int _nParked;
+    pthread_mutex_t _mutex[1];
+    pthread_cond_t  _cond[1];
+    double PostPad[2];
+    Thread * _Assoc;
 
   public:       // TODO-FIXME: make dtor private
-    ~PlatformEvent() { guarantee (0, "invariant") ; }
+    ~PlatformEvent() { guarantee(0, "invariant"); }
 
   public:
     PlatformEvent() {
@@ -208,28 +209,27 @@ class PlatformEvent : public CHeapObj<mtInternal> {
       assert_status(status == 0, status, "cond_init");
       status = pthread_mutex_init (_mutex, NULL);
       assert_status(status == 0, status, "mutex_init");
-      _Event   = 0 ;
-      _nParked = 0 ;
-      _Assoc   = NULL ;
+      _Event   = 0;
+      _nParked = 0;
+      _Assoc   = NULL;
     }
 
     // Use caution with reset() and fired() -- they may require MEMBARs
-    void reset() { _Event = 0 ; }
+    void reset() { _Event = 0; }
     int  fired() { return _Event; }
-    void park () ;
-    void unpark () ;
-    int  TryPark () ;
-    int  park (jlong millis) ;
-    void SetAssociation (Thread * a) { _Assoc = a ; }
+    void park();
+    void unpark();
+    int  park(jlong millis);
+    void SetAssociation(Thread * a) { _Assoc = a; }
 };
 
 class PlatformParker : public CHeapObj<mtInternal> {
   protected:
-    pthread_mutex_t _mutex [1] ;
-    pthread_cond_t  _cond  [1] ;
+    pthread_mutex_t _mutex[1];
+    pthread_cond_t  _cond[1];
 
   public:       // TODO-FIXME: make dtor private
-    ~PlatformParker() { guarantee (0, "invariant") ; }
+    ~PlatformParker() { guarantee(0, "invariant"); }
 
   public:
     PlatformParker() {

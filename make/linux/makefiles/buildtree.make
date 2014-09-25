@@ -1,5 +1,5 @@
 #
-# Copyright (c) 2005, 2013, Oracle and/or its affiliates. All rights reserved.
+# Copyright (c) 2005, 2014, Oracle and/or its affiliates. All rights reserved.
 # DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
 #
 # This code is free software; you can redistribute it and/or modify it
@@ -36,7 +36,7 @@
 # GAMMADIR	- top of workspace
 # OS_FAMILY	- operating system
 # VARIANT	- core, compiler1, compiler2, or tiered
-# HOTSPOT_RELEASE_VERSION - <major>.<minor>-b<nn> (11.0-b07)
+# HOTSPOT_RELEASE_VERSION - <major_ver>.<minor_ver>.<micro_ver>[-<identifier>][-<debug_target>][-b<nn>]
 # HOTSPOT_BUILD_VERSION   - internal, internal-$(USER_RELEASE_SUFFIX) or empty
 # JRE_RELEASE_VERSION     - <major>.<minor>.<micro> (1.7.0)
 #
@@ -124,7 +124,7 @@ SUBMAKE_DIRS = $(addprefix $(PLATFORM_DIR)/,$(TARGETS))
 # For dependencies and recursive makes.
 BUILDTREE_MAKE	= $(GAMMADIR)/make/$(OS_FAMILY)/makefiles/buildtree.make
 
-BUILDTREE_TARGETS = Makefile flags.make flags_vm.make vm.make adlc.make jvmti.make trace.make sa.make
+BUILDTREE_TARGETS = Makefile flags.make flags_vm.make vm.make adlc.make jvmti.make trace.make sa.make dtrace.make
 
 BUILDTREE_VARS	= GAMMADIR=$(GAMMADIR) OS_FAMILY=$(OS_FAMILY) \
 	SRCARCH=$(SRCARCH) BUILDARCH=$(BUILDARCH) LIBARCH=$(LIBARCH) VARIANT=$(VARIANT)
@@ -172,7 +172,7 @@ all:  $(SUBMAKE_DIRS)
 # Run make in each subdirectory recursively.
 $(SUBMAKE_DIRS): $(SIMPLE_DIRS) FORCE
 	$(QUIETLY) [ -d $@ ] || { mkdir -p $@; }
-	$(QUIETLY) cd $@ && $(BUILDTREE) TARGET=$(@F)
+	+$(QUIETLY) cd $@ && $(BUILDTREE) TARGET=$(@F)
 	$(QUIETLY) touch $@
 
 $(SIMPLE_DIRS):
@@ -193,6 +193,7 @@ DATA_MODE/i486 = 32
 DATA_MODE/sparc = 32
 DATA_MODE/sparcv9 = 64
 DATA_MODE/amd64 = 64
+DATA_MODE/ppc64 = 64
 
 DATA_MODE = $(DATA_MODE/$(BUILDARCH))
 
@@ -276,6 +277,8 @@ flags.make: $(BUILDTREE_MAKE) ../shared_dirs.lst
 	echo; \
 	[ -n "$(SPEC)" ] && \
 	    echo "include $(SPEC)"; \
+	echo "CP ?= cp"; \
+	echo "MV ?= mv"; \
 	echo "include \$$(GAMMADIR)/make/$(OS_FAMILY)/makefiles/$(VARIANT).make"; \
 	echo "include \$$(GAMMADIR)/make/excludeSrc.make"; \
 	echo "include \$$(GAMMADIR)/make/$(OS_FAMILY)/makefiles/$(COMPILER).make"; \
@@ -361,6 +364,18 @@ sa.make: $(BUILDTREE_MAKE)
 	echo "include \$$(GAMMADIR)/make/$(OS_FAMILY)/makefiles/$(@F)"; \
 	) > $@
 
+dtrace.make: $(BUILDTREE_MAKE)
+	@echo Creating $@ ...
+	$(QUIETLY) ( \
+	$(BUILDTREE_COMMENT); \
+	echo; \
+	echo include flags.make; \
+	echo; \
+	echo "include \$$(GAMMADIR)/make/$(OS_FAMILY)/makefiles/$(@F)"; \
+	) > $@
+
 FORCE:
 
 .PHONY:  all FORCE
+
+.NOTPARALLEL:

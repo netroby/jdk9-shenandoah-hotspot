@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -26,7 +26,6 @@
 #define SHARE_VM_RUNTIME_OS_HPP
 
 #include "jvmtifiles/jvmti.h"
-#include "runtime/atomic.hpp"
 #include "runtime/extendedPC.hpp"
 #include "runtime/handles.hpp"
 #include "utilities/top.hpp"
@@ -41,9 +40,16 @@
 #ifdef TARGET_OS_FAMILY_windows
 # include "jvm_windows.h"
 #endif
+#ifdef TARGET_OS_FAMILY_aix
+# include "jvm_aix.h"
+# include <setjmp.h>
+#endif
 #ifdef TARGET_OS_FAMILY_bsd
 # include "jvm_bsd.h"
 # include <setjmp.h>
+# ifdef __APPLE__
+#  include <mach/mach_time.h>
+# endif
 #endif
 
 class AgentLibrary;
@@ -59,6 +65,8 @@ class JavaThread;
 class Event;
 class DLL;
 class FileHandle;
+class NativeCallStack;
+
 template<class E> class GrowableArray;
 
 // %%%%% Moved ThreadState, START_FN, OSThread to new osThread.hpp. -- Rose
@@ -90,9 +98,11 @@ const bool ExecMem = true;
 // Typedef for structured exception handling support
 typedef void (*java_call_t)(JavaValue* value, methodHandle* method, JavaCallArguments* args, Thread* thread);
 
+class MallocTracker;
+
 class os: AllStatic {
   friend class VMStructs;
-
+  friend class MallocTracker;
  public:
   enum { page_sizes_max = 9 }; // Size of _page_sizes array (8 plus a sentinel)
 
@@ -154,13 +164,17 @@ class os: AllStatic {
   // Override me as needed
   static int    file_name_strcmp(const char* s1, const char* s2);
 
+  // get/unset environment variable
   static bool getenv(const char* name, char* buffer, int len);
+  static bool unsetenv(const char* name);
+
   static bool have_special_privileges();
 
   static jlong  javaTimeMillis();
   static jlong  javaTimeNanos();
   static void   javaTimeNanos_info(jvmtiTimerInfo *info_ptr);
   static void   run_periodic_checks();
+  static bool   supports_monotonic_clock();
 
 
   // Returns the elapsed time in seconds since the vm started.
@@ -200,8 +214,13 @@ class os: AllStatic {
 
   // Interface for detecting multiprocessor system
   static inline bool is_MP() {
+#if !INCLUDE_NMT
     assert(_processor_count > 0, "invalid processor count");
     return _processor_count > 1 || AssumeMP;
+#else
+    // NMT needs atomic operations before this initialization.
+    return true;
+#endif
   }
   static julong available_memory();
   static julong physical_memory();
@@ -395,7 +414,7 @@ class os: AllStatic {
     // was equal.  However, some platforms mask off faulting addresses
     // to the page size, so now we just check that the address is
     // within the page.  This makes the thread argument unnecessary,
-    // but we retain the NULL check to preserve existing behaviour.
+    // but we retain the NULL check to preserve existing behavior.
     if (thread == NULL) return false;
     address page = (address) _mem_serialize_page;
     return addr >= page && addr < (page + os::vm_page_size());
@@ -431,20 +450,12 @@ class os: AllStatic {
   static intx current_thread_id();
   static int current_process_id();
   static int sleep(Thread* thread, jlong ms, bool interruptable);
-  static int naked_sleep();
+  // Short standalone OS sleep suitable for slow path spin loop.
+  // Ignores Thread.interrupt() (so keep it short).
+  // ms = 0, will sleep for the least amount of time allowed by the OS.
+  static void naked_short_sleep(jlong ms);
   static void infinite_sleep(); // never returns, use with CAUTION
-  static void yield();        // Yields to all threads with same priority
-  enum YieldResult {
-    YIELD_SWITCHED = 1,         // caller descheduled, other ready threads exist & ran
-    YIELD_NONEREADY = 0,        // No other runnable/ready threads.
-                                // platform-specific yield return immediately
-    YIELD_UNKNOWN = -1          // Unknown: platform doesn't support _SWITCHED or _NONEREADY
-    // YIELD_SWITCHED and YIELD_NONREADY imply the platform supports a "strong"
-    // yield that can be used in lieu of blocking.
-  } ;
-  static YieldResult NakedYield () ;
-  static void yield_all(int attempts = 0); // Yields to all other threads including lower priority
-  static void loop_breaker(int attempts);  // called from within tight loops to possibly influence time-sharing
+  static void naked_yield () ;
   static OSReturn set_priority(Thread* thread, ThreadPriority priority);
   static OSReturn get_priority(const Thread* const thread, ThreadPriority& priority);
 
@@ -470,9 +481,6 @@ class os: AllStatic {
 
   // run cmd in a separate process and return its exit code; or -1 on failures
   static int fork_and_exec(char *cmd);
-
-  // Set file to send error reports.
-  static void set_error_file(const char *logfile);
 
   // os::exit() is merged with vm_exit()
   // static void exit(int num);
@@ -541,7 +549,7 @@ class os: AllStatic {
 
   // Loads .dll/.so and
   // in case of error it checks if .dll/.so was built for the
-  // same architecture as Hotspot is running on
+  // same architecture as HotSpot is running on
   static void* dll_load(const char *name, char *ebuf, int ebuflen);
 
   // lookup symbol in a shared library
@@ -549,6 +557,16 @@ class os: AllStatic {
 
   // Unload library
   static void  dll_unload(void *lib);
+
+  // Callback for loaded module information
+  // Input parameters:
+  //    char*     module_file_name,
+  //    address   module_base_addr,
+  //    address   module_top_addr,
+  //    void*     param
+  typedef int (*LoadedModulesCallbackFunc)(const char *, address, address, void *);
+
+  static int get_loaded_modules_info(LoadedModulesCallbackFunc callback, void *param);
 
   // Return the handle of this process
   static void* get_default_process_handle();
@@ -622,11 +640,6 @@ class os: AllStatic {
   static void     print_jni_name_prefix_on(outputStream* st, int args_size);
   static void     print_jni_name_suffix_on(outputStream* st, int args_size);
 
-  // File conventions
-  static const char* file_separator();
-  static const char* line_separator();
-  static const char* path_separator();
-
   // Init os specific system properties values
   static void init_system_properties_values();
 
@@ -645,15 +658,25 @@ class os: AllStatic {
   static void* thread_local_storage_at(int index);
   static void  free_thread_local_storage(int index);
 
-  // Stack walk
-  static address get_caller_pc(int n = 0);
+  // Retrieve native stack frames.
+  // Parameter:
+  //   stack:  an array to storage stack pointers.
+  //   frames: size of above array.
+  //   toSkip: number of stack frames to skip at the beginning.
+  // Return: number of stack frames captured.
+  static int get_native_stack(address* stack, int size, int toSkip = 0);
 
   // General allocation (must be MT-safe)
-  static void* malloc  (size_t size, MEMFLAGS flags, address caller_pc = 0);
-  static void* realloc (void *memblock, size_t size, MEMFLAGS flags, address caller_pc = 0);
+  static void* malloc  (size_t size, MEMFLAGS flags, const NativeCallStack& stack);
+  static void* malloc  (size_t size, MEMFLAGS flags);
+  static void* realloc (void *memblock, size_t size, MEMFLAGS flag, const NativeCallStack& stack);
+  static void* realloc (void *memblock, size_t size, MEMFLAGS flag);
+
   static void  free    (void *memblock, MEMFLAGS flags = mtNone);
   static bool  check_heap(bool force = false);      // verify C heap integrity
   static char* strdup(const char *, MEMFLAGS flags = mtInternal);  // Like strdup
+  // Like strdup, but exit VM when strdup() returns NULL
+  static char* strdup_check_oom(const char*, MEMFLAGS flags = mtInternal);
 
 #ifndef PRODUCT
   static julong num_mallocs;         // # of calls to malloc/realloc
@@ -749,6 +772,9 @@ class os: AllStatic {
   // Hook for os specific jvm options that we don't want to abort on seeing
   static bool obsolete_option(const JavaVMOption *option);
 
+  // Amount beyond the callee frame size that we bang the stack.
+  static int extra_bang_size_in_bytes();
+
   // Extensions
 #include "runtime/os_ext.hpp"
 
@@ -769,6 +795,10 @@ class os: AllStatic {
 #endif
 #ifdef TARGET_OS_FAMILY_windows
 # include "os_windows.hpp"
+#endif
+#ifdef TARGET_OS_FAMILY_aix
+# include "os_aix.hpp"
+# include "os_posix.hpp"
 #endif
 #ifdef TARGET_OS_FAMILY_bsd
 # include "os_posix.hpp"
@@ -798,11 +828,18 @@ class os: AllStatic {
 #ifdef TARGET_OS_ARCH_linux_ppc
 # include "os_linux_ppc.hpp"
 #endif
+#ifdef TARGET_OS_ARCH_aix_ppc
+# include "os_aix_ppc.hpp"
+#endif
 #ifdef TARGET_OS_ARCH_bsd_x86
 # include "os_bsd_x86.hpp"
 #endif
 #ifdef TARGET_OS_ARCH_bsd_zero
 # include "os_bsd_zero.hpp"
+#endif
+
+#ifndef OS_NATIVE_THREAD_CREATION_FAILED_MSG
+#define OS_NATIVE_THREAD_CREATION_FAILED_MSG "unable to create native thread: possibly out of memory or process/resource limits reached"
 #endif
 
  public:
@@ -827,6 +864,9 @@ class os: AllStatic {
   // Hint to the underlying OS that a task switch would not be good.
   // Void return because it's a hint and can fail.
   static void hint_no_preempt();
+  static const char* native_thread_creation_failed_msg() {
+    return OS_NATIVE_THREAD_CREATION_FAILED_MSG;
+  }
 
   // Used at creation if requested by the diagnostic flag PauseAtStartup.
   // Causes the VM to wait until an external stimulus has been applied

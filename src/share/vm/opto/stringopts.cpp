@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2009, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2009, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -70,7 +70,7 @@ class StringConcat : public ResourceObj {
     _multiple(false),
     _string_alloc(NULL),
     _stringopts(stringopts) {
-    _arguments = new (_stringopts->C) Node(1);
+    _arguments = new Node(1);
     _arguments->del_req(0);
   }
 
@@ -228,8 +228,8 @@ class StringConcat : public ResourceObj {
       const TypeFunc* call_type = OptoRuntime::uncommon_trap_Type();
       const TypePtr* no_memory_effects = NULL;
       Compile* C = _stringopts->C;
-      CallStaticJavaNode* call = new (C) CallStaticJavaNode(call_type, call_addr, "uncommon_trap",
-                                                            jvms->bci(), no_memory_effects);
+      CallStaticJavaNode* call = new CallStaticJavaNode(call_type, call_addr, "uncommon_trap",
+                                                        jvms->bci(), no_memory_effects);
       for (int e = 0; e < TypeFunc::Parms; e++) {
         call->init_req(e, uct->in(e));
       }
@@ -1122,13 +1122,14 @@ Node* PhaseStringOpts::fetch_static_field(GraphKit& kit, ciField* field) {
 
   return kit.make_load(NULL, kit.basic_plus_adr(klass_node, field->offset_in_bytes()),
                        type, T_OBJECT,
-                       C->get_alias_index(mirror_type->add_offset(field->offset_in_bytes())));
+                       C->get_alias_index(mirror_type->add_offset(field->offset_in_bytes())),
+                       MemNode::unordered);
 }
 
 Node* PhaseStringOpts::int_stringSize(GraphKit& kit, Node* arg) {
-  RegionNode *final_merge = new (C) RegionNode(3);
+  RegionNode *final_merge = new RegionNode(3);
   kit.gvn().set_type(final_merge, Type::CONTROL);
-  Node* final_size = new (C) PhiNode(final_merge, TypeInt::INT);
+  Node* final_size = new PhiNode(final_merge, TypeInt::INT);
   kit.gvn().set_type(final_size, TypeInt::INT);
 
   IfNode* iff = kit.create_and_map_if(kit.control(),
@@ -1145,11 +1146,11 @@ Node* PhaseStringOpts::int_stringSize(GraphKit& kit, Node* arg) {
   } else {
 
     // int size = (i < 0) ? stringSize(-i) + 1 : stringSize(i);
-    RegionNode *r = new (C) RegionNode(3);
+    RegionNode *r = new RegionNode(3);
     kit.gvn().set_type(r, Type::CONTROL);
-    Node *phi = new (C) PhiNode(r, TypeInt::INT);
+    Node *phi = new PhiNode(r, TypeInt::INT);
     kit.gvn().set_type(phi, TypeInt::INT);
-    Node *size = new (C) PhiNode(r, TypeInt::INT);
+    Node *size = new PhiNode(r, TypeInt::INT);
     kit.gvn().set_type(size, TypeInt::INT);
     Node* chk = __ CmpI(arg, __ intcon(0));
     Node* p = __ Bool(chk, BoolTest::lt);
@@ -1174,11 +1175,11 @@ Node* PhaseStringOpts::int_stringSize(GraphKit& kit, Node* arg) {
     // Add loop predicate first.
     kit.add_predicate();
 
-    RegionNode *loop = new (C) RegionNode(3);
+    RegionNode *loop = new RegionNode(3);
     loop->init_req(1, kit.control());
     kit.gvn().set_type(loop, Type::CONTROL);
 
-    Node *index = new (C) PhiNode(loop, TypeInt::INT);
+    Node *index = new PhiNode(loop, TypeInt::INT);
     index->init_req(1, __ intcon(0));
     kit.gvn().set_type(index, TypeInt::INT);
     kit.set_control(loop);
@@ -1211,7 +1212,7 @@ Node* PhaseStringOpts::int_stringSize(GraphKit& kit, Node* arg) {
 }
 
 void PhaseStringOpts::int_getChars(GraphKit& kit, Node* arg, Node* char_array, Node* start, Node* end) {
-  RegionNode *final_merge = new (C) RegionNode(4);
+  RegionNode *final_merge = new RegionNode(4);
   kit.gvn().set_type(final_merge, Type::CONTROL);
   Node *final_mem = PhiNode::make(final_merge, kit.memory(char_adr_idx), Type::MEMORY, TypeAryPtr::CHARS);
   kit.gvn().set_type(final_mem, Type::MEMORY);
@@ -1261,11 +1262,11 @@ void PhaseStringOpts::int_getChars(GraphKit& kit, Node* arg, Node* char_array, N
                                         __ Bool(__ CmpI(arg, __ intcon(0)), BoolTest::lt),
                                         PROB_FAIR, COUNT_UNKNOWN);
 
-    RegionNode *merge = new (C) RegionNode(3);
+    RegionNode *merge = new RegionNode(3);
     kit.gvn().set_type(merge, Type::CONTROL);
-    i = new (C) PhiNode(merge, TypeInt::INT);
+    i = new PhiNode(merge, TypeInt::INT);
     kit.gvn().set_type(i, TypeInt::INT);
-    sign = new (C) PhiNode(merge, TypeInt::INT);
+    sign = new PhiNode(merge, TypeInt::INT);
     kit.gvn().set_type(sign, TypeInt::INT);
 
     merge->init_req(1, __ IfTrue(iff));
@@ -1294,10 +1295,10 @@ void PhaseStringOpts::int_getChars(GraphKit& kit, Node* arg, Node* char_array, N
     // Add loop predicate first.
     kit.add_predicate();
 
-    RegionNode *head = new (C) RegionNode(3);
+    RegionNode *head = new RegionNode(3);
     head->init_req(1, kit.control());
     kit.gvn().set_type(head, Type::CONTROL);
-    Node *i_phi = new (C) PhiNode(head, TypeInt::INT);
+    Node *i_phi = new PhiNode(head, TypeInt::INT);
     i_phi->init_req(1, i);
     kit.gvn().set_type(i_phi, TypeInt::INT);
     charPos = PhiNode::make(head, charPos);
@@ -1314,7 +1315,7 @@ void PhaseStringOpts::int_getChars(GraphKit& kit, Node* arg, Node* char_array, N
     Node* ch = __ AddI(r, __ intcon('0'));
 
     Node* st = __ store_to_memory(kit.control(), kit.array_element_address(char_array, m1, T_CHAR),
-                                  ch, T_CHAR, char_adr_idx);
+                                  ch, T_CHAR, char_adr_idx, MemNode::unordered);
 
 
     IfNode* iff = kit.create_and_map_if(head, __ Bool(__ CmpI(q, __ intcon(0)), BoolTest::ne),
@@ -1356,7 +1357,7 @@ void PhaseStringOpts::int_getChars(GraphKit& kit, Node* arg, Node* char_array, N
     } else {
       Node* m1 = __ SubI(charPos, __ intcon(1));
       Node* st = __ store_to_memory(kit.control(), kit.array_element_address(char_array, m1, T_CHAR),
-                                    sign, T_CHAR, char_adr_idx);
+                                    sign, T_CHAR, char_adr_idx, MemNode::unordered);
 
       final_merge->init_req(1, kit.control());
       final_mem->init_req(1, st);
@@ -1387,7 +1388,8 @@ Node* PhaseStringOpts::copy_string(GraphKit& kit, Node* str, Node* char_array, N
     ciTypeArray* value_array = t->const_oop()->as_type_array();
     for (int e = 0; e < c; e++) {
       __ store_to_memory(kit.control(), kit.array_element_address(char_array, start, T_CHAR),
-                         __ intcon(value_array->char_at(o + e)), T_CHAR, char_adr_idx);
+                         __ intcon(value_array->char_at(o + e)), T_CHAR, char_adr_idx,
+                         MemNode::unordered);
       start = __ AddI(start, __ intcon(1));
     }
   } else {
@@ -1418,7 +1420,7 @@ void PhaseStringOpts::replace_string_concat(StringConcat* sc) {
   // as a shim for the insertion of the new code.
   JVMState* jvms     = sc->begin()->jvms()->clone_shallow(C);
   uint size = sc->begin()->req();
-  SafePointNode* map = new (C) SafePointNode(size, jvms);
+  SafePointNode* map = new SafePointNode(size, jvms);
 
   // copy the control and memory state from the final call into our
   // new starting state.  This allows any preceeding tests to feed
@@ -1436,7 +1438,7 @@ void PhaseStringOpts::replace_string_concat(StringConcat* sc) {
   }
   // Make sure the memory state is a MergeMem for parsing.
   if (!map->in(TypeFunc::Memory)->is_MergeMem()) {
-    map->set_req(TypeFunc::Memory, MergeMemNode::make(C, map->in(TypeFunc::Memory)));
+    map->set_req(TypeFunc::Memory, MergeMemNode::make(map->in(TypeFunc::Memory)));
   }
 
   jvms->set_map(map);
@@ -1463,12 +1465,12 @@ void PhaseStringOpts::replace_string_concat(StringConcat* sc) {
 
   // Create a region for the overflow checks to merge into.
   int args = MAX2(sc->num_arguments(), 1);
-  RegionNode* overflow = new (C) RegionNode(args);
+  RegionNode* overflow = new RegionNode(args);
   kit.gvn().set_type(overflow, Type::CONTROL);
 
   // Create a hook node to hold onto the individual sizes since they
   // are need for the copying phase.
-  Node* string_sizes = new (C) Node(args);
+  Node* string_sizes = new Node(args);
 
   Node* length = __ intcon(0);
   for (int argi = 0; argi < sc->num_arguments(); argi++) {
@@ -1512,9 +1514,9 @@ void PhaseStringOpts::replace_string_concat(StringConcat* sc) {
         } else if (!type->higher_equal(TypeInstPtr::NOTNULL)) {
           // s = s != null ? s : "null";
           // length = length + (s.count - s.offset);
-          RegionNode *r = new (C) RegionNode(3);
+          RegionNode *r = new RegionNode(3);
           kit.gvn().set_type(r, Type::CONTROL);
-          Node *phi = new (C) PhiNode(r, type);
+          Node *phi = new PhiNode(r, type);
           kit.gvn().set_type(phi, phi->bottom_type());
           Node* p = __ Bool(__ CmpP(arg, kit.null()), BoolTest::ne);
           IfNode* iff = kit.create_and_map_if(kit.control(), p, PROB_MIN, COUNT_UNKNOWN);
@@ -1609,7 +1611,7 @@ void PhaseStringOpts::replace_string_concat(StringConcat* sc) {
         }
         case StringConcat::CharMode: {
           __ store_to_memory(kit.control(), kit.array_element_address(char_array, start, T_CHAR),
-                             arg, T_CHAR, char_adr_idx);
+                             arg, T_CHAR, char_adr_idx, MemNode::unordered);
           start = __ AddI(start, __ intcon(1));
           break;
         }

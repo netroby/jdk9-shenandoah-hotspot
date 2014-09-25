@@ -43,6 +43,7 @@ class ciKlass : public ciType {
   friend class ciMethod;
   friend class ciMethodData;
   friend class ciObjArrayKlass;
+  friend class ciReceiverTypeData;
 
 private:
   ciSymbol* _name;
@@ -125,6 +126,8 @@ public:
   virtual ciKlass* exact_klass() = 0;
 
   void print_name_on(outputStream* st);
+
+  const char* external_name() const;
 };
 
 #endif // SHARE_VM_CI_CIKLASS_HPP

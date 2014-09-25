@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2001, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2001, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -21,6 +21,11 @@
  * questions.
  *
  */
+
+#ifndef __clang_major__
+// FIXME, formats have issues.  Disable this macro definition, compile, and study warnings for more information.
+#define ATTRIBUTE_PRINTF(x,y)
+#endif
 
 #include "precompiled.hpp"
 #include "gc_implementation/g1/concurrentG1Refine.hpp"
@@ -318,7 +323,7 @@ G1CollectorPolicy::G1CollectorPolicy() :
 
 void G1CollectorPolicy::initialize_alignments() {
   _space_alignment = HeapRegion::GrainBytes;
-  size_t card_table_alignment = GenRemSet::max_alignment_constraint(GenRemSet::CardTable);
+  size_t card_table_alignment = GenRemSet::max_alignment_constraint();
   size_t page_size = UseLargePages ? os::large_page_size() : os::vm_page_size();
   _heap_alignment = MAX3(card_table_alignment, _space_alignment, page_size);
 }
@@ -451,7 +456,7 @@ void G1CollectorPolicy::init() {
   } else {
     _young_list_fixed_length = _young_gen_sizer->min_desired_young_length();
   }
-  _free_regions_at_end_of_collection = _g1->free_regions();
+  _free_regions_at_end_of_collection = _g1->num_free_regions();
   update_young_list_target_length();
 
   // We may immediately start allocating regions and placing them on the
@@ -804,7 +809,7 @@ void G1CollectorPolicy::record_full_collection_end() {
   double full_gc_time_sec = end_sec - _full_collection_start_sec;
   double full_gc_time_ms = full_gc_time_sec * 1000.0;
 
-  _trace_gen1_time_data.record_full_collection(full_gc_time_ms);
+  _trace_old_gen_time_data.record_full_collection(full_gc_time_ms);
 
   update_recent_gc_times(end_sec, full_gc_time_ms);
 
@@ -824,7 +829,7 @@ void G1CollectorPolicy::record_full_collection_end() {
 
   record_survivor_regions(0, NULL, NULL);
 
-  _free_regions_at_end_of_collection = _g1->free_regions();
+  _free_regions_at_end_of_collection = _g1->num_free_regions();
   // Reset survivors SurvRateGroup.
   _survivor_surv_rate_group->reset();
   update_young_list_target_length();
@@ -846,7 +851,7 @@ void G1CollectorPolicy::record_collection_pause_start(double start_time_sec) {
                  _g1->used(), _g1->recalculate_used()));
 
   double s_w_t_ms = (start_time_sec - _stop_world_start) * 1000.0;
-  _trace_gen0_time_data.record_start_collection(s_w_t_ms);
+  _trace_young_gen_time_data.record_start_collection(s_w_t_ms);
   _stop_world_start = 0.0;
 
   record_heap_size_info_at_start(false /* full */);
@@ -901,7 +906,7 @@ void G1CollectorPolicy::record_concurrent_mark_cleanup_completed() {
 void G1CollectorPolicy::record_concurrent_pause() {
   if (_stop_world_start > 0.0) {
     double yield_ms = (os::elapsedTime() - _stop_world_start) * 1000.0;
-    _trace_gen0_time_data.record_yield_time(yield_ms);
+    _trace_young_gen_time_data.record_yield_time(yield_ms);
   }
 }
 
@@ -965,7 +970,7 @@ void G1CollectorPolicy::record_collection_pause_end(double pause_time_ms, Evacua
 
 #ifndef PRODUCT
   if (G1YoungSurvRateVerbose) {
-    gclog_or_tty->print_cr("");
+    gclog_or_tty->cr();
     _short_lived_surv_rate_group->print();
     // do that for any other surv rate groups too
   }
@@ -988,7 +993,7 @@ void G1CollectorPolicy::record_collection_pause_end(double pause_time_ms, Evacua
   evacuation_info.set_bytes_copied(_bytes_copied_during_gc);
 
   if (update_stats) {
-    _trace_gen0_time_data.record_end_collection(pause_time_ms, phase_times());
+    _trace_young_gen_time_data.record_end_collection(pause_time_ms, phase_times());
     // this is where we update the allocation rate of the application
     double app_time_ms =
       (phase_times()->cur_collection_start_sec() * 1000.0 - _prev_collection_pause_end_ms);
@@ -1042,7 +1047,7 @@ void G1CollectorPolicy::record_collection_pause_end(double pause_time_ms, Evacua
 
   bool new_in_marking_window = _in_marking_window;
   bool new_in_marking_window_im = false;
-  if (during_initial_mark_pause()) {
+  if (last_pause_included_initial_mark) {
     new_in_marking_window = true;
     new_in_marking_window_im = true;
   }
@@ -1075,7 +1080,7 @@ void G1CollectorPolicy::record_collection_pause_end(double pause_time_ms, Evacua
   }
 
   _short_lived_surv_rate_group->start_adding_regions();
-  // do that for any other surv rate groupsx
+  // Do that for any other surv rate groups
 
   if (update_stats) {
     double cost_per_card_ms = 0.0;
@@ -1176,7 +1181,7 @@ void G1CollectorPolicy::record_collection_pause_end(double pause_time_ms, Evacua
 
   _in_marking_window = new_in_marking_window;
   _in_marking_window_im = new_in_marking_window_im;
-  _free_regions_at_end_of_collection = _g1->free_regions();
+  _free_regions_at_end_of_collection = _g1->num_free_regions();
   update_young_list_target_length();
 
   // Note that _mmu_tracker->max_gc_time() returns the time in seconds.
@@ -1198,13 +1203,13 @@ void G1CollectorPolicy::record_heap_size_info_at_start(bool full) {
   _survivor_used_bytes_before_gc = young_list->survivor_used_bytes();
   _heap_capacity_bytes_before_gc = _g1->capacity();
   _heap_used_bytes_before_gc = _g1->used();
-  _cur_collection_pause_used_regions_at_start = _g1->used_regions();
+  _cur_collection_pause_used_regions_at_start = _g1->num_used_regions();
 
   _eden_capacity_bytes_before_gc =
          (_young_list_target_length * HeapRegion::GrainBytes) - _survivor_used_bytes_before_gc;
 
   if (full) {
-    _metaspace_used_bytes_before_gc = MetaspaceAux::allocated_used_bytes();
+    _metaspace_used_bytes_before_gc = MetaspaceAux::used_bytes();
   }
 }
 
@@ -1410,8 +1415,8 @@ size_t G1CollectorPolicy::expansion_amount() {
 }
 
 void G1CollectorPolicy::print_tracing_info() const {
-  _trace_gen0_time_data.print();
-  _trace_gen1_time_data.print();
+  _trace_young_gen_time_data.print();
+  _trace_old_gen_time_data.print();
 }
 
 void G1CollectorPolicy::print_yg_surv_rate_info() const {
@@ -1613,7 +1618,7 @@ void
 G1CollectorPolicy::record_concurrent_mark_cleanup_end(int no_of_gc_threads) {
   _collectionSetChooser->clear();
 
-  uint region_num = _g1->n_regions();
+  uint region_num = _g1->num_regions();
   if (G1CollectedHeap::use_parallel_gc_threads()) {
     const uint OverpartitionFactor = 4;
     uint WorkUnit;
@@ -1634,7 +1639,7 @@ G1CollectorPolicy::record_concurrent_mark_cleanup_end(int no_of_gc_threads) {
         MAX2(region_num / (uint) (ParallelGCThreads * OverpartitionFactor),
              MinWorkUnit);
     }
-    _collectionSetChooser->prepare_for_par_region_addition(_g1->n_regions(),
+    _collectionSetChooser->prepare_for_par_region_addition(_g1->num_regions(),
                                                            WorkUnit);
     ParKnownGarbageTask parKnownGarbageTask(_collectionSetChooser,
                                             (int) WorkUnit);
@@ -1741,7 +1746,7 @@ void G1CollectorPolicy::add_to_incremental_cset_info(HeapRegion* hr, size_t rs_l
   _inc_cset_predicted_elapsed_time_ms += region_elapsed_time_ms;
   _inc_cset_bytes_used_before += used_bytes;
 
-  // Cache the values we have added to the aggregated informtion
+  // Cache the values we have added to the aggregated information
   // in the heap region in case we have to remove this region from
   // the incremental collection set, or it is updated by the
   // rset sampling code
@@ -1931,7 +1936,7 @@ uint G1CollectorPolicy::calc_max_old_cset_length() {
   // of them are available.
 
   G1CollectedHeap* g1h = G1CollectedHeap::heap();
-  const size_t region_num = g1h->n_regions();
+  const size_t region_num = g1h->num_regions();
   const size_t perc = (size_t) G1OldCSetRegionThresholdPercent;
   size_t result = region_num * perc / 100;
   // emulate ceiling
@@ -1968,9 +1973,9 @@ void G1CollectorPolicy::finalize_cset(double target_pause_time_ms, EvacuationInf
   _last_gc_was_young = gcs_are_young() ? true : false;
 
   if (_last_gc_was_young) {
-    _trace_gen0_time_data.increment_young_collection_count();
+    _trace_young_gen_time_data.increment_young_collection_count();
   } else {
-    _trace_gen0_time_data.increment_mixed_collection_count();
+    _trace_young_gen_time_data.increment_mixed_collection_count();
   }
 
   // The young list is laid with the survivor regions from the previous
@@ -2151,20 +2156,20 @@ void G1CollectorPolicy::finalize_cset(double target_pause_time_ms, EvacuationInf
   evacuation_info.set_collectionset_regions(cset_region_length());
 }
 
-void TraceGen0TimeData::record_start_collection(double time_to_stop_the_world_ms) {
-  if(TraceGen0Time) {
+void TraceYoungGenTimeData::record_start_collection(double time_to_stop_the_world_ms) {
+  if(TraceYoungGenTime) {
     _all_stop_world_times_ms.add(time_to_stop_the_world_ms);
   }
 }
 
-void TraceGen0TimeData::record_yield_time(double yield_time_ms) {
-  if(TraceGen0Time) {
+void TraceYoungGenTimeData::record_yield_time(double yield_time_ms) {
+  if(TraceYoungGenTime) {
     _all_yield_times_ms.add(yield_time_ms);
   }
 }
 
-void TraceGen0TimeData::record_end_collection(double pause_time_ms, G1GCPhaseTimes* phase_times) {
-  if(TraceGen0Time) {
+void TraceYoungGenTimeData::record_end_collection(double pause_time_ms, G1GCPhaseTimes* phase_times) {
+  if(TraceYoungGenTime) {
     _total.add(pause_time_ms);
     _other.add(pause_time_ms - phase_times->accounted_time_ms());
     _root_region_scan_wait.add(phase_times->root_region_scan_wait_time_ms());
@@ -2189,44 +2194,44 @@ void TraceGen0TimeData::record_end_collection(double pause_time_ms, G1GCPhaseTim
   }
 }
 
-void TraceGen0TimeData::increment_young_collection_count() {
-  if(TraceGen0Time) {
+void TraceYoungGenTimeData::increment_young_collection_count() {
+  if(TraceYoungGenTime) {
     ++_young_pause_num;
   }
 }
 
-void TraceGen0TimeData::increment_mixed_collection_count() {
-  if(TraceGen0Time) {
+void TraceYoungGenTimeData::increment_mixed_collection_count() {
+  if(TraceYoungGenTime) {
     ++_mixed_pause_num;
   }
 }
 
-void TraceGen0TimeData::print_summary(const char* str,
-                                      const NumberSeq* seq) const {
+void TraceYoungGenTimeData::print_summary(const char* str,
+                                          const NumberSeq* seq) const {
   double sum = seq->sum();
   gclog_or_tty->print_cr("%-27s = %8.2lf s (avg = %8.2lf ms)",
                 str, sum / 1000.0, seq->avg());
 }
 
-void TraceGen0TimeData::print_summary_sd(const char* str,
-                                         const NumberSeq* seq) const {
+void TraceYoungGenTimeData::print_summary_sd(const char* str,
+                                             const NumberSeq* seq) const {
   print_summary(str, seq);
   gclog_or_tty->print_cr("%+45s = %5d, std dev = %8.2lf ms, max = %8.2lf ms)",
                 "(num", seq->num(), seq->sd(), seq->maximum());
 }
 
-void TraceGen0TimeData::print() const {
-  if (!TraceGen0Time) {
+void TraceYoungGenTimeData::print() const {
+  if (!TraceYoungGenTime) {
     return;
   }
 
   gclog_or_tty->print_cr("ALL PAUSES");
   print_summary_sd("   Total", &_total);
-  gclog_or_tty->print_cr("");
-  gclog_or_tty->print_cr("");
+  gclog_or_tty->cr();
+  gclog_or_tty->cr();
   gclog_or_tty->print_cr("   Young GC Pauses: %8d", _young_pause_num);
   gclog_or_tty->print_cr("   Mixed GC Pauses: %8d", _mixed_pause_num);
-  gclog_or_tty->print_cr("");
+  gclog_or_tty->cr();
 
   gclog_or_tty->print_cr("EVACUATION PAUSES");
 
@@ -2246,21 +2251,21 @@ void TraceGen0TimeData::print() const {
     print_summary("      Clear CT", &_clear_ct);
     print_summary("      Other", &_other);
   }
-  gclog_or_tty->print_cr("");
+  gclog_or_tty->cr();
 
   gclog_or_tty->print_cr("MISC");
   print_summary_sd("   Stop World", &_all_stop_world_times_ms);
   print_summary_sd("   Yields", &_all_yield_times_ms);
 }
 
-void TraceGen1TimeData::record_full_collection(double full_gc_time_ms) {
-  if (TraceGen1Time) {
+void TraceOldGenTimeData::record_full_collection(double full_gc_time_ms) {
+  if (TraceOldGenTime) {
     _all_full_gc_times.add(full_gc_time_ms);
   }
 }
 
-void TraceGen1TimeData::print() const {
-  if (!TraceGen1Time) {
+void TraceOldGenTimeData::print() const {
+  if (!TraceOldGenTime) {
     return;
   }
 

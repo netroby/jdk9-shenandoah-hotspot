@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -74,6 +74,8 @@
   template(PopulateDumpSharedSpace)               \
   template(JNIFunctionTableCopier)                \
   template(RedefineClasses)                       \
+  template(UpdateForPopTopFrame)                  \
+  template(SetFramePop)                           \
   template(GetOwnedMonitorInfo)                   \
   template(GetObjectMonitorUsage)                 \
   template(GetCurrentContendedMonitor)            \
@@ -102,6 +104,12 @@
   template(ShenandoahUpdateRefs)                  \
   template(Exit)                                  \
   template(LinuxDllLoad)                          \
+  template(RotateGCLog)                           \
+  template(WhiteBoxOperation)                     \
+  template(ClassLoaderStatsOperation)             \
+  template(PrintCompileQueue)                     \
+  template(PrintCodeList)                         \
+  template(PrintCodeCache)                        \
 
 class VM_Operation: public CHeapObj<mtInternal> {
  public:
@@ -162,7 +170,7 @@ class VM_Operation: public CHeapObj<mtInternal> {
   void set_next(VM_Operation *next)              { _next = next; }
   void set_prev(VM_Operation *prev)              { _prev = prev; }
 
-  // Configuration. Override these appropriatly in subclasses.
+  // Configuration. Override these appropriately in subclasses.
   virtual VMOp_Type type() const = 0;
   virtual Mode evaluation_mode() const            { return _safepoint; }
   virtual bool allow_nested_vm_operations() const { return false; }
@@ -404,5 +412,47 @@ class VM_Exit: public VM_Operation {
   VMOp_Type type() const { return VMOp_Exit; }
   void doit();
 };
+
+
+class VM_RotateGCLog: public VM_Operation {
+ private:
+  outputStream* _out;
+
+ public:
+  VM_RotateGCLog(outputStream* st) : _out(st) {}
+  VMOp_Type type() const { return VMOp_RotateGCLog; }
+  void doit() { gclog_or_tty->rotate_log(true, _out); }
+};
+
+class VM_PrintCompileQueue: public VM_Operation {
+ private:
+  outputStream* _out;
+
+ public:
+  VM_PrintCompileQueue(outputStream* st) : _out(st) {}
+  VMOp_Type type() const { return VMOp_PrintCompileQueue; }
+  void doit();
+};
+
+class VM_PrintCodeList: public VM_Operation {
+ private:
+  outputStream* _out;
+
+ public:
+  VM_PrintCodeList(outputStream* st) : _out(st) {}
+  VMOp_Type type() const { return VMOp_PrintCodeList; }
+  void doit();
+};
+
+class VM_PrintCodeCache: public VM_Operation {
+ private:
+  outputStream* _out;
+
+ public:
+  VM_PrintCodeCache(outputStream* st) : _out(st) {}
+  VMOp_Type type() const { return VMOp_PrintCodeCache; }
+  void doit();
+};
+
 
 #endif // SHARE_VM_RUNTIME_VM_OPERATIONS_HPP

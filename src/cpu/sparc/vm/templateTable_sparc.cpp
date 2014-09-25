@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -25,6 +25,7 @@
 #include "precompiled.hpp"
 #include "interpreter/interpreter.hpp"
 #include "interpreter/interpreterRuntime.hpp"
+#include "interpreter/interp_masm.hpp"
 #include "interpreter/templateTable.hpp"
 #include "memory/universe.inline.hpp"
 #include "oops/methodData.hpp"
@@ -2942,12 +2943,12 @@ void TemplateTable::prepare_invoke(int byte_no,
 
 
 void TemplateTable::generate_vtable_call(Register Rrecv, Register Rindex, Register Rret) {
-  Register Rtemp = G4_scratch;
   Register Rcall = Rindex;
   assert_different_registers(Rcall, G5_method, Gargs, Rret);
 
   // get target Method* & entry point
   __ lookup_virtual_method(Rrecv, Rindex, G5_method);
+  __ profile_arguments_type(G5_method, Rcall, Gargs, true);
   __ call_from_interpreter(Rcall, Gargs, Rret);
 }
 
@@ -3022,6 +3023,7 @@ void TemplateTable::invokevfinal_helper(Register Rscratch, Register Rret) {
   __ null_check(O0);
 
   __ profile_final_call(O4);
+  __ profile_arguments_type(G5_method, Rscratch, Gargs, true);
 
   // get return address
   AddressLiteral table(Interpreter::invoke_return_entry_table());
@@ -3051,6 +3053,7 @@ void TemplateTable::invokespecial(int byte_no) {
 
   // do the call
   __ profile_call(O4);
+  __ profile_arguments_type(G5_method, Rscratch, Gargs, false);
   __ call_from_interpreter(Rscratch, Gargs, Rret);
 }
 
@@ -3066,6 +3069,7 @@ void TemplateTable::invokestatic(int byte_no) {
 
   // do the call
   __ profile_call(O4);
+  __ profile_arguments_type(G5_method, Rscratch, Gargs, false);
   __ call_from_interpreter(Rscratch, Gargs, Rret);
 }
 
@@ -3091,6 +3095,7 @@ void TemplateTable::invokeinterface_object_method(Register RKlass,
   // do the call - the index (f2) contains the Method*
   assert_different_registers(G5_method, Gargs, Rcall);
   __ mov(Rindex, G5_method);
+  __ profile_arguments_type(G5_method, Rcall, Gargs, true);
   __ call_from_interpreter(Rcall, Gargs, Rret);
   __ bind(notFinal);
 
@@ -3197,18 +3202,13 @@ void TemplateTable::invokeinterface(int byte_no) {
   Register Rcall = Rinterface;
   assert_different_registers(Rcall, G5_method, Gargs, Rret);
 
+  __ profile_arguments_type(G5_method, Rcall, Gargs, true);
   __ call_from_interpreter(Rcall, Gargs, Rret);
 }
 
 void TemplateTable::invokehandle(int byte_no) {
   transition(vtos, vtos);
   assert(byte_no == f1_byte, "use this argument");
-
-  if (!EnableInvokeDynamic) {
-    // rewriter does not generate this bytecode
-    __ should_not_reach_here();
-    return;
-  }
 
   const Register Rret       = Lscratch;
   const Register G4_mtype   = G4_scratch;
@@ -3226,6 +3226,7 @@ void TemplateTable::invokehandle(int byte_no) {
   // do the call
   __ verify_oop(G4_mtype);
   __ profile_final_call(O4);  // FIXME: profile the LambdaForm also
+  __ profile_arguments_type(G5_method, Rscratch, Gargs, true);
   __ call_from_interpreter(Rscratch, Gargs, Rret);
 }
 
@@ -3233,17 +3234,6 @@ void TemplateTable::invokehandle(int byte_no) {
 void TemplateTable::invokedynamic(int byte_no) {
   transition(vtos, vtos);
   assert(byte_no == f1_byte, "use this argument");
-
-  if (!EnableInvokeDynamic) {
-    // We should not encounter this bytecode if !EnableInvokeDynamic.
-    // The verifier will stop it.  However, if we get past the verifier,
-    // this will stop the thread in a reasonable way, without crashing the JVM.
-    __ call_VM(noreg, CAST_FROM_FN_PTR(address,
-                     InterpreterRuntime::throw_IncompatibleClassChangeError));
-    // the call_VM checks for exception, so we should never return here.
-    __ should_not_reach_here();
-    return;
-  }
 
   const Register Rret        = Lscratch;
   const Register G4_callsite = G4_scratch;
@@ -3262,6 +3252,7 @@ void TemplateTable::invokedynamic(int byte_no) {
 
   // do the call
   __ verify_oop(G4_callsite);
+  __ profile_arguments_type(G5_method, Rscratch, Gargs, false);
   __ call_from_interpreter(Rscratch, Gargs, Rret);
 }
 

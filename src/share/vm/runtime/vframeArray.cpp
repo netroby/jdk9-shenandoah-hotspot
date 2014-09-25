@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -24,6 +24,7 @@
 
 #include "precompiled.hpp"
 #include "classfile/vmSymbols.hpp"
+#include "code/vmreg.inline.hpp"
 #include "interpreter/bytecode.hpp"
 #include "interpreter/interpreter.hpp"
 #include "memory/allocation.inline.hpp"
@@ -43,6 +44,7 @@
 #include "opto/runtime.hpp"
 #endif
 
+PRAGMA_FORMAT_MUTE_WARNINGS_FOR_GCC
 
 int vframeArrayElement:: bci(void) const { return (_bci == SynchronizationEntryBCI ? 0 : _bci); }
 
@@ -295,9 +297,9 @@ void vframeArrayElement::unpack_on_stack(int caller_actual_parameters,
     src->lock()->move_to(src->obj(), top->lock());
   }
   if (ProfileInterpreter) {
-    iframe()->interpreter_frame_set_mdx(0); // clear out the mdp.
+    iframe()->interpreter_frame_set_mdp(0); // clear out the mdp.
   }
-  iframe()->interpreter_frame_set_bcx((intptr_t)bcp); // cannot use bcp because frame is not initialized yet
+  iframe()->interpreter_frame_set_bcp(bcp);
   if (ProfileInterpreter) {
     MethodData* mdo = method()->method_data();
     if (mdo != NULL) {
@@ -418,24 +420,20 @@ void vframeArrayElement::unpack_on_stack(int caller_actual_parameters,
 
 }
 
-int vframeArrayElement::on_stack_size(int caller_actual_parameters,
-                                      int callee_parameters,
+int vframeArrayElement::on_stack_size(int callee_parameters,
                                       int callee_locals,
                                       bool is_top_frame,
-                                      bool is_bottom_frame,
                                       int popframe_extra_stack_expression_els) const {
   assert(method()->max_locals() == locals()->size(), "just checking");
   int locks = monitors() == NULL ? 0 : monitors()->number_of_monitors();
   int temps = expressions()->size();
-  return Interpreter::size_activation(method(),
+  return Interpreter::size_activation(method()->max_stack(),
                                       temps + callee_parameters,
                                       popframe_extra_stack_expression_els,
                                       locks,
-                                      caller_actual_parameters,
                                       callee_parameters,
                                       callee_locals,
-                                      is_top_frame,
-                                      is_bottom_frame);
+                                      is_top_frame);
 }
 
 

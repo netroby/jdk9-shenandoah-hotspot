@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -25,6 +25,7 @@
 #include "precompiled.hpp"
 #include "memory/allocation.inline.hpp"
 #include "runtime/mutexLocker.hpp"
+#include "runtime/os.inline.hpp"
 #include "runtime/osThread.hpp"
 #include "runtime/thread.inline.hpp"
 #include "runtime/threadCritical.hpp"
@@ -82,7 +83,7 @@ EventMark::EventMark(const char* format, ...) {
     va_start(ap, format);
     // Save a copy of begin message and log it.
     _buffer.printv(format, ap);
-    Events::log(NULL, _buffer);
+    Events::log(NULL, "%s", _buffer.buffer());
     va_end(ap);
   }
 }
@@ -91,6 +92,6 @@ EventMark::~EventMark() {
   if (LogEvents) {
     // Append " done" to the begin message and log it
     _buffer.append(" done");
-    Events::log(NULL, _buffer);
+    Events::log(NULL, "%s", _buffer.buffer());
   }
 }

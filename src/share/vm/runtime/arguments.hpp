@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -26,7 +26,9 @@
 #define SHARE_VM_RUNTIME_ARGUMENTS_HPP
 
 #include "runtime/java.hpp"
+#include "runtime/os.hpp"
 #include "runtime/perfData.hpp"
+#include "utilities/debug.hpp"
 #include "utilities/top.hpp"
 
 // Arguments parses the command line and recognizes options
@@ -35,7 +37,7 @@
 extern "C" {
   typedef void (JNICALL *abort_hook_t)(void);
   typedef void (JNICALL *exit_hook_t)(jint code);
-  typedef jint (JNICALL *vfprintf_hook_t)(FILE *fp, const char *format, va_list args);
+  typedef jint (JNICALL *vfprintf_hook_t)(FILE *fp, const char *format, va_list args)  ATTRIBUTE_PRINTF(2, 0);
 }
 
 // Forward declarations
@@ -268,14 +270,14 @@ class Arguments : AllStatic {
   static const char* _java_vendor_url_bug;
 
   // sun.java.launcher, private property to provide information about
-  // java/gamma launcher
+  // java launcher
   static const char* _sun_java_launcher;
 
   // sun.java.launcher.pid, private property
   static int    _sun_java_launcher_pid;
 
-  // was this VM created by the gamma launcher
-  static bool   _created_by_gamma_launcher;
+  // was this VM created via the -XXaltjvm=<path> option
+  static bool   _sun_java_launcher_is_altjvm;
 
   // Option flags
   static bool   _has_profile;
@@ -322,6 +324,7 @@ class Arguments : AllStatic {
 
   // Tiered
   static void set_tiered_flags();
+  static int  get_min_number_of_compiler_threads();
   // CMS/ParNew garbage collectors
   static void set_parnew_gc_flags();
   static void set_cms_and_parnew_gc_flags();
@@ -370,11 +373,16 @@ class Arguments : AllStatic {
   static jint parse_vm_init_args(const JavaVMInitArgs* args);
   static jint parse_each_vm_init_arg(const JavaVMInitArgs* args, SysClassPath* scp_p, bool* scp_assembly_required_p, Flag::Flags origin);
   static jint finalize_vm_init_args(SysClassPath* scp_p, bool scp_assembly_required);
-  static bool is_bad_option(const JavaVMOption* option, jboolean ignore,
-    const char* option_type);
+  static bool is_bad_option(const JavaVMOption* option, jboolean ignore, const char* option_type);
+
   static bool is_bad_option(const JavaVMOption* option, jboolean ignore) {
     return is_bad_option(option, ignore, NULL);
   }
+
+  static bool is_percentage(uintx val) {
+    return val <= 100;
+  }
+
   static bool verify_interval(uintx val, uintx min,
                               uintx max, const char* name);
   static bool verify_min_value(intx val, intx min, const char* name);
@@ -440,12 +448,22 @@ class Arguments : AllStatic {
   static jint apply_ergo();
   // Adjusts the arguments after the OS have adjusted the arguments
   static jint adjust_after_os();
+
+  // Verifies that the given value will fit as a MinHeapFreeRatio. If not, an error
+  // message is returned in the provided buffer.
+  static bool verify_MinHeapFreeRatio(FormatBuffer<80>& err_msg, uintx min_heap_free_ratio);
+
+  // Verifies that the given value will fit as a MaxHeapFreeRatio. If not, an error
+  // message is returned in the provided buffer.
+  static bool verify_MaxHeapFreeRatio(FormatBuffer<80>& err_msg, uintx max_heap_free_ratio);
+
   // Check for consistency in the selection of the garbage collector.
   static bool check_gc_consistency();
   static void check_deprecated_gcs();
   static void check_deprecated_gc_flags();
-  // Check consistecy or otherwise of VM argument settings
+  // Check consistency or otherwise of VM argument settings
   static bool check_vm_args_consistency();
+  static bool check_vm_args_consistency_ext();
   // Check stack pages settings
   static bool check_stack_pages();
   // Used by os_solaris
@@ -483,8 +501,8 @@ class Arguments : AllStatic {
   static const char* sun_java_launcher()    { return _sun_java_launcher; }
   // Was VM created by a Java launcher?
   static bool created_by_java_launcher();
-  // Was VM created by the gamma Java launcher?
-  static bool created_by_gamma_launcher();
+  // -Dsun.java.launcher.is_altjvm
+  static bool sun_java_launcher_is_altjvm();
   // -Dsun.java.launcher.pid
   static int sun_java_launcher_pid()        { return _sun_java_launcher_pid; }
 
@@ -494,7 +512,7 @@ class Arguments : AllStatic {
   // -Xprof
   static bool has_profile()                 { return _has_profile; }
 
-  // -Xms, -Xmx
+  // -Xms
   static uintx min_heap_size()              { return _min_heap_size; }
   static void  set_min_heap_size(uintx v)   { _min_heap_size = v;  }
 
@@ -561,15 +579,20 @@ class Arguments : AllStatic {
     _meta_index_dir  = meta_index_dir;
   }
 
-  static char *get_java_home() { return _java_home->value(); }
-  static char *get_dll_dir() { return _sun_boot_library_path->value(); }
-  static char *get_endorsed_dir() { return _java_endorsed_dirs->value(); }
-  static char *get_sysclasspath() { return _sun_boot_class_path->value(); }
+  static char* get_java_home() { return _java_home->value(); }
+  static char* get_dll_dir() { return _sun_boot_library_path->value(); }
+  static char* get_endorsed_dir() { return _java_endorsed_dirs->value(); }
+  static char* get_sysclasspath() { return _sun_boot_class_path->value(); }
   static char* get_meta_index_path() { return _meta_index_path; }
   static char* get_meta_index_dir()  { return _meta_index_dir;  }
+  static char* get_ext_dirs() { return _java_ext_dirs->value(); }
+  static char* get_appclasspath() { return _java_class_path->value(); }
+  static void  fix_appclasspath();
 
   // Operation modi
-  static Mode mode()                        { return _mode; }
+  static Mode mode()                { return _mode; }
+  static bool is_interpreter_only() { return mode() == _int; }
+
 
   // Utility: copies src into buf, replacing "%%" with "%" and "%p" with pid.
   static bool copy_expand_pid(const char* src, size_t srclen, char* buf, size_t buflen);

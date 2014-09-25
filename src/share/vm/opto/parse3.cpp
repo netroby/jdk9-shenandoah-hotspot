@@ -28,6 +28,7 @@
 #include "memory/universe.inline.hpp"
 #include "oops/objArrayKlass.hpp"
 #include "opto/addnode.hpp"
+#include "opto/castnode.hpp"
 #include "opto/memnode.hpp"
 #include "opto/parse.hpp"
 #include "opto/rootnode.hpp"
@@ -230,8 +231,14 @@ void Parse::do_get_xxx(Node* obj, ciField* field, bool is_field) {
   } else {
     type = Type::get_const_basic_type(bt);
   }
+  if (support_IRIW_for_not_multiple_copy_atomic_cpu && field->is_volatile()) {
+    insert_mem_bar(Op_MemBarVolatile);   // StoreLoad barrier
+  }
   // Build the load.
-  Node* ld = make_load(NULL, adr, type, bt, adr_type, is_vol);
+  //
+  MemNode::MemOrd mo = is_vol ? MemNode::acquire : MemNode::unordered;
+  bool needs_atomic_access = is_vol || AlwaysAtomicAccesses;
+  Node* ld = make_load(NULL, adr, type, bt, adr_type, mo, needs_atomic_access);
 
   // Adjust Java stack
   if (type2size[bt] == 1)
@@ -294,6 +301,16 @@ void Parse::do_put_xxx(Node* obj, ciField* field, bool is_field) {
   // Round doubles before storing
   if (bt == T_DOUBLE)  val = dstore_rounding(val);
 
+  // Conservatively release stores of object references.
+  const MemNode::MemOrd mo =
+    is_vol ?
+    // Volatile fields need releasing stores.
+    MemNode::release :
+    // Non-volatile fields also need releasing stores if they hold an
+    // object reference, because the object reference might point to
+    // a freshly created object.
+    StoreNode::release_if_reference(bt);
+
   // Store the value.
   Node* store;
   if (bt == T_OBJECT) {
@@ -306,15 +323,29 @@ void Parse::do_put_xxx(Node* obj, ciField* field, bool is_field) {
 
     val = shenandoah_read_barrier(val);
 
-    store = store_oop_to_object( control(), obj, adr, adr_type, val, field_type, bt);
+    store = store_oop_to_object(control(), obj, adr, adr_type, val, field_type, bt, mo);
   } else {
-    store = store_to_memory( control(), adr, val, bt, adr_type, is_vol );
+    bool needs_atomic_access = is_vol || AlwaysAtomicAccesses;
+    store = store_to_memory(control(), adr, val, bt, adr_type, mo, needs_atomic_access);
   }
 
   // If reference is volatile, prevent following volatiles ops from
   // floating up before the volatile write.
   if (is_vol) {
-    insert_mem_bar(Op_MemBarVolatile); // Use fat membar
+    // If not multiple copy atomic, we do the MemBarVolatile before the load.
+    if (!support_IRIW_for_not_multiple_copy_atomic_cpu) {
+      insert_mem_bar(Op_MemBarVolatile); // Use fat membar
+    }
+    // Remember we wrote a volatile field.
+    // For not multiple copy atomic cpu (ppc64) a barrier should be issued
+    // in constructors which have such stores. See do_exits() in parse1.cpp.
+    if (is_field) {
+      set_wrote_volatile(true);
+    }
+  }
+
+  if (is_field) {
+    set_wrote_fields(true);
   }
 
   // If the field is final, the rules of Java say we are in <init> or <clinit>.
@@ -323,7 +354,13 @@ void Parse::do_put_xxx(Node* obj, ciField* field, bool is_field) {
   // out of the constructor.
   // Any method can write a @Stable field; insert memory barriers after those also.
   if (is_field && (field->is_final() || field->is_stable())) {
-    set_wrote_final(true);
+    if (field->is_final()) {
+        set_wrote_final(true);
+    }
+    if (field->is_stable()) {
+        set_wrote_stable(true);
+    }
+
     // Preserve allocation ptr to create precedent edge to it in membar
     // generated on exit from constructor.
     if (C->eliminate_boxing() &&
@@ -346,7 +383,7 @@ bool Parse::push_constant(ciConstant constant, bool require_constant, bool is_au
     //   should_be_constant = (oop not scavengable || ScavengeRootsInCode >= 2)
     // An oop is not scavengable if it is in the perm gen.
     if (stable_type != NULL && con_type != NULL && con_type->isa_oopptr())
-      con_type = con_type->join(stable_type);
+      con_type = con_type->join_speculative(stable_type);
     break;
 
   case T_ILLEGAL:
@@ -423,7 +460,7 @@ Node* Parse::expand_multianewarray(ciArrayKlass* array_klass, Node* *lengths, in
       Node*    elem   = expand_multianewarray(array_klass_1, &lengths[1], ndimensions-1, nargs);
       intptr_t offset = header + ((intptr_t)i << LogBytesPerHeapOop);
       Node*    eaddr  = basic_plus_adr(array, offset);
-      store_oop_to_array(control(), array, eaddr, adr_type, elem, elemtype, T_OBJECT);
+      store_oop_to_array(control(), array, eaddr, adr_type, elem, elemtype, T_OBJECT, MemNode::unordered);
     }
   }
   return array;
@@ -512,7 +549,7 @@ void Parse::do_multianewarray() {
       // Fill-in it with values
       for (j = 0; j < ndimensions; j++) {
         Node *dims_elem = array_element_address(dims, intcon(j), T_INT);
-        store_to_memory(control(), dims_elem, length[j], T_INT, TypeAryPtr::INTS);
+        store_to_memory(control(), dims_elem, length[j], T_INT, TypeAryPtr::INTS, MemNode::unordered);
       }
     }
 
@@ -524,7 +561,7 @@ void Parse::do_multianewarray() {
   }
   make_slow_call_ex(c, env()->Throwable_klass(), false);
 
-  Node* res = _gvn.transform(new (C) ProjNode(c, TypeFunc::Parms));
+  Node* res = _gvn.transform(new ProjNode(c, TypeFunc::Parms));
 
   const Type* type = TypeOopPtr::make_from_klass_raw(array_klass);
 
@@ -538,7 +575,7 @@ void Parse::do_multianewarray() {
 
     // We cannot sharpen the nested sub-arrays, since the top level is mutable.
 
-  Node* cast = _gvn.transform( new (C) CheckCastPPNode(control(), res, type) );
+  Node* cast = _gvn.transform( new CheckCastPPNode(control(), res, type) );
   push(cast);
 
   // Possible improvements:

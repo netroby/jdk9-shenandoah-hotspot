@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -29,7 +29,9 @@
 #include "interpreter/bytecodeHistogram.hpp"
 #include "interpreter/bytecodeInterpreter.hpp"
 #include "interpreter/interpreter.hpp"
+#include "interpreter/interpreterGenerator.hpp"
 #include "interpreter/interpreterRuntime.hpp"
+#include "interpreter/interp_masm.hpp"
 #include "interpreter/templateTable.hpp"
 #include "memory/allocation.inline.hpp"
 #include "memory/resourceArea.hpp"
@@ -72,7 +74,7 @@ void InterpreterCodelet::print_on(outputStream* st) const {
   if (description() != NULL) st->print("%s  ", description());
   if (bytecode()    >= 0   ) st->print("%d %s  ", bytecode(), Bytecodes::name(bytecode()));
   st->print_cr("[" INTPTR_FORMAT ", " INTPTR_FORMAT "]  %d bytes",
-                code_begin(), code_end(), code_size());
+                p2i(code_begin()), p2i(code_end()), code_size());
 
   if (PrintInterpreter) {
     st->cr();
@@ -80,9 +82,35 @@ void InterpreterCodelet::print_on(outputStream* st) const {
   }
 }
 
+CodeletMark::CodeletMark(InterpreterMacroAssembler*& masm,
+                         const char* description,
+                         Bytecodes::Code bytecode) :
+  _clet((InterpreterCodelet*)AbstractInterpreter::code()->request(codelet_size())),
+  _cb(_clet->code_begin(), _clet->code_size()) {
+  // Request all space (add some slack for Codelet data).
+  assert(_clet != NULL, "we checked not enough space already");
+
+  // Initialize Codelet attributes.
+  _clet->initialize(description, bytecode);
+  // Create assembler for code generation.
+  masm = new InterpreterMacroAssembler(&_cb);
+  _masm = &masm;
+}
+
+CodeletMark::~CodeletMark() {
+  // Align so printing shows nop's instead of random code at the end (Codelets are aligned).
+  (*_masm)->align(wordSize);
+  // Make sure all code is in code buffer.
+  (*_masm)->flush();
+
+  // Commit Codelet.
+  AbstractInterpreter::code()->commit((*_masm)->code()->pure_insts_size(), (*_masm)->code()->strings());
+  // Make sure nobody can use _masm outside a CodeletMark lifespan.
+  *_masm = NULL;
+}
 
 //------------------------------------------------------------------------------------------------------------------------
-// Implementation of  platform independent aspects of Interpreter
+// Implementation of platform independent aspects of Interpreter
 
 void AbstractInterpreter::initialize() {
   if (_code != NULL) return;
@@ -234,7 +262,7 @@ AbstractInterpreter::MethodKind AbstractInterpreter::method_kind(methodHandle m)
   // Special intrinsic method?
   // Note: This test must come _after_ the test for native methods,
   //       otherwise we will run into problems with JDK 1.2, see also
-  //       AbstractInterpreterGenerator::generate_method_entry() for
+  //       InterpreterGenerator::generate_method_entry() for
   //       for details.
   switch (m->intrinsic_id()) {
     case vmIntrinsics::_dsin  : return java_lang_math_sin  ;
@@ -493,4 +521,51 @@ void AbstractInterpreterGenerator::initialize_method_handle_entries() {
     Interpreter::MethodKind kind = (Interpreter::MethodKind) i;
     Interpreter::_entry_table[kind] = Interpreter::_entry_table[Interpreter::abstract];
   }
+}
+
+// Generate method entries
+address InterpreterGenerator::generate_method_entry(
+                                        AbstractInterpreter::MethodKind kind) {
+  // determine code generation flags
+  bool synchronized = false;
+  address entry_point = NULL;
+
+  switch (kind) {
+  case Interpreter::zerolocals             :                                                      break;
+  case Interpreter::zerolocals_synchronized: synchronized = true;                                 break;
+  case Interpreter::native                 : entry_point = generate_native_entry(false); break;
+  case Interpreter::native_synchronized    : entry_point = generate_native_entry(true);  break;
+  case Interpreter::empty                  : entry_point = generate_empty_entry(); break;
+  case Interpreter::accessor               : entry_point = generate_accessor_entry(); break;
+  case Interpreter::abstract               : entry_point = generate_abstract_entry();    break;
+
+  case Interpreter::java_lang_math_sin     : // fall thru
+  case Interpreter::java_lang_math_cos     : // fall thru
+  case Interpreter::java_lang_math_tan     : // fall thru
+  case Interpreter::java_lang_math_abs     : // fall thru
+  case Interpreter::java_lang_math_log     : // fall thru
+  case Interpreter::java_lang_math_log10   : // fall thru
+  case Interpreter::java_lang_math_sqrt    : // fall thru
+  case Interpreter::java_lang_math_pow     : // fall thru
+  case Interpreter::java_lang_math_exp     : entry_point = generate_math_entry(kind);      break;
+  case Interpreter::java_lang_ref_reference_get
+                                           : entry_point = generate_Reference_get_entry(); break;
+#ifndef CC_INTERP
+  case Interpreter::java_util_zip_CRC32_update
+                                           : entry_point = generate_CRC32_update_entry();  break;
+  case Interpreter::java_util_zip_CRC32_updateBytes
+                                           : // fall thru
+  case Interpreter::java_util_zip_CRC32_updateByteBuffer
+                                           : entry_point = generate_CRC32_updateBytes_entry(kind); break;
+#endif // CC_INTERP
+  default:
+    fatal(err_msg("unexpected method kind: %d", kind));
+    break;
+  }
+
+  if (entry_point) {
+    return entry_point;
+  }
+
+  return generate_normal_entry(synchronized);
 }

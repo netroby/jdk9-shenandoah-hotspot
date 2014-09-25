@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2005, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2005, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -28,21 +28,8 @@
 #include "oops/fieldStreams.hpp"
 #include "prims/jvmtiClassFileReconstituter.hpp"
 #include "runtime/signature.hpp"
-#ifdef TARGET_ARCH_x86
-# include "bytes_x86.hpp"
-#endif
-#ifdef TARGET_ARCH_sparc
-# include "bytes_sparc.hpp"
-#endif
-#ifdef TARGET_ARCH_zero
-# include "bytes_zero.hpp"
-#endif
-#ifdef TARGET_ARCH_arm
-# include "bytes_arm.hpp"
-#endif
-#ifdef TARGET_ARCH_ppc
-# include "bytes_ppc.hpp"
-#endif
+#include "utilities/bytes.hpp"
+
 // FIXME: add Deprecated attribute
 // FIXME: fix Synthetic attribute
 // FIXME: per Serguei, add error return handling for ConstantPool::copy_cpool_bytes()
@@ -851,7 +838,7 @@ void JvmtiClassFileReconstituter::copy_bytecodes(methodHandle mh,
                "sanity check");
 
         int cpci = Bytes::get_native_u2(bcp+1);
-        bool is_invokedynamic = (EnableInvokeDynamic && code == Bytecodes::_invokedynamic);
+        bool is_invokedynamic = (code == Bytecodes::_invokedynamic);
         ConstantPoolCacheEntry* entry;
         if (is_invokedynamic) {
           cpci = Bytes::get_native_u4(bcp+1);

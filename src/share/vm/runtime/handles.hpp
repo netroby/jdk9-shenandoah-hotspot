@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -228,7 +228,7 @@ class HandleArea: public Arena {
   HandleArea* _prev;          // link to outer (older) area
  public:
   // Constructor
-  HandleArea(HandleArea* prev) : Arena(Chunk::tiny_size) {
+  HandleArea(HandleArea* prev) : Arena(mtThread, Chunk::tiny_size) {
     debug_only(_handle_mark_nesting    = 0);
     debug_only(_no_handle_mark_nesting = 0);
     _prev = prev;
@@ -268,7 +268,7 @@ class HandleArea: public Arena {
 // HandleMarks manually.
 //
 // A HandleMark constructor will record the current handle area top, and the
-// desctructor will reset the top, destroying all handles allocated in between.
+// destructor will reset the top, destroying all handles allocated in between.
 // The following code will therefore NOT work:
 //
 //   Handle h;

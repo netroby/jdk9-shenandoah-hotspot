@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2000, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -27,6 +27,7 @@
 #include "classfile/javaClasses.hpp"
 #include "classfile/loaderConstraints.hpp"
 #include "classfile/placeholders.hpp"
+#include "classfile/stringTable.hpp"
 #include "classfile/systemDictionary.hpp"
 #include "ci/ciField.hpp"
 #include "ci/ciInstance.hpp"
@@ -51,6 +52,7 @@
 #include "interpreter/bytecodes.hpp"
 #include "interpreter/interpreter.hpp"
 #include "memory/allocation.hpp"
+#include "memory/allocation.inline.hpp"
 #include "memory/cardTableRS.hpp"
 #include "memory/defNewGeneration.hpp"
 #include "memory/freeBlockDictionary.hpp"
@@ -92,6 +94,7 @@
 #include "runtime/globals.hpp"
 #include "runtime/java.hpp"
 #include "runtime/javaCalls.hpp"
+#include "runtime/os.hpp"
 #include "runtime/perfMemory.hpp"
 #include "runtime/serviceThread.hpp"
 #include "runtime/sharedRuntime.hpp"
@@ -103,6 +106,7 @@
 #include "utilities/globalDefinitions.hpp"
 #include "utilities/hashtable.hpp"
 #include "utilities/macros.hpp"
+
 #ifdef TARGET_ARCH_x86
 # include "vmStructs_x86.hpp"
 #endif
@@ -142,6 +146,9 @@
 #ifdef TARGET_OS_ARCH_linux_ppc
 # include "vmStructs_linux_ppc.hpp"
 #endif
+#ifdef TARGET_OS_ARCH_aix_ppc
+# include "vmStructs_aix_ppc.hpp"
+#endif
 #ifdef TARGET_OS_ARCH_bsd_x86
 # include "vmStructs_bsd_x86.hpp"
 #endif
@@ -164,44 +171,38 @@
 #include "gc_implementation/parallelScavenge/vmStructs_parallelgc.hpp"
 #include "gc_implementation/g1/vmStructs_g1.hpp"
 #endif // INCLUDE_ALL_GCS
+
+#if INCLUDE_TRACE
+ #include "runtime/vmStructs_trace.hpp"
+#endif
+
 #ifdef COMPILER2
 #include "opto/addnode.hpp"
 #include "opto/block.hpp"
 #include "opto/callnode.hpp"
+#include "opto/castnode.hpp"
 #include "opto/cfgnode.hpp"
 #include "opto/chaitin.hpp"
+#include "opto/convertnode.hpp"
 #include "opto/divnode.hpp"
+#include "opto/intrinsicnode.hpp"
 #include "opto/locknode.hpp"
 #include "opto/loopnode.hpp"
 #include "opto/machnode.hpp"
 #include "opto/matcher.hpp"
 #include "opto/mathexactnode.hpp"
 #include "opto/mulnode.hpp"
+#include "opto/movenode.hpp"
+#include "opto/narrowptrnode.hpp"
+#include "opto/opaquenode.hpp"
+#include "opto/optoreg.hpp"
 #include "opto/phaseX.hpp"
 #include "opto/parse.hpp"
 #include "opto/regalloc.hpp"
 #include "opto/rootnode.hpp"
 #include "opto/subnode.hpp"
 #include "opto/vectornode.hpp"
-#ifdef TARGET_ARCH_MODEL_x86_32
-# include "adfiles/adGlobals_x86_32.hpp"
-#endif
-#ifdef TARGET_ARCH_MODEL_x86_64
-# include "adfiles/adGlobals_x86_64.hpp"
-#endif
-#ifdef TARGET_ARCH_MODEL_sparc
-# include "adfiles/adGlobals_sparc.hpp"
-#endif
-#ifdef TARGET_ARCH_MODEL_zero
-# include "adfiles/adGlobals_zero.hpp"
-#endif
-#ifdef TARGET_ARCH_MODEL_arm
-# include "adfiles/adGlobals_arm.hpp"
-#endif
-#ifdef TARGET_ARCH_MODEL_ppc
-# include "adfiles/adGlobals_ppc.hpp"
-#endif
-#endif
+#endif // COMPILER2
 
 // Note: the cross-product of (c1, c2, product, nonproduct, ...),
 // (nonstatic, static), and (unchecked, checked) has not been taken.
@@ -242,7 +243,6 @@ typedef TwoOopHashtable<Klass*, mtClass>      KlassTwoOopHashtable;
 typedef Hashtable<Klass*, mtClass>            KlassHashtable;
 typedef HashtableEntry<Klass*, mtClass>       KlassHashtableEntry;
 typedef TwoOopHashtable<Symbol*, mtClass>     SymbolTwoOopHashtable;
-typedef BinaryTreeDictionary<Metablock, FreeList> MetablockTreeDictionary;
 
 //--------------------------------------------------------------------------------
 // VM_STRUCTS
@@ -274,7 +274,6 @@ typedef BinaryTreeDictionary<Metablock, FreeList> MetablockTreeDictionary;
   volatile_nonstatic_field(ArrayKlass,         _higher_dimension,                             Klass*)                                \
   volatile_nonstatic_field(ArrayKlass,         _lower_dimension,                              Klass*)                                \
   nonstatic_field(ArrayKlass,                  _vtable_len,                                   int)                                   \
-  nonstatic_field(ArrayKlass,                  _component_mirror,                             oop)                                   \
   nonstatic_field(CompiledICHolder,     _holder_method,                                Method*)                               \
   nonstatic_field(CompiledICHolder,     _holder_klass,                                 Klass*)                                \
   nonstatic_field(ConstantPool,         _tags,                                         Array<u1>*)                            \
@@ -314,7 +313,7 @@ typedef BinaryTreeDictionary<Metablock, FreeList> MetablockTreeDictionary;
   nonstatic_field(InstanceKlass,               _jni_ids,                                      JNIid*)                                \
   nonstatic_field(InstanceKlass,               _osr_nmethods_head,                            nmethod*)                              \
   nonstatic_field(InstanceKlass,               _breakpoints,                                  BreakpointInfo*)                       \
-  nonstatic_field(InstanceKlass,               _generic_signature_index,                           u2)                               \
+  nonstatic_field(InstanceKlass,               _generic_signature_index,                      u2)                                    \
   nonstatic_field(InstanceKlass,               _methods_jmethod_ids,                          jmethodID*)                            \
   volatile_nonstatic_field(InstanceKlass,      _idnum_allocated_count,                        u2)                                    \
   nonstatic_field(InstanceKlass,               _annotations,                                  Annotations*)                          \
@@ -342,6 +341,7 @@ typedef BinaryTreeDictionary<Metablock, FreeList> MetablockTreeDictionary;
   nonstatic_field(MethodData,           _method,                                       Method*)                               \
   nonstatic_field(MethodData,           _data_size,                                    int)                                   \
   nonstatic_field(MethodData,           _data[0],                                      intptr_t)                              \
+  nonstatic_field(MethodData,           _parameters_type_data_di,                      int)                                   \
   nonstatic_field(MethodData,           _nof_decompiles,                               uint)                                  \
   nonstatic_field(MethodData,           _nof_overflow_recompiles,                      uint)                                  \
   nonstatic_field(MethodData,           _nof_overflow_traps,                           uint)                                  \
@@ -350,10 +350,12 @@ typedef BinaryTreeDictionary<Metablock, FreeList> MetablockTreeDictionary;
   nonstatic_field(MethodData,           _arg_local,                                    intx)                                  \
   nonstatic_field(MethodData,           _arg_stack,                                    intx)                                  \
   nonstatic_field(MethodData,           _arg_returned,                                 intx)                                  \
+  nonstatic_field(MethodData,           _tenure_traps,                                 uint)                                  \
   nonstatic_field(DataLayout,           _header._struct._tag,                          u1)                                    \
   nonstatic_field(DataLayout,           _header._struct._flags,                        u1)                                    \
   nonstatic_field(DataLayout,           _header._struct._bci,                          u2)                                    \
   nonstatic_field(DataLayout,           _cells[0],                                     intptr_t)                              \
+  nonstatic_field(MethodCounters,       _nmethod_age,                                  int)                                   \
   nonstatic_field(MethodCounters,       _interpreter_invocation_count,                 int)                                   \
   nonstatic_field(MethodCounters,       _interpreter_throwout_count,                   u2)                                    \
   nonstatic_field(MethodCounters,       _number_of_breakpoints,                        u2)                                    \
@@ -659,6 +661,7 @@ typedef BinaryTreeDictionary<Metablock, FreeList> MetablockTreeDictionary;
       static_field(SystemDictionary,            WK_KLASS(StackOverflowError_klass),            Klass*)                               \
       static_field(SystemDictionary,            WK_KLASS(ProtectionDomain_klass),              Klass*)                               \
       static_field(SystemDictionary,            WK_KLASS(AccessControlContext_klass),          Klass*)                               \
+      static_field(SystemDictionary,            WK_KLASS(SecureClassLoader_klass),             Klass*)                               \
       static_field(SystemDictionary,            WK_KLASS(Reference_klass),                     Klass*)                               \
       static_field(SystemDictionary,            WK_KLASS(SoftReference_klass),                 Klass*)                               \
       static_field(SystemDictionary,            WK_KLASS(WeakReference_klass),                 Klass*)                               \
@@ -807,6 +810,7 @@ typedef BinaryTreeDictionary<Metablock, FreeList> MetablockTreeDictionary;
      static_field(StubRoutines,                _cipherBlockChaining_decryptAESCrypt,          address)                               \
      static_field(StubRoutines,                _updateBytesCRC32,                             address)                               \
      static_field(StubRoutines,                _crc_table_adr,                                address)                               \
+     static_field(StubRoutines,                _multiplyToLen,                                address)                               \
                                                                                                                                      \
   /*****************/                                                                                                                \
   /* SharedRuntime */                                                                                                                \
@@ -867,7 +871,7 @@ typedef BinaryTreeDictionary<Metablock, FreeList> MetablockTreeDictionary;
   nonstatic_field(nmethod,             _entry_point,                                  address)                               \
   nonstatic_field(nmethod,             _verified_entry_point,                         address)                               \
   nonstatic_field(nmethod,             _osr_entry_point,                              address)                               \
-  nonstatic_field(nmethod,             _lock_count,                                   jint)                                  \
+  volatile_nonstatic_field(nmethod,    _lock_count,                                   jint)                                  \
   nonstatic_field(nmethod,             _stack_traversal_mark,                         long)                                  \
   nonstatic_field(nmethod,             _compile_id,                                   int)                                   \
   nonstatic_field(nmethod,             _comp_level,                                   int)                                   \
@@ -1171,9 +1175,9 @@ typedef BinaryTreeDictionary<Metablock, FreeList> MetablockTreeDictionary;
   c2_nonstatic_field(Block,              _pre_order,               uint)                                                             \
   c2_nonstatic_field(Block,              _dom_depth,               uint)                                                             \
   c2_nonstatic_field(Block,              _idom,                    Block*)                                                           \
-  c2_nonstatic_field(Block,              _freq,                    jfloat)                                                           \
+  c2_nonstatic_field(Block,              _freq,                    jdouble)                                                          \
                                                                                                                                      \
-  c2_nonstatic_field(CFGElement,         _freq,                    jfloat)                                                           \
+  c2_nonstatic_field(CFGElement,         _freq,                    jdouble)                                                          \
                                                                                                                                      \
   c2_nonstatic_field(Block_List,         _cnt,                     uint)                                                             \
                                                                                                                                      \
@@ -1207,6 +1211,7 @@ typedef BinaryTreeDictionary<Metablock, FreeList> MetablockTreeDictionary;
   static_field(Abstract_VM_Version,            _s_internal_vm_info_string,                    const char*)                           \
   static_field(Abstract_VM_Version,            _vm_major_version,                             int)                                   \
   static_field(Abstract_VM_Version,            _vm_minor_version,                             int)                                   \
+  static_field(Abstract_VM_Version,            _vm_micro_version,                             int)                                   \
   static_field(Abstract_VM_Version,            _vm_build_number,                              int)                                   \
   static_field(Abstract_VM_Version,            _reserve_for_allocation_prefetch,              int)                                   \
                                                                                                                                      \
@@ -1281,11 +1286,8 @@ typedef BinaryTreeDictionary<Metablock, FreeList> MetablockTreeDictionary;
   volatile_nonstatic_field(FreeChunk,          _size,                                        size_t)                                 \
   nonstatic_field(FreeChunk,                   _next,                                        FreeChunk*)                             \
   nonstatic_field(FreeChunk,                   _prev,                                        FreeChunk*)                             \
-  nonstatic_field(FreeList<FreeChunk>,         _size,                                        size_t)                                 \
-  nonstatic_field(FreeList<Metablock>,         _size,                                        size_t)                                 \
-  nonstatic_field(FreeList<FreeChunk>,         _count,                                       ssize_t)                                \
-  nonstatic_field(FreeList<Metablock>,         _count,                                       ssize_t)                                \
-  nonstatic_field(MetablockTreeDictionary,     _total_size,                                  size_t)
+  nonstatic_field(AdaptiveFreeList<FreeChunk>, _size,                                        size_t)                                 \
+  nonstatic_field(AdaptiveFreeList<FreeChunk>, _count,                                       ssize_t)
 
 
 //--------------------------------------------------------------------------------
@@ -1377,6 +1379,8 @@ typedef BinaryTreeDictionary<Metablock, FreeList> MetablockTreeDictionary;
   /* unsigned short on Win32 */                                           \
   declare_unsigned_integer_type(u1)                                       \
   declare_unsigned_integer_type(u2)                                       \
+  declare_unsigned_integer_type(u4)                                       \
+  declare_unsigned_integer_type(u8)                                       \
   declare_unsigned_integer_type(unsigned)                                 \
                                                                           \
   /*****************************/                                         \
@@ -1814,6 +1818,8 @@ typedef BinaryTreeDictionary<Metablock, FreeList> MetablockTreeDictionary;
   declare_c2_type(MemBarNode, MultiNode)                                  \
   declare_c2_type(MemBarAcquireNode, MemBarNode)                          \
   declare_c2_type(MemBarReleaseNode, MemBarNode)                          \
+  declare_c2_type(LoadFenceNode, MemBarNode)                              \
+  declare_c2_type(StoreFenceNode, MemBarNode)                             \
   declare_c2_type(MemBarVolatileNode, MemBarNode)                         \
   declare_c2_type(MemBarCPUOrderNode, MemBarNode)                         \
   declare_c2_type(InitializeNode, MemBarNode)                             \
@@ -1938,15 +1944,6 @@ typedef BinaryTreeDictionary<Metablock, FreeList> MetablockTreeDictionary;
   declare_c2_type(CmpF3Node, CmpFNode)                                    \
   declare_c2_type(CmpDNode, CmpNode)                                      \
   declare_c2_type(CmpD3Node, CmpDNode)                                    \
-  declare_c2_type(MathExactNode, MultiNode)                               \
-  declare_c2_type(MathExactINode, MathExactNode)                          \
-  declare_c2_type(AddExactINode, MathExactINode)                          \
-  declare_c2_type(AddExactLNode, MathExactLNode)                          \
-  declare_c2_type(SubExactINode, MathExactINode)                          \
-  declare_c2_type(SubExactLNode, MathExactLNode)                          \
-  declare_c2_type(NegExactINode, MathExactINode)                          \
-  declare_c2_type(MulExactINode, MathExactINode)                          \
-  declare_c2_type(FlagsProjNode, ProjNode)                                \
   declare_c2_type(BoolNode, Node)                                         \
   declare_c2_type(AbsNode, Node)                                          \
   declare_c2_type(AbsINode, AbsNode)                                      \
@@ -2027,6 +2024,15 @@ typedef BinaryTreeDictionary<Metablock, FreeList> MetablockTreeDictionary;
   declare_c2_type(ExtractLNode, ExtractNode)                              \
   declare_c2_type(ExtractFNode, ExtractNode)                              \
   declare_c2_type(ExtractDNode, ExtractNode)                              \
+  declare_c2_type(OverflowNode, CmpNode)                                  \
+  declare_c2_type(OverflowINode, OverflowNode)                            \
+  declare_c2_type(OverflowAddINode, OverflowINode)                        \
+  declare_c2_type(OverflowSubINode, OverflowINode)                        \
+  declare_c2_type(OverflowMulINode, OverflowINode)                        \
+  declare_c2_type(OverflowLNode, OverflowNode)                            \
+  declare_c2_type(OverflowAddLNode, OverflowLNode)                        \
+  declare_c2_type(OverflowSubLNode, OverflowLNode)                        \
+  declare_c2_type(OverflowMulLNode, OverflowLNode)                        \
                                                                           \
   /*********************/                                                 \
   /* Adapter Blob Entries */                                              \
@@ -2155,14 +2161,8 @@ typedef BinaryTreeDictionary<Metablock, FreeList> MetablockTreeDictionary;
                                                                           \
   /* freelist */                                                          \
   declare_toplevel_type(FreeChunk*)                                       \
-  declare_toplevel_type(Metablock*)                                       \
-  declare_toplevel_type(FreeBlockDictionary<FreeChunk>*)                  \
-  declare_toplevel_type(FreeList<FreeChunk>*)                             \
-  declare_toplevel_type(FreeList<FreeChunk>)                              \
-  declare_toplevel_type(FreeBlockDictionary<Metablock>*)                  \
-  declare_toplevel_type(FreeList<Metablock>*)                             \
-  declare_toplevel_type(FreeList<Metablock>)                              \
-  declare_type(MetablockTreeDictionary, FreeBlockDictionary<Metablock>)
+  declare_toplevel_type(AdaptiveFreeList<FreeChunk>*)                     \
+  declare_toplevel_type(AdaptiveFreeList<FreeChunk>)
 
 
 //--------------------------------------------------------------------------------
@@ -2339,6 +2339,12 @@ typedef BinaryTreeDictionary<Metablock, FreeList> MetablockTreeDictionary;
   /* ConstMethod anon-enum */                                             \
   /********************************/                                      \
                                                                           \
+  declare_constant(Method::_jfr_towrite)                                  \
+  declare_constant(Method::_caller_sensitive)                             \
+  declare_constant(Method::_force_inline)                                 \
+  declare_constant(Method::_dont_inline)                                  \
+  declare_constant(Method::_hidden)                                       \
+                                                                          \
   declare_constant(ConstMethod::_has_linenumber_table)                    \
   declare_constant(ConstMethod::_has_checked_exceptions)                  \
   declare_constant(ConstMethod::_has_localvariable_table)                 \
@@ -2487,6 +2493,11 @@ typedef BinaryTreeDictionary<Metablock, FreeList> MetablockTreeDictionary;
   declare_constant(Deoptimization::Reason_age)                            \
   declare_constant(Deoptimization::Reason_predicate)                      \
   declare_constant(Deoptimization::Reason_loop_limit_check)               \
+  declare_constant(Deoptimization::Reason_speculate_class_check)          \
+  declare_constant(Deoptimization::Reason_speculate_null_check)           \
+  declare_constant(Deoptimization::Reason_rtm_state_change)               \
+  declare_constant(Deoptimization::Reason_unstable_if)                    \
+  declare_constant(Deoptimization::Reason_tenured)                        \
   declare_constant(Deoptimization::Reason_LIMIT)                          \
   declare_constant(Deoptimization::Reason_RECORDED_LIMIT)                 \
                                                                           \
@@ -2904,6 +2915,11 @@ VMStructEntry VMStructs::localHotSpotVMStructs[] = {
                 GENERATE_STATIC_VM_STRUCT_ENTRY)
 #endif // INCLUDE_ALL_GCS
 
+#if INCLUDE_TRACE
+  VM_STRUCTS_TRACE(GENERATE_NONSTATIC_VM_STRUCT_ENTRY,
+                GENERATE_STATIC_VM_STRUCT_ENTRY)
+#endif
+
   VM_STRUCTS_CPU(GENERATE_NONSTATIC_VM_STRUCT_ENTRY,
                  GENERATE_STATIC_VM_STRUCT_ENTRY,
                  GENERATE_UNCHECKED_NONSTATIC_VM_STRUCT_ENTRY,
@@ -2949,6 +2965,11 @@ VMTypeEntry VMStructs::localHotSpotVMTypes[] = {
               GENERATE_TOPLEVEL_VM_TYPE_ENTRY)
 #endif // INCLUDE_ALL_GCS
 
+#if INCLUDE_TRACE
+  VM_TYPES_TRACE(GENERATE_VM_TYPE_ENTRY,
+              GENERATE_TOPLEVEL_VM_TYPE_ENTRY)
+#endif
+
   VM_TYPES_CPU(GENERATE_VM_TYPE_ENTRY,
                GENERATE_TOPLEVEL_VM_TYPE_ENTRY,
                GENERATE_OOP_VM_TYPE_ENTRY,
@@ -2983,6 +3004,10 @@ VMIntConstantEntry VMStructs::localHotSpotVMIntConstants[] = {
 
   VM_INT_CONSTANTS_PARNEW(GENERATE_VM_INT_CONSTANT_ENTRY)
 #endif // INCLUDE_ALL_GCS
+
+#if INCLUDE_TRACE
+  VM_INT_CONSTANTS_TRACE(GENERATE_VM_INT_CONSTANT_ENTRY)
+#endif
 
   VM_INT_CONSTANTS_CPU(GENERATE_VM_INT_CONSTANT_ENTRY,
                        GENERATE_PREPROCESSOR_VM_INT_CONSTANT_ENTRY,
@@ -3046,7 +3071,13 @@ VMStructs::init() {
 
   VM_STRUCTS_G1(CHECK_NONSTATIC_VM_STRUCT_ENTRY,
                 CHECK_STATIC_VM_STRUCT_ENTRY);
+
 #endif // INCLUDE_ALL_GCS
+
+#if INCLUDE_TRACE
+  VM_STRUCTS_TRACE(CHECK_NONSTATIC_VM_STRUCT_ENTRY,
+                CHECK_STATIC_VM_STRUCT_ENTRY);
+#endif
 
   VM_STRUCTS_CPU(CHECK_NONSTATIC_VM_STRUCT_ENTRY,
                  CHECK_STATIC_VM_STRUCT_ENTRY,
@@ -3086,7 +3117,13 @@ VMStructs::init() {
 
   VM_TYPES_G1(CHECK_VM_TYPE_ENTRY,
               CHECK_SINGLE_ARG_VM_TYPE_NO_OP);
+
 #endif // INCLUDE_ALL_GCS
+
+#if INCLUDE_TRACE
+  VM_TYPES_TRACE(CHECK_VM_TYPE_ENTRY,
+              CHECK_SINGLE_ARG_VM_TYPE_NO_OP);
+#endif
 
   VM_TYPES_CPU(CHECK_VM_TYPE_ENTRY,
                CHECK_SINGLE_ARG_VM_TYPE_NO_OP,
@@ -3150,6 +3187,12 @@ VMStructs::init() {
   debug_only(VM_STRUCTS_G1(ENSURE_FIELD_TYPE_PRESENT,
                            ENSURE_FIELD_TYPE_PRESENT));
 #endif // INCLUDE_ALL_GCS
+
+#if INCLUDE_TRACE
+  debug_only(VM_STRUCTS_TRACE(ENSURE_FIELD_TYPE_PRESENT,
+                           ENSURE_FIELD_TYPE_PRESENT));
+#endif
+
   debug_only(VM_STRUCTS_CPU(ENSURE_FIELD_TYPE_PRESENT,
                             ENSURE_FIELD_TYPE_PRESENT,
                             CHECK_NO_OP,
@@ -3257,14 +3300,14 @@ static int recursiveFindType(VMTypeEntry* origtypes, const char* typeName, bool 
     }
   }
   if (strstr(typeName, " const") == typeName + len - 6) {
-    char * s = strdup(typeName);
+    char * s = os::strdup_check_oom(typeName);
     s[len - 6] = '\0';
     // tty->print_cr("checking \"%s\" for \"%s\"", s, typeName);
     if (recursiveFindType(origtypes, s, true) == 1) {
-      free(s);
+      os::free(s);
       return 1;
     }
-    free(s);
+    os::free(s);
   }
   if (!isRecurse) {
     tty->print_cr("type \"%s\" not found", typeName);

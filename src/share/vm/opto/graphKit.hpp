@@ -309,35 +309,36 @@ class GraphKit : public Phase {
 
 
   // Some convenient shortcuts for common nodes
-  Node* IfTrue(IfNode* iff)                   { return _gvn.transform(new (C) IfTrueNode(iff));      }
-  Node* IfFalse(IfNode* iff)                  { return _gvn.transform(new (C) IfFalseNode(iff));     }
+  Node* IfTrue(IfNode* iff)                   { return _gvn.transform(new IfTrueNode(iff));      }
+  Node* IfFalse(IfNode* iff)                  { return _gvn.transform(new IfFalseNode(iff));     }
 
-  Node* AddI(Node* l, Node* r)                { return _gvn.transform(new (C) AddINode(l, r));       }
-  Node* SubI(Node* l, Node* r)                { return _gvn.transform(new (C) SubINode(l, r));       }
-  Node* MulI(Node* l, Node* r)                { return _gvn.transform(new (C) MulINode(l, r));       }
-  Node* DivI(Node* ctl, Node* l, Node* r)     { return _gvn.transform(new (C) DivINode(ctl, l, r));  }
+  Node* AddI(Node* l, Node* r)                { return _gvn.transform(new AddINode(l, r));       }
+  Node* SubI(Node* l, Node* r)                { return _gvn.transform(new SubINode(l, r));       }
+  Node* MulI(Node* l, Node* r)                { return _gvn.transform(new MulINode(l, r));       }
+  Node* DivI(Node* ctl, Node* l, Node* r)     { return _gvn.transform(new DivINode(ctl, l, r));  }
 
-  Node* AndI(Node* l, Node* r)                { return _gvn.transform(new (C) AndINode(l, r));       }
-  Node* OrI(Node* l, Node* r)                 { return _gvn.transform(new (C) OrINode(l, r));        }
-  Node* XorI(Node* l, Node* r)                { return _gvn.transform(new (C) XorINode(l, r));       }
+  Node* AndI(Node* l, Node* r)                { return _gvn.transform(new AndINode(l, r));       }
+  Node* OrI(Node* l, Node* r)                 { return _gvn.transform(new OrINode(l, r));        }
+  Node* XorI(Node* l, Node* r)                { return _gvn.transform(new XorINode(l, r));       }
 
-  Node* MaxI(Node* l, Node* r)                { return _gvn.transform(new (C) MaxINode(l, r));       }
-  Node* MinI(Node* l, Node* r)                { return _gvn.transform(new (C) MinINode(l, r));       }
+  Node* MaxI(Node* l, Node* r)                { return _gvn.transform(new MaxINode(l, r));       }
+  Node* MinI(Node* l, Node* r)                { return _gvn.transform(new MinINode(l, r));       }
 
-  Node* LShiftI(Node* l, Node* r)             { return _gvn.transform(new (C) LShiftINode(l, r));    }
-  Node* RShiftI(Node* l, Node* r)             { return _gvn.transform(new (C) RShiftINode(l, r));    }
-  Node* URShiftI(Node* l, Node* r)            { return _gvn.transform(new (C) URShiftINode(l, r));   }
+  Node* LShiftI(Node* l, Node* r)             { return _gvn.transform(new LShiftINode(l, r));    }
+  Node* RShiftI(Node* l, Node* r)             { return _gvn.transform(new RShiftINode(l, r));    }
+  Node* URShiftI(Node* l, Node* r)            { return _gvn.transform(new URShiftINode(l, r));   }
 
-  Node* CmpI(Node* l, Node* r)                { return _gvn.transform(new (C) CmpINode(l, r));       }
-  Node* CmpL(Node* l, Node* r)                { return _gvn.transform(new (C) CmpLNode(l, r));       }
-  Node* CmpP(Node* l, Node* r)                { return _gvn.transform(new (C) CmpPNode(l, r));       }
-  Node* Bool(Node* cmp, BoolTest::mask relop) { return _gvn.transform(new (C) BoolNode(cmp, relop)); }
+  Node* CmpI(Node* l, Node* r)                { return _gvn.transform(new CmpINode(l, r));       }
+  Node* CmpL(Node* l, Node* r)                { return _gvn.transform(new CmpLNode(l, r));       }
+  Node* CmpP(Node* l, Node* r)                { return _gvn.transform(new CmpPNode(l, r));       }
+  Node* Bool(Node* cmp, BoolTest::mask relop) { return _gvn.transform(new BoolNode(cmp, relop)); }
 
-  Node* AddP(Node* b, Node* a, Node* o)       { return _gvn.transform(new (C) AddPNode(b, a, o));    }
+  Node* AddP(Node* b, Node* a, Node* o)       { return _gvn.transform(new AddPNode(b, a, o));    }
 
   // Convert between int and long, and size_t.
   // (See macros ConvI2X, etc., in type.hpp for ConvI2X, etc.)
   Node* ConvI2L(Node* offset);
+  Node* ConvI2UL(Node* offset);
   Node* ConvL2I(Node* offset);
   // Find out the klass of an object.
   Node* load_object_klass(Node* object);
@@ -350,9 +351,11 @@ class GraphKit : public Phase {
   // Return the value cast to not-null.
   // Be clever about equivalent dominating null checks.
   Node* null_check_common(Node* value, BasicType type,
-                          bool assert_null = false, Node* *null_control = NULL);
+                          bool assert_null = false,
+                          Node* *null_control = NULL,
+                          bool speculative = false);
   Node* null_check(Node* value, BasicType type = T_OBJECT) {
-    return null_check_common(value, type);
+    return null_check_common(value, type, false, NULL, !_gvn.type(value)->speculative_maybe_null());
   }
   Node* null_check_receiver() {
     assert(argument(0)->bottom_type()->isa_ptr(), "must be");
@@ -381,10 +384,12 @@ class GraphKit : public Phase {
   // If safe_for_replace, then we can replace the value with the cast
   // in the parsing map (the cast is guaranteed to dominate the map)
   Node* null_check_oop(Node* value, Node* *null_control,
-                       bool never_see_null = false, bool safe_for_replace = false);
+                       bool never_see_null = false,
+                       bool safe_for_replace = false,
+                       bool speculative = false);
 
   // Check the null_seen bit.
-  bool seems_never_null(Node* obj, ciProfileData* data);
+  bool seems_never_null(Node* obj, ciProfileData* data, bool& speculating);
 
   // Check for unique class for receiver at call
   ciKlass* profile_has_unique_klass() {
@@ -398,15 +403,16 @@ class GraphKit : public Phase {
   }
 
   // record type from profiling with the type system
-  Node* record_profile_for_speculation(Node* n, ciKlass* exact_kls);
-  Node* record_profiled_receiver_for_speculation(Node* n);
+  Node* record_profile_for_speculation(Node* n, ciKlass* exact_kls, bool maybe_null);
   void record_profiled_arguments_for_speculation(ciMethod* dest_method, Bytecodes::Code bc);
   void record_profiled_parameters_for_speculation();
+  void record_profiled_return_for_speculation();
+  Node* record_profiled_receiver_for_speculation(Node* n);
 
   // Use the type profile to narrow an object type.
   Node* maybe_cast_profiled_receiver(Node* not_null_obj,
                                      ciKlass* require_klass,
-                                    ciKlass* spec,
+                                     ciKlass* spec,
                                      bool safe_for_replace);
 
   // Cast obj to type and emit guard unless we had too many traps here already
@@ -510,36 +516,50 @@ class GraphKit : public Phase {
 
   // Create a LoadNode, reading from the parser's memory state.
   // (Note:  require_atomic_access is useful only with T_LONG.)
+  //
+  // We choose the unordered semantics by default because we have
+  // adapted the `do_put_xxx' and `do_get_xxx' procedures for the case
+  // of volatile fields.
   Node* make_load(Node* ctl, Node* adr, const Type* t, BasicType bt,
-                  bool require_atomic_access = false) {
+                  MemNode::MemOrd mo, bool require_atomic_access = false) {
     // This version computes alias_index from bottom_type
     return make_load(ctl, adr, t, bt, adr->bottom_type()->is_ptr(),
-                     require_atomic_access);
+                     mo, require_atomic_access);
   }
-  Node* make_load(Node* ctl, Node* adr, const Type* t, BasicType bt, const TypePtr* adr_type, bool require_atomic_access = false) {
+  Node* make_load(Node* ctl, Node* adr, const Type* t, BasicType bt, const TypePtr* adr_type,
+                  MemNode::MemOrd mo, bool require_atomic_access = false) {
     // This version computes alias_index from an address type
     assert(adr_type != NULL, "use other make_load factory");
     return make_load(ctl, adr, t, bt, C->get_alias_index(adr_type),
-                     require_atomic_access);
+                     mo, require_atomic_access);
   }
   // This is the base version which is given an alias index.
-  Node* make_load(Node* ctl, Node* adr, const Type* t, BasicType bt, int adr_idx, bool require_atomic_access = false);
+  Node* make_load(Node* ctl, Node* adr, const Type* t, BasicType bt, int adr_idx,
+                  MemNode::MemOrd mo, bool require_atomic_access = false);
 
   // Create & transform a StoreNode and store the effect into the
   // parser's memory state.
+  //
+  // We must ensure that stores of object references will be visible
+  // only after the object's initialization. So the clients of this
+  // procedure must indicate that the store requires `release'
+  // semantics, if the stored value is an object reference that might
+  // point to a new object and may become externally visible.
   Node* store_to_memory(Node* ctl, Node* adr, Node* val, BasicType bt,
                         const TypePtr* adr_type,
+                        MemNode::MemOrd mo,
                         bool require_atomic_access = false) {
     // This version computes alias_index from an address type
     assert(adr_type != NULL, "use other store_to_memory factory");
     return store_to_memory(ctl, adr, val, bt,
                            C->get_alias_index(adr_type),
-                           require_atomic_access);
+                           mo, require_atomic_access);
   }
   // This is the base version which is given alias index
   // Return the new StoreXNode
   Node* store_to_memory(Node* ctl, Node* adr, Node* val, BasicType bt,
                         int adr_idx,
+                        MemNode::MemOrd,
                         bool require_atomic_access = false);
 
 
@@ -557,40 +577,44 @@ class GraphKit : public Phase {
 
   Node* store_oop(Node* ctl,
                   Node* obj,   // containing obj
-                  Node* adr,  // actual adress to store val at
+                  Node* adr,   // actual adress to store val at
                   const TypePtr* adr_type,
                   Node* val,
                   const TypeOopPtr* val_type,
                   BasicType bt,
-                  bool use_precise);
+                  bool use_precise,
+                  MemNode::MemOrd mo);
 
   Node* store_oop_to_object(Node* ctl,
                             Node* obj,   // containing obj
-                            Node* adr,  // actual adress to store val at
+                            Node* adr,   // actual adress to store val at
                             const TypePtr* adr_type,
                             Node* val,
                             const TypeOopPtr* val_type,
-                            BasicType bt) {
-    return store_oop(ctl, obj, adr, adr_type, val, val_type, bt, false);
+                            BasicType bt,
+                            MemNode::MemOrd mo) {
+    return store_oop(ctl, obj, adr, adr_type, val, val_type, bt, false, mo);
   }
 
   Node* store_oop_to_array(Node* ctl,
                            Node* obj,   // containing obj
-                           Node* adr,  // actual adress to store val at
+                           Node* adr,   // actual adress to store val at
                            const TypePtr* adr_type,
                            Node* val,
                            const TypeOopPtr* val_type,
-                           BasicType bt) {
-    return store_oop(ctl, obj, adr, adr_type, val, val_type, bt, true);
+                           BasicType bt,
+                           MemNode::MemOrd mo) {
+    return store_oop(ctl, obj, adr, adr_type, val, val_type, bt, true, mo);
   }
 
   // Could be an array or object we don't know at compile time (unsafe ref.)
   Node* store_oop_to_unknown(Node* ctl,
                              Node* obj,   // containing obj
-                             Node* adr,  // actual adress to store val at
+                             Node* adr,   // actual adress to store val at
                              const TypePtr* adr_type,
                              Node* val,
-                             BasicType bt);
+                             BasicType bt,
+                             MemNode::MemOrd mo);
 
   // For the few case where the barriers need special help
   void pre_barrier(bool do_load, Node* ctl,
@@ -666,7 +690,7 @@ class GraphKit : public Phase {
   // Replace the call with the current state of the kit.  Requires
   // that the call was generated with separate io_projs so that
   // exceptional control flow can be handled properly.
-  void replace_call(CallNode* call, Node* result);
+  void replace_call(CallNode* call, Node* result, bool do_replaced_nodes = false);
 
   // helper functions for statistics
   void increment_counter(address counter_addr);   // increment a debug counter
@@ -783,7 +807,7 @@ class GraphKit : public Phase {
 
   // merge in all memory slices from new_mem, along the given path
   void merge_memory(Node* new_mem, Node* region, int new_path);
-  void make_slow_call_ex(Node* call, ciInstanceKlass* ex_klass, bool separate_io_proj);
+  void make_slow_call_ex(Node* call, ciInstanceKlass* ex_klass, bool separate_io_proj, bool deoptimize = false);
 
   // Helper functions to build synchronizations
   int next_monitor();
@@ -805,17 +829,13 @@ class GraphKit : public Phase {
   Node* gen_checkcast( Node *subobj, Node* superkls,
                        Node* *failure_control = NULL );
 
-  // Generate a subtyping check.  Takes as input the subtype and supertype.
-  // Returns 2 values: sets the default control() to the true path and
-  // returns the false path.  Only reads from constant memory taken from the
-  // default memory; does not write anything.  It also doesn't take in an
-  // Object; if you wish to check an Object you need to load the Object's
-  // class prior to coming here.
-  Node* gen_subtype_check(Node* subklass, Node* superklass);
-
-  // Static parse-time type checking logic for gen_subtype_check:
-  enum { SSC_always_false, SSC_always_true, SSC_easy_test, SSC_full_test };
-  int static_subtype_check(ciKlass* superk, ciKlass* subk);
+  Node* gen_subtype_check(Node* subklass, Node* superklass) {
+    MergeMemNode* mem = merged_memory();
+    Node* ctrl = control();
+    Node* n = Phase::gen_subtype_check(subklass, superklass, &ctrl, mem, &_gvn);
+    set_control(ctrl);
+    return n;
+  }
 
   // Exact type check used for predicted calls and casts.
   // Rewrites (*casted_receiver) to be casted to the stronger type.
@@ -825,13 +845,16 @@ class GraphKit : public Phase {
 
   // implementation of object creation
   Node* set_output_for_allocation(AllocateNode* alloc,
-                                  const TypeOopPtr* oop_type);
+                                  const TypeOopPtr* oop_type,
+                                  bool deoptimize_on_exception=false);
   Node* get_layout_helper(Node* klass_node, jint& constant_value);
   Node* new_instance(Node* klass_node,
                      Node* slow_test = NULL,
-                     Node* *return_size_val = NULL);
+                     Node* *return_size_val = NULL,
+                     bool deoptimize_on_exception = false);
   Node* new_array(Node* klass_node, Node* count_val, int nargs,
-                  Node* *return_size_val = NULL);
+                  Node* *return_size_val = NULL,
+                  bool deoptimize_on_exception = false);
 
   // java.lang.String helpers
   Node* load_String_offset(Node* ctrl, Node* str);
@@ -843,7 +866,7 @@ class GraphKit : public Phase {
 
   // Handy for making control flow
   IfNode* create_and_map_if(Node* ctrl, Node* tst, float prob, float cnt) {
-    IfNode* iff = new (C) IfNode(ctrl, tst, prob, cnt);// New IfNode's
+    IfNode* iff = new IfNode(ctrl, tst, prob, cnt);// New IfNode's
     _gvn.set_type(iff, iff->Value(&_gvn)); // Value may be known at parse-time
     // Place 'if' on worklist if it will be in graph
     if (!tst->is_Con())  record_for_igvn(iff);     // Range-check and Null-check removal is later
@@ -851,7 +874,7 @@ class GraphKit : public Phase {
   }
 
   IfNode* create_and_xform_if(Node* ctrl, Node* tst, float prob, float cnt) {
-    IfNode* iff = new (C) IfNode(ctrl, tst, prob, cnt);// New IfNode's
+    IfNode* iff = new IfNode(ctrl, tst, prob, cnt);// New IfNode's
     _gvn.transform(iff);                           // Value may be known at parse-time
     // Place 'if' on worklist if it will be in graph
     if (!tst->is_Con())  record_for_igvn(iff);     // Range-check and Null-check removal is later

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1999, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1999, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -24,25 +24,8 @@
 
 #include "precompiled.hpp"
 #include "opto/c2compiler.hpp"
+#include "opto/optoreg.hpp"
 #include "opto/runtime.hpp"
-#ifdef TARGET_ARCH_MODEL_x86_32
-# include "adfiles/ad_x86_32.hpp"
-#endif
-#ifdef TARGET_ARCH_MODEL_x86_64
-# include "adfiles/ad_x86_64.hpp"
-#endif
-#ifdef TARGET_ARCH_MODEL_sparc
-# include "adfiles/ad_sparc.hpp"
-#endif
-#ifdef TARGET_ARCH_MODEL_zero
-# include "adfiles/ad_zero.hpp"
-#endif
-#ifdef TARGET_ARCH_MODEL_arm
-# include "adfiles/ad_arm.hpp"
-#endif
-#ifdef TARGET_ARCH_MODEL_ppc
-# include "adfiles/ad_ppc.hpp"
-#endif
 
 // register information defined by ADLC
 extern const char register_save_policy[];
@@ -111,7 +94,7 @@ void C2Compiler::compile_method(ciEnv* env, ciMethod* target, int entry_bci) {
   assert(is_initialized(), "Compiler thread must be initialized");
 
   bool subsume_loads = SubsumeLoads;
-  bool do_escape_analysis = DoEscapeAnalysis && !env->jvmti_can_access_local_variables();
+  bool do_escape_analysis = DoEscapeAnalysis && !env->should_retain_local_variables();
   bool eliminate_boxing = EliminateAutoBox;
   while (!env->failing()) {
     // Attempt to compile while subsuming loads into machine instructions.
@@ -151,6 +134,9 @@ void C2Compiler::compile_method(ciEnv* env, ciMethod* target, int entry_bci) {
         continue;  // retry
       }
     }
+
+    // print inlining for last compilation only
+    C.dump_print_inlining();
 
     // No retry; just break the loop.
     break;

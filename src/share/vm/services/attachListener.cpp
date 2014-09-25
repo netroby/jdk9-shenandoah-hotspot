@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2005, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2005, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -162,10 +162,7 @@ static jint jcmd(AttachOperation* op, outputStream* out) {
     java_lang_Throwable::print(PENDING_EXCEPTION, out);
     out->cr();
     CLEAR_PENDING_EXCEPTION;
-    // The exception has been printed on the output stream
-    // If the JVM returns JNI_ERR, the attachAPI throws a generic I/O
-    // exception and the content of the output stream is not processed.
-    // By returning JNI_OK, the exception will be displayed on the client side
+    return JNI_ERR;
   }
   return JNI_OK;
 }
@@ -282,6 +279,20 @@ static jint set_uintx_flag(const char* name, AttachOperation* op, outputStream* 
       return JNI_ERR;
     }
   }
+
+  if (strncmp(name, "MaxHeapFreeRatio", 17) == 0) {
+    FormatBuffer<80> err_msg("%s", "");
+    if (!Arguments::verify_MaxHeapFreeRatio(err_msg, value)) {
+      out->print_cr("%s", err_msg.buffer());
+      return JNI_ERR;
+    }
+  } else if (strncmp(name, "MinHeapFreeRatio", 17) == 0) {
+    FormatBuffer<80> err_msg("%s", "");
+    if (!Arguments::verify_MinHeapFreeRatio(err_msg, value)) {
+      out->print_cr("%s", err_msg.buffer());
+      return JNI_ERR;
+    }
+  }
   bool res = CommandLineFlags::uintxAtPut((char*)name, &value, Flag::ATTACH_ON_DEMAND);
   if (! res) {
     out->print_cr("setting flag %s failed", name);
@@ -302,6 +313,25 @@ static jint set_uint64_t_flag(const char* name, AttachOperation* op, outputStrea
     }
   }
   bool res = CommandLineFlags::uint64_tAtPut((char*)name, &value, Flag::ATTACH_ON_DEMAND);
+  if (! res) {
+    out->print_cr("setting flag %s failed", name);
+  }
+
+  return res? JNI_OK : JNI_ERR;
+}
+
+// set a size_t global flag using value from AttachOperation
+static jint set_size_t_flag(const char* name, AttachOperation* op, outputStream* out) {
+  size_t value;
+  const char* arg1;
+  if ((arg1 = op->arg(1)) != NULL) {
+    int n = sscanf(arg1, SIZE_FORMAT, &value);
+    if (n != 1) {
+      out->print_cr("flag value must be an unsigned integer");
+      return JNI_ERR;
+    }
+  }
+  bool res = CommandLineFlags::size_tAtPut((char*)name, &value, Flag::ATTACH_ON_DEMAND);
   if (! res) {
     out->print_cr("setting flag %s failed", name);
   }
@@ -345,6 +375,8 @@ static jint set_flag(AttachOperation* op, outputStream* out) {
       return set_uintx_flag(name, op, out);
     } else if (f->is_uint64_t()) {
       return set_uint64_t_flag(name, op, out);
+    } else if (f->is_size_t()) {
+      return set_size_t_flag(name, op, out);
     } else if (f->is_ccstr()) {
       return set_ccstr_flag(name, op, out);
     } else {
@@ -367,7 +399,7 @@ static jint print_flag(AttachOperation* op, outputStream* out) {
   Flag* f = Flag::find_flag((char*)name, strlen(name));
   if (f) {
     f->print_as_flag(out);
-    out->print_cr("");
+    out->cr();
   } else {
     out->print_cr("no such flag '%s'", name);
   }
@@ -451,15 +483,39 @@ static void attach_listener_thread_entry(JavaThread* thread, TRAPS) {
   }
 }
 
+bool AttachListener::has_init_error(TRAPS) {
+  if (HAS_PENDING_EXCEPTION) {
+    tty->print_cr("Exception in VM (AttachListener::init) : ");
+    java_lang_Throwable::print(PENDING_EXCEPTION, tty);
+    tty->cr();
+
+    CLEAR_PENDING_EXCEPTION;
+
+    return true;
+  } else {
+    return false;
+  }
+}
+
 // Starts the Attach Listener thread
 void AttachListener::init() {
   EXCEPTION_MARK;
-  Klass* k = SystemDictionary::resolve_or_fail(vmSymbols::java_lang_Thread(), true, CHECK);
+  Klass* k = SystemDictionary::resolve_or_fail(vmSymbols::java_lang_Thread(), true, THREAD);
+  if (has_init_error(THREAD)) {
+    return;
+  }
+
   instanceKlassHandle klass (THREAD, k);
-  instanceHandle thread_oop = klass->allocate_instance_handle(CHECK);
+  instanceHandle thread_oop = klass->allocate_instance_handle(THREAD);
+  if (has_init_error(THREAD)) {
+    return;
+  }
 
   const char thread_name[] = "Attach Listener";
-  Handle string = java_lang_String::create_from_str(thread_name, CHECK);
+  Handle string = java_lang_String::create_from_str(thread_name, THREAD);
+  if (has_init_error(THREAD)) {
+    return;
+  }
 
   // Initialize thread_oop to put it into the system threadGroup
   Handle thread_group (THREAD, Universe::system_thread_group());
@@ -472,13 +528,7 @@ void AttachListener::init() {
                        string,
                        THREAD);
 
-  if (HAS_PENDING_EXCEPTION) {
-    tty->print_cr("Exception in VM (AttachListener::init) : ");
-    java_lang_Throwable::print(PENDING_EXCEPTION, tty);
-    tty->cr();
-
-    CLEAR_PENDING_EXCEPTION;
-
+  if (has_init_error(THREAD)) {
     return;
   }
 
@@ -490,14 +540,7 @@ void AttachListener::init() {
                         vmSymbols::thread_void_signature(),
                         thread_oop,             // ARG 1
                         THREAD);
-
-  if (HAS_PENDING_EXCEPTION) {
-    tty->print_cr("Exception in VM (AttachListener::init) : ");
-    java_lang_Throwable::print(PENDING_EXCEPTION, tty);
-    tty->cr();
-
-    CLEAR_PENDING_EXCEPTION;
-
+  if (has_init_error(THREAD)) {
     return;
   }
 
@@ -507,7 +550,7 @@ void AttachListener::init() {
     // Check that thread and osthread were created
     if (listener_thread == NULL || listener_thread->osthread() == NULL) {
       vm_exit_during_initialization("java.lang.OutOfMemoryError",
-                                    "unable to create new native thread");
+                                    os::native_thread_creation_failed_msg());
     }
 
     java_lang_Thread::set_thread(thread_oop(), listener_thread);

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -207,7 +207,6 @@ void InterpreterMacroAssembler::get_cache_index_at_bcp(Register reg, int bcp_off
   if (index_size == sizeof(u2)) {
     load_unsigned_short(reg, Address(rsi, bcp_offset));
   } else if (index_size == sizeof(u4)) {
-    assert(EnableInvokeDynamic, "giant index used only for JSR 292");
     movl(reg, Address(rsi, bcp_offset));
     // Check if the secondary index definition is still ~x, otherwise
     // we have to change the following assembler code to calculate the
@@ -264,20 +263,6 @@ void InterpreterMacroAssembler::get_cache_entry_pointer_at_bcp(Register cache, R
                                // skip past the header
   addptr(cache, in_bytes(ConstantPoolCache::base_offset()));
   addptr(cache, tmp);            // construct pointer to cache entry
-}
-
-void InterpreterMacroAssembler::get_method_counters(Register method,
-                                                    Register mcs, Label& skip) {
-  Label has_counters;
-  movptr(mcs, Address(method, Method::method_counters_offset()));
-  testptr(mcs, mcs);
-  jcc(Assembler::notZero, has_counters);
-  call_VM(noreg, CAST_FROM_FN_PTR(address,
-          InterpreterRuntime::build_method_counters), method);
-  movptr(mcs, Address(method,Method::method_counters_offset()));
-  testptr(mcs, mcs);
-  jcc(Assembler::zero, skip); // No MethodCounters allocated, OutOfMemory
-  bind(has_counters);
 }
 
 // Load object from cpool->resolved_references(index)
@@ -678,6 +663,20 @@ void InterpreterMacroAssembler::remove_activation(TosState state, Register ret_a
 
 #endif /* !CC_INTERP */
 
+void InterpreterMacroAssembler::get_method_counters(Register method,
+                                                    Register mcs, Label& skip) {
+  Label has_counters;
+  movptr(mcs, Address(method, Method::method_counters_offset()));
+  testptr(mcs, mcs);
+  jcc(Assembler::notZero, has_counters);
+  call_VM(noreg, CAST_FROM_FN_PTR(address,
+          InterpreterRuntime::build_method_counters), method);
+  movptr(mcs, Address(method,Method::method_counters_offset()));
+  testptr(mcs, mcs);
+  jcc(Assembler::zero, skip); // No MethodCounters allocated, OutOfMemory
+  bind(has_counters);
+}
+
 
 // Lock object
 //
@@ -827,7 +826,7 @@ void InterpreterMacroAssembler::unlock_object(Register lock_reg) {
 // Test ImethodDataPtr.  If it is null, continue at the specified label
 void InterpreterMacroAssembler::test_method_data_pointer(Register mdp, Label& zero_continue) {
   assert(ProfileInterpreter, "must be profiling interpreter");
-  movptr(mdp, Address(rbp, frame::interpreter_frame_mdx_offset * wordSize));
+  movptr(mdp, Address(rbp, frame::interpreter_frame_mdp_offset * wordSize));
   testptr(mdp, mdp);
   jcc(Assembler::zero, zero_continue);
 }
@@ -854,7 +853,7 @@ void InterpreterMacroAssembler::set_method_data_pointer_for_bcp() {
   addptr(rbx, in_bytes(MethodData::data_offset()));
   addptr(rax, rbx);
   bind(set_mdp);
-  movptr(Address(rbp, frame::interpreter_frame_mdx_offset * wordSize), rax);
+  movptr(Address(rbp, frame::interpreter_frame_mdp_offset * wordSize), rax);
   pop(rbx);
   pop(rax);
 }
@@ -976,7 +975,7 @@ void InterpreterMacroAssembler::update_mdp_by_offset(Register mdp_in, int offset
   assert(ProfileInterpreter, "must be profiling interpreter");
   Address disp_address(mdp_in, offset_of_disp);
   addptr(mdp_in,disp_address);
-  movptr(Address(rbp, frame::interpreter_frame_mdx_offset * wordSize), mdp_in);
+  movptr(Address(rbp, frame::interpreter_frame_mdp_offset * wordSize), mdp_in);
 }
 
 
@@ -984,14 +983,14 @@ void InterpreterMacroAssembler::update_mdp_by_offset(Register mdp_in, Register r
   assert(ProfileInterpreter, "must be profiling interpreter");
   Address disp_address(mdp_in, reg, Address::times_1, offset_of_disp);
   addptr(mdp_in, disp_address);
-  movptr(Address(rbp, frame::interpreter_frame_mdx_offset * wordSize), mdp_in);
+  movptr(Address(rbp, frame::interpreter_frame_mdp_offset * wordSize), mdp_in);
 }
 
 
 void InterpreterMacroAssembler::update_mdp_by_constant(Register mdp_in, int constant) {
   assert(ProfileInterpreter, "must be profiling interpreter");
   addptr(mdp_in, constant);
-  movptr(Address(rbp, frame::interpreter_frame_mdx_offset * wordSize), mdp_in);
+  movptr(Address(rbp, frame::interpreter_frame_mdp_offset * wordSize), mdp_in);
 }
 
 
@@ -1359,6 +1358,19 @@ void InterpreterMacroAssembler::verify_FPU(int stack_depth, TosState state) {
   if (state == ftos || state == dtos) MacroAssembler::verify_FPU(stack_depth);
 }
 
+// Jump if ((*counter_addr += increment) & mask) satisfies the condition.
+void InterpreterMacroAssembler::increment_mask_and_jump(Address counter_addr,
+                                                        int increment, int mask,
+                                                        Register scratch, bool preloaded,
+                                                        Condition cond, Label* where) {
+  if (!preloaded) {
+    movl(scratch, counter_addr);
+  }
+  incrementl(scratch, increment);
+  movl(counter_addr, scratch);
+  andl(scratch, mask);
+  jcc(cond, *where);
+}
 #endif /* CC_INTERP */
 
 
@@ -1429,18 +1441,4 @@ void InterpreterMacroAssembler::notify_method_exit(
       rbx, rcx);
     NOT_CC_INTERP(pop(state));
   }
-}
-
-// Jump if ((*counter_addr += increment) & mask) satisfies the condition.
-void InterpreterMacroAssembler::increment_mask_and_jump(Address counter_addr,
-                                                        int increment, int mask,
-                                                        Register scratch, bool preloaded,
-                                                        Condition cond, Label* where) {
-  if (!preloaded) {
-    movl(scratch, counter_addr);
-  }
-  incrementl(scratch, increment);
-  movl(counter_addr, scratch);
-  andl(scratch, mask);
-  jcc(cond, *where);
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2013, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -24,11 +24,13 @@
 /**
  * @test TieredLevelsTest
  * @library /testlibrary /testlibrary/whitebox /compiler/whitebox
+ * @ignore 8046268
  * @build TieredLevelsTest
  * @run main ClassFileInstaller sun.hotspot.WhiteBox
+ *                              sun.hotspot.WhiteBox$WhiteBoxPermission
  * @run main/othervm -Xbootclasspath/a:. -XX:+TieredCompilation
  *                   -XX:+UnlockDiagnosticVMOptions -XX:+WhiteBoxAPI
- *                   -XX:CompileCommand=compileonly,TestCase$Helper::*
+ *                   -XX:CompileCommand=compileonly,SimpleTestCase$Helper::*
  *                   TieredLevelsTest
  * @summary Verify that all levels &lt; 'TieredStopAtLevel' can be used
  * @author igor.ignatyev@oracle.com
@@ -40,9 +42,7 @@ public class TieredLevelsTest extends CompLevelsTest {
                     + "TieredCompilation. Skip test.");
             return;
         }
-        for (TestCase test : TestCase.values()) {
-            new TieredLevelsTest(test).runTest();
-        }
+        CompilerWhiteBoxTest.main(TieredLevelsTest::new, args);
     }
 
     private TieredLevelsTest(TestCase testCase) {
@@ -53,6 +53,9 @@ public class TieredLevelsTest extends CompLevelsTest {
 
     @Override
     protected void test() throws Exception {
+        if (skipXcompOSR()) {
+          return;
+        }
         checkNotCompiled();
         compile();
         checkCompiled();

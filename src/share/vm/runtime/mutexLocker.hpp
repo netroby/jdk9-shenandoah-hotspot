@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -27,23 +27,11 @@
 
 #include "memory/allocation.hpp"
 #include "runtime/mutex.hpp"
-#ifdef TARGET_OS_FAMILY_linux
-# include "os_linux.inline.hpp"
-#endif
-#ifdef TARGET_OS_FAMILY_solaris
-# include "os_solaris.inline.hpp"
-#endif
-#ifdef TARGET_OS_FAMILY_windows
-# include "os_windows.inline.hpp"
-#endif
-#ifdef TARGET_OS_FAMILY_bsd
-# include "os_bsd.inline.hpp"
-#endif
 
 // Mutexes used in the VM.
 
 extern Mutex*   Patching_lock;                   // a lock used to guard code patching of compiled code
-extern Monitor* SystemDictionary_lock;           // a lock on the system dictonary
+extern Monitor* SystemDictionary_lock;           // a lock on the system dictionary
 extern Mutex*   PackageTable_lock;               // a lock on the class loader package table
 extern Mutex*   CompiledIC_lock;                 // a lock used to guard compiled IC patching and access
 extern Mutex*   InlineCacheBuffer_lock;          // a lock used to guard the InlineCacheBuffer
@@ -66,6 +54,8 @@ extern Mutex*   SignatureHandlerLibrary_lock;    // a lock on the SignatureHandl
 extern Mutex*   VtableStubs_lock;                // a lock on the VtableStubs
 extern Mutex*   SymbolTable_lock;                // a lock on the symbol table
 extern Mutex*   StringTable_lock;                // a lock on the interned string table
+extern Monitor* StringDedupQueue_lock;           // a lock on the string deduplication queue
+extern Mutex*   StringDedupTable_lock;           // a lock on the string deduplication table
 extern Mutex*   CodeCache_lock;                  // a lock on the CodeCache, rank is special, use MutexLockerEx
 extern Mutex*   MethodData_lock;                 // a lock on installation of method data
 extern Mutex*   RetData_lock;                    // a lock on installation of RetData inside method data
@@ -77,7 +67,7 @@ extern Monitor* Threads_lock;                    // a lock on the Threads table 
                                                  // (also used by Safepoints too to block threads creation/destruction)
 extern Monitor* CGC_lock;                        // used for coordination between
                                                  // fore- & background GC threads.
-extern Mutex*   STS_init_lock;                   // coordinate initialization of SuspendibleThreadSets.
+extern Monitor* STS_lock;                        // used for joining/leaving SuspendibleThreadSet.
 extern Monitor* SLT_lock;                        // used in CMS GC for acquiring PLL
 extern Monitor* iCMS_lock;                       // CMS incremental mode start/stop notification
 extern Monitor* FullGCCount_lock;                // in support of "concurrent" full gc
@@ -350,8 +340,8 @@ class MutexUnlockerEx: StackObj {
 //   - reentrant locking
 //   - locking out of order
 //
-// Only too be used for verify code, where we can relaxe out dead-lock
-// dection code a bit (unsafe, but probably ok). This code is NEVER to
+// Only to be used for verify code, where we can relax out dead-lock
+// detection code a bit (unsafe, but probably ok). This code is NEVER to
 // be included in a product version.
 //
 class VerifyMutexLocker: StackObj {
@@ -363,7 +353,7 @@ class VerifyMutexLocker: StackObj {
     _mutex     = mutex;
     _reentrant = mutex->owned_by_self();
     if (!_reentrant) {
-      // We temp. diable strict safepoint checking, while we require the lock
+      // We temp. disable strict safepoint checking, while we require the lock
       FlagSetting fs(StrictSafepointChecks, false);
       if (no_safepoint_check == Mutex::_no_safepoint_check_flag) {
         _mutex->lock_without_safepoint_check();

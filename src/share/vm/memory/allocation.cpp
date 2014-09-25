@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -29,25 +29,12 @@
 #include "memory/metaspaceShared.hpp"
 #include "memory/resourceArea.hpp"
 #include "memory/universe.hpp"
-#include "runtime/atomic.hpp"
+#include "runtime/atomic.inline.hpp"
 #include "runtime/os.hpp"
 #include "runtime/task.hpp"
 #include "runtime/threadCritical.hpp"
 #include "services/memTracker.hpp"
 #include "utilities/ostream.hpp"
-
-#ifdef TARGET_OS_FAMILY_linux
-# include "os_linux.inline.hpp"
-#endif
-#ifdef TARGET_OS_FAMILY_solaris
-# include "os_solaris.inline.hpp"
-#endif
-#ifdef TARGET_OS_FAMILY_windows
-# include "os_windows.inline.hpp"
-#endif
-#ifdef TARGET_OS_FAMILY_bsd
-# include "os_bsd.inline.hpp"
-#endif
 
 void* StackObj::operator new(size_t size)     throw() { ShouldNotCallThis(); return 0; }
 void  StackObj::operator delete(void* p)              { ShouldNotCallThis(); }
@@ -71,13 +58,12 @@ bool MetaspaceObj::is_shared() const {
   return MetaspaceShared::is_in_shared_space(this);
 }
 
-
 bool MetaspaceObj::is_metaspace_object() const {
   return Metaspace::contains((void*)this);
 }
 
 void MetaspaceObj::print_address_on(outputStream* st) const {
-  st->print(" {"INTPTR_FORMAT"}", this);
+  st->print(" {" INTPTR_FORMAT "}", p2i(this));
 }
 
 void* ResourceObj::operator new(size_t size, allocation_type type, MEMFLAGS flags) throw() {
@@ -140,7 +126,7 @@ void ResourceObj::operator delete [](void* p) {
 void ResourceObj::set_allocation_type(address res, allocation_type type) {
     // Set allocation type in the resource object
     uintptr_t allocation = (uintptr_t)res;
-    assert((allocation & allocation_mask) == 0, "address should be aligned to 4 bytes at least");
+    assert((allocation & allocation_mask) == 0, err_msg("address should be aligned to 4 bytes at least: " INTPTR_FORMAT, p2i(res)));
     assert(type <= allocation_mask, "incorrect allocation type");
     ResourceObj* resobj = (ResourceObj *)res;
     resobj->_allocation_t[0] = ~(allocation + type);
@@ -177,7 +163,7 @@ ResourceObj::ResourceObj() { // default constructor
       // Operator new() was called and type was set.
       assert(!allocated_on_stack(),
              err_msg("not embedded or stack, this(" PTR_FORMAT ") type %d a[0]=(" PTR_FORMAT ") a[1]=(" PTR_FORMAT ")",
-                     this, get_allocation_type(), _allocation_t[0], _allocation_t[1]));
+                     p2i(this), get_allocation_type(), _allocation_t[0], _allocation_t[1]));
     } else {
       // Operator new() was not called.
       // Assume that it is embedded or stack object.
@@ -191,7 +177,7 @@ ResourceObj::ResourceObj(const ResourceObj& r) { // default copy constructor
     // Note: garbage may resembles valid value.
     assert(~(_allocation_t[0] | allocation_mask) != (uintptr_t)this || !is_type_set(),
            err_msg("embedded or stack only, this(" PTR_FORMAT ") type %d a[0]=(" PTR_FORMAT ") a[1]=(" PTR_FORMAT ")",
-                   this, get_allocation_type(), _allocation_t[0], _allocation_t[1]));
+                   p2i(this), get_allocation_type(), _allocation_t[0], _allocation_t[1]));
     set_allocation_type((address)this, STACK_OR_EMBEDDED);
     _allocation_t[1] = 0; // Zap verification value
 }
@@ -200,7 +186,7 @@ ResourceObj& ResourceObj::operator=(const ResourceObj& r) { // default copy assi
     // Used in InlineTree::ok_to_inline() for WarmCallInfo.
     assert(allocated_on_stack(),
            err_msg("copy only into local, this(" PTR_FORMAT ") type %d a[0]=(" PTR_FORMAT ") a[1]=(" PTR_FORMAT ")",
-                   this, get_allocation_type(), _allocation_t[0], _allocation_t[1]));
+                   p2i(this), get_allocation_type(), _allocation_t[0], _allocation_t[1]));
     // Keep current _allocation_t value;
     return *this;
 }
@@ -216,13 +202,13 @@ ResourceObj::~ResourceObj() {
 
 void trace_heap_malloc(size_t size, const char* name, void* p) {
   // A lock is not needed here - tty uses a lock internally
-  tty->print_cr("Heap malloc " INTPTR_FORMAT " " SIZE_FORMAT " %s", p, size, name == NULL ? "" : name);
+  tty->print_cr("Heap malloc " INTPTR_FORMAT " " SIZE_FORMAT " %s", p2i(p), size, name == NULL ? "" : name);
 }
 
 
 void trace_heap_free(void* p) {
   // A lock is not needed here - tty uses a lock internally
-  tty->print_cr("Heap free   " INTPTR_FORMAT, p);
+  tty->print_cr("Heap free   " INTPTR_FORMAT, p2i(p));
 }
 
 //--------------------------------------------------------------------------------------
@@ -436,24 +422,23 @@ void Chunk::start_chunk_pool_cleaner_task() {
 }
 
 //------------------------------Arena------------------------------------------
-NOT_PRODUCT(volatile jint Arena::_instance_count = 0;)
 
-Arena::Arena(size_t init_size) {
+Arena::Arena(MEMFLAGS flag, size_t init_size) : _flags(flag), _size_in_bytes(0)  {
   size_t round_size = (sizeof (char *)) - 1;
   init_size = (init_size+round_size) & ~round_size;
   _first = _chunk = new (AllocFailStrategy::EXIT_OOM, init_size) Chunk(init_size);
   _hwm = _chunk->bottom();      // Save the cached hwm, max
   _max = _chunk->top();
+  MemTracker::record_new_arena(flag);
   set_size_in_bytes(init_size);
-  NOT_PRODUCT(Atomic::inc(&_instance_count);)
 }
 
-Arena::Arena() {
+Arena::Arena(MEMFLAGS flag) : _flags(flag), _size_in_bytes(0) {
   _first = _chunk = new (AllocFailStrategy::EXIT_OOM, Chunk::init_size) Chunk(Chunk::init_size);
   _hwm = _chunk->bottom();      // Save the cached hwm, max
   _max = _chunk->top();
+  MemTracker::record_new_arena(flag);
   set_size_in_bytes(Chunk::init_size);
-  NOT_PRODUCT(Atomic::inc(&_instance_count);)
 }
 
 Arena *Arena::move_contents(Arena *copy) {
@@ -475,7 +460,7 @@ Arena *Arena::move_contents(Arena *copy) {
 
 Arena::~Arena() {
   destruct_contents();
-  NOT_PRODUCT(Atomic::dec(&_instance_count);)
+  MemTracker::record_arena_free(_flags);
 }
 
 void* Arena::operator new(size_t size) throw() {
@@ -491,21 +476,21 @@ void* Arena::operator new (size_t size, const std::nothrow_t&  nothrow_constant)
   // dynamic memory type binding
 void* Arena::operator new(size_t size, MEMFLAGS flags) throw() {
 #ifdef ASSERT
-  void* p = (void*)AllocateHeap(size, flags|otArena, CALLER_PC);
+  void* p = (void*)AllocateHeap(size, flags, CALLER_PC);
   if (PrintMallocFree) trace_heap_malloc(size, "Arena-new", p);
   return p;
 #else
-  return (void *) AllocateHeap(size, flags|otArena, CALLER_PC);
+  return (void *) AllocateHeap(size, flags, CALLER_PC);
 #endif
 }
 
 void* Arena::operator new(size_t size, const std::nothrow_t& nothrow_constant, MEMFLAGS flags) throw() {
 #ifdef ASSERT
-  void* p = os::malloc(size, flags|otArena, CALLER_PC);
+  void* p = os::malloc(size, flags, CALLER_PC);
   if (PrintMallocFree) trace_heap_malloc(size, "Arena-new", p);
   return p;
 #else
-  return os::malloc(size, flags|otArena, CALLER_PC);
+  return os::malloc(size, flags, CALLER_PC);
 #endif
 }
 
@@ -530,8 +515,9 @@ void Arena::destruct_contents() {
 // change the size
 void Arena::set_size_in_bytes(size_t size) {
   if (_size_in_bytes != size) {
+    long delta = (long)(size - size_in_bytes());
     _size_in_bytes = size;
-    MemTracker::record_arena_size((address)this, size);
+    MemTracker::record_arena_size_change(delta, _flags);
   }
 }
 
@@ -559,6 +545,7 @@ void* Arena::grow(size_t x, AllocFailType alloc_failmode) {
   _chunk = new (alloc_failmode, len) Chunk(len);
 
   if (_chunk == NULL) {
+    _chunk = k;                 // restore the previous value of _chunk
     return NULL;
   }
   if (k) k->set_next(_chunk);   // Append new chunk to end of linked list
@@ -682,50 +669,67 @@ void* Arena::internal_malloc_4(size_t x) {
 // a memory leak.  Use CHeapObj as the base class of such objects to make it explicit
 // that they're allocated on the C heap.
 // Commented out in product version to avoid conflicts with third-party C++ native code.
-// On certain platforms, such as Mac OS X (Darwin), in debug version, new is being called
-// from jdk source and causing data corruption. Such as
-//  Java_sun_security_ec_ECKeyPairGenerator_generateECKeyPair
-// define ALLOW_OPERATOR_NEW_USAGE for platform on which global operator new allowed.
 //
-#ifndef ALLOW_OPERATOR_NEW_USAGE
-void* operator new(size_t size) throw() {
-  assert(false, "Should not call global operator new");
+// In C++98/03 the throwing new operators are defined with the following signature:
+//
+// void* operator new(std::size_tsize) throw(std::bad_alloc);
+// void* operator new[](std::size_tsize) throw(std::bad_alloc);
+//
+// while all the other (non-throwing) new and delete operators are defined with an empty
+// throw clause (i.e. "operator delete(void* p) throw()") which means that they do not
+// throw any exceptions (see section 18.4 of the C++ standard).
+//
+// In the new C++11/14 standard, the signature of the throwing new operators was changed
+// by completely omitting the throw clause (which effectively means they could throw any
+// exception) while all the other new/delete operators where changed to have a 'nothrow'
+// clause instead of an empty throw clause.
+//
+// Unfortunately, the support for exception specifications among C++ compilers is still
+// very fragile. While some more strict compilers like AIX xlC or HP aCC reject to
+// override the default throwing new operator with a user operator with an empty throw()
+// clause, the MS Visual C++ compiler warns for every non-empty throw clause like
+// throw(std::bad_alloc) that it will ignore the exception specification. The following
+// operator definitions have been checked to correctly work with all currently supported
+// compilers and they should be upwards compatible with C++11/14. Therefore
+// PLEASE BE CAREFUL if you change the signature of the following operators!
+
+void* operator new(size_t size) /* throw(std::bad_alloc) */ {
+  fatal("Should not call global operator new");
   return 0;
 }
 
-void* operator new [](size_t size) throw() {
-  assert(false, "Should not call global operator new[]");
+void* operator new [](size_t size) /* throw(std::bad_alloc) */ {
+  fatal("Should not call global operator new[]");
   return 0;
 }
 
 void* operator new(size_t size, const std::nothrow_t&  nothrow_constant) throw() {
-  assert(false, "Should not call global operator new");
+  fatal("Should not call global operator new");
   return 0;
 }
 
 void* operator new [](size_t size, std::nothrow_t&  nothrow_constant) throw() {
-  assert(false, "Should not call global operator new[]");
+  fatal("Should not call global operator new[]");
   return 0;
 }
 
-void operator delete(void* p) {
-  assert(false, "Should not call global delete");
+void operator delete(void* p) throw() {
+  fatal("Should not call global delete");
 }
 
-void operator delete [](void* p) {
-  assert(false, "Should not call global delete []");
+void operator delete [](void* p) throw() {
+  fatal("Should not call global delete []");
 }
-#endif // ALLOW_OPERATOR_NEW_USAGE
 
 void AllocatedObj::print() const       { print_on(tty); }
 void AllocatedObj::print_value() const { print_value_on(tty); }
 
 void AllocatedObj::print_on(outputStream* st) const {
-  st->print_cr("AllocatedObj(" INTPTR_FORMAT ")", this);
+  st->print_cr("AllocatedObj(" INTPTR_FORMAT ")", p2i(this));
 }
 
 void AllocatedObj::print_value_on(outputStream* st) const {
-  st->print("AllocatedObj(" INTPTR_FORMAT ")", this);
+  st->print("AllocatedObj(" INTPTR_FORMAT ")", p2i(this));
 }
 
 julong Arena::_bytes_allocated = 0;

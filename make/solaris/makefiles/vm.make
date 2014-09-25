@@ -1,5 +1,5 @@
 #
-# Copyright (c) 1998, 2013, Oracle and/or its affiliates. All rights reserved.
+# Copyright (c) 1998, 2014, Oracle and/or its affiliates. All rights reserved.
 # DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
 #
 # This code is free software; you can redistribute it and/or modify it
@@ -69,18 +69,20 @@ else
 endif
 
 # The following variables are defined in the generated flags.make file.
-BUILD_VERSION = -DHOTSPOT_RELEASE_VERSION="\"$(HS_BUILD_VER)\""
-JRE_VERSION   = -DJRE_RELEASE_VERSION="\"$(JRE_RELEASE_VER)\""
+JDK_VER_DEFS  = -DJDK_MAJOR_VERSION="\"$(JDK_MAJOR_VERSION)\"" \
+		-DJDK_MINOR_VERSION="\"$(JDK_MINOR_VERSION)\"" \
+		-DJDK_MICRO_VERSION="\"$(JDK_MICRO_VERSION)\"" \
+		-DJDK_BUILD_NUMBER="\"$(JDK_BUILD_NUMBER)\""
+VM_VER_DEFS   = -DHOTSPOT_RELEASE_VERSION="\"$(HS_BUILD_VER)\"" \
+		-DJRE_RELEASE_VERSION="\"$(JRE_RELEASE_VER)\""  \
+		$(JDK_VER_DEFS)
 HS_LIB_ARCH   = -DHOTSPOT_LIB_ARCH=\"$(LIBARCH)\"
-BUILD_TARGET  = -DHOTSPOT_BUILD_TARGET="\"$(TARGET)\""
 BUILD_USER    = -DHOTSPOT_BUILD_USER="\"$(HOTSPOT_BUILD_USER)\""
 VM_DISTRO     = -DHOTSPOT_VM_DISTRO="\"$(HOTSPOT_VM_DISTRO)\""
 
 CXXFLAGS =           \
   ${SYSDEFS}         \
   ${INCLUDES}        \
-  ${BUILD_VERSION}   \
-  ${BUILD_TARGET}    \
   ${BUILD_USER}      \
   ${HS_LIB_ARCH}     \
   ${VM_DISTRO}
@@ -88,7 +90,7 @@ CXXFLAGS =           \
 # This is VERY important! The version define must only be supplied to vm_version.o
 # If not, ccache will not re-use the cache at all, since the version string might contain
 # a time and date.
-CXXFLAGS/vm_version.o += ${JRE_VERSION}
+CXXFLAGS/vm_version.o += ${VM_VER_DEFS}
 
 CXXFLAGS/BYFILE = $(CXXFLAGS/$@)
 
@@ -141,7 +143,7 @@ else
 LIBS += -lsocket -lsched -ldl $(LIBM) -lthread -lc -ldemangle
 endif # sparcWorks
 
-LIBS += -lkstat
+LIBS += -lkstat -lpicl
 
 # By default, link the *.o into the library, not the executable.
 LINK_INTO$(LINK_INTO) = LIBJVM
@@ -333,11 +335,11 @@ DEST_JVM_DIZ       = $(DEST_SUBDIR)/$(LIBJVM_DIZ)
 
 install_jvm: $(LIBJVM)
 	@echo "Copying $(LIBJVM) to $(DEST_JVM)"
-	$(QUIETLY) test -f $(LIBJVM_DEBUGINFO) && \
-	    cp -f $(LIBJVM_DEBUGINFO) $(DEST_JVM_DEBUGINFO)
-	$(QUIETLY) test -f $(LIBJVM_DIZ) && \
-	    cp -f $(LIBJVM_DIZ) $(DEST_JVM_DIZ)
-	$(QUIETLY) cp -f $(LIBJVM) $(DEST_JVM) && echo "Done"
+	$(QUIETLY) test ! -f $(LIBJVM_DEBUGINFO) || \
+	    $(CP) -f $(LIBJVM_DEBUGINFO) $(DEST_JVM_DEBUGINFO)
+	$(QUIETLY) test ! -f $(LIBJVM_DIZ) || \
+	    $(CP) -f $(LIBJVM_DIZ) $(DEST_JVM_DIZ)
+	$(QUIETLY) $(CP) -f $(LIBJVM) $(DEST_JVM) && echo "Done"
 
 #----------------------------------------------------------------------
 # Other files

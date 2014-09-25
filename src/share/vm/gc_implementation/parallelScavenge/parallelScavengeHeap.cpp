@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2001, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2001, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -78,6 +78,7 @@ jint ParallelScavengeHeap::initialize() {
                         (HeapWord*)(heap_rs.base() + heap_rs.size()));
 
   CardTableExtension* const barrier_set = new CardTableExtension(_reserved, 3);
+  barrier_set->initialize();
   _barrier_set = barrier_set;
   oopDesc::set_bs(_barrier_set);
   if (_barrier_set == NULL) {
@@ -373,7 +374,7 @@ HeapWord* ParallelScavengeHeap::mem_allocate(
     if ((result == NULL) && (QueuedAllocationWarningCount > 0) &&
         (loop_count % QueuedAllocationWarningCount == 0)) {
       warning("ParallelScavengeHeap::mem_allocate retries %d times \n\t"
-              " size=%d", loop_count, size);
+              " size=" SIZE_FORMAT, loop_count, size);
     }
   }
 
@@ -484,12 +485,12 @@ void ParallelScavengeHeap::ensure_parsability(bool retire_tlabs) {
   young_gen()->eden_space()->ensure_parsability();
 }
 
-size_t ParallelScavengeHeap::unsafe_max_alloc() {
-  return young_gen()->eden_space()->free_in_bytes();
-}
-
 size_t ParallelScavengeHeap::tlab_capacity(Thread* thr) const {
   return young_gen()->eden_space()->tlab_capacity(thr);
+}
+
+size_t ParallelScavengeHeap::tlab_used(Thread* thr) const {
+  return young_gen()->eden_space()->tlab_used(thr);
 }
 
 size_t ParallelScavengeHeap::unsafe_max_tlab_alloc(Thread* thr) const {
@@ -623,11 +624,11 @@ void ParallelScavengeHeap::print_gc_threads_on(outputStream* st) const {
 }
 
 void ParallelScavengeHeap::print_tracing_info() const {
-  if (TraceGen0Time) {
+  if (TraceYoungGenTime) {
     double time = PSScavenge::accumulated_time()->seconds();
     tty->print_cr("[Accumulated GC generation 0 time %3.7f secs]", time);
   }
-  if (TraceGen1Time) {
+  if (TraceOldGenTime) {
     double time = UseParallelOldGC ? PSParallelCompact::accumulated_time()->seconds() : PSMarkSweep::accumulated_time()->seconds();
     tty->print_cr("[Accumulated GC generation 1 time %3.7f secs]", time);
   }
@@ -665,8 +666,10 @@ void ParallelScavengeHeap::print_heap_change(size_t prev_used) {
 
 void ParallelScavengeHeap::trace_heap(GCWhen::Type when, GCTracer* gc_tracer) {
   const PSHeapSummary& heap_summary = create_ps_heap_summary();
+  gc_tracer->report_gc_heap_summary(when, heap_summary);
+
   const MetaspaceSummary& metaspace_summary = create_metaspace_summary();
-  gc_tracer->report_gc_heap_summary(when, heap_summary, metaspace_summary);
+  gc_tracer->report_metaspace_summary(when, metaspace_summary);
 }
 
 ParallelScavengeHeap* ParallelScavengeHeap::heap() {
@@ -677,7 +680,7 @@ ParallelScavengeHeap* ParallelScavengeHeap::heap() {
 
 // Before delegating the resize to the young generation,
 // the reserved space for the young and old generations
-// may be changed to accomodate the desired resize.
+// may be changed to accommodate the desired resize.
 void ParallelScavengeHeap::resize_young_gen(size_t eden_size,
     size_t survivor_size) {
   if (UseAdaptiveGCBoundary) {
@@ -694,7 +697,7 @@ void ParallelScavengeHeap::resize_young_gen(size_t eden_size,
 
 // Before delegating the resize to the old generation,
 // the reserved space for the young and old generations
-// may be changed to accomodate the desired resize.
+// may be changed to accommodate the desired resize.
 void ParallelScavengeHeap::resize_old_gen(size_t desired_free_space) {
   if (UseAdaptiveGCBoundary) {
     if (size_policy()->bytes_absorbed_from_eden() != 0) {

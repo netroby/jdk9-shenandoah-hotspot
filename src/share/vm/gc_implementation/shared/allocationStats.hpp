@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2001, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2001, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -49,11 +49,11 @@ class AllocationStats VALUE_OBJ_CLASS_SPEC {
   // estimates.
   AdaptivePaddedAverage _demand_rate_estimate;
 
-  ssize_t     _desired;         // Demand stimate computed as described above
+  ssize_t     _desired;          // Demand estimate computed as described above
   ssize_t     _coal_desired;     // desired +/- small-percent for tuning coalescing
 
-  ssize_t     _surplus;         // count - (desired +/- small-percent),
-                                // used to tune splitting in best fit
+  ssize_t     _surplus;          // count - (desired +/- small-percent),
+                                 // used to tune splitting in best fit
   ssize_t     _bfr_surp;         // surplus at start of current sweep
   ssize_t     _prev_sweep;       // count from end of previous sweep
   ssize_t     _before_sweep;     // count from before current sweep
@@ -107,7 +107,7 @@ class AllocationStats VALUE_OBJ_CLASS_SPEC {
       assert(demand >= 0,
              err_msg("Demand (" SSIZE_FORMAT ") should be non-negative for "
                      PTR_FORMAT " (size=" SIZE_FORMAT ")",
-                     demand, this, count));
+                     demand, p2i(this), count));
       // Defensive: adjust for imprecision in event counting
       if (demand < 0) {
         demand = 0;
@@ -120,8 +120,9 @@ class AllocationStats VALUE_OBJ_CLASS_SPEC {
       float delta_ise = (CMSExtrapolateSweep ? intra_sweep_estimate : 0.0);
       _desired = (ssize_t)(new_rate * (inter_sweep_estimate + delta_ise));
       if (PrintFLSStatistics > 1) {
-        gclog_or_tty->print_cr("demand: %d, old_rate: %f, current_rate: %f, new_rate: %f, old_desired: %d, new_desired: %d",
-                                demand,     old_rate,     rate,             new_rate,     old_desired,     _desired);
+        gclog_or_tty->print_cr("demand: " SSIZE_FORMAT ", old_rate: %f, current_rate: %f, "
+                               "new_rate: %f, old_desired: " SSIZE_FORMAT ", new_desired: " SSIZE_FORMAT,
+                                demand, old_rate, rate, new_rate, old_desired, _desired);
       }
     }
   }

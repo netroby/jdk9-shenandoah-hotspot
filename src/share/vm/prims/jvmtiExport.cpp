@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2003, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2003, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -47,7 +47,8 @@
 #include "runtime/interfaceSupport.hpp"
 #include "runtime/objectMonitor.hpp"
 #include "runtime/objectMonitor.inline.hpp"
-#include "runtime/thread.hpp"
+#include "runtime/os.inline.hpp"
+#include "runtime/thread.inline.hpp"
 #include "runtime/vframe.hpp"
 #include "services/attachListener.hpp"
 #include "services/serviceUtil.hpp"
@@ -55,6 +56,8 @@
 #if INCLUDE_ALL_GCS
 #include "gc_implementation/parallelScavenge/psMarkSweep.hpp"
 #endif // INCLUDE_ALL_GCS
+
+PRAGMA_FORMAT_MUTE_WARNINGS_FOR_GCC
 
 #ifdef JVMTI_TRACE
 #define EVT_TRACE(evt,out) if ((JvmtiTrace::event_trace_flags(evt) & JvmtiTrace::SHOW_EVENT_SENT) != 0) { SafeResourceMark rm; tty->print_cr out; }
@@ -993,7 +996,9 @@ void JvmtiExport::post_class_unload(Klass* klass) {
         // Before we call the JVMTI agent, we have to set the state in the
         // thread for which we are proxying.
         JavaThreadState prev_state = real_thread->thread_state();
-        assert(prev_state == _thread_blocked, "JavaThread should be at safepoint");
+        assert(((Thread *)real_thread)->is_ConcurrentGC_thread() ||
+               (real_thread->is_Java_thread() && prev_state == _thread_blocked),
+               "should be ConcurrentGCThread or JavaThread at safepoint");
         real_thread->set_thread_state(_thread_in_native);
 
         jvmtiExtensionEvent callback = env->ext_callbacks()->ClassUnload;
@@ -2158,6 +2163,15 @@ void JvmtiExport::cleanup_thread(JavaThread* thread) {
     // why it is not in post_thread_end_event like its complement
     // Maybe both these functions should be rolled into the posts?
     JvmtiEventController::thread_ended(thread);
+  }
+}
+
+void JvmtiExport::clear_detected_exception(JavaThread* thread) {
+  assert(JavaThread::current() == thread, "thread is not current");
+
+  JvmtiThreadState* state = thread->jvmti_thread_state();
+  if (state != NULL) {
+    state->clear_exception_detected();
   }
 }
 

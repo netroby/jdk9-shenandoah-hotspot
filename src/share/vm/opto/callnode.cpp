@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -27,6 +27,7 @@
 #include "compiler/oopMap.hpp"
 #include "opto/callGenerator.hpp"
 #include "opto/callnode.hpp"
+#include "opto/castnode.hpp"
 #include "opto/escape.hpp"
 #include "opto/locknode.hpp"
 #include "opto/machnode.hpp"
@@ -73,20 +74,20 @@ Node *StartNode::match( const ProjNode *proj, const Matcher *match ) {
   case TypeFunc::Control:
   case TypeFunc::I_O:
   case TypeFunc::Memory:
-    return new (match->C) MachProjNode(this,proj->_con,RegMask::Empty,MachProjNode::unmatched_proj);
+    return new MachProjNode(this,proj->_con,RegMask::Empty,MachProjNode::unmatched_proj);
   case TypeFunc::FramePtr:
-    return new (match->C) MachProjNode(this,proj->_con,Matcher::c_frame_ptr_mask, Op_RegP);
+    return new MachProjNode(this,proj->_con,Matcher::c_frame_ptr_mask, Op_RegP);
   case TypeFunc::ReturnAdr:
-    return new (match->C) MachProjNode(this,proj->_con,match->_return_addr_mask,Op_RegP);
+    return new MachProjNode(this,proj->_con,match->_return_addr_mask,Op_RegP);
   case TypeFunc::Parms:
   default: {
       uint parm_num = proj->_con - TypeFunc::Parms;
       const Type *t = _domain->field_at(proj->_con);
       if (t->base() == Type::Half)  // 2nd half of Longs and Doubles
-        return new (match->C) ConNode(Type::TOP);
+        return new ConNode(Type::TOP);
       uint ideal_reg = t->ideal_reg();
       RegMask &rm = match->_calling_convention_mask[parm_num];
-      return new (match->C) MachProjNode(this,proj->_con,rm,ideal_reg);
+      return new MachProjNode(this,proj->_con,rm,ideal_reg);
     }
   }
   return NULL;
@@ -111,7 +112,7 @@ const char * const ParmNode::names[TypeFunc::Parms+1] = {
 #ifndef PRODUCT
 void ParmNode::dump_spec(outputStream *st) const {
   if( _con < TypeFunc::Parms ) {
-    st->print(names[_con]);
+    st->print("%s", names[_con]);
   } else {
     st->print("Parm%d: ",_con-TypeFunc::Parms);
     // Verbose and WizardMode dump bottom_type for all nodes
@@ -342,24 +343,24 @@ static void format_helper( PhaseRegAlloc *regalloc, outputStream* st, Node *n, c
       st->print(" %s%d]=#"INT32_FORMAT,msg,i,t->is_int()->get_con());
       break;
     case Type::AnyPtr:
-      assert( t == TypePtr::NULL_PTR, "" );
+      assert( t == TypePtr::NULL_PTR || n->in_dump(), "" );
       st->print(" %s%d]=#NULL",msg,i);
       break;
     case Type::AryPtr:
     case Type::InstPtr:
-      st->print(" %s%d]=#Ptr" INTPTR_FORMAT,msg,i,t->isa_oopptr()->const_oop());
+      st->print(" %s%d]=#Ptr" INTPTR_FORMAT,msg,i,p2i(t->isa_oopptr()->const_oop()));
       break;
     case Type::KlassPtr:
-      st->print(" %s%d]=#Ptr" INTPTR_FORMAT,msg,i,t->make_ptr()->isa_klassptr()->klass());
+      st->print(" %s%d]=#Ptr" INTPTR_FORMAT,msg,i,p2i(t->make_ptr()->isa_klassptr()->klass()));
       break;
     case Type::MetadataPtr:
-      st->print(" %s%d]=#Ptr" INTPTR_FORMAT,msg,i,t->make_ptr()->isa_metadataptr()->metadata());
+      st->print(" %s%d]=#Ptr" INTPTR_FORMAT,msg,i,p2i(t->make_ptr()->isa_metadataptr()->metadata()));
       break;
     case Type::NarrowOop:
-      st->print(" %s%d]=#Ptr" INTPTR_FORMAT,msg,i,t->make_ptr()->isa_oopptr()->const_oop());
+      st->print(" %s%d]=#Ptr" INTPTR_FORMAT,msg,i,p2i(t->make_ptr()->isa_oopptr()->const_oop()));
       break;
     case Type::RawPtr:
-      st->print(" %s%d]=#Raw" INTPTR_FORMAT,msg,i,t->is_rawptr());
+      st->print(" %s%d]=#Raw" INTPTR_FORMAT,msg,i,p2i(t->is_rawptr()));
       break;
     case Type::DoubleCon:
       st->print(" %s%d]=#%fD",msg,i,t->is_double_constant()->_d);
@@ -368,7 +369,7 @@ static void format_helper( PhaseRegAlloc *regalloc, outputStream* st, Node *n, c
       st->print(" %s%d]=#%fF",msg,i,t->is_float_constant()->_f);
       break;
     case Type::Long:
-      st->print(" %s%d]=#"INT64_FORMAT,msg,i,t->is_long()->get_con());
+      st->print(" %s%d]=#"INT64_FORMAT,msg,i,(int64_t)(t->is_long()->get_con()));
       break;
     case Type::Half:
     case Type::Top:
@@ -427,7 +428,7 @@ void JVMState::format(PhaseRegAlloc *regalloc, const Node *n, outputStream* st) 
 
     for (i = 0; i < (uint)scobjs.length(); i++) {
       // Scalar replaced objects.
-      st->print_cr("");
+      st->cr();
       st->print("        # ScObj" INT32_FORMAT " ", i);
       SafePointScalarObjectNode* spobj = scobjs.at(i);
       ciKlass* cik = spobj->bottom_type()->is_oopptr()->klass();
@@ -484,7 +485,7 @@ void JVMState::format(PhaseRegAlloc *regalloc, const Node *n, outputStream* st) 
       st->print(" }");
     }
   }
-  st->print_cr("");
+  st->cr();
   if (caller() != NULL) caller()->format(regalloc, n, st);
 }
 
@@ -595,6 +596,51 @@ void JVMState::set_map_deep(SafePointNode* map) {
   }
 }
 
+// Adapt offsets in in-array after adding or removing an edge.
+// Prerequisite is that the JVMState is used by only one node.
+void JVMState::adapt_position(int delta) {
+  for (JVMState* jvms = this; jvms != NULL; jvms = jvms->caller()) {
+    jvms->set_locoff(jvms->locoff() + delta);
+    jvms->set_stkoff(jvms->stkoff() + delta);
+    jvms->set_monoff(jvms->monoff() + delta);
+    jvms->set_scloff(jvms->scloff() + delta);
+    jvms->set_endoff(jvms->endoff() + delta);
+  }
+}
+
+// Mirror the stack size calculation in the deopt code
+// How much stack space would we need at this point in the program in
+// case of deoptimization?
+int JVMState::interpreter_frame_size() const {
+  const JVMState* jvms = this;
+  int size = 0;
+  int callee_parameters = 0;
+  int callee_locals = 0;
+  int extra_args = method()->max_stack() - stk_size();
+
+  while (jvms != NULL) {
+    int locks = jvms->nof_monitors();
+    int temps = jvms->stk_size();
+    bool is_top_frame = (jvms == this);
+    ciMethod* method = jvms->method();
+
+    int frame_size = BytesPerWord * Interpreter::size_activation(method->max_stack(),
+                                                                 temps + callee_parameters,
+                                                                 extra_args,
+                                                                 locks,
+                                                                 callee_parameters,
+                                                                 callee_locals,
+                                                                 is_top_frame);
+    size += frame_size;
+
+    callee_parameters = method->size_of_parameters();
+    callee_locals = method->max_locals();
+    extra_args = 0;
+    jvms = jvms->caller();
+  }
+  return size + Deoptimization::last_frame_adjust(0, callee_locals) * BytesPerWord;
+}
+
 //=============================================================================
 uint CallNode::cmp( const Node &n ) const
 { return _tf == ((CallNode&)n)._tf && _jvms == ((CallNode&)n)._jvms; }
@@ -639,12 +685,12 @@ Node *CallNode::match( const ProjNode *proj, const Matcher *match ) {
   case TypeFunc::Control:
   case TypeFunc::I_O:
   case TypeFunc::Memory:
-    return new (match->C) MachProjNode(this,proj->_con,RegMask::Empty,MachProjNode::unmatched_proj);
+    return new MachProjNode(this,proj->_con,RegMask::Empty,MachProjNode::unmatched_proj);
 
   case TypeFunc::Parms+1:       // For LONG & DOUBLE returns
-    assert(tf()->_range->field_at(TypeFunc::Parms+1) == Type::HALF, "");
+    assert(tf()->range()->field_at(TypeFunc::Parms+1) == Type::HALF, "");
     // 2nd half of doubles and longs
-    return new (match->C) MachProjNode(this,proj->_con, RegMask::Empty, (uint)OptoReg::Bad);
+    return new MachProjNode(this,proj->_con, RegMask::Empty, (uint)OptoReg::Bad);
 
   case TypeFunc::Parms: {       // Normal returns
     uint ideal_reg = tf()->range()->field_at(TypeFunc::Parms)->ideal_reg();
@@ -654,7 +700,7 @@ Node *CallNode::match( const ProjNode *proj, const Matcher *match ) {
     RegMask rm = RegMask(regs.first());
     if( OptoReg::is_valid(regs.second()) )
       rm.Insert( regs.second() );
-    return new (match->C) MachProjNode(this,proj->_con,rm,ideal_reg);
+    return new MachProjNode(this,proj->_con,rm,ideal_reg);
   }
 
   case TypeFunc::ReturnAdr:
@@ -732,7 +778,7 @@ bool CallNode::has_non_debug_use(Node *n) {
 }
 
 // Returns the unique CheckCastPP of a call
-// or 'this' if there are several CheckCastPP
+// or 'this' if there are several CheckCastPP or unexpected uses
 // or returns NULL if there is no one.
 Node *CallNode::result_cast() {
   Node *cast = NULL;
@@ -748,6 +794,13 @@ Node *CallNode::result_cast() {
         return this;  // more than 1 CheckCastPP
       }
       cast = use;
+    } else if (!use->is_Initialize() &&
+               !use->is_AddP()) {
+      // Expected uses are restricted to a CheckCastPP, an Initialize
+      // node, and AddP nodes. If we encounter any other use (a Phi
+      // node can be seen in rare cases) return this to prevent
+      // incorrect optimizations.
+      return this;
     }
   }
   return cast;
@@ -887,7 +940,7 @@ int CallStaticJavaNode::extract_uncommon_trap_request(const Node* call) {
   if (!(call->req() > TypeFunc::Parms &&
         call->in(TypeFunc::Parms) != NULL &&
         call->in(TypeFunc::Parms)->is_Con())) {
-    assert(_in_dump_cnt != 0, "OK if dumping");
+    assert(in_dump() != 0, "OK if dumping");
     tty->print("[bad uncommon trap]");
     return 0;
   }
@@ -935,7 +988,7 @@ uint CallRuntimeNode::cmp( const Node &n ) const {
 #ifndef PRODUCT
 void CallRuntimeNode::dump_spec(outputStream *st) const {
   st->print("# ");
-  st->print(_name);
+  st->print("%s", _name);
   CallNode::dump_spec(st);
 }
 #endif
@@ -953,7 +1006,7 @@ void CallRuntimeNode::calling_convention( BasicType* sig_bt, VMRegPair *parm_reg
 #ifndef PRODUCT
 void CallLeafNode::dump_spec(outputStream *st) const {
   st->print("# ");
-  st->print(_name);
+  st->print("%s", _name);
   CallNode::dump_spec(st);
 }
 #endif
@@ -1044,6 +1097,7 @@ const Type *SafePointNode::Value( PhaseTransform *phase ) const {
 #ifndef PRODUCT
 void SafePointNode::dump_spec(outputStream *st) const {
   st->print(" SafePoint ");
+  _replaced_nodes.dump(st);
 }
 #endif
 
@@ -1242,10 +1296,10 @@ Node* AllocateArrayNode::Ideal(PhaseGVN *phase, bool can_reshape) {
         Node* nproj = catchproj->clone();
         igvn->register_new_node_with_optimizer(nproj);
 
-        Node *frame = new (phase->C) ParmNode( phase->C->start(), TypeFunc::FramePtr );
+        Node *frame = new ParmNode( phase->C->start(), TypeFunc::FramePtr );
         frame = phase->transform(frame);
         // Halt & Catch Fire
-        Node *halt = new (phase->C) HaltNode( nproj, frame );
+        Node *halt = new HaltNode( nproj, frame );
         phase->C->root()->add_req(halt);
         phase->transform(halt);
 
@@ -1287,7 +1341,7 @@ Node *AllocateArrayNode::make_ideal_length(const TypeOopPtr* oop_type, PhaseTran
       if (!allow_new_nodes) return NULL;
       // Create a cast which is control dependent on the initialization to
       // propagate the fact that the array length must be positive.
-      length = new (phase->C) CastIINode(length, narrow_length_type);
+      length = new CastIINode(length, narrow_length_type);
       length->set_req(0, initialization()->proj_out(0));
     }
   }
@@ -1761,3 +1815,57 @@ Node *UnlockNode::Ideal(PhaseGVN *phase, bool can_reshape) {
   }
   return result;
 }
+
+ArrayCopyNode::ArrayCopyNode(Compile* C, bool alloc_tightly_coupled)
+  : CallNode(arraycopy_type(), NULL, TypeRawPtr::BOTTOM), _alloc_tightly_coupled(alloc_tightly_coupled), _kind(ArrayCopy) {
+  init_class_id(Class_ArrayCopy);
+  init_flags(Flag_is_macro);
+  C->add_macro_node(this);
+}
+
+uint ArrayCopyNode::size_of() const { return sizeof(*this); }
+
+ArrayCopyNode* ArrayCopyNode::make(GraphKit* kit, bool may_throw,
+                                   Node* src, Node* src_offset,
+                                   Node* dest, Node* dest_offset,
+                                   Node* length,
+                                   bool alloc_tightly_coupled,
+                                   Node* src_klass, Node* dest_klass,
+                                   Node* src_length, Node* dest_length) {
+
+  ArrayCopyNode* ac = new ArrayCopyNode(kit->C, alloc_tightly_coupled);
+  Node* prev_mem = kit->set_predefined_input_for_runtime_call(ac);
+
+  ac->init_req(ArrayCopyNode::Src, src);
+  ac->init_req(ArrayCopyNode::SrcPos, src_offset);
+  ac->init_req(ArrayCopyNode::Dest, dest);
+  ac->init_req(ArrayCopyNode::DestPos, dest_offset);
+  ac->init_req(ArrayCopyNode::Length, length);
+  ac->init_req(ArrayCopyNode::SrcLen, src_length);
+  ac->init_req(ArrayCopyNode::DestLen, dest_length);
+  ac->init_req(ArrayCopyNode::SrcKlass, src_klass);
+  ac->init_req(ArrayCopyNode::DestKlass, dest_klass);
+
+  if (may_throw) {
+    ac->set_req(TypeFunc::I_O , kit->i_o());
+    kit->add_safepoint_edges(ac, false);
+  }
+
+  return ac;
+}
+
+void ArrayCopyNode::connect_outputs(GraphKit* kit) {
+  kit->set_all_memory_call(this, true);
+  kit->set_control(kit->gvn().transform(new ProjNode(this,TypeFunc::Control)));
+  kit->set_i_o(kit->gvn().transform(new ProjNode(this, TypeFunc::I_O)));
+  kit->make_slow_call_ex(this, kit->env()->Throwable_klass(), true);
+  kit->set_all_memory_call(this);
+}
+
+#ifndef PRODUCT
+const char* ArrayCopyNode::_kind_names[] = {"arraycopy", "arraycopy, validated arguments", "clone", "oop array clone", "CopyOf", "CopyOfRange"};
+void ArrayCopyNode::dump_spec(outputStream *st) const {
+  CallNode::dump_spec(st);
+  st->print(" (%s%s)", _kind_names[_kind], _alloc_tightly_coupled ? ", tightly coupled allocation" : "");
+}
+#endif

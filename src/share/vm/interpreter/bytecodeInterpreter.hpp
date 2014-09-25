@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2002, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2002, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -32,21 +32,6 @@
 #include "runtime/frame.hpp"
 #include "runtime/globals.hpp"
 #include "utilities/globalDefinitions.hpp"
-#ifdef TARGET_ARCH_x86
-# include "bytes_x86.hpp"
-#endif
-#ifdef TARGET_ARCH_sparc
-# include "bytes_sparc.hpp"
-#endif
-#ifdef TARGET_ARCH_zero
-# include "bytes_zero.hpp"
-#endif
-#ifdef TARGET_ARCH_arm
-# include "bytes_arm.hpp"
-#endif
-#ifdef TARGET_ARCH_ppc
-# include "bytes_ppc.hpp"
-#endif
 
 #ifdef CC_INTERP
 
@@ -55,6 +40,8 @@
     (topOfStack -= ((count) * Interpreter::stackElementWords))
 
 // CVM definitions find hotspot equivalents...
+
+class InterpreterMacroAssembler;
 
 union VMJavaVal64 {
     jlong   l;
@@ -66,27 +53,26 @@ union VMJavaVal64 {
 typedef class BytecodeInterpreter* interpreterState;
 
 struct call_message {
-    class Method* _callee;    /* method to call during call_method request */
-    address   _callee_entry_point;   /* address to jump to for call_method request */
-    int       _bcp_advance;          /* size of the invoke bytecode operation */
+  class Method* _callee;           // method to call during call_method request
+  address _callee_entry_point;     // address to jump to for call_method request
+  int _bcp_advance;                // size of the invoke bytecode operation
 };
 
 struct osr_message {
-    address _osr_buf;                 /* the osr buffer */
-    address _osr_entry;               /* the entry to the osr method */
+  address _osr_buf;                 // the osr buffer
+  address _osr_entry;               // the entry to the osr method
 };
 
 struct osr_result {
-  nmethod* nm;                       /* osr nmethod */
-  address return_addr;               /* osr blob return address */
+  nmethod* nm;                      // osr nmethod
+  address return_addr;              // osr blob return address
 };
 
 // Result returned to frame manager
 union frame_manager_message {
-    call_message _to_call;            /* describes callee */
-    Bytecodes::Code _return_kind;     /* i_return, a_return, ... */
-    osr_message _osr;                 /* describes the osr */
-    osr_result _osr_result;           /* result of OSR request */
+  call_message _to_call;            // describes callee
+  osr_message _osr;                 // describes the osr
+  osr_result _osr_result;           // result of OSR request
 };
 
 class BytecodeInterpreter : StackObj {
@@ -115,7 +101,8 @@ public:
          more_monitors,             // need a new monitor
          throwing_exception,        // unwind stack and rethrow
          popping_frame,             // unwind call and retry call
-         do_osr                     // request this invocation be OSR's
+         do_osr,                    // request this invocation be OSR's
+         early_return               // early return as commanded by jvmti
     };
 
 private:
@@ -215,8 +202,6 @@ inline void set_osr_buf(address buf) { _result._osr._osr_buf = buf; }
 inline void set_osr_entry(address entry) { _result._osr._osr_entry = entry; }
 inline int bcp_advance() { return _result._to_call._bcp_advance; }
 inline void set_bcp_advance(int count) { _result._to_call._bcp_advance = count; }
-
-inline void set_return_kind(Bytecodes::Code kind) { _result._return_kind = kind; }
 
 inline interpreterState prev() { return _prev_link; }
 

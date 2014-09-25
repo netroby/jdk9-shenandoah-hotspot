@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -111,6 +111,7 @@ class Ticks;
   do_klass(SecurityManager_klass,                       java_lang_SecurityManager,                 Pre                 ) \
   do_klass(ProtectionDomain_klass,                      java_security_ProtectionDomain,            Pre                 ) \
   do_klass(AccessControlContext_klass,                  java_security_AccessControlContext,        Pre                 ) \
+  do_klass(SecureClassLoader_klass,                     java_security_SecureClassLoader,           Pre                 ) \
   do_klass(ClassNotFoundException_klass,                java_lang_ClassNotFoundException,          Pre                 ) \
   do_klass(NoClassDefFoundError_klass,                  java_lang_NoClassDefFoundError,            Pre                 ) \
   do_klass(LinkageError_klass,                          java_lang_LinkageError,                    Pre                 ) \
@@ -139,37 +140,44 @@ class Ticks;
   do_klass(reflect_Constructor_klass,                   java_lang_reflect_Constructor,             Pre                 ) \
                                                                                                                          \
   /* NOTE: needed too early in bootstrapping process to have checks based on JDK version */                              \
-  /* Universe::is_gte_jdk14x_version() is not set up by this point. */                                                   \
   /* It's okay if this turns out to be NULL in non-1.4 JDKs. */                                                          \
   do_klass(reflect_MagicAccessorImpl_klass,             sun_reflect_MagicAccessorImpl,             Opt                 ) \
-  do_klass(reflect_MethodAccessorImpl_klass,            sun_reflect_MethodAccessorImpl,            Opt_Only_JDK14NewRef) \
-  do_klass(reflect_ConstructorAccessorImpl_klass,       sun_reflect_ConstructorAccessorImpl,       Opt_Only_JDK14NewRef) \
+  do_klass(reflect_MethodAccessorImpl_klass,            sun_reflect_MethodAccessorImpl,            Pre                 ) \
+  do_klass(reflect_ConstructorAccessorImpl_klass,       sun_reflect_ConstructorAccessorImpl,       Pre                 ) \
   do_klass(reflect_DelegatingClassLoader_klass,         sun_reflect_DelegatingClassLoader,         Opt                 ) \
-  do_klass(reflect_ConstantPool_klass,                  sun_reflect_ConstantPool,                  Opt_Only_JDK15      ) \
-  do_klass(reflect_UnsafeStaticFieldAccessorImpl_klass, sun_reflect_UnsafeStaticFieldAccessorImpl, Opt_Only_JDK15      ) \
+  do_klass(reflect_ConstantPool_klass,                  sun_reflect_ConstantPool,                  Opt                 ) \
+  do_klass(reflect_UnsafeStaticFieldAccessorImpl_klass, sun_reflect_UnsafeStaticFieldAccessorImpl, Opt                 ) \
   do_klass(reflect_CallerSensitive_klass,               sun_reflect_CallerSensitive,               Opt                 ) \
                                                                                                                          \
   /* support for dynamic typing; it's OK if these are NULL in earlier JDKs */                                            \
   do_klass(DirectMethodHandle_klass,                    java_lang_invoke_DirectMethodHandle,       Opt                 ) \
-  do_klass(MethodHandle_klass,                          java_lang_invoke_MethodHandle,             Pre_JSR292          ) \
-  do_klass(MemberName_klass,                            java_lang_invoke_MemberName,               Pre_JSR292          ) \
-  do_klass(MethodHandleNatives_klass,                   java_lang_invoke_MethodHandleNatives,      Pre_JSR292          ) \
+  do_klass(MethodHandle_klass,                          java_lang_invoke_MethodHandle,             Pre                 ) \
+  do_klass(MemberName_klass,                            java_lang_invoke_MemberName,               Pre                 ) \
+  do_klass(MethodHandleNatives_klass,                   java_lang_invoke_MethodHandleNatives,      Pre                 ) \
   do_klass(LambdaForm_klass,                            java_lang_invoke_LambdaForm,               Opt                 ) \
-  do_klass(MethodType_klass,                            java_lang_invoke_MethodType,               Pre_JSR292          ) \
-  do_klass(BootstrapMethodError_klass,                  java_lang_BootstrapMethodError,            Pre_JSR292          ) \
-  do_klass(CallSite_klass,                              java_lang_invoke_CallSite,                 Pre_JSR292          ) \
-  do_klass(ConstantCallSite_klass,                      java_lang_invoke_ConstantCallSite,         Pre_JSR292          ) \
-  do_klass(MutableCallSite_klass,                       java_lang_invoke_MutableCallSite,          Pre_JSR292          ) \
-  do_klass(VolatileCallSite_klass,                      java_lang_invoke_VolatileCallSite,         Pre_JSR292          ) \
+  do_klass(MethodType_klass,                            java_lang_invoke_MethodType,               Pre                 ) \
+  do_klass(BootstrapMethodError_klass,                  java_lang_BootstrapMethodError,            Pre                 ) \
+  do_klass(CallSite_klass,                              java_lang_invoke_CallSite,                 Pre                 ) \
+  do_klass(ConstantCallSite_klass,                      java_lang_invoke_ConstantCallSite,         Pre                 ) \
+  do_klass(MutableCallSite_klass,                       java_lang_invoke_MutableCallSite,          Pre                 ) \
+  do_klass(VolatileCallSite_klass,                      java_lang_invoke_VolatileCallSite,         Pre                 ) \
   /* Note: MethodHandle must be first, and VolatileCallSite last in group */                                             \
                                                                                                                          \
   do_klass(StringBuffer_klass,                          java_lang_StringBuffer,                    Pre                 ) \
   do_klass(StringBuilder_klass,                         java_lang_StringBuilder,                   Pre                 ) \
   do_klass(misc_Unsafe_klass,                           sun_misc_Unsafe,                           Pre                 ) \
                                                                                                                          \
+  /* support for CDS */                                                                                                  \
+  do_klass(ByteArrayInputStream_klass,                  java_io_ByteArrayInputStream,              Pre                 ) \
+  do_klass(File_klass,                                  java_io_File,                              Pre                 ) \
+  do_klass(URLClassLoader_klass,                        java_net_URLClassLoader,                   Pre                 ) \
+  do_klass(URL_klass,                                   java_net_URL,                              Pre                 ) \
+  do_klass(Jar_Manifest_klass,                          java_util_jar_Manifest,                    Pre                 ) \
+  do_klass(sun_misc_Launcher_klass,                     sun_misc_Launcher,                         Pre                 ) \
+  do_klass(CodeSource_klass,                            java_security_CodeSource,                  Pre                 ) \
+                                                                                                                         \
   /* It's NULL in non-1.4 JDKs. */                                                                                       \
   do_klass(StackTraceElement_klass,                     java_lang_StackTraceElement,               Opt                 ) \
-  /* Universe::is_gte_jdk14x_version() is not set up by this point. */                                                   \
   /* It's okay if this turns out to be NULL in non-1.4 JDKs. */                                                          \
   do_klass(nio_Buffer_klass,                            java_nio_Buffer,                           Opt                 ) \
                                                                                                                          \
@@ -204,16 +212,13 @@ class SystemDictionary : AllStatic {
 
   enum InitOption {
     Pre,                        // preloaded; error if not present
-    Pre_JSR292,                 // preloaded if EnableInvokeDynamic
 
     // Order is significant.  Options before this point require resolve_or_fail.
     // Options after this point will use resolve_or_null instead.
 
     Opt,                        // preload tried; NULL if not present
-    Opt_Only_JDK14NewRef,       // preload tried; use only with NewReflection
-    Opt_Only_JDK15,             // preload tried; use only with JDK1.5+
     OPTION_LIMIT,
-    CEIL_LG_OPTION_LIMIT = 4    // OPTION_LIMIT <= (1<<CEIL_LG_OPTION_LIMIT)
+    CEIL_LG_OPTION_LIMIT = 2    // OPTION_LIMIT <= (1<<CEIL_LG_OPTION_LIMIT)
   };
 
 
@@ -226,9 +231,9 @@ class SystemDictionary : AllStatic {
   static Klass* resolve_or_fail(Symbol* class_name, Handle class_loader, Handle protection_domain, bool throw_error, TRAPS);
   // Convenient call for null loader and protection domain.
   static Klass* resolve_or_fail(Symbol* class_name, bool throw_error, TRAPS);
-private:
+protected:
   // handle error translation for resolve_or_null results
-  static Klass* handle_resolution_exception(Symbol* class_name, Handle class_loader, Handle protection_domain, bool throw_error, KlassHandle klass_h, TRAPS);
+  static Klass* handle_resolution_exception(Symbol* class_name, bool throw_error, KlassHandle klass_h, TRAPS);
 
 public:
 
@@ -331,15 +336,19 @@ public:
   // loaders.  Returns "true" iff something was unloaded.
   static bool do_unloading(BoolObjectClosure* is_alive);
 
+  // Used by DumpSharedSpaces only to remove classes that failed verification
+  static void remove_classes_in_error_state();
+
   static int calculate_systemdictionary_size(int loadedclasses);
 
   // Applies "f->do_oop" to all root oops in the system dictionary.
   static void oops_do(OopClosure* f);
+  static void roots_oops_do(OopClosure* strong, OopClosure* weak);
 
   // System loader lock
   static oop system_loader_lock()           { return _system_loader_lock_obj; }
 
-private:
+protected:
   // Extended Redefine classes support (tbi)
   static void preloaded_classes_do(KlassClosure* f);
   static void lazily_loaded_classes_do(KlassClosure* f);
@@ -352,7 +361,8 @@ public:
   static void set_shared_dictionary(HashtableBucket<mtClass>* t, int length,
                                     int number_of_entries);
   // Printing
-  static void print()                   PRODUCT_RETURN;
+  static void print(bool details = true);
+  static void print_shared(bool details = true);
   static void print_class_statistics()  PRODUCT_RETURN;
   static void print_method_statistics() PRODUCT_RETURN;
 
@@ -375,10 +385,6 @@ public:
   static bool is_internal_format(Symbol* class_name);
 #endif
 
-  // Verify class is in dictionary
-  static void verify_obj_klass_present(Symbol* class_name,
-                                       ClassLoaderData* loader_data);
-
   // Initialization
   static void initialize(TRAPS);
 
@@ -389,17 +395,7 @@ public:
   }
 
   static Klass* check_klass_Pre(       Klass* k) { return check_klass(k); }
-  static Klass* check_klass_Pre_JSR292(Klass* k) { return EnableInvokeDynamic ? check_klass(k) : k; }
   static Klass* check_klass_Opt(       Klass* k) { return k; }
-  static Klass* check_klass_Opt_Only_JDK15(Klass* k) {
-    assert(JDK_Version::is_gte_jdk15x_version(), "JDK 1.5 only");
-    return k;
-  }
-  static Klass* check_klass_Opt_Only_JDK14NewRef(Klass* k) {
-    assert(JDK_Version::is_gte_jdk14x_version() && UseNewReflection, "JDK 1.4 only");
-    // despite the optional loading, if you use this it must be present:
-    return check_klass(k);
-  }
 
   static bool initialize_wk_klass(WKID id, int init_opt, TRAPS);
   static void initialize_wk_klasses_until(WKID limit_id, WKID &start_id, TRAPS);
@@ -442,7 +438,7 @@ public:
 
   static void load_abstract_ownable_synchronizer_klass(TRAPS);
 
-private:
+protected:
   // Tells whether ClassLoader.loadClassInternal is present
   static bool has_loadClassInternal()       { return _has_loadClassInternal; }
 
@@ -470,7 +466,7 @@ public:
 
   // Register a new class loader
   static ClassLoaderData* register_loader(Handle class_loader, TRAPS);
-private:
+protected:
   // Mirrors for primitive classes (created eagerly)
   static oop check_mirror(oop m) {
     assert(m != NULL, "mirror not initialized");
@@ -535,11 +531,13 @@ public:
 
   // Record the error when the first attempt to resolve a reference from a constant
   // pool entry to a class fails.
-  static void add_resolution_error(constantPoolHandle pool, int which, Symbol* error);
+  static void add_resolution_error(constantPoolHandle pool, int which, Symbol* error,
+                                   Symbol* message);
   static void delete_resolution_error(ConstantPool* pool);
-  static Symbol* find_resolution_error(constantPoolHandle pool, int which);
+  static Symbol* find_resolution_error(constantPoolHandle pool, int which,
+                                       Symbol** message);
 
- private:
+ protected:
 
   enum Constants {
     _loader_constraint_size = 107,                     // number of entries in constraint table
@@ -590,7 +588,7 @@ public:
   friend class CounterDecay;
   static Klass* try_get_next_class();
 
-private:
+protected:
   static void validate_protection_domain(instanceKlassHandle klass,
                                          Handle class_loader,
                                          Handle protection_domain, TRAPS);
@@ -617,11 +615,10 @@ private:
   static instanceKlassHandle find_or_define_instance_class(Symbol* class_name,
                                                 Handle class_loader,
                                                 instanceKlassHandle k, TRAPS);
-  static instanceKlassHandle load_shared_class(Symbol* class_name,
-                                               Handle class_loader, TRAPS);
   static instanceKlassHandle load_shared_class(instanceKlassHandle ik,
-                                               Handle class_loader, TRAPS);
-  static void clean_up_shared_class(instanceKlassHandle ik, Handle class_loader, TRAPS);
+                                               Handle class_loader,
+                                               Handle protection_domain,
+                                               TRAPS);
   static instanceKlassHandle load_instance_class(Symbol* class_name, Handle class_loader, TRAPS);
   static Handle compute_loader_lock_object(Handle class_loader, TRAPS);
   static void check_loader_lock_contention(Handle loader_lock, TRAPS);
@@ -629,9 +626,12 @@ private:
   static bool is_parallelDefine(Handle class_loader);
 
 public:
+  static instanceKlassHandle load_shared_class(Symbol* class_name,
+                                               Handle class_loader,
+                                               TRAPS);
   static bool is_ext_class_loader(Handle class_loader);
 
-private:
+protected:
   static Klass* find_shared_class(Symbol* class_name);
 
   // Setup link to hierarchy

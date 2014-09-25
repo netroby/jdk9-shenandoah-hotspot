@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -32,7 +32,6 @@
 #include "compiler/compilerOracle.hpp"
 #include "compiler/compileBroker.hpp"
 #include "libadt/dict.hpp"
-#include "libadt/port.hpp"
 #include "libadt/vectset.hpp"
 #include "memory/resourceArea.hpp"
 #include "opto/idealGraphPrinter.hpp"
@@ -311,6 +310,7 @@ class Compile : public Phase {
   bool                  _do_freq_based_layout;  // True if we intend to do frequency based block layout
   bool                  _do_count_invocations;  // True if we generate code to count invocations
   bool                  _do_method_data_update; // True if we generate code to update MethodData*s
+  bool                  _age_code;              // True if we need to profile code age (decrement the aging counter)
   int                   _AliasLevel;            // Locally-adjusted version of AliasLevel flag.
   bool                  _print_assembly;        // True if we should dump assembly code for this compilation
   bool                  _print_inlining;        // True if we should print inlining for this compilation
@@ -319,9 +319,10 @@ class Compile : public Phase {
   bool                  _trace_opto_output;
   bool                  _parsed_irreducible_loop; // True if ciTypeFlow detected irreducible loops during parsing
 #endif
-
+  bool                  _has_irreducible_loop;  // Found irreducible loops
   // JSR 292
   bool                  _has_method_handle_invokes; // True if this method has MethodHandle invokes.
+  RTMState              _rtm_state;             // State of Restricted Transactional Memory usage
 
   // Compilation environment.
   Arena                 _comp_arena;            // Arena with lifetime equivalent to Compile
@@ -343,6 +344,8 @@ class Compile : public Phase {
   VectorSet             _dead_node_list;        // Set of dead nodes
   uint                  _dead_node_count;       // Number of dead nodes; VectorSet::Size() is O(N).
                                                 // So use this to keep count and make the call O(1).
+  DEBUG_ONLY( Unique_Node_List* _modified_nodes; )  // List of nodes which inputs were modified
+
   debug_only(static int _debug_idx;)            // Monotonic counter (not reset), use -XX:BreakAtNode=<idx>
   Arena                 _node_arena;            // Arena for new-space Nodes
   Arena                 _old_arena;             // Arena for old-space Nodes, lifetime during xform
@@ -416,8 +419,10 @@ class Compile : public Phase {
     void set_cg(CallGenerator* cg) { _cg = cg; }
   };
 
+  stringStream* _print_inlining_stream;
   GrowableArray<PrintInliningBuffer>* _print_inlining_list;
   int _print_inlining_idx;
+  char* _print_inlining_output;
 
   // Only keep nodes in the expensive node list that need to be optimized
   void cleanup_expensive_nodes(PhaseIterGVN &igvn);
@@ -428,42 +433,43 @@ class Compile : public Phase {
   // Remove the speculative part of types and clean up the graph
   void remove_speculative_types(PhaseIterGVN &igvn);
 
-  // Are we within a PreserveJVMState block?
-  int _preserve_jvm_state;
+  void* _replay_inline_data; // Pointer to data loaded from file
+
+  void print_inlining_init();
+  void print_inlining_reinit();
+  void print_inlining_commit();
+  void print_inlining_push();
+  PrintInliningBuffer& print_inlining_current();
+
+  void log_late_inline_failure(CallGenerator* cg, const char* msg);
 
  public:
 
   outputStream* print_inlining_stream() const {
-    return _print_inlining_list->adr_at(_print_inlining_idx)->ss();
+    assert(print_inlining() || print_intrinsics(), "PrintInlining off?");
+    return _print_inlining_stream;
   }
 
-  void print_inlining_skip(CallGenerator* cg) {
-    if (_print_inlining) {
-      _print_inlining_list->adr_at(_print_inlining_idx)->set_cg(cg);
-      _print_inlining_idx++;
-      _print_inlining_list->insert_before(_print_inlining_idx, PrintInliningBuffer());
-    }
-  }
-
-  void print_inlining_insert(CallGenerator* cg) {
-    if (_print_inlining) {
-      for (int i = 0; i < _print_inlining_list->length(); i++) {
-        if (_print_inlining_list->adr_at(i)->cg() == cg) {
-          _print_inlining_list->insert_before(i+1, PrintInliningBuffer());
-          _print_inlining_idx = i+1;
-          _print_inlining_list->adr_at(i)->set_cg(NULL);
-          return;
-        }
-      }
-      ShouldNotReachHere();
-    }
-  }
+  void print_inlining_update(CallGenerator* cg);
+  void print_inlining_update_delayed(CallGenerator* cg);
+  void print_inlining_move_to(CallGenerator* cg);
+  void print_inlining_assert_ready();
+  void print_inlining_reset();
 
   void print_inlining(ciMethod* method, int inline_level, int bci, const char* msg = NULL) {
     stringStream ss;
     CompileTask::print_inlining(&ss, method, inline_level, bci, msg);
-    print_inlining_stream()->print(ss.as_string());
+    print_inlining_stream()->print("%s", ss.as_string());
   }
+
+  void log_late_inline(CallGenerator* cg);
+  void log_inline_id(CallGenerator* cg);
+  void log_inline_failure(const char* msg);
+
+  void* replay_inline_data() const { return _replay_inline_data; }
+
+  // Dump inlining replay data to the stream.
+  void dump_inline_data(outputStream* out);
 
  private:
   // Matching, CFG layout, allocation, code generation
@@ -479,6 +485,7 @@ class Compile : public Phase {
   RegMask               _FIRST_STACK_mask;      // All stack slots usable for spills (depends on frame layout)
   Arena*                _indexSet_arena;        // control IndexSet allocation within PhaseChaitin
   void*                 _indexSet_free_block_list; // free list of IndexSet bit blocks
+  int                   _interpreter_frame_size;
 
   uint                  _node_bundling_limit;
   Bundle*               _node_bundling_base;    // Information for instruction bundling
@@ -577,22 +584,35 @@ class Compile : public Phase {
   void          set_do_count_invocations(bool z){ _do_count_invocations = z; }
   bool              do_method_data_update() const { return _do_method_data_update; }
   void          set_do_method_data_update(bool z) { _do_method_data_update = z; }
-  int               AliasLevel() const          { return _AliasLevel; }
+  bool              age_code() const             { return _age_code; }
+  void          set_age_code(bool z)             { _age_code = z; }
+  int               AliasLevel() const           { return _AliasLevel; }
   bool              print_assembly() const       { return _print_assembly; }
   void          set_print_assembly(bool z)       { _print_assembly = z; }
   bool              print_inlining() const       { return _print_inlining; }
   void          set_print_inlining(bool z)       { _print_inlining = z; }
   bool              print_intrinsics() const     { return _print_intrinsics; }
   void          set_print_intrinsics(bool z)     { _print_intrinsics = z; }
+  RTMState          rtm_state()  const           { return _rtm_state; }
+  void          set_rtm_state(RTMState s)        { _rtm_state = s; }
+  bool              use_rtm() const              { return (_rtm_state & NoRTM) == 0; }
+  bool          profile_rtm() const              { return _rtm_state == ProfileRTM; }
   // check the CompilerOracle for special behaviours for this compile
   bool          method_has_option(const char * option) {
     return method() != NULL && method()->has_option(option);
+  }
+  template<typename T>
+  bool          method_has_option_value(const char * option, T& value) {
+    return method() != NULL && method()->has_option_value(option, value);
   }
 #ifndef PRODUCT
   bool          trace_opto_output() const       { return _trace_opto_output; }
   bool              parsed_irreducible_loop() const { return _parsed_irreducible_loop; }
   void          set_parsed_irreducible_loop(bool z) { _parsed_irreducible_loop = z; }
+  int _in_dump_cnt;  // Required for dumping ir nodes.
 #endif
+  bool              has_irreducible_loop() const { return _has_irreducible_loop; }
+  void          set_has_irreducible_loop(bool z) { _has_irreducible_loop = z; }
 
   // JSR 292
   bool              has_method_handle_invokes() const { return _has_method_handle_invokes;     }
@@ -752,11 +772,18 @@ class Compile : public Phase {
   void         print_missing_nodes();
 #endif
 
+  // Record modified nodes to check that they are put on IGVN worklist
+  void         record_modified_node(Node* n) NOT_DEBUG_RETURN;
+  void         remove_modified_node(Node* n) NOT_DEBUG_RETURN;
+  DEBUG_ONLY( Unique_Node_List*   modified_nodes() const { return _modified_nodes; } )
+
   // Constant table
   ConstantTable&   constant_table() { return _constant_table; }
 
   MachConstantBaseNode*     mach_constant_base_node();
   bool                  has_mach_constant_base_node() const { return _mach_constant_base_node != NULL; }
+  // Generated by adlc, true if CallNode requires MachConstantBase.
+  bool                      needs_clone_jvms();
 
   // Handy undefined Node
   Node*             top() const                 { return _top; }
@@ -836,8 +863,8 @@ class Compile : public Phase {
 
   // Helper functions to identify inlining potential at call-site
   ciMethod* optimize_virtual_call(ciMethod* caller, int bci, ciInstanceKlass* klass,
-                                  ciMethod* callee, const TypeOopPtr* receiver_type,
-                                  bool is_virtual,
+                                  ciKlass* holder, ciMethod* callee,
+                                  const TypeOopPtr* receiver_type, bool is_virtual,
                                   bool &call_does_dispatch, int &vtable_index);
   ciMethod* optimize_inlining(ciMethod* caller, int bci, ciInstanceKlass* klass,
                               ciMethod* callee, const TypeOopPtr* receiver_type);
@@ -853,6 +880,11 @@ class Compile : public Phase {
                       ciMethodData* logmd = NULL);
   // Report if there were too many recompiles at a method and bci.
   bool too_many_recompiles(ciMethod* method, int bci, Deoptimization::DeoptReason reason);
+  // Return a bitset with the reasons where deoptimization is allowed,
+  // i.e., where there were not too many uncommon traps.
+  int _allowed_reasons;
+  int      allowed_deopt_reasons() { return _allowed_reasons; }
+  void set_allowed_deopt_reasons();
 
   // Parsing, optimization
   PhaseGVN*         initial_gvn()               { return _initial_gvn; }
@@ -894,7 +926,8 @@ class Compile : public Phase {
 
   void remove_useless_late_inlines(GrowableArray<CallGenerator*>* inlines, Unique_Node_List &useful);
 
-  void dump_inlining();
+  void process_print_inlining();
+  void dump_print_inlining();
 
   bool over_inlining_cutoff() const {
     if (!inlining_incrementally()) {
@@ -924,6 +957,7 @@ class Compile : public Phase {
   PhaseRegAlloc*    regalloc()                  { return _regalloc; }
   int               frame_slots() const         { return _frame_slots; }
   int               frame_size_in_words() const; // frame_slots in units of the polymorphic 'words'
+  int               frame_size_in_bytes() const { return _frame_slots << LogBytesPerInt; }
   RegMask&          FIRST_STACK_mask()          { return _FIRST_STACK_mask; }
   Arena*            indexSet_arena()            { return _indexSet_arena; }
   void*             indexSet_free_block_list()  { return _indexSet_free_block_list; }
@@ -934,6 +968,13 @@ class Compile : public Phase {
   bool          starts_bundle(const Node *n) const;
   bool          need_stack_bang(int frame_size_in_bytes) const;
   bool          need_register_stack_bang() const;
+
+  void  update_interpreter_frame_size(int size) {
+    if (_interpreter_frame_size < size) {
+      _interpreter_frame_size = size;
+    }
+  }
+  int           bang_size_in_bytes() const;
 
   void          set_matcher(Matcher* m)                 { _matcher = m; }
 //void          set_regalloc(PhaseRegAlloc* ra)           { _regalloc = ra; }
@@ -1163,23 +1204,12 @@ class Compile : public Phase {
   // Definitions of pd methods
   static void pd_compiler2_init();
 
+  // Static parse-time type checking logic for gen_subtype_check:
+  enum { SSC_always_false, SSC_always_true, SSC_easy_test, SSC_full_test };
+  int static_subtype_check(ciKlass* superk, ciKlass* subk);
+
   // Auxiliary method for randomized fuzzing/stressing
   static bool randomized_select(int count);
-
-  // enter a PreserveJVMState block
-  void inc_preserve_jvm_state() {
-    _preserve_jvm_state++;
-  }
-
-  // exit a PreserveJVMState block
-  void dec_preserve_jvm_state() {
-    _preserve_jvm_state--;
-    assert(_preserve_jvm_state >= 0, "_preserve_jvm_state shouldn't be negative");
-  }
-
-  bool has_preserve_jvm_state() const {
-    return _preserve_jvm_state > 0;
-  }
 };
 
 #endif // SHARE_VM_OPTO_COMPILE_HPP

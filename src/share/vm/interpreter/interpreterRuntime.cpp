@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -42,11 +42,13 @@
 #include "oops/symbol.hpp"
 #include "prims/jvmtiExport.hpp"
 #include "prims/nativeLookup.hpp"
+#include "runtime/atomic.inline.hpp"
 #include "runtime/biasedLocking.hpp"
 #include "runtime/compilationPolicy.hpp"
 #include "runtime/deoptimization.hpp"
 #include "runtime/fieldDescriptor.hpp"
 #include "runtime/handles.inline.hpp"
+#include "runtime/icache.hpp"
 #include "runtime/interfaceSupport.hpp"
 #include "runtime/java.hpp"
 #include "runtime/jfieldIDWorkaround.hpp"
@@ -56,24 +58,11 @@
 #include "runtime/synchronizer.hpp"
 #include "runtime/threadCritical.hpp"
 #include "utilities/events.hpp"
-#ifdef TARGET_ARCH_x86
-# include "vm_version_x86.hpp"
-#endif
-#ifdef TARGET_ARCH_sparc
-# include "vm_version_sparc.hpp"
-#endif
-#ifdef TARGET_ARCH_zero
-# include "vm_version_zero.hpp"
-#endif
-#ifdef TARGET_ARCH_arm
-# include "vm_version_arm.hpp"
-#endif
-#ifdef TARGET_ARCH_ppc
-# include "vm_version_ppc.hpp"
-#endif
 #ifdef COMPILER2
 #include "opto/runtime.hpp"
 #endif
+
+PRAGMA_FORMAT_MUTE_WARNINGS_FOR_GCC
 
 class UnlockFlagSaver {
   private:
@@ -241,18 +230,15 @@ IRT_END
 //------------------------------------------------------------------------------------------------------------------------
 // Exceptions
 
-// Assume the compiler is (or will be) interested in this event.
-// If necessary, create an MDO to hold the information, and record it.
-void InterpreterRuntime::note_trap(JavaThread* thread, int reason, TRAPS) {
-  assert(ProfileTraps, "call me only if profiling");
-  methodHandle trap_method(thread, method(thread));
-
+void InterpreterRuntime::note_trap_inner(JavaThread* thread, int reason,
+                                         methodHandle trap_method, int trap_bci, TRAPS) {
   if (trap_method.not_null()) {
     MethodData* trap_mdo = trap_method->method_data();
     if (trap_mdo == NULL) {
       Method::build_interpreter_method_data(trap_method, THREAD);
       if (HAS_PENDING_EXCEPTION) {
-        assert((PENDING_EXCEPTION->is_a(SystemDictionary::OutOfMemoryError_klass())), "we expect only an OOM error here");
+        assert((PENDING_EXCEPTION->is_a(SystemDictionary::OutOfMemoryError_klass())),
+               "we expect only an OOM error here");
         CLEAR_PENDING_EXCEPTION;
       }
       trap_mdo = trap_method->method_data();
@@ -261,11 +247,41 @@ void InterpreterRuntime::note_trap(JavaThread* thread, int reason, TRAPS) {
     if (trap_mdo != NULL) {
       // Update per-method count of trap events.  The interpreter
       // is updating the MDO to simulate the effect of compiler traps.
-      int trap_bci = trap_method->bci_from(bcp(thread));
       Deoptimization::update_method_data_from_interpreter(trap_mdo, trap_bci, reason);
     }
   }
 }
+
+// Assume the compiler is (or will be) interested in this event.
+// If necessary, create an MDO to hold the information, and record it.
+void InterpreterRuntime::note_trap(JavaThread* thread, int reason, TRAPS) {
+  assert(ProfileTraps, "call me only if profiling");
+  methodHandle trap_method(thread, method(thread));
+  int trap_bci = trap_method->bci_from(bcp(thread));
+  note_trap_inner(thread, reason, trap_method, trap_bci, THREAD);
+}
+
+#ifdef CC_INTERP
+// As legacy note_trap, but we have more arguments.
+IRT_ENTRY(void, InterpreterRuntime::note_trap(JavaThread* thread, int reason, Method *method, int trap_bci))
+  methodHandle trap_method(method);
+  note_trap_inner(thread, reason, trap_method, trap_bci, THREAD);
+IRT_END
+
+// Class Deoptimization is not visible in BytecodeInterpreter, so we need a wrapper
+// for each exception.
+void InterpreterRuntime::note_nullCheck_trap(JavaThread* thread, Method *method, int trap_bci)
+  { if (ProfileTraps) note_trap(thread, Deoptimization::Reason_null_check, method, trap_bci); }
+void InterpreterRuntime::note_div0Check_trap(JavaThread* thread, Method *method, int trap_bci)
+  { if (ProfileTraps) note_trap(thread, Deoptimization::Reason_div0_check, method, trap_bci); }
+void InterpreterRuntime::note_rangeCheck_trap(JavaThread* thread, Method *method, int trap_bci)
+  { if (ProfileTraps) note_trap(thread, Deoptimization::Reason_range_check, method, trap_bci); }
+void InterpreterRuntime::note_classCheck_trap(JavaThread* thread, Method *method, int trap_bci)
+  { if (ProfileTraps) note_trap(thread, Deoptimization::Reason_class_check, method, trap_bci); }
+void InterpreterRuntime::note_arrayCheck_trap(JavaThread* thread, Method *method, int trap_bci)
+  { if (ProfileTraps) note_trap(thread, Deoptimization::Reason_array_check, method, trap_bci); }
+#endif // CC_INTERP
+
 
 static Handle get_preinitialized_exception(Klass* k, TRAPS) {
   // get klass
@@ -400,9 +416,18 @@ IRT_ENTRY(address, InterpreterRuntime::exception_handler_for_exception(JavaThrea
 
     // tracing
     if (TraceExceptions) {
-      ttyLocker ttyl;
       ResourceMark rm(thread);
-      tty->print_cr("Exception <%s> (" INTPTR_FORMAT ")", h_exception->print_value_string(), (address)h_exception());
+      Symbol* message = java_lang_Throwable::detail_message(h_exception());
+      ttyLocker ttyl;  // Lock after getting the detail message
+      if (message != NULL) {
+        tty->print_cr("Exception <%s: %s> (" INTPTR_FORMAT ")",
+                      h_exception->print_value_string(), message->as_C_string(),
+                      (address)h_exception());
+      } else {
+        tty->print_cr("Exception <%s> (" INTPTR_FORMAT ")",
+                      h_exception->print_value_string(),
+                      (address)h_exception());
+      }
       tty->print_cr(" thrown in interpreter method <%s>", h_method->print_value_string());
       tty->print_cr(" at bci %d for thread " INTPTR_FORMAT, current_bci, thread);
     }
@@ -742,7 +767,6 @@ IRT_END
 
 // First time execution:  Resolve symbols, create a permanent MethodType object.
 IRT_ENTRY(void, InterpreterRuntime::resolve_invokehandle(JavaThread* thread)) {
-  assert(EnableInvokeDynamic, "");
   const Bytecodes::Code bytecode = Bytecodes::_invokehandle;
 
   // resolve method
@@ -762,7 +786,6 @@ IRT_END
 
 // First time execution:  Resolve symbols, create a permanent CallSite object.
 IRT_ENTRY(void, InterpreterRuntime::resolve_invokedynamic(JavaThread* thread)) {
-  assert(EnableInvokeDynamic, "");
   const Bytecodes::Code bytecode = Bytecodes::_invokedynamic;
 
   //TO DO: consider passing BCI to Java.
@@ -964,17 +987,6 @@ ConstantPoolCacheEntry *cp_entry))
   int index = cp_entry->field_index();
   if ((ik->field_access_flags(index) & JVM_ACC_FIELD_ACCESS_WATCHED) == 0) return;
 
-  switch(cp_entry->flag_state()) {
-    case btos:    // fall through
-    case ctos:    // fall through
-    case stos:    // fall through
-    case itos:    // fall through
-    case ftos:    // fall through
-    case ltos:    // fall through
-    case dtos:    // fall through
-    case atos: break;
-    default: ShouldNotReachHere(); return;
-  }
   bool is_static = (obj == NULL);
   HandleMark hm(thread);
 
@@ -1065,6 +1077,7 @@ IRT_END
 address SignatureHandlerLibrary::set_handler_blob() {
   BufferBlob* handler_blob = BufferBlob::create("native signature handlers", blob_size);
   if (handler_blob == NULL) {
+    CompileBroker::handle_full_code_cache();
     return NULL;
   }
   address handler = handler_blob->code_begin();
@@ -1240,8 +1253,10 @@ IRT_END
 // This is a support of the JVMTI PopFrame interface.
 // Make sure it is an invokestatic of a polymorphic intrinsic that has a member_name argument
 // and return it as a vm_result so that it can be reloaded in the list of invokestatic parameters.
-// The dmh argument is a reference to a DirectMethoHandle that has a member name field.
-IRT_ENTRY(void, InterpreterRuntime::member_name_arg_or_null(JavaThread* thread, address dmh,
+// The member_name argument is a saved reference (in local#0) to the member_name.
+// For backward compatibility with some JDK versions (7, 8) it can also be a direct method handle.
+// FIXME: remove DMH case after j.l.i.InvokerBytecodeGenerator code shape is updated.
+IRT_ENTRY(void, InterpreterRuntime::member_name_arg_or_null(JavaThread* thread, address member_name,
                                                             Method* method, address bcp))
   Bytecodes::Code code = Bytecodes::code_at(method, bcp);
   if (code != Bytecodes::_invokestatic) {
@@ -1253,8 +1268,12 @@ IRT_ENTRY(void, InterpreterRuntime::member_name_arg_or_null(JavaThread* thread, 
   Symbol* mname = cpool->name_ref_at(cp_index);
 
   if (MethodHandles::has_member_arg(cname, mname)) {
-    oop member_name = java_lang_invoke_DirectMethodHandle::member((oop)dmh);
-    thread->set_vm_result(member_name);
+    oop member_name_oop = (oop) member_name;
+    if (java_lang_invoke_DirectMethodHandle::is_instance(member_name_oop)) {
+      // FIXME: remove after j.l.i.InvokerBytecodeGenerator code shape is updated.
+      member_name_oop = java_lang_invoke_DirectMethodHandle::member(member_name_oop);
+    }
+    thread->set_vm_result(member_name_oop);
   }
 IRT_END
 #endif // INCLUDE_JVMTI

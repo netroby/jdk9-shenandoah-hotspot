@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2013, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -25,28 +25,21 @@
  * @test MakeMethodNotCompilableTest
  * @bug 8012322 8006683 8007288 8022832
  * @library /testlibrary /testlibrary/whitebox
+ * @ignore 8046268
  * @build MakeMethodNotCompilableTest
  * @run main ClassFileInstaller sun.hotspot.WhiteBox
- * @run main/othervm/timeout=2400 -Xbootclasspath/a:. -XX:+UnlockDiagnosticVMOptions -XX:+WhiteBoxAPI -XX:CompileCommand=compileonly,TestCase$Helper::* MakeMethodNotCompilableTest
+ *                              sun.hotspot.WhiteBox$WhiteBoxPermission
+ * @run main/othervm/timeout=2400 -Xbootclasspath/a:. -XX:+UnlockDiagnosticVMOptions -XX:+WhiteBoxAPI -XX:CompileCommand=compileonly,SimpleTestCase$Helper::* MakeMethodNotCompilableTest
  * @summary testing of WB::makeMethodNotCompilable()
  * @author igor.ignatyev@oracle.com
  */
 public class MakeMethodNotCompilableTest extends CompilerWhiteBoxTest {
     private int bci;
     public static void main(String[] args) throws Exception {
-        if (args.length == 0) {
-            for (TestCase test : TestCase.values()) {
-                new MakeMethodNotCompilableTest(test).runTest();
-            }
-        } else {
-            for (String name : args) {
-                new MakeMethodNotCompilableTest(
-                        TestCase.valueOf(name)).runTest();
-            }
-        }
+        CompilerWhiteBoxTest.main(MakeMethodNotCompilableTest::new, args);
     }
 
-    public MakeMethodNotCompilableTest(TestCase testCase) {
+    private MakeMethodNotCompilableTest(TestCase testCase) {
         super(testCase);
         // to prevent inlining of #method
         WHITE_BOX.testSetDontInlineMethod(method, true);
@@ -62,11 +55,8 @@ public class MakeMethodNotCompilableTest extends CompilerWhiteBoxTest {
      */
     @Override
     protected void test() throws Exception {
-        if (testCase.isOsr && CompilerWhiteBoxTest.MODE.startsWith(
-                "compiled ")) {
-          System.err.printf("Warning: %s is not applicable in %s%n",
-                testCase.name(), CompilerWhiteBoxTest.MODE);
-          return;
+        if (skipXcompOSR()) {
+            return;
         }
         checkNotCompiled();
         if (!isCompilable()) {

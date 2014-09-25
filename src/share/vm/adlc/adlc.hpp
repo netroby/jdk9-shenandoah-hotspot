@@ -30,13 +30,17 @@
 //
 
 // standard library constants
-#include "stdio.h"
-#include "stdlib.h"
 #include <iostream>
-#include "string.h"
-#include "ctype.h"
-#include "stdarg.h"
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <ctype.h>
+#include <stdarg.h>
 #include <sys/types.h>
+
+/* Make sure that we have the intptr_t and uintptr_t definitions */
+#ifdef _WIN32
 
 #if _MSC_VER >= 1300
 using namespace std;
@@ -46,8 +50,6 @@ using namespace std;
 #define strdup _strdup
 #endif
 
-/* Make sure that we have the intptr_t and uintptr_t definitions */
-#ifdef _WIN32
 #ifndef _INTPTR_T_DEFINED
 #ifdef _WIN64
 typedef __int64 intptr_t;
@@ -65,6 +67,7 @@ typedef unsigned int uintptr_t;
 #endif
 #define _UINTPTR_T_DEFINED
 #endif
+
 #endif // _WIN32
 
 #if defined(LINUX) || defined(_ALLBSD_SOURCE)

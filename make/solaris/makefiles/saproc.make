@@ -1,5 +1,5 @@
 #
-# Copyright (c) 2005, 2012, Oracle and/or its affiliates. All rights reserved.
+# Copyright (c) 2005, 2014, Oracle and/or its affiliates. All rights reserved.
 # DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
 #
 # This code is free software; you can redistribute it and/or modify it
@@ -19,7 +19,7 @@
 # Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
 # or visit www.oracle.com if you need additional information or have any
 # questions.
-#  
+#
 #
 
 # Rules to build serviceability agent library, used by vm.make
@@ -119,7 +119,7 @@ $(SADISOBJ): $(SADISSRCFILES)
 	           $(SOLARIS_11_B159_OR_LATER)                          \
 	           $(SADISSRCFILES)                                     \
 	           -c -o $(SADISOBJ)
-	
+
 ifeq ($(ENABLE_FULL_DEBUG_SYMBOLS),1)
 # gobjcopy crashes on "empty" section headers with the SHF_ALLOC flag set.
 # Clear the SHF_ALLOC flag (if set) from empty section headers.
@@ -147,13 +147,13 @@ ifeq ($(ENABLE_FULL_DEBUG_SYMBOLS),1)
 endif
 
 install_saproc: $(BULDLIBSAPROC)
-	$(QUIETLY) if [ -f $(LIBSAPROC) ] ; then             \
-	  echo "Copying $(LIBSAPROC) to $(DEST_SAPROC)";     \
-	  test -f $(LIBSAPROC_DEBUGINFO) &&             \
-	    cp -f $(LIBSAPROC_DEBUGINFO) $(DEST_SAPROC_DEBUGINFO); \
-	  test -f $(LIBSAPROC_DIZ) &&             \
-	    cp -f $(LIBSAPROC_DIZ) $(DEST_SAPROC_DIZ); \
-	  cp -f $(LIBSAPROC) $(DEST_SAPROC) && echo "Done";  \
+	$(QUIETLY) if [ -f $(LIBSAPROC) ] ; then                   \
+	  echo "Copying $(LIBSAPROC) to $(DEST_SAPROC)";           \
+	  test ! -f $(LIBSAPROC_DEBUGINFO) ||                      \
+	    $(CP) -f $(LIBSAPROC_DEBUGINFO) $(DEST_SAPROC_DEBUGINFO); \
+	  test ! -f $(LIBSAPROC_DIZ) ||                            \
+	    $(CP) -f $(LIBSAPROC_DIZ) $(DEST_SAPROC_DIZ);             \
+	  $(CP) -f $(LIBSAPROC) $(DEST_SAPROC) && echo "Done";        \
 	fi
 
 .PHONY: install_saproc

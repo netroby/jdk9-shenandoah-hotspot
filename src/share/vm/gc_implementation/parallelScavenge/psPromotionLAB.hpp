@@ -26,6 +26,7 @@
 #define SHARE_VM_GC_IMPLEMENTATION_PARALLELSCAVENGE_PSPROMOTIONLAB_HPP
 
 #include "gc_implementation/parallelScavenge/objectStartArray.hpp"
+#include "gc_interface/collectedHeap.inline.hpp"
 #include "memory/allocation.hpp"
 
 //
@@ -78,7 +79,7 @@ class PSPromotionLAB : public CHeapObj<mtGC> {
   // Returns a subregion containing all objects in this space.
   MemRegion used_region()            { return MemRegion(bottom(), top()); }
 
-  // Boolean querries.
+  // Boolean queries.
   bool is_empty() const              { return used() == 0; }
   bool not_empty() const             { return used() > 0; }
   bool contains(const void* p) const { return _bottom <= p && p < _end; }
@@ -94,23 +95,9 @@ class PSYoungPromotionLAB : public PSPromotionLAB {
   PSYoungPromotionLAB() { }
 
   // Not MT safe
-  HeapWord* allocate(size_t size) {
-    // Can't assert this, when young fills, we keep the LAB around, but flushed.
-    // assert(_state != flushed, "Sanity");
-    HeapWord* obj = top();
-    HeapWord* new_top = obj + size;
-    // The 'new_top>obj' check is needed to detect overflow of obj+size.
-    if (new_top > obj && new_top <= end()) {
-      set_top(new_top);
-      assert(is_object_aligned((intptr_t)obj) && is_object_aligned((intptr_t)new_top),
-             "checking alignment");
-      return obj;
-    }
+  inline HeapWord* allocate(size_t size);
 
-    return NULL;
-  }
-
-  debug_only(virtual bool lab_is_valid(MemRegion lab));
+  debug_only(virtual bool lab_is_valid(MemRegion lab);)
 };
 
 class PSOldPromotionLAB : public PSPromotionLAB {

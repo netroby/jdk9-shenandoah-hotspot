@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -27,19 +27,8 @@
 #include "oops/oop.inline.hpp"
 #include "runtime/virtualspace.hpp"
 #include "services/memTracker.hpp"
-#ifdef TARGET_OS_FAMILY_linux
-# include "os_linux.inline.hpp"
-#endif
-#ifdef TARGET_OS_FAMILY_solaris
-# include "os_solaris.inline.hpp"
-#endif
-#ifdef TARGET_OS_FAMILY_windows
-# include "os_windows.inline.hpp"
-#endif
-#ifdef TARGET_OS_FAMILY_bsd
-# include "os_bsd.inline.hpp"
-#endif
 
+PRAGMA_FORMAT_MUTE_WARNINGS_FOR_GCC
 
 // ReservedSpace
 
@@ -215,9 +204,9 @@ void ReservedSpace::initialize(size_t size, size_t alignment, bool large,
          noaccess_prefix == _alignment, "noaccess prefix wrong");
 
   assert(markOopDesc::encode_pointer_as_mark(_base)->decode_pointer() == _base,
-         "area must be distinguisable from marks for mark-sweep");
+         "area must be distinguishable from marks for mark-sweep");
   assert(markOopDesc::encode_pointer_as_mark(&_base[size])->decode_pointer() == &_base[size],
-         "area must be distinguisable from marks for mark-sweep");
+         "area must be distinguishable from marks for mark-sweep");
 }
 
 
@@ -551,10 +540,10 @@ bool VirtualSpace::expand_by(size_t bytes, bool pre_touch) {
 
   // Determine which regions need to grow in this expand_by call.
   // If you are growing in the lower region, high() must be in that
-  // region so calcuate the size based on high().  For the middle and
+  // region so calculate the size based on high().  For the middle and
   // upper regions, determine the starting point of growth based on the
   // location of high().  By getting the MAX of the region's low address
-  // (or the prevoius region's high address) and high(), we can tell if it
+  // (or the previous region's high address) and high(), we can tell if it
   // is an intra or inter region growth.
   size_t lower_needs = 0;
   if (aligned_lower_new_high > lower_high()) {

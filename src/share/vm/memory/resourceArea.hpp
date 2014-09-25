@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -49,11 +49,11 @@ class ResourceArea: public Arena {
   debug_only(static int _warned;)       // to suppress multiple warnings
 
 public:
-  ResourceArea() {
+  ResourceArea() : Arena(mtThread) {
     debug_only(_nesting = 0;)
   }
 
-  ResourceArea(size_t init_size) : Arena(init_size) {
+  ResourceArea(size_t init_size) : Arena(mtThread, init_size) {
     debug_only(_nesting = 0;);
   }
 
@@ -64,7 +64,7 @@ public:
     if (UseMallocOnly) {
       // use malloc, but save pointer in res. area for later freeing
       char** save = (char**)internal_malloc_4(sizeof(char*));
-      return (*save = (char*)os::malloc(size, mtThread));
+      return (*save = (char*)os::malloc(size, mtThread, CURRENT_PC));
     }
 #endif
     return (char*)Amalloc(size, alloc_failmode);
@@ -196,7 +196,7 @@ protected:
 // leveraging existing data structures if we simply create a way to manage this one
 // special need for a ResourceMark. If ResourceMark simply inherited from CHeapObj
 // then existing ResourceMarks would work fine since no one use new to allocate them
-// and they would be stack allocated. This leaves open the possibilty of accidental
+// and they would be stack allocated. This leaves open the possibility of accidental
 // misuse so we simple duplicate the ResourceMark functionality here.
 
 class DeoptResourceMark: public CHeapObj<mtInternal> {

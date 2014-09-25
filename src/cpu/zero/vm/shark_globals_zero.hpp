@@ -43,14 +43,12 @@ define_pd_global(intx,     Tier2CompileThreshold,        1500);
 define_pd_global(intx,     Tier3CompileThreshold,        2500);
 define_pd_global(intx,     Tier4CompileThreshold,        4500);
 
-define_pd_global(intx,     BackEdgeThreshold,            100000);
 define_pd_global(intx,     Tier2BackEdgeThreshold,       100000);
 define_pd_global(intx,     Tier3BackEdgeThreshold,       100000);
 define_pd_global(intx,     Tier4BackEdgeThreshold,       100000);
 
 define_pd_global(intx,     OnStackReplacePercentage,     933  );
 define_pd_global(intx,     FreqInlineSize,               325  );
-define_pd_global(intx,     InlineSmallCode,              1000 );
 define_pd_global(uintx,    NewRatio,                     12   );
 define_pd_global(intx,     NewSizeThreadIncrease,        4*K  );
 define_pd_global(intx,     InitialCodeCacheSize,         160*K);

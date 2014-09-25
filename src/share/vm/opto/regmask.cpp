@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -23,32 +23,15 @@
  */
 
 #include "precompiled.hpp"
+#include "opto/ad.hpp"
 #include "opto/compile.hpp"
 #include "opto/regmask.hpp"
-#ifdef TARGET_ARCH_MODEL_x86_32
-# include "adfiles/ad_x86_32.hpp"
-#endif
-#ifdef TARGET_ARCH_MODEL_x86_64
-# include "adfiles/ad_x86_64.hpp"
-#endif
-#ifdef TARGET_ARCH_MODEL_sparc
-# include "adfiles/ad_sparc.hpp"
-#endif
-#ifdef TARGET_ARCH_MODEL_zero
-# include "adfiles/ad_zero.hpp"
-#endif
-#ifdef TARGET_ARCH_MODEL_arm
-# include "adfiles/ad_arm.hpp"
-#endif
-#ifdef TARGET_ARCH_MODEL_ppc
-# include "adfiles/ad_ppc.hpp"
-#endif
 
 #define RM_SIZE _RM_SIZE /* a constant private to the class RegMask */
 
 //-------------Non-zero bit search methods used by RegMask---------------------
 // Find lowest 1, or return 32 if empty
-int find_lowest_bit( uint32 mask ) {
+int find_lowest_bit( uint32_t mask ) {
   int n = 0;
   if( (mask & 0xffff) == 0 ) {
     mask >>= 16;
@@ -77,7 +60,7 @@ int find_lowest_bit( uint32 mask ) {
 }
 
 // Find highest 1, or return 32 if empty
-int find_hihghest_bit( uint32 mask ) {
+int find_hihghest_bit( uint32_t mask ) {
   int n = 0;
   if( mask > 0xffff ) {
     mask >>= 16;
@@ -113,7 +96,7 @@ void OptoReg::dump(int r, outputStream *st) {
   case Special: st->print("r---"); break;
   case Bad:     st->print("rBAD"); break;
   default:
-    if (r < _last_Mach_Reg) st->print(Matcher::regName[r]);
+    if (r < _last_Mach_Reg) st->print("%s", Matcher::regName[r]);
     else st->print("rS%d",r);
     break;
   }
@@ -392,7 +375,7 @@ bool RegMask::is_UP() const {
 //------------------------------Size-------------------------------------------
 // Compute size of register mask in bits
 uint RegMask::Size() const {
-  extern uint8 bitsInByte[256];
+  extern uint8_t bitsInByte[256];
   uint sum = 0;
   for( int i = 0; i < RM_SIZE; i++ )
     sum +=

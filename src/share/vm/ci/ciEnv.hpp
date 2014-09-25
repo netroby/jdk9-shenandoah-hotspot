@@ -69,6 +69,7 @@ private:
   bool  _jvmti_can_hotswap_or_post_breakpoint;
   bool  _jvmti_can_access_local_variables;
   bool  _jvmti_can_post_on_exceptions;
+  bool  _jvmti_can_pop_frame;
 
   // Cache DTrace flags
   bool  _dtrace_extended_probes;
@@ -182,6 +183,10 @@ private:
     } else {
       return _factory->get_metadata(o);
     }
+  }
+
+  void ensure_metadata_alive(ciMetadata* m) {
+    _factory->ensure_metadata_alive(m);
   }
 
   ciInstance* get_instance(oop o) {
@@ -332,8 +337,9 @@ public:
 
   // Cache Jvmti state
   void  cache_jvmti_state();
+  bool  jvmti_state_changed() const;
+  bool  should_retain_local_variables() const;
   bool  jvmti_can_hotswap_or_post_breakpoint() const { return _jvmti_can_hotswap_or_post_breakpoint; }
-  bool  jvmti_can_access_local_variables()     const { return _jvmti_can_access_local_variables; }
   bool  jvmti_can_post_on_exceptions()         const { return _jvmti_can_post_on_exceptions; }
 
   // Cache DTrace flags
@@ -363,7 +369,8 @@ public:
                        AbstractCompiler*         compiler,
                        int                       comp_level,
                        bool                      has_unsafe_access,
-                       bool                      has_wide_vectors);
+                       bool                      has_wide_vectors,
+                       RTMState                  rtm_state = NoRTM);
 
 
   // Access to certain well known ciObjects.
@@ -451,8 +458,11 @@ public:
   void metadata_do(void f(Metadata*)) { _factory->metadata_do(f); }
 
   // Dump the compilation replay data for the ciEnv to the stream.
+  void dump_replay_data(int compile_id);
+  void dump_inline_data(int compile_id);
   void dump_replay_data(outputStream* out);
   void dump_replay_data_unsafe(outputStream* out);
+  void dump_compile_data(outputStream* out);
 };
 
 #endif // SHARE_VM_CI_CIENV_HPP

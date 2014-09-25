@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1999, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1999, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -25,15 +25,7 @@
 #ifndef OS_BSD_VM_OS_BSD_INLINE_HPP
 #define OS_BSD_VM_OS_BSD_INLINE_HPP
 
-#include "runtime/atomic.inline.hpp"
 #include "runtime/os.hpp"
-
-#ifdef TARGET_OS_ARCH_bsd_x86
-# include "orderAccess_bsd_x86.inline.hpp"
-#endif
-#ifdef TARGET_OS_ARCH_bsd_zero
-# include "orderAccess_bsd_zero.inline.hpp"
-#endif
 
 // System includes
 
@@ -44,18 +36,6 @@
 
 inline void* os::thread_local_storage_at(int index) {
   return pthread_getspecific((pthread_key_t)index);
-}
-
-inline const char* os::file_separator() {
-  return "/";
-}
-
-inline const char* os::line_separator() {
-  return "\n";
-}
-
-inline const char* os::path_separator() {
-  return ":";
 }
 
 // File names are case-sensitive on windows only
@@ -284,6 +264,14 @@ inline int os::get_sock_opt(int fd, int level, int optname,
 inline int os::set_sock_opt(int fd, int level, int optname,
                             const char* optval, socklen_t optlen) {
   return ::setsockopt(fd, level, optname, optval, optlen);
+}
+
+inline bool os::supports_monotonic_clock() {
+#ifdef __APPLE__
+  return true;
+#else
+  return Bsd::_clock_gettime != NULL;
+#endif
 }
 
 #endif // OS_BSD_VM_OS_BSD_INLINE_HPP

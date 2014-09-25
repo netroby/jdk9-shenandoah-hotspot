@@ -47,7 +47,6 @@
 
 // Forward declarations.
 class GenCollectorPolicy;
-class TwoGenerationCollectorPolicy;
 class AdaptiveSizePolicy;
 #if INCLUDE_ALL_GCS
 class ConcurrentMarkSweepPolicy;
@@ -77,10 +76,10 @@ class CollectorPolicy : public CHeapObj<mtGC> {
   size_t _heap_alignment;
 
   // Needed to keep information if MaxHeapSize was set on the command line
-  // when the flag value is aligned etc by ergonomics
+  // when the flag value is aligned etc by ergonomics.
   bool _max_heap_size_cmdline;
 
-  // The sizing of the heap are controlled by a sizing policy.
+  // The sizing of the heap is controlled by a sizing policy.
   AdaptiveSizePolicy* _size_policy;
 
   // Set to true when policy wants soft refs cleared.
@@ -103,7 +102,7 @@ class CollectorPolicy : public CHeapObj<mtGC> {
     initialize_size_info();
   }
 
-  // Return maximum heap alignment that may be imposed by the policy
+  // Return maximum heap alignment that may be imposed by the policy.
   static size_t compute_heap_alignment();
 
   size_t space_alignment()        { return _space_alignment; }
@@ -115,9 +114,8 @@ class CollectorPolicy : public CHeapObj<mtGC> {
 
   enum Name {
     CollectorPolicyKind,
-    TwoGenerationCollectorPolicyKind,
+    GenCollectorPolicyKind,
     ConcurrentMarkSweepPolicyKind,
-    ASConcurrentMarkSweepPolicyKind,
     G1CollectorPolicyKind,
     ShenandoahCollectorPolicyKind
   };
@@ -137,7 +135,6 @@ class CollectorPolicy : public CHeapObj<mtGC> {
 
   // Identification methods.
   virtual GenCollectorPolicy*           as_generation_policy()            { return NULL; }
-  virtual TwoGenerationCollectorPolicy* as_two_generation_policy()        { return NULL; }
   virtual MarkSweepPolicy*              as_mark_sweep_policy()            { return NULL; }
 #if INCLUDE_ALL_GCS
   virtual ConcurrentMarkSweepPolicy*    as_concurrent_mark_sweep_policy() { return NULL; }
@@ -146,7 +143,6 @@ class CollectorPolicy : public CHeapObj<mtGC> {
 #endif // INCLUDE_ALL_GCS
   // Note that these are not virtual.
   bool is_generation_policy()            { return as_generation_policy() != NULL; }
-  bool is_two_generation_policy()        { return as_two_generation_policy() != NULL; }
   bool is_mark_sweep_policy()            { return as_mark_sweep_policy() != NULL; }
 #if INCLUDE_ALL_GCS
   bool is_concurrent_mark_sweep_policy() { return as_concurrent_mark_sweep_policy() != NULL; }
@@ -185,7 +181,7 @@ class CollectorPolicy : public CHeapObj<mtGC> {
                                                        size_t size,
                                                        Metaspace::MetadataType mdtype);
 
-  // Performace Counter support
+  // Performance Counter support
   GCPolicyCounters* counters()     { return _gc_policy_counters; }
 
   // Create the jstat counters for the GC policy.  By default, policy's
@@ -225,10 +221,14 @@ class ClearedAllSoftRefs : public StackObj {
 };
 
 class GenCollectorPolicy : public CollectorPolicy {
+friend class TestGenCollectorPolicy;
  protected:
-  size_t _min_gen0_size;
-  size_t _initial_gen0_size;
-  size_t _max_gen0_size;
+  size_t _min_young_size;
+  size_t _initial_young_size;
+  size_t _max_young_size;
+  size_t _min_old_size;
+  size_t _initial_old_size;
+  size_t _max_old_size;
 
   // _gen_alignment and _space_alignment will have the same value most of the
   // time. When using large pages they can differ.
@@ -236,9 +236,8 @@ class GenCollectorPolicy : public CollectorPolicy {
 
   GenerationSpec **_generations;
 
-  // Return true if an allocation should be attempted in the older
-  // generation if it fails in the younger generation.  Return
-  // false, otherwise.
+  // Return true if an allocation should be attempted in the older generation
+  // if it fails in the younger generation.  Return false, otherwise.
   virtual bool should_try_older_generation_allocation(size_t word_size) const;
 
   void initialize_flags();
@@ -250,27 +249,30 @@ class GenCollectorPolicy : public CollectorPolicy {
   // Try to allocate space by expanding the heap.
   virtual HeapWord* expand_heap_and_allocate(size_t size, bool is_tlab);
 
-  // Compute max heap alignment
+  // Compute max heap alignment.
   size_t compute_max_alignment();
 
- // Scale the base_size by NewRatio according to
- //     result = base_size / (NewRatio + 1)
- // and align by min_alignment()
- size_t scale_by_NewRatio_aligned(size_t base_size);
+  // Scale the base_size by NewRatio according to
+  //     result = base_size / (NewRatio + 1)
+  // and align by min_alignment()
+  size_t scale_by_NewRatio_aligned(size_t base_size);
 
- // Bound the value by the given maximum minus the min_alignment
- size_t bound_minus_alignment(size_t desired_size, size_t maximum_size);
+  // Bound the value by the given maximum minus the min_alignment.
+  size_t bound_minus_alignment(size_t desired_size, size_t maximum_size);
 
  public:
   GenCollectorPolicy();
 
   // Accessors
-  size_t min_gen0_size()     { return _min_gen0_size; }
-  size_t initial_gen0_size() { return _initial_gen0_size; }
-  size_t max_gen0_size()     { return _max_gen0_size; }
-  size_t gen_alignment()     { return _gen_alignment; }
+  size_t min_young_size()     { return _min_young_size; }
+  size_t initial_young_size() { return _initial_young_size; }
+  size_t max_young_size()     { return _max_young_size; }
+  size_t gen_alignment()      { return _gen_alignment; }
+  size_t min_old_size()       { return _min_old_size; }
+  size_t initial_old_size()   { return _initial_old_size; }
+  size_t max_old_size()       { return _max_old_size; }
 
-  virtual int number_of_generations() = 0;
+  int number_of_generations() { return 2; }
 
   virtual GenerationSpec **generations() {
     assert(_generations != NULL, "Sanity check");
@@ -300,53 +302,17 @@ class GenCollectorPolicy : public CollectorPolicy {
                                       size_t init_survivor_size);
 
   virtual void post_heap_initialize() {
-    assert(_max_gen0_size == MaxNewSize, "Should be taken care of by initialize_size_info");
+    assert(_max_young_size == MaxNewSize, "Should be taken care of by initialize_size_info");
   }
-};
 
-// All of hotspot's current collectors are subtypes of this
-// class. Currently, these collectors all use the same gen[0],
-// but have different gen[1] types. If we add another subtype
-// of CollectorPolicy, this class should be broken out into
-// its own file.
-
-class TwoGenerationCollectorPolicy : public GenCollectorPolicy {
- protected:
-  size_t _min_gen1_size;
-  size_t _initial_gen1_size;
-  size_t _max_gen1_size;
-
-  void initialize_flags();
-  void initialize_size_info();
-
-  DEBUG_ONLY(void assert_flags();)
-  DEBUG_ONLY(void assert_size_info();)
-
- public:
-  TwoGenerationCollectorPolicy() : GenCollectorPolicy(), _min_gen1_size(0),
-    _initial_gen1_size(0), _max_gen1_size(0) {}
-
-  // Accessors
-  size_t min_gen1_size()     { return _min_gen1_size; }
-  size_t initial_gen1_size() { return _initial_gen1_size; }
-  size_t max_gen1_size()     { return _max_gen1_size; }
-
-  // Inherited methods
-  TwoGenerationCollectorPolicy* as_two_generation_policy() { return this; }
-
-  int number_of_generations()          { return 2; }
   BarrierSet::Name barrier_set_name()  { return BarrierSet::CardTableModRef; }
 
   virtual CollectorPolicy::Name kind() {
-    return CollectorPolicy::TwoGenerationCollectorPolicyKind;
+    return CollectorPolicy::GenCollectorPolicyKind;
   }
-
-  // Returns true if gen0 sizes were adjusted
-  bool adjust_gen0_sizes(size_t* gen0_size_ptr, size_t* gen1_size_ptr,
-                         const size_t heap_size);
 };
 
-class MarkSweepPolicy : public TwoGenerationCollectorPolicy {
+class MarkSweepPolicy : public GenCollectorPolicy {
  protected:
   void initialize_alignments();
   void initialize_generations();

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -37,10 +37,12 @@
 #include "mutex_solaris.inline.hpp"
 #include "oops/oop.inline.hpp"
 #include "os_share_solaris.hpp"
+#include "os_solaris.inline.hpp"
 #include "prims/jniFastGetField.hpp"
 #include "prims/jvm.h"
 #include "prims/jvm_misc.hpp"
 #include "runtime/arguments.hpp"
+#include "runtime/atomic.inline.hpp"
 #include "runtime/extendedPC.hpp"
 #include "runtime/globals.hpp"
 #include "runtime/interfaceSupport.hpp"
@@ -48,6 +50,7 @@
 #include "runtime/javaCalls.hpp"
 #include "runtime/mutexLocker.hpp"
 #include "runtime/objectMonitor.hpp"
+#include "runtime/orderAccess.inline.hpp"
 #include "runtime/osThread.hpp"
 #include "runtime/perfMemory.hpp"
 #include "runtime/sharedRuntime.hpp"
@@ -56,6 +59,7 @@
 #include "runtime/thread.inline.hpp"
 #include "runtime/threadCritical.hpp"
 #include "runtime/timer.hpp"
+#include "runtime/vm_version.hpp"
 #include "services/attachListener.hpp"
 #include "services/memTracker.hpp"
 #include "services/runtimeService.hpp"
@@ -211,13 +215,13 @@ Thread* ThreadLocalStorage::get_thread_via_cache_slowly(uintptr_t raw_id,
               "sp must be inside of selected thread stack");
 
     thread->set_self_raw_id(raw_id);  // mark for quick retrieval
-    _get_thread_cache[ index ] = thread;
+    _get_thread_cache[index] = thread;
   }
   return thread;
 }
 
 
-static const double all_zero[ sizeof(Thread) / sizeof(double) + 1 ] = {0};
+static const double all_zero[sizeof(Thread) / sizeof(double) + 1] = {0};
 #define NO_CACHED_THREAD ((Thread*)all_zero)
 
 void ThreadLocalStorage::pd_set_thread(Thread* thread) {
@@ -269,8 +273,8 @@ static inline stack_t get_stack_info() {
 }
 
 address os::current_stack_base() {
-  int r = thr_main() ;
-  guarantee (r == 0 || r == 1, "CR6501650 or CR6493689") ;
+  int r = thr_main();
+  guarantee(r == 0 || r == 1, "CR6501650 or CR6493689");
   bool is_primordial_thread = r;
 
   // Workaround 4352906, avoid calls to thr_stksegment by
@@ -292,9 +296,9 @@ address os::current_stack_base() {
 size_t os::current_stack_size() {
   size_t size;
 
-  int r = thr_main() ;
-  guarantee (r == 0 || r == 1, "CR6501650 or CR6493689") ;
-  if(!r) {
+  int r = thr_main();
+  guarantee(r == 0 || r == 1, "CR6501650 or CR6493689");
+  if (!r) {
     size = get_stack_info().ss_size;
   } else {
     struct rlimit limits;
@@ -311,39 +315,6 @@ struct tm* os::localtime_pd(const time_t* clock, struct tm*  res) {
   return localtime_r(clock, res);
 }
 
-// interruptible infrastructure
-
-// setup_interruptible saves the thread state before going into an
-// interruptible system call.
-// The saved state is used to restore the thread to
-// its former state whether or not an interrupt is received.
-// Used by classloader os::read
-// os::restartable_read calls skip this layer and stay in _thread_in_native
-
-void os::Solaris::setup_interruptible(JavaThread* thread) {
-
-  JavaThreadState thread_state = thread->thread_state();
-
-  assert(thread_state != _thread_blocked, "Coming from the wrong thread");
-  assert(thread_state != _thread_in_native, "Native threads skip setup_interruptible");
-  OSThread* osthread = thread->osthread();
-  osthread->set_saved_interrupt_thread_state(thread_state);
-  thread->frame_anchor()->make_walkable(thread);
-  ThreadStateTransition::transition(thread, thread_state, _thread_blocked);
-}
-
-// Version of setup_interruptible() for threads that are already in
-// _thread_blocked. Used by os_sleep().
-void os::Solaris::setup_interruptible_already_blocked(JavaThread* thread) {
-  thread->frame_anchor()->make_walkable(thread);
-}
-
-JavaThread* os::Solaris::setup_interruptible() {
-  JavaThread* thread = (JavaThread*)ThreadLocalStorage::thread();
-  setup_interruptible(thread);
-  return thread;
-}
-
 void os::Solaris::try_enable_extended_io() {
   typedef int (*enable_extended_FILE_stdio_t)(int, int);
 
@@ -357,41 +328,6 @@ void os::Solaris::try_enable_extended_io() {
   if (enabler) {
     enabler(-1, -1);
   }
-}
-
-
-#ifdef ASSERT
-
-JavaThread* os::Solaris::setup_interruptible_native() {
-  JavaThread* thread = (JavaThread*)ThreadLocalStorage::thread();
-  JavaThreadState thread_state = thread->thread_state();
-  assert(thread_state == _thread_in_native, "Assumed thread_in_native");
-  return thread;
-}
-
-void os::Solaris::cleanup_interruptible_native(JavaThread* thread) {
-  JavaThreadState thread_state = thread->thread_state();
-  assert(thread_state == _thread_in_native, "Assumed thread_in_native");
-}
-#endif
-
-// cleanup_interruptible reverses the effects of setup_interruptible
-// setup_interruptible_already_blocked() does not need any cleanup.
-
-void os::Solaris::cleanup_interruptible(JavaThread* thread) {
-  OSThread* osthread = thread->osthread();
-
-  ThreadStateTransition::transition(thread, _thread_blocked, osthread->saved_interrupt_thread_state());
-}
-
-// I/O interruption related counters called in _INTERRUPTIBLE
-
-void os::Solaris::bump_interrupted_before_count() {
-  RuntimeService::record_interrupted_before_count();
-}
-
-void os::Solaris::bump_interrupted_during_count() {
-  RuntimeService::record_interrupted_during_count();
 }
 
 static int _processors_online = 0;
@@ -415,11 +351,7 @@ julong os::physical_memory() {
 
 static hrtime_t first_hrtime = 0;
 static const hrtime_t hrtime_hz = 1000*1000*1000;
-const int LOCK_BUSY = 1;
-const int LOCK_FREE = 0;
-const int LOCK_INVALID = -1;
 static volatile hrtime_t max_hrtime = 0;
-static volatile int max_hrtime_lock = LOCK_FREE;     // Update counter with LSB as lock-in-progress
 
 
 void os::Solaris::initialize_system_info() {
@@ -480,7 +412,7 @@ static bool find_processors_in_pset(psetid_t        pset,
 
 static bool find_processors_online(processorid_t** id_array,
                                    uint*           id_length) {
-  const processorid_t MAX_PROCESSOR_ID = 100000 ;
+  const processorid_t MAX_PROCESSOR_ID = 100000;
   // Find the number of processors online.
   *id_length = sysconf(_SC_NPROCESSORS_ONLN);
   // Make up an array to hold their ids.
@@ -507,7 +439,7 @@ static bool find_processors_online(processorid_t** id_array,
       // we've got.  Note that in the worst case find_processors_online() could
       // return an empty set.  (As a fall-back in the case of the empty set we
       // could just return the ID of the current processor).
-      *id_length = found ;
+      *id_length = found;
   }
 
   return true;
@@ -623,13 +555,13 @@ bool os::bind_to_processor(uint processor_id) {
 }
 
 bool os::getenv(const char* name, char* buffer, int len) {
-  char* val = ::getenv( name );
-  if ( val == NULL
+  char* val = ::getenv(name);
+  if (val == NULL
   ||   strlen(val) + 1  >  len ) {
     if (len > 0)  buffer[0] = 0; // return a null string
     return false;
   }
-  strcpy( buffer, val );
+  strcpy(buffer, val);
   return true;
 }
 
@@ -648,9 +580,6 @@ bool os::have_special_privileges() {
 
 
 void os::init_system_properties_values() {
-  char arch[12];
-  sysinfo(SI_ARCHITECTURE, arch, sizeof(arch));
-
   // The next steps are taken in the product version:
   //
   // Obtain the JAVA_HOME value from the location of libjvm.so.
@@ -677,218 +606,174 @@ void os::init_system_properties_values() {
   // Important note: if the location of libjvm.so changes this
   // code needs to be changed accordingly.
 
-  // The next few definitions allow the code to be verbatim:
-#define malloc(n) (char*)NEW_C_HEAP_ARRAY(char, (n), mtInternal)
-#define free(p) FREE_C_HEAP_ARRAY(char, p, mtInternal)
-#define getenv(n) ::getenv(n)
-
+// Base path of extensions installed on the system.
+#define SYS_EXT_DIR     "/usr/jdk/packages"
 #define EXTENSIONS_DIR  "/lib/ext"
 #define ENDORSED_DIR    "/lib/endorsed"
-#define COMMON_DIR      "/usr/jdk/packages"
 
+  char cpu_arch[12];
+  // Buffer that fits several sprintfs.
+  // Note that the space for the colon and the trailing null are provided
+  // by the nulls included by the sizeof operator.
+  const size_t bufsize =
+    MAX4((size_t)MAXPATHLEN,  // For dll_dir & friends.
+         sizeof(SYS_EXT_DIR) + sizeof("/lib/") + strlen(cpu_arch), // invariant ld_library_path
+         (size_t)MAXPATHLEN + sizeof(EXTENSIONS_DIR) + sizeof(SYS_EXT_DIR) + sizeof(EXTENSIONS_DIR), // extensions dir
+         (size_t)MAXPATHLEN + sizeof(ENDORSED_DIR)); // endorsed dir
+  char *buf = (char *)NEW_C_HEAP_ARRAY(char, bufsize, mtInternal);
+
+  // sysclasspath, java_home, dll_dir
   {
-    /* sysclasspath, java_home, dll_dir */
-    {
-        char *home_path;
-        char *dll_path;
-        char *pslash;
-        char buf[MAXPATHLEN];
-        os::jvm_path(buf, sizeof(buf));
+    char *pslash;
+    os::jvm_path(buf, bufsize);
 
-        // Found the full path to libjvm.so.
-        // Now cut the path to <java_home>/jre if we can.
-        *(strrchr(buf, '/')) = '\0';  /* get rid of /libjvm.so */
+    // Found the full path to libjvm.so.
+    // Now cut the path to <java_home>/jre if we can.
+    *(strrchr(buf, '/')) = '\0'; // Get rid of /libjvm.so.
+    pslash = strrchr(buf, '/');
+    if (pslash != NULL) {
+      *pslash = '\0';            // Get rid of /{client|server|hotspot}.
+    }
+    Arguments::set_dll_dir(buf);
+
+    if (pslash != NULL) {
+      pslash = strrchr(buf, '/');
+      if (pslash != NULL) {
+        *pslash = '\0';          // Get rid of /<arch>.
         pslash = strrchr(buf, '/');
-        if (pslash != NULL)
-            *pslash = '\0';           /* get rid of /{client|server|hotspot} */
-        dll_path = malloc(strlen(buf) + 1);
-        if (dll_path == NULL)
-            return;
-        strcpy(dll_path, buf);
-        Arguments::set_dll_dir(dll_path);
-
         if (pslash != NULL) {
-            pslash = strrchr(buf, '/');
-            if (pslash != NULL) {
-                *pslash = '\0';       /* get rid of /<arch> */
-                pslash = strrchr(buf, '/');
-                if (pslash != NULL)
-                    *pslash = '\0';   /* get rid of /lib */
-            }
+          *pslash = '\0';        // Get rid of /lib.
         }
-
-        home_path = malloc(strlen(buf) + 1);
-        if (home_path == NULL)
-            return;
-        strcpy(home_path, buf);
-        Arguments::set_java_home(home_path);
-
-        if (!set_boot_path('/', ':'))
-            return;
+      }
     }
-
-    /*
-     * Where to look for native libraries
-     */
-    {
-      // Use dlinfo() to determine the correct java.library.path.
-      //
-      // If we're launched by the Java launcher, and the user
-      // does not set java.library.path explicitly on the commandline,
-      // the Java launcher sets LD_LIBRARY_PATH for us and unsets
-      // LD_LIBRARY_PATH_32 and LD_LIBRARY_PATH_64.  In this case
-      // dlinfo returns LD_LIBRARY_PATH + crle settings (including
-      // /usr/lib), which is exactly what we want.
-      //
-      // If the user does set java.library.path, it completely
-      // overwrites this setting, and always has.
-      //
-      // If we're not launched by the Java launcher, we may
-      // get here with any/all of the LD_LIBRARY_PATH[_32|64]
-      // settings.  Again, dlinfo does exactly what we want.
-
-      Dl_serinfo     _info, *info = &_info;
-      Dl_serpath     *path;
-      char*          library_path;
-      char           *common_path;
-      int            i;
-
-      // determine search path count and required buffer size
-      if (dlinfo(RTLD_SELF, RTLD_DI_SERINFOSIZE, (void *)info) == -1) {
-        vm_exit_during_initialization("dlinfo SERINFOSIZE request", dlerror());
-      }
-
-      // allocate new buffer and initialize
-      info = (Dl_serinfo*)malloc(_info.dls_size);
-      if (info == NULL) {
-        vm_exit_out_of_memory(_info.dls_size, OOM_MALLOC_ERROR,
-                              "init_system_properties_values info");
-      }
-      info->dls_size = _info.dls_size;
-      info->dls_cnt = _info.dls_cnt;
-
-      // obtain search path information
-      if (dlinfo(RTLD_SELF, RTLD_DI_SERINFO, (void *)info) == -1) {
-        free(info);
-        vm_exit_during_initialization("dlinfo SERINFO request", dlerror());
-      }
-
-      path = &info->dls_serpath[0];
-
-      // Note: Due to a legacy implementation, most of the library path
-      // is set in the launcher.  This was to accomodate linking restrictions
-      // on legacy Solaris implementations (which are no longer supported).
-      // Eventually, all the library path setting will be done here.
-      //
-      // However, to prevent the proliferation of improperly built native
-      // libraries, the new path component /usr/jdk/packages is added here.
-
-      // Determine the actual CPU architecture.
-      char cpu_arch[12];
-      sysinfo(SI_ARCHITECTURE, cpu_arch, sizeof(cpu_arch));
-#ifdef _LP64
-      // If we are a 64-bit vm, perform the following translations:
-      //   sparc   -> sparcv9
-      //   i386    -> amd64
-      if (strcmp(cpu_arch, "sparc") == 0)
-        strcat(cpu_arch, "v9");
-      else if (strcmp(cpu_arch, "i386") == 0)
-        strcpy(cpu_arch, "amd64");
-#endif
-
-      // Construct the invariant part of ld_library_path. Note that the
-      // space for the colon and the trailing null are provided by the
-      // nulls included by the sizeof operator.
-      size_t bufsize = sizeof(COMMON_DIR) + sizeof("/lib/") + strlen(cpu_arch);
-      common_path = malloc(bufsize);
-      if (common_path == NULL) {
-        free(info);
-        vm_exit_out_of_memory(bufsize, OOM_MALLOC_ERROR,
-                              "init_system_properties_values common_path");
-      }
-      sprintf(common_path, COMMON_DIR "/lib/%s", cpu_arch);
-
-      // struct size is more than sufficient for the path components obtained
-      // through the dlinfo() call, so only add additional space for the path
-      // components explicitly added here.
-      bufsize = info->dls_size + strlen(common_path);
-      library_path = malloc(bufsize);
-      if (library_path == NULL) {
-        free(info);
-        free(common_path);
-        vm_exit_out_of_memory(bufsize, OOM_MALLOC_ERROR,
-                              "init_system_properties_values library_path");
-      }
-      library_path[0] = '\0';
-
-      // Construct the desired Java library path from the linker's library
-      // search path.
-      //
-      // For compatibility, it is optimal that we insert the additional path
-      // components specific to the Java VM after those components specified
-      // in LD_LIBRARY_PATH (if any) but before those added by the ld.so
-      // infrastructure.
-      if (info->dls_cnt == 0) { // Not sure this can happen, but allow for it
-        strcpy(library_path, common_path);
-      } else {
-        int inserted = 0;
-        for (i = 0; i < info->dls_cnt; i++, path++) {
-          uint_t flags = path->dls_flags & LA_SER_MASK;
-          if (((flags & LA_SER_LIBPATH) == 0) && !inserted) {
-            strcat(library_path, common_path);
-            strcat(library_path, os::path_separator());
-            inserted = 1;
-          }
-          strcat(library_path, path->dls_name);
-          strcat(library_path, os::path_separator());
-        }
-        // eliminate trailing path separator
-        library_path[strlen(library_path)-1] = '\0';
-      }
-
-      // happens before argument parsing - can't use a trace flag
-      // tty->print_raw("init_system_properties_values: native lib path: ");
-      // tty->print_raw_cr(library_path);
-
-      // callee copies into its own buffer
-      Arguments::set_library_path(library_path);
-
-      free(common_path);
-      free(library_path);
-      free(info);
-    }
-
-    /*
-     * Extensions directories.
-     *
-     * Note that the space for the colon and the trailing null are provided
-     * by the nulls included by the sizeof operator (so actually one byte more
-     * than necessary is allocated).
-     */
-    {
-        char *buf = (char *) malloc(strlen(Arguments::get_java_home()) +
-            sizeof(EXTENSIONS_DIR) + sizeof(COMMON_DIR) +
-            sizeof(EXTENSIONS_DIR));
-        sprintf(buf, "%s" EXTENSIONS_DIR ":" COMMON_DIR EXTENSIONS_DIR,
-            Arguments::get_java_home());
-        Arguments::set_ext_dirs(buf);
-    }
-
-    /* Endorsed standards default directory. */
-    {
-        char * buf = malloc(strlen(Arguments::get_java_home()) + sizeof(ENDORSED_DIR));
-        sprintf(buf, "%s" ENDORSED_DIR, Arguments::get_java_home());
-        Arguments::set_endorsed_dirs(buf);
-    }
+    Arguments::set_java_home(buf);
+    set_boot_path('/', ':');
   }
 
-#undef malloc
-#undef free
-#undef getenv
+  // Where to look for native libraries.
+  {
+    // Use dlinfo() to determine the correct java.library.path.
+    //
+    // If we're launched by the Java launcher, and the user
+    // does not set java.library.path explicitly on the commandline,
+    // the Java launcher sets LD_LIBRARY_PATH for us and unsets
+    // LD_LIBRARY_PATH_32 and LD_LIBRARY_PATH_64.  In this case
+    // dlinfo returns LD_LIBRARY_PATH + crle settings (including
+    // /usr/lib), which is exactly what we want.
+    //
+    // If the user does set java.library.path, it completely
+    // overwrites this setting, and always has.
+    //
+    // If we're not launched by the Java launcher, we may
+    // get here with any/all of the LD_LIBRARY_PATH[_32|64]
+    // settings.  Again, dlinfo does exactly what we want.
+
+    Dl_serinfo     info_sz, *info = &info_sz;
+    Dl_serpath     *path;
+    char           *library_path;
+    char           *common_path = buf;
+
+    // Determine search path count and required buffer size.
+    if (dlinfo(RTLD_SELF, RTLD_DI_SERINFOSIZE, (void *)info) == -1) {
+      FREE_C_HEAP_ARRAY(char, buf, mtInternal);
+      vm_exit_during_initialization("dlinfo SERINFOSIZE request", dlerror());
+    }
+
+    // Allocate new buffer and initialize.
+    info = (Dl_serinfo*)NEW_C_HEAP_ARRAY(char, info_sz.dls_size, mtInternal);
+    info->dls_size = info_sz.dls_size;
+    info->dls_cnt = info_sz.dls_cnt;
+
+    // Obtain search path information.
+    if (dlinfo(RTLD_SELF, RTLD_DI_SERINFO, (void *)info) == -1) {
+      FREE_C_HEAP_ARRAY(char, buf, mtInternal);
+      FREE_C_HEAP_ARRAY(char, info, mtInternal);
+      vm_exit_during_initialization("dlinfo SERINFO request", dlerror());
+    }
+
+    path = &info->dls_serpath[0];
+
+    // Note: Due to a legacy implementation, most of the library path
+    // is set in the launcher. This was to accomodate linking restrictions
+    // on legacy Solaris implementations (which are no longer supported).
+    // Eventually, all the library path setting will be done here.
+    //
+    // However, to prevent the proliferation of improperly built native
+    // libraries, the new path component /usr/jdk/packages is added here.
+
+    // Determine the actual CPU architecture.
+    sysinfo(SI_ARCHITECTURE, cpu_arch, sizeof(cpu_arch));
+#ifdef _LP64
+    // If we are a 64-bit vm, perform the following translations:
+    //   sparc   -> sparcv9
+    //   i386    -> amd64
+    if (strcmp(cpu_arch, "sparc") == 0) {
+      strcat(cpu_arch, "v9");
+    } else if (strcmp(cpu_arch, "i386") == 0) {
+      strcpy(cpu_arch, "amd64");
+    }
+#endif
+
+    // Construct the invariant part of ld_library_path.
+    sprintf(common_path, SYS_EXT_DIR "/lib/%s", cpu_arch);
+
+    // Struct size is more than sufficient for the path components obtained
+    // through the dlinfo() call, so only add additional space for the path
+    // components explicitly added here.
+    size_t library_path_size = info->dls_size + strlen(common_path);
+    library_path = (char *)NEW_C_HEAP_ARRAY(char, library_path_size, mtInternal);
+    library_path[0] = '\0';
+
+    // Construct the desired Java library path from the linker's library
+    // search path.
+    //
+    // For compatibility, it is optimal that we insert the additional path
+    // components specific to the Java VM after those components specified
+    // in LD_LIBRARY_PATH (if any) but before those added by the ld.so
+    // infrastructure.
+    if (info->dls_cnt == 0) { // Not sure this can happen, but allow for it.
+      strcpy(library_path, common_path);
+    } else {
+      int inserted = 0;
+      int i;
+      for (i = 0; i < info->dls_cnt; i++, path++) {
+        uint_t flags = path->dls_flags & LA_SER_MASK;
+        if (((flags & LA_SER_LIBPATH) == 0) && !inserted) {
+          strcat(library_path, common_path);
+          strcat(library_path, os::path_separator());
+          inserted = 1;
+        }
+        strcat(library_path, path->dls_name);
+        strcat(library_path, os::path_separator());
+      }
+      // Eliminate trailing path separator.
+      library_path[strlen(library_path)-1] = '\0';
+    }
+
+    // happens before argument parsing - can't use a trace flag
+    // tty->print_raw("init_system_properties_values: native lib path: ");
+    // tty->print_raw_cr(library_path);
+
+    // Callee copies into its own buffer.
+    Arguments::set_library_path(library_path);
+
+    FREE_C_HEAP_ARRAY(char, library_path, mtInternal);
+    FREE_C_HEAP_ARRAY(char, info, mtInternal);
+  }
+
+  // Extensions directories.
+  sprintf(buf, "%s" EXTENSIONS_DIR ":" SYS_EXT_DIR EXTENSIONS_DIR, Arguments::get_java_home());
+  Arguments::set_ext_dirs(buf);
+
+  // Endorsed standards default directory.
+  sprintf(buf, "%s" ENDORSED_DIR, Arguments::get_java_home());
+  Arguments::set_endorsed_dirs(buf);
+
+  FREE_C_HEAP_ARRAY(char, buf, mtInternal);
+
+#undef SYS_EXT_DIR
 #undef EXTENSIONS_DIR
 #undef ENDORSED_DIR
-#undef COMMON_DIR
-
 }
 
 void os::breakpoint() {
@@ -912,7 +797,7 @@ bool os::obsolete_option(const JavaVMOption *option)
 bool os::Solaris::valid_stack_address(Thread* thread, address sp) {
   address  stackStart  = (address)thread->stack_base();
   address  stackEnd    = (address)(stackStart - (address)thread->stack_size());
-  if (sp < stackStart && sp >= stackEnd ) return true;
+  if (sp < stackStart && sp >= stackEnd) return true;
   return false;
 }
 
@@ -937,8 +822,8 @@ extern "C" void* java_start(void* thread_addr) {
   Thread* thread = (Thread*)thread_addr;
   OSThread* osthr = thread->osthread();
 
-  osthr->set_lwp_id( _lwp_self() );  // Store lwp in case we are bound
-  thread->_schedctl = (void *) schedctl_init () ;
+  osthr->set_lwp_id(_lwp_self());  // Store lwp in case we are bound
+  thread->_schedctl = (void *) schedctl_init();
 
   if (UseNUMA) {
     int lgrp_id = os::numa_get_group_id();
@@ -957,8 +842,8 @@ extern "C" void* java_start(void* thread_addr) {
   // in java_to_os_priority. So we save the native priority
   // in the osThread and recall it here.
 
-  if ( osthr->thread_id() != -1 ) {
-    if ( UseThreadPriorities ) {
+  if (osthr->thread_id() != -1) {
+    if (UseThreadPriorities) {
       int prio = osthr->native_priority();
       if (ThreadPriorityVerbose) {
         tty->print_cr("Starting Thread " INTPTR_FORMAT ", LWP is "
@@ -1000,7 +885,7 @@ static OSThread* create_os_thread(Thread* thread, thread_t thread_id) {
   // Store info on the Solaris thread into the OSThread
   osthread->set_thread_id(thread_id);
   osthread->set_lwp_id(_lwp_self());
-  thread->_schedctl = (void *) schedctl_init () ;
+  thread->_schedctl = (void *) schedctl_init();
 
   if (UseNUMA) {
     int lgrp_id = os::numa_get_group_id();
@@ -1009,9 +894,9 @@ static OSThread* create_os_thread(Thread* thread, thread_t thread_id) {
     }
   }
 
-  if ( ThreadPriorityVerbose ) {
+  if (ThreadPriorityVerbose) {
     tty->print_cr("In create_os_thread, Thread " INTPTR_FORMAT ", LWP is " INTPTR_FORMAT "\n",
-                  osthread->thread_id(), osthread->lwp_id() );
+                  osthread->thread_id(), osthread->lwp_id());
   }
 
   // Initial thread state is INITIALIZED, not SUSPENDED
@@ -1084,9 +969,6 @@ bool os::create_main_thread(JavaThread* thread) {
   return true;
 }
 
-// _T2_libthread is true if we believe we are running with the newer
-// SunSoft lwp/libthread.so (2.8 patch, 2.9 default)
-bool os::Solaris::_T2_libthread = false;
 
 bool os::create_thread(Thread* thread, ThreadType thr_type, size_t stack_size) {
   // Allocate the OSThread object
@@ -1095,9 +977,9 @@ bool os::create_thread(Thread* thread, ThreadType thr_type, size_t stack_size) {
     return false;
   }
 
-  if ( ThreadPriorityVerbose ) {
+  if (ThreadPriorityVerbose) {
     char *thrtyp;
-    switch ( thr_type ) {
+    switch (thr_type) {
       case vm_thread:
         thrtyp = (char *)"vm";
         break;
@@ -1171,70 +1053,9 @@ bool os::create_thread(Thread* thread, ThreadType thr_type, size_t stack_size) {
   thread->set_osthread(osthread);
 
   // Create the Solaris thread
-  // explicit THR_BOUND for T2_libthread case in case
-  // that assumption is not accurate, but our alternate signal stack
-  // handling is based on it which must have bound threads
   thread_t tid = 0;
-  long     flags = (UseDetachedThreads ? THR_DETACHED : 0) | THR_SUSPENDED
-                   | ((UseBoundThreads || os::Solaris::T2_libthread() ||
-                       (thr_type == vm_thread) ||
-                       (thr_type == cgc_thread) ||
-                       (thr_type == pgc_thread) ||
-                       (thr_type == compiler_thread && BackgroundCompilation)) ?
-                      THR_BOUND : 0);
+  long     flags = (UseDetachedThreads ? THR_DETACHED : 0) | THR_SUSPENDED;
   int      status;
-
-  // 4376845 -- libthread/kernel don't provide enough LWPs to utilize all CPUs.
-  //
-  // On multiprocessors systems, libthread sometimes under-provisions our
-  // process with LWPs.  On a 30-way systems, for instance, we could have
-  // 50 user-level threads in ready state and only 2 or 3 LWPs assigned
-  // to our process.  This can result in under utilization of PEs.
-  // I suspect the problem is related to libthread's LWP
-  // pool management and to the kernel's SIGBLOCKING "last LWP parked"
-  // upcall policy.
-  //
-  // The following code is palliative -- it attempts to ensure that our
-  // process has sufficient LWPs to take advantage of multiple PEs.
-  // Proper long-term cures include using user-level threads bound to LWPs
-  // (THR_BOUND) or using LWP-based synchronization.  Note that there is a
-  // slight timing window with respect to sampling _os_thread_count, but
-  // the race is benign.  Also, we should periodically recompute
-  // _processors_online as the min of SC_NPROCESSORS_ONLN and the
-  // the number of PEs in our partition.  You might be tempted to use
-  // THR_NEW_LWP here, but I'd recommend against it as that could
-  // result in undesirable growth of the libthread's LWP pool.
-  // The fix below isn't sufficient; for instance, it doesn't take into count
-  // LWPs parked on IO.  It does, however, help certain CPU-bound benchmarks.
-  //
-  // Some pathologies this scheme doesn't handle:
-  // *  Threads can block, releasing the LWPs.  The LWPs can age out.
-  //    When a large number of threads become ready again there aren't
-  //    enough LWPs available to service them.  This can occur when the
-  //    number of ready threads oscillates.
-  // *  LWPs/Threads park on IO, thus taking the LWP out of circulation.
-  //
-  // Finally, we should call thr_setconcurrency() periodically to refresh
-  // the LWP pool and thwart the LWP age-out mechanism.
-  // The "+3" term provides a little slop -- we want to slightly overprovision.
-
-  if (AdjustConcurrency && os::Solaris::_os_thread_count < (_processors_online+3)) {
-    if (!(flags & THR_BOUND)) {
-      thr_setconcurrency (os::Solaris::_os_thread_count);       // avoid starvation
-    }
-  }
-  // Although this doesn't hurt, we should warn of undefined behavior
-  // when using unbound T1 threads with schedctl().  This should never
-  // happen, as the compiler and VM threads are always created bound
-  DEBUG_ONLY(
-      if ((VMThreadHintNoPreempt || CompilerThreadHintNoPreempt) &&
-          (!os::Solaris::T2_libthread() && (!(flags & THR_BOUND))) &&
-          ((thr_type == vm_thread) || (thr_type == cgc_thread) ||
-           (thr_type == pgc_thread) || (thr_type == compiler_thread && BackgroundCompilation))) {
-         warning("schedctl behavior undefined when Compiler/VM/GC Threads are Unbound");
-      }
-  );
-
 
   // Mark that we don't have an lwp or thread id yet.
   // In case we attempt to set the priority before the thread starts.
@@ -1259,13 +1080,6 @@ bool os::create_thread(Thread* thread, ThreadType thr_type, size_t stack_size) {
 
   // Remember that we created this thread so we can set priority on it
   osthread->set_vm_created();
-
-  // Set the default thread priority.  If using bound threads, setting
-  // lwp priority will be delayed until thread start.
-  set_native_priority(thread,
-                      DefaultThreadPriority == -1 ?
-                        java_to_os_priority[NormPriority] :
-                        DefaultThreadPriority);
 
   // Initial thread state is INITIALIZED, not SUSPENDED
   osthread->set_state(INITIALIZED);
@@ -1396,11 +1210,11 @@ void _handle_uncaught_cxx_exception() {
 
 // First crack at OS-specific initialization, from inside the new thread.
 void os::initialize_thread(Thread* thr) {
-  int r = thr_main() ;
-  guarantee (r == 0 || r == 1, "CR6501650 or CR6493689") ;
+  int r = thr_main();
+  guarantee(r == 0 || r == 1, "CR6501650 or CR6493689");
   if (r) {
     JavaThread* jt = (JavaThread *)thr;
-    assert(jt != NULL,"Sanity check");
+    assert(jt != NULL, "Sanity check");
     size_t stack_size;
     address base = jt->stack_base();
     if (Arguments::created_by_java_launcher()) {
@@ -1448,39 +1262,8 @@ void os::initialize_thread(Thread* thr) {
     jt->set_stack_size(stack_size);
   }
 
-   // 5/22/01: Right now alternate signal stacks do not handle
-   // throwing stack overflow exceptions, see bug 4463178
-   // Until a fix is found for this, T2 will NOT imply alternate signal
-   // stacks.
-   // If using T2 libthread threads, install an alternate signal stack.
-   // Because alternate stacks associate with LWPs on Solaris,
-   // see sigaltstack(2), if using UNBOUND threads, or if UseBoundThreads
-   // we prefer to explicitly stack bang.
-   // If not using T2 libthread, but using UseBoundThreads any threads
-   // (primordial thread, jni_attachCurrentThread) we do not create,
-   // probably are not bound, therefore they can not have an alternate
-   // signal stack. Since our stack banging code is generated and
-   // is shared across threads, all threads must be bound to allow
-   // using alternate signal stacks.  The alternative is to interpose
-   // on _lwp_create to associate an alt sig stack with each LWP,
-   // and this could be a problem when the JVM is embedded.
-   // We would prefer to use alternate signal stacks with T2
-   // Since there is currently no accurate way to detect T2
-   // we do not. Assuming T2 when running T1 causes sig 11s or assertions
-   // on installing alternate signal stacks
-
-
-   // 05/09/03: removed alternate signal stack support for Solaris
-   // The alternate signal stack mechanism is no longer needed to
-   // handle stack overflow. This is now handled by allocating
-   // guard pages (red zone) and stackbanging.
-   // Initially the alternate signal stack mechanism was removed because
-   // it did not work with T1 llibthread. Alternate
-   // signal stacks MUST have all threads bound to lwps. Applications
-   // can create their own threads and attach them without their being
-   // bound under T1. This is frequently the case for the primordial thread.
-   // If we were ever to reenable this mechanism we would need to
-   // use the dynamic check for T2 libthread.
+  // With the T2 libthread (T1 is no longer supported) threads are always bound
+  // and we use stackbanging in all cases.
 
   os::Solaris::init_thread_fpu_state();
   std::set_terminate(_handle_uncaught_cxx_exception);
@@ -1542,7 +1325,7 @@ int os::allocate_thread_local_storage() {
   //           JavaThread in Java code, and have stubs simply
   //           treat %g2 as a caller-save register, preserving it in a %lN.
   thread_key_t tk;
-  if (thr_keycreate( &tk, NULL ) )
+  if (thr_keycreate( &tk, NULL))
     fatal(err_msg("os::allocate_thread_local_storage: thr_keycreate failed "
                   "(%s)", strerror(errno)));
   return int(tk);
@@ -1567,7 +1350,7 @@ void os::thread_local_storage_at_put(int index, void* value) {
                     "(%s)", strerror(errno)));
     }
   } else {
-      ThreadLocalStorage::set_thread_in_slot ((Thread *) value) ;
+      ThreadLocalStorage::set_thread_in_slot((Thread *) value);
   }
 }
 
@@ -1581,58 +1364,31 @@ void* os::thread_local_storage_at(int index) {
 }
 
 
-// gethrtime can move backwards if read from one cpu and then a different cpu
-// getTimeNanos is guaranteed to not move backward on Solaris
-// local spinloop created as faster for a CAS on an int than
-// a CAS on a 64bit jlong. Also Atomic::cmpxchg for jlong is not
-// supported on sparc v8 or pre supports_cx8 intel boxes.
-// oldgetTimeNanos for systems which do not support CAS on 64bit jlong
-// i.e. sparc v8 and pre supports_cx8 (i486) intel boxes
-inline hrtime_t oldgetTimeNanos() {
-  int gotlock = LOCK_INVALID;
-  hrtime_t newtime = gethrtime();
-
-  for (;;) {
-// grab lock for max_hrtime
-    int curlock = max_hrtime_lock;
-    if (curlock & LOCK_BUSY)  continue;
-    if (gotlock = Atomic::cmpxchg(LOCK_BUSY, &max_hrtime_lock, LOCK_FREE) != LOCK_FREE) continue;
-    if (newtime > max_hrtime) {
-      max_hrtime = newtime;
-    } else {
-      newtime = max_hrtime;
-    }
-    // release lock
-    max_hrtime_lock = LOCK_FREE;
-    return newtime;
-  }
-}
-// gethrtime can move backwards if read from one cpu and then a different cpu
-// getTimeNanos is guaranteed to not move backward on Solaris
+// gethrtime() should be monotonic according to the documentation,
+// but some virtualized platforms are known to break this guarantee.
+// getTimeNanos() must be guaranteed not to move backwards, so we
+// are forced to add a check here.
 inline hrtime_t getTimeNanos() {
-  if (VM_Version::supports_cx8()) {
-    const hrtime_t now = gethrtime();
-    // Use atomic long load since 32-bit x86 uses 2 registers to keep long.
-    const hrtime_t prev = Atomic::load((volatile jlong*)&max_hrtime);
-    if (now <= prev)  return prev;   // same or retrograde time;
-    const hrtime_t obsv = Atomic::cmpxchg(now, (volatile jlong*)&max_hrtime, prev);
-    assert(obsv >= prev, "invariant");   // Monotonicity
-    // If the CAS succeeded then we're done and return "now".
-    // If the CAS failed and the observed value "obs" is >= now then
-    // we should return "obs".  If the CAS failed and now > obs > prv then
-    // some other thread raced this thread and installed a new value, in which case
-    // we could either (a) retry the entire operation, (b) retry trying to install now
-    // or (c) just return obs.  We use (c).   No loop is required although in some cases
-    // we might discard a higher "now" value in deference to a slightly lower but freshly
-    // installed obs value.   That's entirely benign -- it admits no new orderings compared
-    // to (a) or (b) -- and greatly reduces coherence traffic.
-    // We might also condition (c) on the magnitude of the delta between obs and now.
-    // Avoiding excessive CAS operations to hot RW locations is critical.
-    // See http://blogs.sun.com/dave/entry/cas_and_cache_trivia_invalidate
-    return (prev == obsv) ? now : obsv ;
-  } else {
-    return oldgetTimeNanos();
+  const hrtime_t now = gethrtime();
+  const hrtime_t prev = max_hrtime;
+  if (now <= prev) {
+    return prev;   // same or retrograde time;
   }
+  const hrtime_t obsv = Atomic::cmpxchg(now, (volatile jlong*)&max_hrtime, prev);
+  assert(obsv >= prev, "invariant");   // Monotonicity
+  // If the CAS succeeded then we're done and return "now".
+  // If the CAS failed and the observed value "obsv" is >= now then
+  // we should return "obsv".  If the CAS failed and now > obsv > prv then
+  // some other thread raced this thread and installed a new value, in which case
+  // we could either (a) retry the entire operation, (b) retry trying to install now
+  // or (c) just return obsv.  We use (c).   No loop is required although in some cases
+  // we might discard a higher "now" value in deference to a slightly lower but freshly
+  // installed obsv value.   That's entirely benign -- it admits no new orderings compared
+  // to (a) or (b) -- and greatly reduces coherence traffic.
+  // We might also condition (c) on the magnitude of the delta between obsv and now.
+  // Avoiding excessive CAS operations to hot RW locations is critical.
+  // See https://blogs.oracle.com/dave/entry/cas_and_cache_trivia_invalidate
+  return (prev == obsv) ? now : obsv;
 }
 
 // Time since start-up in seconds to a fine granularity.
@@ -1788,9 +1544,6 @@ void os::die() {
   ::abort(); // dump core (for debugging)
 }
 
-// unused
-void os::set_error_file(const char *logfile) {}
-
 // DLL functions
 
 const char* os::dll_file_extension() { return ".so"; }
@@ -1826,7 +1579,7 @@ bool os::dll_build_name(char* buffer, size_t buflen,
     if (pelements == NULL) {
       return false;
     }
-    for (int i = 0 ; i < n ; i++) {
+    for (int i = 0; i < n; i++) {
       // really shouldn't be NULL but what the heck, check can't hurt
       if (pelements[i] == NULL || strlen(pelements[i]) == 0) {
         continue; // skip the empty path values
@@ -1838,7 +1591,7 @@ bool os::dll_build_name(char* buffer, size_t buflen,
       }
     }
     // release the storage
-    for (int i = 0 ; i < n ; i++) {
+    for (int i = 0; i < n; i++) {
       if (pelements[i] != NULL) {
         FREE_C_HEAP_ARRAY(char, pelements[i], mtInternal);
       }
@@ -1969,41 +1722,54 @@ bool os::dll_address_to_library_name(address addr, char* buf,
   return false;
 }
 
-// Prints the names and full paths of all opened dynamic libraries
-// for current process
-void os::print_dll_info(outputStream * st) {
+int os::get_loaded_modules_info(os::LoadedModulesCallbackFunc callback, void *param) {
   Dl_info dli;
-  void *handle;
-  Link_map *map;
-  Link_map *p;
-
-  st->print_cr("Dynamic libraries:"); st->flush();
-
-  if (dladdr(CAST_FROM_FN_PTR(void *, os::print_dll_info), &dli) == 0 ||
+  // Sanity check?
+  if (dladdr(CAST_FROM_FN_PTR(void *, os::get_loaded_modules_info), &dli) == 0 ||
       dli.dli_fname == NULL) {
-    st->print_cr("Error: Cannot print dynamic libraries.");
-    return;
+    return 1;
   }
-  handle = dlopen(dli.dli_fname, RTLD_LAZY);
+
+  void * handle = dlopen(dli.dli_fname, RTLD_LAZY);
   if (handle == NULL) {
-    st->print_cr("Error: Cannot print dynamic libraries.");
-    return;
+    return 1;
   }
+
+  Link_map *map;
   dlinfo(handle, RTLD_DI_LINKMAP, &map);
   if (map == NULL) {
-    st->print_cr("Error: Cannot print dynamic libraries.");
-    return;
+    dlclose(handle);
+    return 1;
   }
 
-  while (map->l_prev != NULL)
+  while (map->l_prev != NULL) {
     map = map->l_prev;
+  }
 
   while (map != NULL) {
-    st->print_cr(PTR_FORMAT " \t%s", map->l_addr, map->l_name);
+    // Iterate through all map entries and call callback with fields of interest
+    if(callback(map->l_name, (address)map->l_addr, (address)0, param)) {
+      dlclose(handle);
+      return 1;
+    }
     map = map->l_next;
   }
 
   dlclose(handle);
+  return 0;
+}
+
+int _print_dll_info_cb(const char * name, address base_address, address top_address, void * param) {
+  outputStream * out = (outputStream *) param;
+  out->print_cr(PTR_FORMAT " \t%s", base_address, name);
+  return 0;
+}
+
+void os::print_dll_info(outputStream * st) {
+  st->print_cr("Dynamic libraries:"); st->flush();
+  if (get_loaded_modules_info(_print_dll_info_cb, (void *)st)) {
+    st->print_cr("Error: Cannot print dynamic libraries.");
+  }
 }
 
   // Loads .dll/.so and
@@ -2042,7 +1808,7 @@ void * os::dll_load(const char *filename, char *ebuf, int ebuflen)
 
   bool failed_to_read_elf_head=
     (sizeof(elf_head)!=
-        (::read(file_descriptor, &elf_head,sizeof(elf_head)))) ;
+        (::read(file_descriptor, &elf_head,sizeof(elf_head))));
 
   ::close(file_descriptor);
   if (failed_to_read_elf_head) {
@@ -2098,7 +1864,7 @@ void * os::dll_load(const char *filename, char *ebuf, int ebuflen)
   arch_t lib_arch={elf_head.e_machine,0,elf_head.e_ident[EI_CLASS], elf_head.e_ident[EI_DATA], NULL};
   int running_arch_index=-1;
 
-  for (unsigned int i=0 ; i < ARRAY_SIZE(arch_array) ; i++ ) {
+  for (unsigned int i=0; i < ARRAY_SIZE(arch_array); i++) {
     if (running_arch_code == arch_array[i].code) {
       running_arch_index    = i;
     }
@@ -2127,7 +1893,7 @@ void * os::dll_load(const char *filename, char *ebuf, int ebuflen)
   }
 
   if (lib_arch.compat_class != arch_array[running_arch_index].compat_class) {
-    if ( lib_arch.name!=NULL ) {
+    if (lib_arch.name!=NULL) {
       ::snprintf(diag_msg_buf, diag_msg_max_length-1,
         " (Possible cause: can't load %s-bit .so on a %s-bit platform)",
         lib_arch.name, arch_array[running_arch_index].name);
@@ -2144,6 +1910,10 @@ void * os::dll_load(const char *filename, char *ebuf, int ebuflen)
 
 void* os::dll_lookup(void* handle, const char* name) {
   return dlsym(handle, name);
+}
+
+void* os::get_default_process_handle() {
+  return (void*)::dlopen(NULL, RTLD_LAZY);
 }
 
 int os::stat(const char *path, struct stat *sbuf) {
@@ -2203,12 +1973,7 @@ void os::Solaris::print_distro_info(outputStream* st) {
 }
 
 void os::Solaris::print_libversion_info(outputStream* st) {
-  if (os::Solaris::T2_libthread()) {
-    st->print("  (T2 libthread)");
-  }
-  else {
-    st->print("  (T1 libthread)");
-  }
+  st->print("  (T2 libthread)");
   st->cr();
 }
 
@@ -2217,7 +1982,7 @@ static bool check_addr0(outputStream* st) {
   int fd = ::open("/proc/self/map",O_RDONLY);
   if (fd >= 0) {
     prmap_t p;
-    while(::read(fd, &p, sizeof(p)) > 0) {
+    while (::read(fd, &p, sizeof(p)) > 0) {
       if (p.pr_vaddr == 0x0) {
         st->print("Warning: Address: 0x%x, Size: %dK, ",p.pr_vaddr, p.pr_size/1024, p.pr_mapname);
         st->print("Mapped file: %s, ", p.pr_mapname[0] == '\0' ? "None" : p.pr_mapname);
@@ -2228,8 +1993,8 @@ static bool check_addr0(outputStream* st) {
         st->cr();
         status = true;
       }
-      ::close(fd);
     }
+    ::close(fd);
   }
   return status;
 }
@@ -2247,58 +2012,12 @@ void os::print_memory_info(outputStream* st) {
   (void) check_addr0(st);
 }
 
-// Taken from /usr/include/sys/machsig.h  Supposed to be architecture specific
-// but they're the same for all the solaris architectures that we support.
-const char *ill_names[] = { "ILL0", "ILL_ILLOPC", "ILL_ILLOPN", "ILL_ILLADR",
-                          "ILL_ILLTRP", "ILL_PRVOPC", "ILL_PRVREG",
-                          "ILL_COPROC", "ILL_BADSTK" };
-
-const char *fpe_names[] = { "FPE0", "FPE_INTDIV", "FPE_INTOVF", "FPE_FLTDIV",
-                          "FPE_FLTOVF", "FPE_FLTUND", "FPE_FLTRES",
-                          "FPE_FLTINV", "FPE_FLTSUB" };
-
-const char *segv_names[] = { "SEGV0", "SEGV_MAPERR", "SEGV_ACCERR" };
-
-const char *bus_names[] = { "BUS0", "BUS_ADRALN", "BUS_ADRERR", "BUS_OBJERR" };
-
 void os::print_siginfo(outputStream* st, void* siginfo) {
-  st->print("siginfo:");
+  const siginfo_t* si = (const siginfo_t*)siginfo;
 
-  const int buflen = 100;
-  char buf[buflen];
-  siginfo_t *si = (siginfo_t*)siginfo;
-  st->print("si_signo=%s: ", os::exception_name(si->si_signo, buf, buflen));
-  char *err = strerror(si->si_errno);
-  if (si->si_errno != 0 && err != NULL) {
-    st->print("si_errno=%s", err);
-  } else {
-    st->print("si_errno=%d", si->si_errno);
-  }
-  const int c = si->si_code;
-  assert(c > 0, "unexpected si_code");
-  switch (si->si_signo) {
-  case SIGILL:
-    st->print(", si_code=%d (%s)", c, c > 8 ? "" : ill_names[c]);
-    st->print(", si_addr=" PTR_FORMAT, si->si_addr);
-    break;
-  case SIGFPE:
-    st->print(", si_code=%d (%s)", c, c > 9 ? "" : fpe_names[c]);
-    st->print(", si_addr=" PTR_FORMAT, si->si_addr);
-    break;
-  case SIGSEGV:
-    st->print(", si_code=%d (%s)", c, c > 2 ? "" : segv_names[c]);
-    st->print(", si_addr=" PTR_FORMAT, si->si_addr);
-    break;
-  case SIGBUS:
-    st->print(", si_code=%d (%s)", c, c > 3 ? "" : bus_names[c]);
-    st->print(", si_addr=" PTR_FORMAT, si->si_addr);
-    break;
-  default:
-    st->print(", si_code=%d", si->si_code);
-    // no si_addr
-  }
+  os::Posix::print_siginfo_brief(st, si);
 
-  if ((si->si_signo == SIGBUS || si->si_signo == SIGSEGV) &&
+  if (si && (si->si_signo == SIGBUS || si->si_signo == SIGSEGV) &&
       UseSharedSpaces) {
     FileMapInfo* mapinfo = FileMapInfo::current_info();
     if (mapinfo->is_in_shared_space(si->si_addr)) {
@@ -2368,23 +2087,25 @@ static void print_signal_handler(outputStream* st, int sig,
     st->print("[%s]", get_signal_handler_name(handler, buf, buflen));
   }
 
-  st->print(", sa_mask[0]=" PTR32_FORMAT, *(uint32_t*)&sa.sa_mask);
+  st->print(", sa_mask[0]=");
+  os::Posix::print_signal_set_short(st, &sa.sa_mask);
 
   address rh = VMError::get_resetted_sighandler(sig);
   // May be, handler was resetted by VMError?
-  if(rh != NULL) {
+  if (rh != NULL) {
     handler = rh;
     sa.sa_flags = VMError::get_resetted_sigflags(sig);
   }
 
-  st->print(", sa_flags="   PTR32_FORMAT, sa.sa_flags);
+  st->print(", sa_flags=");
+  os::Posix::print_sa_flags(st, sa.sa_flags);
 
   // Check: is it our handler?
-  if(handler == CAST_FROM_FN_PTR(address, signalHandler) ||
+  if (handler == CAST_FROM_FN_PTR(address, signalHandler) ||
      handler == CAST_FROM_FN_PTR(address, sigINTRHandler)) {
     // It is our signal handler
     // check for flags
-    if(sa.sa_flags != os::Solaris::get_our_sigflags(sig)) {
+    if (sa.sa_flags != os::Solaris::get_our_sigflags(sig)) {
       st->print(
         ", flags was changed from " PTR32_FORMAT ", consider using jsig library",
         os::Solaris::get_our_sigflags(sig));
@@ -2437,13 +2158,14 @@ void os::jvm_path(char *buf, jint buflen) {
     return;
   }
 
-  if (Arguments::created_by_gamma_launcher()) {
-    // Support for the gamma launcher.  Typical value for buf is
-    // "<JAVA_HOME>/jre/lib/<arch>/<vmtype>/libjvm.so".  If "/jre/lib/" appears at
-    // the right place in the string, then assume we are installed in a JDK and
-    // we're done.  Otherwise, check for a JAVA_HOME environment variable and fix
-    // up the path so it looks like libjvm.so is installed there (append a
-    // fake suffix hotspot/libjvm.so).
+  if (Arguments::sun_java_launcher_is_altjvm()) {
+    // Support for the java launcher's '-XXaltjvm=<path>' option. Typical
+    // value for buf is "<JAVA_HOME>/jre/lib/<arch>/<vmtype>/libjvm.so".
+    // If "/jre/lib/" appears at the right place in the string, then
+    // assume we are installed in a JDK and we're done.  Otherwise, check
+    // for a JAVA_HOME environment variable and fix up the path so it
+    // looks like libjvm.so is installed there (append a fake suffix
+    // hotspot/libjvm.so).
     const char *p = buf + strlen(buf) - 1;
     for (int count = 0; p > buf && count < 5; ++count) {
       for (--p; p > buf && *p != '/'; --p)
@@ -2474,6 +2196,7 @@ void os::jvm_path(char *buf, jint buflen) {
         // determine if this is a legacy image or modules image
         // modules image doesn't have "jre" subdirectory
         len = strlen(buf);
+        assert(len < buflen, "Ran out of buffer space");
         jrelib_p = buf + len;
         snprintf(jrelib_p, buflen-len, "/jre/lib/%s", cpu_arch);
         if (0 != access(buf, F_OK)) {
@@ -2492,7 +2215,7 @@ void os::jvm_path(char *buf, jint buflen) {
     }
   }
 
-  strcpy(saved_jvm_path, buf);
+  strncpy(saved_jvm_path, buf, MAXPATHLEN);
 }
 
 
@@ -2694,7 +2417,7 @@ static int check_pending_signals(bool wait_for_signal) {
     do {
       thread->set_suspend_equivalent();
       // cleared by handle_special_suspend_equivalent_condition() or java_suspend_self()
-      while((ret = ::sema_wait(&sig_sem)) == EINTR)
+      while ((ret = ::sema_wait(&sig_sem)) == EINTR)
           ;
       assert(ret == 0, "sema_wait() failed");
 
@@ -2926,7 +2649,7 @@ size_t os::numa_get_leaf_groups(int *ids, size_t size) {
      }
      if (!r) {
        // That's a leaf node.
-       assert (bottom <= cur, "Sanity check");
+       assert(bottom <= cur, "Sanity check");
        // Check if the node has memory
        if (Solaris::lgrp_resources(Solaris::lgrp_cookie(), ids[cur],
                                    NULL, 0, LGRP_RSRC_MEM) > 0) {
@@ -3007,7 +2730,7 @@ bool os::get_page_info(char *start, page_info* info) {
 char *os::scan_pages(char *start, char* end, page_info* page_expected, page_info* page_found) {
   const uint_t info_types[] = { MEMINFO_VLGRP, MEMINFO_VPAGESIZE };
   const size_t types = sizeof(info_types) / sizeof(info_types[0]);
-  uint64_t addrs[MAX_MEMINFO_CNT], outdata[types * MAX_MEMINFO_CNT];
+  uint64_t addrs[MAX_MEMINFO_CNT], outdata[types * MAX_MEMINFO_CNT + 1];
   uint_t validity[MAX_MEMINFO_CNT];
 
   size_t page_size = MAX2((size_t)os::vm_page_size(), page_expected->size);
@@ -3046,7 +2769,7 @@ char *os::scan_pages(char *start, char* end, page_info* page_expected, page_info
       }
     }
 
-    if (i != addrs_count) {
+    if (i < addrs_count) {
       if ((validity[i] & 2) != 0) {
         page_found->lgrp_id = outdata[types * i];
       } else {
@@ -3342,7 +3065,7 @@ bool os::Solaris::mpss_sanity_check(bool warn, size_t* page_size) {
   const size_t size_limit =
     FLAG_IS_DEFAULT(LargePageSizeInBytes) ? 4 * M : LargePageSizeInBytes;
   int beg;
-  for (beg = 0; beg < n && _page_sizes[beg] > size_limit; ++beg) /* empty */ ;
+  for (beg = 0; beg < n && _page_sizes[beg] > size_limit; ++beg) /* empty */;
   const int end = MIN2((int)usable_count, n) - 1;
   for (int cur = 0; cur < end; ++cur, ++beg) {
     _page_sizes[cur] = _page_sizes[beg];
@@ -3409,136 +3132,32 @@ bool os::can_execute_large_page_memory() {
   return true;
 }
 
-static int os_sleep(jlong millis, bool interruptible) {
-  const jlong limit = INT_MAX;
-  jlong prevtime;
-  int res;
-
-  while (millis > limit) {
-    if ((res = os_sleep(limit, interruptible)) != OS_OK)
-      return res;
-    millis -= limit;
-  }
-
-  // Restart interrupted polls with new parameters until the proper delay
-  // has been completed.
-
-  prevtime = getTimeMillis();
-
-  while (millis > 0) {
-    jlong newtime;
-
-    if (!interruptible) {
-      // Following assert fails for os::yield_all:
-      // assert(!thread->is_Java_thread(), "must not be java thread");
-      res = poll(NULL, 0, millis);
-    } else {
-      JavaThread *jt = JavaThread::current();
-
-      INTERRUPTIBLE_NORESTART_VM_ALWAYS(poll(NULL, 0, millis), res, jt,
-        os::Solaris::clear_interrupted);
-    }
-
-    // INTERRUPTIBLE_NORESTART_VM_ALWAYS returns res == OS_INTRPT for
-    // thread.Interrupt.
-
-    // See c/r 6751923. Poll can return 0 before time
-    // has elapsed if time is set via clock_settime (as NTP does).
-    // res == 0 if poll timed out (see man poll RETURN VALUES)
-    // using the logic below checks that we really did
-    // sleep at least "millis" if not we'll sleep again.
-    if( ( res == 0 ) || ((res == OS_ERR) && (errno == EINTR))) {
-      newtime = getTimeMillis();
-      assert(newtime >= prevtime, "time moving backwards");
-    /* Doing prevtime and newtime in microseconds doesn't help precision,
-       and trying to round up to avoid lost milliseconds can result in a
-       too-short delay. */
-      millis -= newtime - prevtime;
-      if(millis <= 0)
-        return OS_OK;
-      prevtime = newtime;
-    } else
-      return res;
-  }
-
-  return OS_OK;
-}
-
 // Read calls from inside the vm need to perform state transitions
 size_t os::read(int fd, void *buf, unsigned int nBytes) {
-  INTERRUPTIBLE_RETURN_INT_VM(::read(fd, buf, nBytes), os::Solaris::clear_interrupted);
+  size_t res;
+  JavaThread* thread = (JavaThread*)Thread::current();
+  assert(thread->thread_state() == _thread_in_vm, "Assumed _thread_in_vm");
+  ThreadBlockInVM tbiv(thread);
+  RESTARTABLE(::read(fd, buf, (size_t) nBytes), res);
+  return res;
 }
 
 size_t os::restartable_read(int fd, void *buf, unsigned int nBytes) {
-  INTERRUPTIBLE_RETURN_INT(::read(fd, buf, nBytes), os::Solaris::clear_interrupted);
+  size_t res;
+  assert(((JavaThread*)Thread::current())->thread_state() == _thread_in_native,
+          "Assumed _thread_in_native");
+  RESTARTABLE(::read(fd, buf, (size_t) nBytes), res);
+  return res;
 }
 
-int os::sleep(Thread* thread, jlong millis, bool interruptible) {
-  assert(thread == Thread::current(),  "thread consistency check");
+void os::naked_short_sleep(jlong ms) {
+  assert(ms < 1000, "Un-interruptable sleep, short time use only");
 
-  // TODO-FIXME: this should be removed.
-  // On Solaris machines (especially 2.5.1) we found that sometimes the VM gets into a live lock
-  // situation with a JavaThread being starved out of a lwp. The kernel doesn't seem to generate
-  // a SIGWAITING signal which would enable the threads library to create a new lwp for the starving
-  // thread. We suspect that because the Watcher thread keeps waking up at periodic intervals the kernel
-  // is fooled into believing that the system is making progress. In the code below we block the
-  // the watcher thread while safepoint is in progress so that it would not appear as though the
-  // system is making progress.
-  if (!Solaris::T2_libthread() &&
-      thread->is_Watcher_thread() && SafepointSynchronize::is_synchronizing() && !Arguments::has_profile()) {
-    // We now try to acquire the threads lock. Since this lock is held by the VM thread during
-    // the entire safepoint, the watcher thread will  line up here during the safepoint.
-    Threads_lock->lock_without_safepoint_check();
-    Threads_lock->unlock();
-  }
+  // usleep is deprecated and removed from POSIX, in favour of nanosleep, but
+  // Solaris requires -lrt for this.
+  usleep((ms * 1000));
 
-  if (thread->is_Java_thread()) {
-    // This is a JavaThread so we honor the _thread_blocked protocol
-    // even for sleeps of 0 milliseconds. This was originally done
-    // as a workaround for bug 4338139. However, now we also do it
-    // to honor the suspend-equivalent protocol.
-
-    JavaThread *jt = (JavaThread *) thread;
-    ThreadBlockInVM tbivm(jt);
-
-    jt->set_suspend_equivalent();
-    // cleared by handle_special_suspend_equivalent_condition() or
-    // java_suspend_self() via check_and_wait_while_suspended()
-
-    int ret_code;
-    if (millis <= 0) {
-      thr_yield();
-      ret_code = 0;
-    } else {
-      // The original sleep() implementation did not create an
-      // OSThreadWaitState helper for sleeps of 0 milliseconds.
-      // I'm preserving that decision for now.
-      OSThreadWaitState osts(jt->osthread(), false /* not Object.wait() */);
-
-      ret_code = os_sleep(millis, interruptible);
-    }
-
-    // were we externally suspended while we were waiting?
-    jt->check_and_wait_while_suspended();
-
-    return ret_code;
-  }
-
-  // non-JavaThread from this point on:
-
-  if (millis <= 0) {
-    thr_yield();
-    return 0;
-  }
-
-  OSThreadWaitState osts(thread->osthread(), false /* not Object.wait() */);
-
-  return os_sleep(millis, interruptible);
-}
-
-int os::naked_sleep() {
-  // %% make the sleep time an integer flag. for now use 1 millisec.
-  return os_sleep(1, false);
+  return;
 }
 
 // Sleep forever; naked call to OS-specific sleep; use with CAUTION
@@ -3566,62 +3185,23 @@ bool os::dont_yield() {
   }
 }
 
-// Caveat: Solaris os::yield() causes a thread-state transition whereas
-// the linux and win32 implementations do not.  This should be checked.
-
-void os::yield() {
-  // Yields to all threads with same or greater priority
-  os::sleep(Thread::current(), 0, false);
-}
-
 // Note that yield semantics are defined by the scheduling class to which
 // the thread currently belongs.  Typically, yield will _not yield to
 // other equal or higher priority threads that reside on the dispatch queues
 // of other CPUs.
 
-os::YieldResult os::NakedYield() { thr_yield(); return os::YIELD_UNKNOWN; }
-
-
-// On Solaris we found that yield_all doesn't always yield to all other threads.
-// There have been cases where there is a thread ready to execute but it doesn't
-// get an lwp as the VM thread continues to spin with sleeps of 1 millisecond.
-// The 1 millisecond wait doesn't seem long enough for the kernel to issue a
-// SIGWAITING signal which will cause a new lwp to be created. So we count the
-// number of times yield_all is called in the one loop and increase the sleep
-// time after 8 attempts. If this fails too we increase the concurrency level
-// so that the starving thread would get an lwp
-
-void os::yield_all(int attempts) {
-  // Yields to all threads, including threads with lower priorities
-  if (attempts == 0) {
-    os::sleep(Thread::current(), 1, false);
-  } else {
-    int iterations = attempts % 30;
-    if (iterations == 0 && !os::Solaris::T2_libthread()) {
-      // thr_setconcurrency and _getconcurrency make sense only under T1.
-      int noofLWPS = thr_getconcurrency();
-      if (noofLWPS < (Threads::number_of_threads() + 2)) {
-        thr_setconcurrency(thr_getconcurrency() + 1);
-      }
-    } else if (iterations < 25) {
-      os::sleep(Thread::current(), 1, false);
-    } else {
-      os::sleep(Thread::current(), 10, false);
-    }
-  }
+void os::naked_yield() {
+  thr_yield();
 }
-
-// Called from the tight loops to possibly influence time-sharing heuristics
-void os::loop_breaker(int attempts) {
-  os::yield_all(attempts);
-}
-
 
 // Interface for setting lwp priorities.  If we are using T2 libthread,
 // which forces the use of BoundThreads or we manually set UseBoundThreads,
 // all of our threads will be assigned to real lwp's.  Using the thr_setprio
 // function is meaningless in this mode so we must adjust the real lwp's priority
 // The routines below implement the getting and setting of lwp priorities.
+//
+// Note: T2 is now the only supported libthread. UseBoundThreads flag is
+//       being deprecated and all threads are now BoundThreads
 //
 // Note: There are three priority scales used on Solaris.  Java priotities
 //       which range from 1 to 10, libthread "thr_setprio" scale which range
@@ -3687,7 +3267,7 @@ static int java_MaxPriority_to_os_priority = 0; // Saved mapping
 //
 // Return errno or 0 if OK.
 //
-static int lwp_priocntl_init () {
+static int lwp_priocntl_init() {
   int rslt;
   pcinfo_t ClassInfo;
   pcparms_t ParmInfo;
@@ -3695,29 +3275,19 @@ static int lwp_priocntl_init () {
 
   if (!UseThreadPriorities) return 0;
 
-  // We are using Bound threads, we need to determine our priority ranges
-  if (os::Solaris::T2_libthread() || UseBoundThreads) {
-    // If ThreadPriorityPolicy is 1, switch tables
-    if (ThreadPriorityPolicy == 1) {
-      for (i = 0 ; i < CriticalPriority+1; i++)
-        os::java_to_os_priority[i] = prio_policy1[i];
-    }
-    if (UseCriticalJavaThreadPriority) {
-      // MaxPriority always maps to the FX scheduling class and criticalPrio.
-      // See set_native_priority() and set_lwp_class_and_priority().
-      // Save original MaxPriority mapping in case attempt to
-      // use critical priority fails.
-      java_MaxPriority_to_os_priority = os::java_to_os_priority[MaxPriority];
-      // Set negative to distinguish from other priorities
-      os::java_to_os_priority[MaxPriority] = -criticalPrio;
-    }
-  }
-  // Not using Bound Threads, set to ThreadPolicy 1
-  else {
-    for ( i = 0 ; i < CriticalPriority+1; i++ ) {
+  // If ThreadPriorityPolicy is 1, switch tables
+  if (ThreadPriorityPolicy == 1) {
+    for (i = 0; i < CriticalPriority+1; i++)
       os::java_to_os_priority[i] = prio_policy1[i];
-    }
-    return 0;
+  }
+  if (UseCriticalJavaThreadPriority) {
+    // MaxPriority always maps to the FX scheduling class and criticalPrio.
+    // See set_native_priority() and set_lwp_class_and_priority().
+    // Save original MaxPriority mapping in case attempt to
+    // use critical priority fails.
+    java_MaxPriority_to_os_priority = os::java_to_os_priority[MaxPriority];
+    // Set negative to distinguish from other priorities
+    os::java_to_os_priority[MaxPriority] = -criticalPrio;
   }
 
   // Get IDs for a set of well-known scheduling classes.
@@ -3806,12 +3376,12 @@ static int lwp_priocntl_init () {
   } else {
     // No clue - punt
     if (ThreadPriorityVerbose)
-      tty->print_cr ("Unknown scheduling class: %s ... \n", ClassInfo.pc_clname);
+      tty->print_cr("Unknown scheduling class: %s ... \n", ClassInfo.pc_clname);
     return EINVAL;      // no clue, punt
   }
 
   if (ThreadPriorityVerbose) {
-    tty->print_cr ("Thread priority Range: [%d..%d]\n", myMin, myMax);
+    tty->print_cr("Thread priority Range: [%d..%d]\n", myMin, myMax);
   }
 
   priocntl_enable = true;  // Enable changing priorities
@@ -3841,10 +3411,6 @@ int     scale_to_lwp_priority (int rMin, int rMax, int x)
 
 
 // set_lwp_class_and_priority
-//
-// Set the class and priority of the lwp.  This call should only
-// be made when using bound threads (T2 threads are bound by default).
-//
 int set_lwp_class_and_priority(int ThreadID, int lwpid,
                                int newPrio, int new_class, bool scale) {
   int rslt;
@@ -3861,7 +3427,7 @@ int set_lwp_class_and_priority(int ThreadID, int lwpid,
   // TODO: elide set-to-same-value
 
   // If something went wrong on init, don't change priorities.
-  if ( !priocntl_enable ) {
+  if (!priocntl_enable) {
     if (ThreadPriorityVerbose)
       tty->print_cr("Trying to set priority but init failed, ignoring");
     return EINVAL;
@@ -3869,9 +3435,9 @@ int set_lwp_class_and_priority(int ThreadID, int lwpid,
 
   // If lwp hasn't started yet, just return
   // the _start routine will call us again.
-  if ( lwpid <= 0 ) {
+  if (lwpid <= 0) {
     if (ThreadPriorityVerbose) {
-      tty->print_cr ("deferring the set_lwp_class_and_priority of thread "
+      tty->print_cr("deferring the set_lwp_class_and_priority of thread "
                      INTPTR_FORMAT " to %d, lwpid not set",
                      ThreadID, newPrio);
     }
@@ -4070,30 +3636,27 @@ OSReturn os::set_native_priority(Thread* thread, int newpri) {
     status = thr_setprio(thread->osthread()->thread_id(), newpri);
   }
 
-  if (os::Solaris::T2_libthread() ||
-      (UseBoundThreads && osthread->is_vm_created())) {
-    int lwp_status =
-      set_lwp_class_and_priority(osthread->thread_id(),
-                                 osthread->lwp_id(),
-                                 newpri,
-                                 fxcritical ? fxLimits.schedPolicy : myClass,
-                                 !fxcritical);
-    if (lwp_status != 0 && fxcritical) {
-      // Try again, this time without changing the scheduling class
-      newpri = java_MaxPriority_to_os_priority;
-      lwp_status = set_lwp_class_and_priority(osthread->thread_id(),
-                                              osthread->lwp_id(),
-                                              newpri, myClass, false);
-    }
-    status |= lwp_status;
+  int lwp_status =
+          set_lwp_class_and_priority(osthread->thread_id(),
+          osthread->lwp_id(),
+          newpri,
+          fxcritical ? fxLimits.schedPolicy : myClass,
+          !fxcritical);
+  if (lwp_status != 0 && fxcritical) {
+    // Try again, this time without changing the scheduling class
+    newpri = java_MaxPriority_to_os_priority;
+    lwp_status = set_lwp_class_and_priority(osthread->thread_id(),
+            osthread->lwp_id(),
+            newpri, myClass, false);
   }
+  status |= lwp_status;
   return (status == 0) ? OS_OK : OS_ERR;
 }
 
 
 OSReturn os::get_native_priority(const Thread* const thread, int *priority_ptr) {
   int p;
-  if ( !UseThreadPriorities ) {
+  if (!UseThreadPriorities) {
     *priority_ptr = NormalPriority;
     return OS_OK;
   }
@@ -4172,68 +3735,6 @@ void os::Solaris::SR_handler(Thread* thread, ucontext_t* uc) {
 
   errno = old_errno;
 }
-
-
-void os::interrupt(Thread* thread) {
-  assert(Thread::current() == thread || Threads_lock->owned_by_self(), "possibility of dangling Thread pointer");
-
-  OSThread* osthread = thread->osthread();
-
-  int isInterrupted = osthread->interrupted();
-  if (!isInterrupted) {
-      osthread->set_interrupted(true);
-      OrderAccess::fence();
-      // os::sleep() is implemented with either poll (NULL,0,timeout) or
-      // by parking on _SleepEvent.  If the former, thr_kill will unwedge
-      // the sleeper by SIGINTR, otherwise the unpark() will wake the sleeper.
-      ParkEvent * const slp = thread->_SleepEvent ;
-      if (slp != NULL) slp->unpark() ;
-  }
-
-  // For JSR166:  unpark after setting status but before thr_kill -dl
-  if (thread->is_Java_thread()) {
-    ((JavaThread*)thread)->parker()->unpark();
-  }
-
-  // Handle interruptible wait() ...
-  ParkEvent * const ev = thread->_ParkEvent ;
-  if (ev != NULL) ev->unpark() ;
-
-  // When events are used everywhere for os::sleep, then this thr_kill
-  // will only be needed if UseVMInterruptibleIO is true.
-
-  if (!isInterrupted) {
-    int status = thr_kill(osthread->thread_id(), os::Solaris::SIGinterrupt());
-    assert_status(status == 0, status, "thr_kill");
-
-    // Bump thread interruption counter
-    RuntimeService::record_thread_interrupt_signaled_count();
-  }
-}
-
-
-bool os::is_interrupted(Thread* thread, bool clear_interrupted) {
-  assert(Thread::current() == thread || Threads_lock->owned_by_self(), "possibility of dangling Thread pointer");
-
-  OSThread* osthread = thread->osthread();
-
-  bool res = osthread->interrupted();
-
-  // NOTE that since there is no "lock" around these two operations,
-  // there is the possibility that the interrupted flag will be
-  // "false" but that the interrupt event will be set. This is
-  // intentional. The effect of this is that Object.wait() will appear
-  // to have a spurious wakeup, which is not harmful, and the
-  // possibility is so rare that it is not worth the added complexity
-  // to add yet another lock. It has also been recommended not to put
-  // the interrupted flag into the os::Solaris::Event structure,
-  // because it hides the issue.
-  if (res && clear_interrupted) {
-    osthread->set_interrupted(false);
-  }
-  return res;
-}
-
 
 void os::print_statistics() {
 }
@@ -4601,7 +4102,7 @@ void os::Solaris::set_signal_handler(int sig, bool set_installed, bool oktochain
 void os::run_periodic_checks() {
   // A big source of grief is hijacking virt. addr 0x0 on Solaris,
   // thereby preventing a NULL checks.
-  if(!check_addr0_done) check_addr0_done = check_addr0(tty);
+  if (!check_addr0_done) check_addr0_done = check_addr0(tty);
 
   if (check_signals == false) return;
 
@@ -4650,10 +4151,10 @@ void os::Solaris::check_signal_handler(int sig) {
 
   address thisHandler = (act.sa_flags & SA_SIGINFO)
     ? CAST_FROM_FN_PTR(address, act.sa_sigaction)
-    : CAST_FROM_FN_PTR(address, act.sa_handler) ;
+    : CAST_FROM_FN_PTR(address, act.sa_handler);
 
 
-  switch(sig) {
+  switch (sig) {
     case SIGSEGV:
     case SIGBUS:
     case SIGFPE:
@@ -4691,6 +4192,11 @@ void os::Solaris::check_signal_handler(int sig) {
     tty->print_cr("  found:%s", get_signal_handler_name(thisHandler, buf, O_BUFLEN));
     // No need to check this sig any longer
     sigaddset(&check_signal_done, sig);
+    // Running under non-interactive shell, SHUTDOWN2_SIGNAL will be reassigned SIG_IGN
+    if (sig == SHUTDOWN2_SIGNAL && !isatty(fileno(stdin))) {
+      tty->print_cr("Running in non-interactive shell, %s handler is replaced by shell",
+                    exception_name(sig, buf, O_BUFLEN));
+    }
   } else if(os::Solaris::get_our_sigflags(sig) != 0 && act.sa_flags != os::Solaris::get_our_sigflags(sig)) {
     tty->print("Warning: %s handler flags ", exception_name(sig, buf, O_BUFLEN));
     tty->print("expected:" PTR32_FORMAT, os::Solaris::get_our_sigflags(sig));
@@ -4810,13 +4316,6 @@ const char* os::exception_name(int exception_code, char* buf, size_t size) {
   }
 }
 
-// (Static) wrappers for the new libthread API
-int_fnP_thread_t_iP_uP_stack_tP_gregset_t os::Solaris::_thr_getstate;
-int_fnP_thread_t_i_gregset_t os::Solaris::_thr_setstate;
-int_fnP_thread_t_i os::Solaris::_thr_setmutator;
-int_fnP_thread_t os::Solaris::_thr_suspend_mutator;
-int_fnP_thread_t os::Solaris::_thr_continue_mutator;
-
 // (Static) wrapper for getisax(2) call.
 os::Solaris::getisax_func_t os::Solaris::_getisax = 0;
 
@@ -4836,7 +4335,7 @@ os::Solaris::meminfo_func_t os::Solaris::_meminfo = 0;
 
 static address resolve_symbol_lazy(const char* name) {
   address addr = (address) dlsym(RTLD_DEFAULT, name);
-  if(addr == NULL) {
+  if (addr == NULL) {
     // RTLD_DEFAULT was not defined on some early versions of 2.5.1
     addr = (address) dlsym(RTLD_NEXT, name);
   }
@@ -4845,109 +4344,24 @@ static address resolve_symbol_lazy(const char* name) {
 
 static address resolve_symbol(const char* name) {
   address addr = resolve_symbol_lazy(name);
-  if(addr == NULL) {
+  if (addr == NULL) {
     fatal(dlerror());
   }
   return addr;
 }
 
-
-
-// isT2_libthread()
-//
-// Routine to determine if we are currently using the new T2 libthread.
-//
-// We determine if we are using T2 by reading /proc/self/lstatus and
-// looking for a thread with the ASLWP bit set.  If we find this status
-// bit set, we must assume that we are NOT using T2.  The T2 team
-// has approved this algorithm.
-//
-// We need to determine if we are running with the new T2 libthread
-// since setting native thread priorities is handled differently
-// when using this library.  All threads created using T2 are bound
-// threads. Calling thr_setprio is meaningless in this case.
-//
-bool isT2_libthread() {
-  static prheader_t * lwpArray = NULL;
-  static int lwpSize = 0;
-  static int lwpFile = -1;
-  lwpstatus_t * that;
-  char lwpName [128];
-  bool isT2 = false;
-
-#define ADR(x)  ((uintptr_t)(x))
-#define LWPINDEX(ary,ix)   ((lwpstatus_t *)(((ary)->pr_entsize * (ix)) + (ADR((ary) + 1))))
-
-  lwpFile = ::open("/proc/self/lstatus", O_RDONLY, 0);
-  if (lwpFile < 0) {
-      if (ThreadPriorityVerbose) warning ("Couldn't open /proc/self/lstatus\n");
-      return false;
-  }
-  lwpSize = 16*1024;
-  for (;;) {
-    ::lseek64 (lwpFile, 0, SEEK_SET);
-    lwpArray = (prheader_t *)NEW_C_HEAP_ARRAY(char, lwpSize, mtInternal);
-    if (::read(lwpFile, lwpArray, lwpSize) < 0) {
-      if (ThreadPriorityVerbose) warning("Error reading /proc/self/lstatus\n");
-      break;
-    }
-    if ((lwpArray->pr_nent * lwpArray->pr_entsize) <= lwpSize) {
-       // We got a good snapshot - now iterate over the list.
-      int aslwpcount = 0;
-      for (int i = 0; i < lwpArray->pr_nent; i++ ) {
-        that = LWPINDEX(lwpArray,i);
-        if (that->pr_flags & PR_ASLWP) {
-          aslwpcount++;
-        }
-      }
-      if (aslwpcount == 0) isT2 = true;
-      break;
-    }
-    lwpSize = lwpArray->pr_nent * lwpArray->pr_entsize;
-    FREE_C_HEAP_ARRAY(char, lwpArray, mtInternal);  // retry.
-  }
-
-  FREE_C_HEAP_ARRAY(char, lwpArray, mtInternal);
-  ::close (lwpFile);
-  if (ThreadPriorityVerbose) {
-    if (isT2) tty->print_cr("We are running with a T2 libthread\n");
-    else tty->print_cr("We are not running with a T2 libthread\n");
-  }
-  return isT2;
-}
-
-
 void os::Solaris::libthread_init() {
   address func = (address)dlsym(RTLD_DEFAULT, "_thr_suspend_allmutators");
-
-  // Determine if we are running with the new T2 libthread
-  os::Solaris::set_T2_libthread(isT2_libthread());
 
   lwp_priocntl_init();
 
   // RTLD_DEFAULT was not defined on some early versions of 5.5.1
-  if(func == NULL) {
+  if (func == NULL) {
     func = (address) dlsym(RTLD_NEXT, "_thr_suspend_allmutators");
     // Guarantee that this VM is running on an new enough OS (5.6 or
     // later) that it will have a new enough libthread.so.
     guarantee(func != NULL, "libthread.so is too old.");
   }
-
-  // Initialize the new libthread getstate API wrappers
-  func = resolve_symbol("thr_getstate");
-  os::Solaris::set_thr_getstate(CAST_TO_FN_PTR(int_fnP_thread_t_iP_uP_stack_tP_gregset_t, func));
-
-  func = resolve_symbol("thr_setstate");
-  os::Solaris::set_thr_setstate(CAST_TO_FN_PTR(int_fnP_thread_t_i_gregset_t, func));
-
-  func = resolve_symbol("thr_setmutator");
-  os::Solaris::set_thr_setmutator(CAST_TO_FN_PTR(int_fnP_thread_t_i, func));
-
-  func = resolve_symbol("thr_suspend_mutator");
-  os::Solaris::set_thr_suspend_mutator(CAST_TO_FN_PTR(int_fnP_thread_t, func));
-
-  func = resolve_symbol("thr_continue_mutator");
-  os::Solaris::set_thr_continue_mutator(CAST_TO_FN_PTR(int_fnP_thread_t, func));
 
   int size;
   void (*handler_info_func)(address *, int *);
@@ -4973,7 +4387,7 @@ int_fnP_cond_tP os::Solaris::_cond_destroy;
 int os::Solaris::_cond_scope = USYNC_THREAD;
 
 void os::Solaris::synchronization_init() {
-  if(UseLWPSynchronization) {
+  if (UseLWPSynchronization) {
     os::Solaris::set_mutex_lock(CAST_TO_FN_PTR(int_fnP_mutex_tP, resolve_symbol("_lwp_mutex_lock")));
     os::Solaris::set_mutex_trylock(CAST_TO_FN_PTR(int_fnP_mutex_tP, resolve_symbol("_lwp_mutex_trylock")));
     os::Solaris::set_mutex_unlock(CAST_TO_FN_PTR(int_fnP_mutex_tP, resolve_symbol("_lwp_mutex_unlock")));
@@ -4993,7 +4407,7 @@ void os::Solaris::synchronization_init() {
     os::Solaris::set_mutex_scope(USYNC_THREAD);
     os::Solaris::set_cond_scope(USYNC_THREAD);
 
-    if(UsePthreads) {
+    if (UsePthreads) {
       os::Solaris::set_mutex_lock(CAST_TO_FN_PTR(int_fnP_mutex_tP, resolve_symbol("pthread_mutex_lock")));
       os::Solaris::set_mutex_trylock(CAST_TO_FN_PTR(int_fnP_mutex_tP, resolve_symbol("pthread_mutex_trylock")));
       os::Solaris::set_mutex_unlock(CAST_TO_FN_PTR(int_fnP_mutex_tP, resolve_symbol("pthread_mutex_unlock")));
@@ -5165,17 +4579,17 @@ jint os::init_2(void) {
   os::set_polling_page(polling_page);
 
 #ifndef PRODUCT
-  if( Verbose && PrintMiscellaneous )
+  if (Verbose && PrintMiscellaneous)
     tty->print("[SafePoint Polling address: " INTPTR_FORMAT "]\n", (intptr_t)polling_page);
 #endif
 
   if (!UseMembar) {
-    address mem_serialize_page = (address)Solaris::mmap_chunk( NULL, page_size, MAP_PRIVATE, PROT_READ | PROT_WRITE );
-    guarantee( mem_serialize_page != NULL, "mmap Failed for memory serialize page");
-    os::set_memory_serialize_page( mem_serialize_page );
+    address mem_serialize_page = (address)Solaris::mmap_chunk(NULL, page_size, MAP_PRIVATE, PROT_READ | PROT_WRITE);
+    guarantee(mem_serialize_page != NULL, "mmap Failed for memory serialize page");
+    os::set_memory_serialize_page(mem_serialize_page);
 
 #ifndef PRODUCT
-    if(Verbose && PrintMiscellaneous)
+    if (Verbose && PrintMiscellaneous)
       tty->print("[Memory Serialize  Page address: " INTPTR_FORMAT "]\n", (intptr_t)mem_serialize_page);
 #endif
   }
@@ -5314,13 +4728,13 @@ void os::init_3(void) {
 
 // Mark the polling page as unreadable
 void os::make_polling_page_unreadable(void) {
-  if( mprotect((char *)_polling_page, page_size, PROT_NONE) != 0 )
+  if (mprotect((char *)_polling_page, page_size, PROT_NONE) != 0)
     fatal("Could not disable polling page");
 };
 
 // Mark the polling page as readable
 void os::make_polling_page_readable(void) {
-  if( mprotect((char *)_polling_page, page_size, PROT_READ) != 0 )
+  if (mprotect((char *)_polling_page, page_size, PROT_READ) != 0)
     fatal("Could not enable polling page");
 };
 
@@ -5525,6 +4939,8 @@ int os::fsync(int fd)  {
 }
 
 int os::available(int fd, jlong *bytes) {
+  assert(((JavaThread*)Thread::current())->thread_state() == _thread_in_native,
+          "Assumed _thread_in_native");
   jlong cur, end;
   int mode;
   struct stat64 buf64;
@@ -5532,14 +4948,9 @@ int os::available(int fd, jlong *bytes) {
   if (::fstat64(fd, &buf64) >= 0) {
     mode = buf64.st_mode;
     if (S_ISCHR(mode) || S_ISFIFO(mode) || S_ISSOCK(mode)) {
-      /*
-      * XXX: is the following call interruptible? If so, this might
-      * need to go through the INTERRUPT_IO() wrapper as for other
-      * blocking, interruptible calls in this file.
-      */
       int n,ioctl_return;
 
-      INTERRUPTIBLE(::ioctl(fd, FIONREAD, &n),ioctl_return,os::Solaris::clear_interrupted);
+      RESTARTABLE(::ioctl(fd, FIONREAD, &n), ioctl_return);
       if (ioctl_return>= 0) {
           *bytes = n;
         return 1;
@@ -5813,7 +5224,7 @@ jlong os::thread_cpu_time(Thread *thread, bool user_sys_cpu_time) {
                      getpid(),
                      thread->osthread()->lwp_id());
   fd = ::open(proc_name, O_RDONLY);
-  if ( fd == -1 ) return -1;
+  if (fd == -1) return -1;
 
   do {
     count = ::pread(fd,
@@ -5822,7 +5233,7 @@ jlong os::thread_cpu_time(Thread *thread, bool user_sys_cpu_time) {
                   thr_time_off);
   } while (count < 0 && errno == EINTR);
   ::close(fd);
-  if ( count < 0 ) return -1;
+  if (count < 0) return -1;
 
   if (user_sys_cpu_time) {
     // user + system CPU time
@@ -5836,7 +5247,7 @@ jlong os::thread_cpu_time(Thread *thread, bool user_sys_cpu_time) {
                 (jlong)prusage.pr_utime.tv_nsec;
   }
 
-  return(lwp_time);
+  return (lwp_time);
 }
 
 void os::current_thread_cpu_time_info(jvmtiTimerInfo *info_ptr) {
@@ -5854,11 +5265,7 @@ void os::thread_cpu_time_info(jvmtiTimerInfo *info_ptr) {
 }
 
 bool os::is_thread_cpu_time_supported() {
-  if ( os::Solaris::T2_libthread() || UseBoundThreads ) {
-    return true;
-  } else {
-    return false;
-  }
+  return true;
 }
 
 // System loadavg support.  Returns -1 if load average cannot be obtained.
@@ -6039,48 +5446,39 @@ static timestruc_t* compute_abstime(timestruc_t* abstime, jlong millis) {
   return abstime;
 }
 
-// Test-and-clear _Event, always leaves _Event set to 0, returns immediately.
-// Conceptually TryPark() should be equivalent to park(0).
-
-int os::PlatformEvent::TryPark() {
-  for (;;) {
-    const int v = _Event ;
-    guarantee ((v == 0) || (v == 1), "invariant") ;
-    if (Atomic::cmpxchg (0, &_Event, v) == v) return v  ;
-  }
-}
-
 void os::PlatformEvent::park() {           // AKA: down()
   // Invariant: Only the thread associated with the Event/PlatformEvent
   // may call park().
-  int v ;
+  assert(_nParked == 0, "invariant");
+
+  int v;
   for (;;) {
-      v = _Event ;
-      if (Atomic::cmpxchg (v-1, &_Event, v) == v) break ;
+      v = _Event;
+      if (Atomic::cmpxchg(v-1, &_Event, v) == v) break;
   }
-  guarantee (v >= 0, "invariant") ;
+  guarantee(v >= 0, "invariant");
   if (v == 0) {
      // Do this the hard way by blocking ...
      // See http://monaco.sfbay/detail.jsf?cr=5094058.
      // TODO-FIXME: for Solaris SPARC set fprs.FEF=0 prior to parking.
      // Only for SPARC >= V8PlusA
 #if defined(__sparc) && defined(COMPILER2)
-     if (ClearFPUAtPark) { _mark_fpu_nosave() ; }
+     if (ClearFPUAtPark) { _mark_fpu_nosave(); }
 #endif
      int status = os::Solaris::mutex_lock(_mutex);
-     assert_status(status == 0, status,  "mutex_lock");
-     guarantee (_nParked == 0, "invariant") ;
-     ++ _nParked ;
+     assert_status(status == 0, status, "mutex_lock");
+     guarantee(_nParked == 0, "invariant");
+     ++_nParked;
      while (_Event < 0) {
         // for some reason, under 2.7 lwp_cond_wait() may return ETIME ...
         // Treat this the same as if the wait was interrupted
         // With usr/lib/lwp going to kernel, always handle ETIME
         status = os::Solaris::cond_wait(_cond, _mutex);
-        if (status == ETIME) status = EINTR ;
+        if (status == ETIME) status = EINTR;
         assert_status(status == 0 || status == EINTR, status, "cond_wait");
      }
-     -- _nParked ;
-     _Event = 0 ;
+     --_nParked;
+     _Event = 0;
      status = os::Solaris::mutex_unlock(_mutex);
      assert_status(status == 0, status, "mutex_unlock");
     // Paranoia to ensure our locked and lock-free paths interact
@@ -6090,41 +5488,41 @@ void os::PlatformEvent::park() {           // AKA: down()
 }
 
 int os::PlatformEvent::park(jlong millis) {
-  guarantee (_nParked == 0, "invariant") ;
-  int v ;
+  guarantee(_nParked == 0, "invariant");
+  int v;
   for (;;) {
-      v = _Event ;
-      if (Atomic::cmpxchg (v-1, &_Event, v) == v) break ;
+      v = _Event;
+      if (Atomic::cmpxchg(v-1, &_Event, v) == v) break;
   }
-  guarantee (v >= 0, "invariant") ;
-  if (v != 0) return OS_OK ;
+  guarantee(v >= 0, "invariant");
+  if (v != 0) return OS_OK;
 
   int ret = OS_TIMEOUT;
   timestruc_t abst;
-  compute_abstime (&abst, millis);
+  compute_abstime(&abst, millis);
 
   // See http://monaco.sfbay/detail.jsf?cr=5094058.
   // For Solaris SPARC set fprs.FEF=0 prior to parking.
   // Only for SPARC >= V8PlusA
 #if defined(__sparc) && defined(COMPILER2)
- if (ClearFPUAtPark) { _mark_fpu_nosave() ; }
+ if (ClearFPUAtPark) { _mark_fpu_nosave(); }
 #endif
   int status = os::Solaris::mutex_lock(_mutex);
   assert_status(status == 0, status, "mutex_lock");
-  guarantee (_nParked == 0, "invariant") ;
-  ++ _nParked ;
+  guarantee(_nParked == 0, "invariant");
+  ++_nParked;
   while (_Event < 0) {
      int status = os::Solaris::cond_timedwait(_cond, _mutex, &abst);
      assert_status(status == 0 || status == EINTR ||
                    status == ETIME || status == ETIMEDOUT,
                    status, "cond_timedwait");
-     if (!FilterSpuriousWakeups) break ;                // previous semantics
-     if (status == ETIME || status == ETIMEDOUT) break ;
+     if (!FilterSpuriousWakeups) break;                // previous semantics
+     if (status == ETIME || status == ETIMEDOUT) break;
      // We consume and ignore EINTR and spurious wakeups.
   }
-  -- _nParked ;
-  if (_Event >= 0) ret = OS_OK ;
-  _Event = 0 ;
+  --_nParked;
+  if (_Event >= 0) ret = OS_OK;
+  _Event = 0;
   status = os::Solaris::mutex_unlock(_mutex);
   assert_status(status == 0, status, "mutex_unlock");
   // Paranoia to ensure our locked and lock-free paths interact
@@ -6139,8 +5537,7 @@ void os::PlatformEvent::unpark() {
   //    1 :=> 1
   //   -1 :=> either 0 or 1; must signal target thread
   //          That is, we can safely transition _Event from -1 to either
-  //          0 or 1. Forcing 1 is slightly more efficient for back-to-back
-  //          unpark() calls.
+  //          0 or 1.
   // See also: "Semaphores in Plan 9" by Mullender & Cox
   //
   // Note: Forcing a transition from "-1" to "1" on an unpark() means
@@ -6201,7 +5598,7 @@ void os::PlatformEvent::unpark() {
  * years from "now".
  */
 static void unpackTime(timespec* absTime, bool isAbsolute, jlong time) {
-  assert (time > 0, "convertTime");
+  assert(time > 0, "convertTime");
 
   struct timeval now;
   int status = gettimeofday(&now, NULL);
@@ -6260,7 +5657,7 @@ void Parker::park(bool isAbsolute, jlong time) {
 
   // First, demultiplex/decode time arguments
   timespec absTime;
-  if (time < 0 || (isAbsolute && time == 0) ) { // don't wait at all
+  if (time < 0 || (isAbsolute && time == 0)) { // don't wait at all
     return;
   }
   if (time > 0) {
@@ -6284,12 +5681,12 @@ void Parker::park(bool isAbsolute, jlong time) {
     return;
   }
 
-  int status ;
+  int status;
 
   if (_counter > 0)  { // no wait needed
     _counter = 0;
     status = os::Solaris::mutex_unlock(_mutex);
-    assert (status == 0, "invariant") ;
+    assert(status == 0, "invariant");
     // Paranoia to ensure our locked and lock-free paths interact
     // correctly with each other and Java-level accesses.
     OrderAccess::fence();
@@ -6313,11 +5710,11 @@ void Parker::park(bool isAbsolute, jlong time) {
   // TODO-FIXME: for Solaris SPARC set fprs.FEF=0 prior to parking.
   // Only for SPARC >= V8PlusA
 #if defined(__sparc) && defined(COMPILER2)
-  if (ClearFPUAtPark) { _mark_fpu_nosave() ; }
+  if (ClearFPUAtPark) { _mark_fpu_nosave(); }
 #endif
 
   if (time == 0) {
-    status = os::Solaris::cond_wait (_cond, _mutex) ;
+    status = os::Solaris::cond_wait(_cond, _mutex);
   } else {
     status = os::Solaris::cond_timedwait (_cond, _mutex, &absTime);
   }
@@ -6330,9 +5727,9 @@ void Parker::park(bool isAbsolute, jlong time) {
 #ifdef ASSERT
   thr_sigsetmask(SIG_SETMASK, &oldsigs, NULL);
 #endif
-  _counter = 0 ;
+  _counter = 0;
   status = os::Solaris::mutex_unlock(_mutex);
-  assert_status(status == 0, status, "mutex_unlock") ;
+  assert_status(status == 0, status, "mutex_unlock");
   // Paranoia to ensure our locked and lock-free paths interact
   // correctly with each other and Java-level accesses.
   OrderAccess::fence();
@@ -6344,17 +5741,16 @@ void Parker::park(bool isAbsolute, jlong time) {
 }
 
 void Parker::unpark() {
-  int s, status ;
-  status = os::Solaris::mutex_lock (_mutex) ;
-  assert (status == 0, "invariant") ;
-  s = _counter;
+  int status = os::Solaris::mutex_lock(_mutex);
+  assert(status == 0, "invariant");
+  const int s = _counter;
   _counter = 1;
-  status = os::Solaris::mutex_unlock (_mutex) ;
-  assert (status == 0, "invariant") ;
+  status = os::Solaris::mutex_unlock(_mutex);
+  assert(status == 0, "invariant");
 
   if (s < 1) {
-    status = os::Solaris::cond_signal (_cond) ;
-    assert (status == 0, "invariant") ;
+    status = os::Solaris::cond_signal(_cond);
+    assert(status == 0, "invariant");
   }
 }
 
@@ -6470,7 +5866,11 @@ bool os::is_headless_jre() {
 }
 
 size_t os::write(int fd, const void *buf, unsigned int nBytes) {
-  INTERRUPTIBLE_RETURN_INT(::write(fd, buf, nBytes), os::Solaris::clear_interrupted);
+  size_t res;
+  assert(((JavaThread*)Thread::current())->thread_state() == _thread_in_native,
+          "Assumed _thread_in_native");
+  RESTARTABLE((size_t) ::write(fd, buf, (size_t) nBytes), res);
+  return res;
 }
 
 int os::close(int fd) {
@@ -6482,11 +5882,15 @@ int os::socket_close(int fd) {
 }
 
 int os::recv(int fd, char* buf, size_t nBytes, uint flags) {
-  INTERRUPTIBLE_RETURN_INT((int)::recv(fd, buf, nBytes, flags), os::Solaris::clear_interrupted);
+  assert(((JavaThread*)Thread::current())->thread_state() == _thread_in_native,
+          "Assumed _thread_in_native");
+  RESTARTABLE_RETURN_INT((int)::recv(fd, buf, nBytes, flags));
 }
 
 int os::send(int fd, char* buf, size_t nBytes, uint flags) {
-  INTERRUPTIBLE_RETURN_INT((int)::send(fd, buf, nBytes, flags), os::Solaris::clear_interrupted);
+  assert(((JavaThread*)Thread::current())->thread_state() == _thread_in_native,
+          "Assumed _thread_in_native");
+  RESTARTABLE_RETURN_INT((int)::send(fd, buf, nBytes, flags));
 }
 
 int os::raw_send(int fd, char* buf, size_t nBytes, uint flags) {
@@ -6507,17 +5911,20 @@ int os::timeout(int fd, long timeout) {
   pfd.fd = fd;
   pfd.events = POLLIN;
 
+  assert(((JavaThread*)Thread::current())->thread_state() == _thread_in_native,
+          "Assumed _thread_in_native");
+
   gettimeofday(&t, &aNull);
   prevtime = ((julong)t.tv_sec * 1000)  +  t.tv_usec / 1000;
 
-  for(;;) {
-    INTERRUPTIBLE_NORESTART(::poll(&pfd, 1, timeout), res, os::Solaris::clear_interrupted);
-    if(res == OS_ERR && errno == EINTR) {
-        if(timeout != -1) {
+  for (;;) {
+    res = ::poll(&pfd, 1, timeout);
+    if (res == OS_ERR && errno == EINTR) {
+        if (timeout != -1) {
           gettimeofday(&t, &aNull);
           newtime = ((julong)t.tv_sec * 1000)  +  t.tv_usec /1000;
           timeout -= newtime - prevtime;
-          if(timeout <= 0)
+          if (timeout <= 0)
             return OS_OK;
           prevtime = newtime;
         }
@@ -6527,17 +5934,30 @@ int os::timeout(int fd, long timeout) {
 
 int os::connect(int fd, struct sockaddr *him, socklen_t len) {
   int _result;
-  INTERRUPTIBLE_NORESTART(::connect(fd, him, len), _result,\
-                          os::Solaris::clear_interrupted);
+  _result = ::connect(fd, him, len);
 
-  // Depending on when thread interruption is reset, _result could be
-  // one of two values when errno == EINTR
-
-  if (((_result == OS_INTRPT) || (_result == OS_ERR))
-      && (errno == EINTR)) {
+  // On Solaris, when a connect() call is interrupted, the connection
+  // can be established asynchronously (see 6343810). Subsequent calls
+  // to connect() must check the errno value which has the semantic
+  // described below (copied from the connect() man page). Handling
+  // of asynchronously established connections is required for both
+  // blocking and non-blocking sockets.
+  //     EINTR            The  connection  attempt  was   interrupted
+  //                      before  any data arrived by the delivery of
+  //                      a signal. The connection, however, will  be
+  //                      established asynchronously.
+  //
+  //     EINPROGRESS      The socket is non-blocking, and the connec-
+  //                      tion  cannot  be completed immediately.
+  //
+  //     EALREADY         The socket is non-blocking,  and a previous
+  //                      connection  attempt  has  not yet been com-
+  //                      pleted.
+  //
+  //     EISCONN          The socket is already connected.
+  if (_result == OS_ERR && errno == EINTR) {
      /* restarting a connect() changes its errno semantics */
-     INTERRUPTIBLE(::connect(fd, him, len), _result,\
-                   os::Solaris::clear_interrupted);
+     RESTARTABLE(::connect(fd, him, len), _result);
      /* undo these changes */
      if (_result == OS_ERR) {
        if (errno == EALREADY) {
@@ -6555,20 +5975,23 @@ int os::accept(int fd, struct sockaddr* him, socklen_t* len) {
   if (fd < 0) {
     return OS_ERR;
   }
-  INTERRUPTIBLE_RETURN_INT((int)::accept(fd, him, len),\
-                           os::Solaris::clear_interrupted);
+  assert(((JavaThread*)Thread::current())->thread_state() == _thread_in_native,
+          "Assumed _thread_in_native");
+  RESTARTABLE_RETURN_INT((int)::accept(fd, him, len));
 }
 
 int os::recvfrom(int fd, char* buf, size_t nBytes, uint flags,
                  sockaddr* from, socklen_t* fromlen) {
-  INTERRUPTIBLE_RETURN_INT((int)::recvfrom(fd, buf, nBytes, flags, from, fromlen),\
-                           os::Solaris::clear_interrupted);
+  assert(((JavaThread*)Thread::current())->thread_state() == _thread_in_native,
+          "Assumed _thread_in_native");
+  RESTARTABLE_RETURN_INT((int)::recvfrom(fd, buf, nBytes, flags, from, fromlen));
 }
 
 int os::sendto(int fd, char* buf, size_t len, uint flags,
                struct sockaddr* to, socklen_t tolen) {
-  INTERRUPTIBLE_RETURN_INT((int)::sendto(fd, buf, len, flags, to, tolen),\
-                           os::Solaris::clear_interrupted);
+  assert(((JavaThread*)Thread::current())->thread_state() == _thread_in_native,
+          "Assumed _thread_in_native");
+  RESTARTABLE_RETURN_INT((int)::sendto(fd, buf, len, flags, to, tolen));
 }
 
 int os::socket_available(int fd, jint *pbytes) {
@@ -6583,8 +6006,9 @@ int os::socket_available(int fd, jint *pbytes) {
 }
 
 int os::bind(int fd, struct sockaddr* him, socklen_t len) {
-   INTERRUPTIBLE_RETURN_INT_NORESTART(::bind(fd, him, len),\
-                                      os::Solaris::clear_interrupted);
+  assert(((JavaThread*)Thread::current())->thread_state() == _thread_in_native,
+          "Assumed _thread_in_native");
+   return ::bind(fd, him, len);
 }
 
 // Get the default path to the core file

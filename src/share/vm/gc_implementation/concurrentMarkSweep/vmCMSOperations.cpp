@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2005, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2005, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -34,14 +34,7 @@
 #include "runtime/os.hpp"
 #include "utilities/dtrace.hpp"
 
-
-#ifndef USDT2
-HS_DTRACE_PROBE_DECL(hs_private, cms__initmark__begin);
-HS_DTRACE_PROBE_DECL(hs_private, cms__initmark__end);
-
-HS_DTRACE_PROBE_DECL(hs_private, cms__remark__begin);
-HS_DTRACE_PROBE_DECL(hs_private, cms__remark__end);
-#endif /* !USDT2 */
+PRAGMA_FORMAT_MUTE_WARNINGS_FOR_GCC
 
 //////////////////////////////////////////////////////////
 // Methods in abstract class VM_CMS_Operation
@@ -63,7 +56,7 @@ void VM_CMS_Operation::release_and_notify_pending_list_lock() {
 void VM_CMS_Operation::verify_before_gc() {
   if (VerifyBeforeGC &&
       GenCollectedHeap::heap()->total_collections() >= VerifyGCStartAt) {
-    GCTraceTime tm("Verify Before", false, false, _collector->_gc_timer_cm);
+    GCTraceTime tm("Verify Before", false, false, _collector->_gc_timer_cm, _collector->_gc_tracer_cm->gc_id());
     HandleMark hm;
     FreelistLocker x(_collector);
     MutexLockerEx  y(_collector->bitMapLock(), Mutex::_no_safepoint_check_flag);
@@ -75,7 +68,7 @@ void VM_CMS_Operation::verify_before_gc() {
 void VM_CMS_Operation::verify_after_gc() {
   if (VerifyAfterGC &&
       GenCollectedHeap::heap()->total_collections() >= VerifyGCStartAt) {
-    GCTraceTime tm("Verify After", false, false, _collector->_gc_timer_cm);
+    GCTraceTime tm("Verify After", false, false, _collector->_gc_timer_cm, _collector->_gc_tracer_cm->gc_id());
     HandleMark hm;
     FreelistLocker x(_collector);
     MutexLockerEx  y(_collector->bitMapLock(), Mutex::_no_safepoint_check_flag);
@@ -138,12 +131,7 @@ void VM_CMS_Initial_Mark::doit() {
     // Nothing to do.
     return;
   }
-#ifndef USDT2
-  HS_DTRACE_PROBE(hs_private, cms__initmark__begin);
-#else /* USDT2 */
-  HS_PRIVATE_CMS_INITMARK_BEGIN(
-                                );
-#endif /* USDT2 */
+  HS_PRIVATE_CMS_INITMARK_BEGIN();
 
   _collector->_gc_timer_cm->register_gc_pause_start("Initial Mark");
 
@@ -159,12 +147,7 @@ void VM_CMS_Initial_Mark::doit() {
 
   _collector->_gc_timer_cm->register_gc_pause_end();
 
-#ifndef USDT2
-  HS_DTRACE_PROBE(hs_private, cms__initmark__end);
-#else /* USDT2 */
-  HS_PRIVATE_CMS_INITMARK_END(
-                                );
-#endif /* USDT2 */
+  HS_PRIVATE_CMS_INITMARK_END();
 }
 
 //////////////////////////////////////////////////////////
@@ -175,12 +158,7 @@ void VM_CMS_Final_Remark::doit() {
     // Nothing to do.
     return;
   }
-#ifndef USDT2
-  HS_DTRACE_PROBE(hs_private, cms__remark__begin);
-#else /* USDT2 */
-  HS_PRIVATE_CMS_REMARK_BEGIN(
-                                );
-#endif /* USDT2 */
+  HS_PRIVATE_CMS_REMARK_BEGIN();
 
   _collector->_gc_timer_cm->register_gc_pause_start("Final Mark");
 
@@ -197,12 +175,7 @@ void VM_CMS_Final_Remark::doit() {
   _collector->save_heap_summary();
   _collector->_gc_timer_cm->register_gc_pause_end();
 
-#ifndef USDT2
-  HS_DTRACE_PROBE(hs_private, cms__remark__end);
-#else /* USDT2 */
-  HS_PRIVATE_CMS_REMARK_END(
-                                );
-#endif /* USDT2 */
+  HS_PRIVATE_CMS_REMARK_END();
 }
 
 // VM operation to invoke a concurrent collection of a
@@ -258,7 +231,7 @@ bool VM_GenCollectFullConcurrent::evaluate_at_safepoint() const {
       // No need to do a young gc, we'll just nudge the CMS thread
       // in the doit() method above, to be executed soon.
       assert(_gc_count_before < gch->total_collections(),
-             "total_collections() should be monotnically increasing");
+             "total_collections() should be monotonically increasing");
       return false;  // no need for foreground young gc
     }
   }

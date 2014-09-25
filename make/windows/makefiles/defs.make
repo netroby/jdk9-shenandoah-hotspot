@@ -1,5 +1,5 @@
 #
-# Copyright (c) 2006, 2013, Oracle and/or its affiliates. All rights reserved.
+# Copyright (c) 2006, 2014, Oracle and/or its affiliates. All rights reserved.
 # DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
 #
 # This code is free software; you can redistribute it and/or modify it
@@ -156,6 +156,9 @@ endif
 
 MAKE_ARGS += RM="$(RM)"
 MAKE_ARGS += ZIPEXE=$(ZIPEXE)
+MAKE_ARGS += CP="${CP}"
+MAKE_ARGS += MV="${MV}"
+
 
 # On 32 bit windows we build server and client, on 64 bit just server.
 ifeq ($(JVM_VARIANTS),)
@@ -179,9 +182,9 @@ LIBRARY_SUFFIX=dll
 
 # next parameters are defined in $(GAMMADIR)/make/defs.make.
 MAKE_ARGS += JDK_MKTG_VERSION=$(JDK_MKTG_VERSION)
-MAKE_ARGS += JDK_MAJOR_VER=$(JDK_MAJOR_VERSION)
-MAKE_ARGS += JDK_MINOR_VER=$(JDK_MINOR_VERSION)
-MAKE_ARGS += JDK_MICRO_VER=$(JDK_MICRO_VERSION)
+MAKE_ARGS += JDK_MAJOR_VERSION=$(JDK_MAJOR_VERSION)
+MAKE_ARGS += JDK_MINOR_VERSION=$(JDK_MINOR_VERSION)
+MAKE_ARGS += JDK_MICRO_VERSION=$(JDK_MICRO_VERSION)
 
 ifdef COOKED_JDK_UPDATE_VERSION
   MAKE_ARGS += JDK_UPDATE_VER=$(COOKED_JDK_UPDATE_VERSION)
@@ -260,7 +263,6 @@ ifeq ($(JVM_VARIANT_SERVER),true)
       EXPORT_LIST += $(EXPORT_SERVER_DIR)/jvm.map
     endif
   endif
-  EXPORT_LIST += $(EXPORT_LIB_DIR)/jvm.lib
 endif
 ifeq ($(JVM_VARIANT_CLIENT),true)
   EXPORT_LIST += $(EXPORT_CLIENT_DIR)/Xusage.txt
@@ -274,6 +276,8 @@ ifeq ($(JVM_VARIANT_CLIENT),true)
     endif
   endif
 endif
+
+EXPORT_LIST += $(EXPORT_LIB_DIR)/jvm.lib
 
 ifeq ($(BUILD_WIN_SA), 1)
   EXPORT_LIST += $(EXPORT_JRE_BIN_DIR)/sawindbg.$(LIBRARY_SUFFIX)

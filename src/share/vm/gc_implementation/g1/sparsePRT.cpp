@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2001, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2001, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -29,6 +29,7 @@
 #include "memory/allocation.inline.hpp"
 #include "memory/cardTableModRefBS.hpp"
 #include "memory/space.inline.hpp"
+#include "runtime/atomic.inline.hpp"
 #include "runtime/mutexLocker.hpp"
 
 #define SPARSE_PRT_VERBOSE 0
@@ -194,23 +195,16 @@ bool RSHashTable::add_card(RegionIdx_t region_ind, CardIdx_t card_index) {
 }
 
 bool RSHashTable::get_cards(RegionIdx_t region_ind, CardIdx_t* cards) {
-  int ind = (int) (region_ind & capacity_mask());
-  int cur_ind = _buckets[ind];
-  SparsePRTEntry* cur;
-  while (cur_ind != NullEntry &&
-         (cur = entry(cur_ind))->r_ind() != region_ind) {
-    cur_ind = cur->next_index();
+  SparsePRTEntry* entry = get_entry(region_ind);
+  if (entry == NULL) {
+    return false;
   }
-
-  if (cur_ind == NullEntry) return false;
   // Otherwise...
-  assert(cur->r_ind() == region_ind, "Postcondition of loop + test above.");
-  assert(cur->num_valid_cards() > 0, "Inv");
-  cur->copy_cards(cards);
+  entry->copy_cards(cards);
   return true;
 }
 
-SparsePRTEntry* RSHashTable::get_entry(RegionIdx_t region_ind) {
+SparsePRTEntry* RSHashTable::get_entry(RegionIdx_t region_ind) const {
   int ind = (int) (region_ind & capacity_mask());
   int cur_ind = _buckets[ind];
   SparsePRTEntry* cur;
@@ -247,27 +241,8 @@ bool RSHashTable::delete_entry(RegionIdx_t region_ind) {
 }
 
 SparsePRTEntry*
-RSHashTable::entry_for_region_ind(RegionIdx_t region_ind) const {
-  assert(occupied_entries() < capacity(), "Precondition");
-  int ind = (int) (region_ind & capacity_mask());
-  int cur_ind = _buckets[ind];
-  SparsePRTEntry* cur;
-  while (cur_ind != NullEntry &&
-         (cur = entry(cur_ind))->r_ind() != region_ind) {
-    cur_ind = cur->next_index();
-  }
-
-  if (cur_ind != NullEntry) {
-    assert(cur->r_ind() == region_ind, "Loop postcondition + test");
-    return cur;
-  } else {
-    return NULL;
-  }
-}
-
-SparsePRTEntry*
 RSHashTable::entry_for_region_ind_create(RegionIdx_t region_ind) {
-  SparsePRTEntry* res = entry_for_region_ind(region_ind);
+  SparsePRTEntry* res = get_entry(region_ind);
   if (res == NULL) {
     int new_ind = alloc_entry();
     assert(0 <= new_ind && (size_t)new_ind < capacity(), "There should be room.");
@@ -365,12 +340,12 @@ bool RSHashTableIter::has_next(size_t& card_index) {
 }
 
 bool RSHashTable::contains_card(RegionIdx_t region_index, CardIdx_t card_index) const {
-  SparsePRTEntry* e = entry_for_region_ind(region_index);
+  SparsePRTEntry* e = get_entry(region_index);
   return (e != NULL && e->contains_card(card_index));
 }
 
 size_t RSHashTable::mem_size() const {
-  return sizeof(this) +
+  return sizeof(RSHashTable) +
     capacity() * (SparsePRTEntry::size() + sizeof(int));
 }
 
@@ -472,13 +447,13 @@ SparsePRT::~SparsePRT() {
 size_t SparsePRT::mem_size() const {
   // We ignore "_cur" here, because it either = _next, or else it is
   // on the deleted list.
-  return sizeof(this) + _next->mem_size();
+  return sizeof(SparsePRT) + _next->mem_size();
 }
 
 bool SparsePRT::add_card(RegionIdx_t region_id, CardIdx_t card_index) {
 #if SPARSE_PRT_VERBOSE
   gclog_or_tty->print_cr("  Adding card %d from region %d to region %u sparse.",
-                         card_index, region_id, _hr->hrs_index());
+                         card_index, region_id, _hr->hrm_index());
 #endif
   if (_next->occupied_entries() * 2 > _next->capacity()) {
     expand();
@@ -530,7 +505,7 @@ void SparsePRT::expand() {
 
 #if SPARSE_PRT_VERBOSE
   gclog_or_tty->print_cr("  Expanded sparse table for %u to %d.",
-                         _hr->hrs_index(), _next->capacity());
+                         _hr->hrm_index(), _next->capacity());
 #endif
   for (size_t i = 0; i < last->capacity(); i++) {
     SparsePRTEntry* e = last->entry((int)i);

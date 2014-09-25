@@ -32,8 +32,8 @@ void GenerationSizer::trace_gen_sizes(const char* const str) {
                   SIZE_FORMAT "," SIZE_FORMAT " "
                   SIZE_FORMAT,
                   str,
-                  _min_gen1_size / K, _max_gen1_size / K,
-                  _min_gen0_size / K, _max_gen0_size / K,
+                  _min_old_size / K, _max_old_size / K,
+                  _min_young_size / K, _max_young_size / K,
                   _max_heap_byte_size / K);
   }
 }
@@ -45,7 +45,7 @@ void GenerationSizer::initialize_alignments() {
 
 void GenerationSizer::initialize_flags() {
   // Do basic sizing work
-  TwoGenerationCollectorPolicy::initialize_flags();
+  GenCollectorPolicy::initialize_flags();
 
   assert(UseSerialGC ||
           !FLAG_IS_DEFAULT(ParallelGCThreads) ||
@@ -79,7 +79,7 @@ void GenerationSizer::initialize_size_info() {
     // Redo everything from the start
     initialize_flags();
   }
-  TwoGenerationCollectorPolicy::initialize_size_info();
+  GenCollectorPolicy::initialize_size_info();
 
   trace_gen_sizes("ps heap rnd");
 }

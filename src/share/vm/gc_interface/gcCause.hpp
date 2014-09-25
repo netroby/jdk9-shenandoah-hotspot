@@ -31,7 +31,7 @@
 // This class exposes implementation details of the various
 // collector(s), and we need to be very careful with it. If
 // use of this class grows, we should split it into public
-// and implemenation-private "causes".
+// and implementation-private "causes".
 //
 
 class GCCause : public AllStatic {
@@ -46,6 +46,7 @@ class GCCause : public AllStatic {
     _gc_locker,
     _heap_inspection,
     _heap_dump,
+    _wb_young_gc,
 
     /* implementation independent, but reserved for GC use */
     _no_gc,

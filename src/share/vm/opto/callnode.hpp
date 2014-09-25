@@ -30,6 +30,7 @@
 #include "opto/multnode.hpp"
 #include "opto/opcodes.hpp"
 #include "opto/phaseX.hpp"
+#include "opto/replacednodes.hpp"
 #include "opto/type.hpp"
 
 // Portions of code courtesy of Clifford Click
@@ -299,6 +300,8 @@ public:
   JVMState* clone_deep(Compile* C) const;    // recursively clones caller chain
   JVMState* clone_shallow(Compile* C) const; // retains uncloned caller
   void      set_map_deep(SafePointNode *map);// reset map for all callers
+  void      adapt_position(int delta);       // Adapt offsets in in-array after adding an edge.
+  int       interpreter_frame_size() const;
 
 #ifndef PRODUCT
   void      format(PhaseRegAlloc *regalloc, const Node *n, outputStream* st) const;
@@ -333,6 +336,7 @@ public:
   OopMap*         _oop_map;   // Array of OopMap info (8-bit char) for GC
   JVMState* const _jvms;      // Pointer to list of JVM State objects
   const TypePtr*  _adr_type;  // What type of memory does this node produce?
+  ReplacedNodes   _replaced_nodes; // During parsing: list of pair of nodes from calls to GraphKit::replace_in_map()
 
   // Many calls take *all* of memory as input,
   // but some produce a limited subset of that memory as output.
@@ -423,6 +427,37 @@ public:
   SafePointNode*         next_exception() const;
   void               set_next_exception(SafePointNode* n);
   bool                   has_exceptions() const { return next_exception() != NULL; }
+
+  // Helper methods to operate on replaced nodes
+  ReplacedNodes replaced_nodes() const {
+    return _replaced_nodes;
+  }
+
+  void set_replaced_nodes(ReplacedNodes replaced_nodes) {
+    _replaced_nodes = replaced_nodes;
+  }
+
+  void clone_replaced_nodes() {
+    _replaced_nodes.clone();
+  }
+  void record_replaced_node(Node* initial, Node* improved) {
+    _replaced_nodes.record(initial, improved);
+  }
+  void transfer_replaced_nodes_from(SafePointNode* sfpt, uint idx = 0) {
+    _replaced_nodes.transfer_from(sfpt->_replaced_nodes, idx);
+  }
+  void delete_replaced_nodes() {
+    _replaced_nodes.reset();
+  }
+  void apply_replaced_nodes() {
+    _replaced_nodes.apply(this);
+  }
+  void merge_replaced_nodes_with(SafePointNode* sfpt) {
+    _replaced_nodes.merge_with(sfpt->_replaced_nodes);
+  }
+  bool has_replaced_nodes() const {
+    return !_replaced_nodes.is_empty();
+  }
 
   // Standard Node stuff
   virtual int            Opcode() const;
@@ -559,9 +594,15 @@ public:
   // Are we guaranteed that this node is a safepoint?  Not true for leaf calls and
   // for some macro nodes whose expansion does not have a safepoint on the fast path.
   virtual bool        guaranteed_safepoint()  { return true; }
-  // For macro nodes, the JVMState gets modified during expansion, so when cloning
-  // the node the JVMState must be cloned.
-  virtual void        clone_jvms(Compile* C) { }   // default is not to clone
+  // For macro nodes, the JVMState gets modified during expansion. If calls
+  // use MachConstantBase, it gets modified during matching. So when cloning
+  // the node the JVMState must be cloned. Default is not to clone.
+  virtual void clone_jvms(Compile* C) {
+    if (C->needs_clone_jvms() && jvms() != NULL) {
+      set_jvms(jvms()->clone_deep(C));
+      jvms()->set_map_deep(this);
+    }
+  }
 
   // Returns true if the call may modify n
   virtual bool        may_modify(const TypeOopPtr *t_oop, PhaseTransform *phase);
@@ -1022,4 +1063,108 @@ public:
   virtual bool        guaranteed_safepoint()  { return false; }
 };
 
+class GraphKit;
+
+class ArrayCopyNode : public CallNode {
+private:
+
+  // What kind of arraycopy variant is this?
+  enum {
+    ArrayCopy,       // System.arraycopy()
+    ArrayCopyNoTest, // System.arraycopy(), all arguments validated
+    CloneBasic,      // A clone that can be copied by 64 bit chunks
+    CloneOop,        // An oop array clone
+    CopyOf,          // Arrays.copyOf()
+    CopyOfRange      // Arrays.copyOfRange()
+  } _kind;
+
+#ifndef PRODUCT
+  static const char* _kind_names[CopyOfRange+1];
+#endif
+  // Is the alloc obtained with
+  // AllocateArrayNode::Ideal_array_allocation() tighly coupled
+  // (arraycopy follows immediately the allocation)?
+  // We cache the result of LibraryCallKit::tightly_coupled_allocation
+  // here because it's much easier to find whether there's a tightly
+  // couple allocation at parse time than at macro expansion time. At
+  // macro expansion time, for every use of the allocation node we
+  // would need to figure out whether it happens after the arraycopy (and
+  // can be ignored) or between the allocation and the arraycopy. At
+  // parse time, it's straightforward because whatever happens after
+  // the arraycopy is not parsed yet so doesn't exist when
+  // LibraryCallKit::tightly_coupled_allocation() is called.
+  bool _alloc_tightly_coupled;
+
+  static const TypeFunc* arraycopy_type() {
+    const Type** fields = TypeTuple::fields(ParmLimit - TypeFunc::Parms);
+    fields[Src]       = TypeInstPtr::BOTTOM;
+    fields[SrcPos]    = TypeInt::INT;
+    fields[Dest]      = TypeInstPtr::BOTTOM;
+    fields[DestPos]   = TypeInt::INT;
+    fields[Length]    = TypeInt::INT;
+    fields[SrcLen]    = TypeInt::INT;
+    fields[DestLen]   = TypeInt::INT;
+    fields[SrcKlass]  = TypeKlassPtr::BOTTOM;
+    fields[DestKlass] = TypeKlassPtr::BOTTOM;
+    const TypeTuple *domain = TypeTuple::make(ParmLimit, fields);
+
+    // create result type (range)
+    fields = TypeTuple::fields(0);
+
+    const TypeTuple *range = TypeTuple::make(TypeFunc::Parms+0, fields);
+
+    return TypeFunc::make(domain, range);
+  }
+
+  ArrayCopyNode(Compile* C, bool alloc_tightly_coupled);
+
+public:
+
+  enum {
+    Src   = TypeFunc::Parms,
+    SrcPos,
+    Dest,
+    DestPos,
+    Length,
+    SrcLen,
+    DestLen,
+    SrcKlass,
+    DestKlass,
+    ParmLimit
+  };
+
+  static ArrayCopyNode* make(GraphKit* kit, bool may_throw,
+                             Node* src, Node* src_offset,
+                             Node* dest,  Node* dest_offset,
+                             Node* length,
+                             bool alloc_tightly_coupled,
+                             Node* src_klass = NULL, Node* dest_klass = NULL,
+                             Node* src_length = NULL, Node* dest_length = NULL);
+
+  void connect_outputs(GraphKit* kit);
+
+  bool is_arraycopy()         const { return _kind == ArrayCopy; }
+  bool is_arraycopy_notest()  const { return _kind == ArrayCopyNoTest; }
+  bool is_clonebasic()        const { return _kind == CloneBasic; }
+  bool is_cloneoop()          const { return _kind == CloneOop; }
+  bool is_copyof()            const { return _kind == CopyOf; }
+  bool is_copyofrange()       const { return _kind == CopyOfRange; }
+
+  void set_arraycopy()         { _kind = ArrayCopy; }
+  void set_arraycopy_notest()  { _kind = ArrayCopyNoTest; }
+  void set_clonebasic()        { _kind = CloneBasic; }
+  void set_cloneoop()          { _kind = CloneOop; }
+  void set_copyof()            { _kind = CopyOf; }
+  void set_copyofrange()       { _kind = CopyOfRange; }
+
+  virtual int Opcode() const;
+  virtual uint size_of() const; // Size is bigger
+  virtual bool guaranteed_safepoint()  { return false; }
+
+  bool is_alloc_tightly_coupled() const { return _alloc_tightly_coupled; }
+
+#ifndef PRODUCT
+  virtual void dump_spec(outputStream *st) const;
+#endif
+};
 #endif // SHARE_VM_OPTO_CALLNODE_HPP

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -41,18 +41,6 @@
 #include "runtime/sharedRuntime.hpp"
 #include "runtime/signature.hpp"
 #include "utilities/macros.hpp"
-#ifdef TARGET_OS_FAMILY_linux
-# include "os_linux.inline.hpp"
-#endif
-#ifdef TARGET_OS_FAMILY_solaris
-# include "os_solaris.inline.hpp"
-#endif
-#ifdef TARGET_OS_FAMILY_windows
-# include "os_windows.inline.hpp"
-#endif
-#ifdef TARGET_OS_FAMILY_bsd
-# include "os_bsd.inline.hpp"
-#endif
 
 
 static void mangle_name_on(outputStream* st, Symbol* name, int begin, int end) {
@@ -405,7 +393,7 @@ address NativeLookup::base_library_lookup(const char* class_name, const char* me
 
   // Find method and invoke standard lookup
   methodHandle method (THREAD,
-                       klass->uncached_lookup_method(m_name, s_name));
+                       klass->uncached_lookup_method(m_name, s_name, Klass::normal));
   address result = lookup(method, in_base_library, CATCH);
   assert(in_base_library, "must be in basic library");
   guarantee(result != NULL, "must be non NULL");

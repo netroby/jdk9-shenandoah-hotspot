@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1998, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1998, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -32,14 +32,17 @@
 #include "oops/oop.inline.hpp"
 #include "prims/jvmtiRedefineClassesTrace.hpp"
 #include "prims/methodHandles.hpp"
+#include "runtime/atomic.inline.hpp"
 #include "runtime/handles.inline.hpp"
+#include "runtime/orderAccess.inline.hpp"
 #include "utilities/macros.hpp"
 #if INCLUDE_ALL_GCS
 # include "gc_implementation/parallelScavenge/psPromotionManager.hpp"
 #endif // INCLUDE_ALL_GCS
 
+PRAGMA_FORMAT_MUTE_WARNINGS_FOR_GCC
 
-// Implememtation of ConstantPoolCacheEntry
+// Implementation of ConstantPoolCacheEntry
 
 void ConstantPoolCacheEntry::initialize_entry(int index) {
   assert(0 < index && index < 0x10000, "sanity check");
@@ -284,7 +287,9 @@ void ConstantPoolCacheEntry::set_method_handle_common(constantPoolHandle cpool,
   // the lock, so that when the losing writer returns, he can use the linked
   // cache entry.
 
-  MonitorLockerEx ml(cpool->lock());
+  // Use the lock from the metaspace for this, which cannot stop for safepoint.
+  Mutex* metaspace_lock = cpool->pool_holder()->class_loader_data()->metaspace_lock();
+  MutexLockerEx ml(metaspace_lock,  Mutex::_no_safepoint_check_flag);
   if (!is_f1_null()) {
     return;
   }
@@ -328,7 +333,7 @@ void ConstantPoolCacheEntry::set_method_handle_common(constantPoolHandle cpool,
   // the f1 method has signature '(Ljl/Object;Ljl/invoke/MethodType;)Ljl/Object;',
   // not '(Ljava/lang/String;)Ljava/util/List;'.
   // The fact that String and List are involved is encoded in the MethodType in refs[f2].
-  // This allows us to create fewer method oops, while keeping type safety.
+  // This allows us to create fewer Methods, while keeping type safety.
   //
 
   objArrayHandle resolved_references = cpool->resolved_references();
@@ -363,7 +368,7 @@ Method* ConstantPoolCacheEntry::method_if_resolved(constantPoolHandle cpool) {
   // Decode the action of set_method and set_interface_call
   Bytecodes::Code invoke_code = bytecode_1();
   if (invoke_code != (Bytecodes::Code)0) {
-    Metadata* f1 = (Metadata*)_f1;
+    Metadata* f1 = f1_ord();
     if (f1 != NULL) {
       switch (invoke_code) {
       case Bytecodes::_invokeinterface:
@@ -405,7 +410,7 @@ Method* ConstantPoolCacheEntry::method_if_resolved(constantPoolHandle cpool) {
 
 
 oop ConstantPoolCacheEntry::appendix_if_resolved(constantPoolHandle cpool) {
-  if (is_f1_null() || !has_appendix())
+  if (!has_appendix())
     return NULL;
   const int ref_index = f2_as_index() + _indy_resolved_references_appendix_offset;
   objArrayOop resolved_references = cpool->resolved_references();
@@ -414,7 +419,7 @@ oop ConstantPoolCacheEntry::appendix_if_resolved(constantPoolHandle cpool) {
 
 
 oop ConstantPoolCacheEntry::method_type_if_resolved(constantPoolHandle cpool) {
-  if (is_f1_null() || !has_method_type())
+  if (!has_method_type())
     return NULL;
   const int ref_index = f2_as_index() + _indy_resolved_references_method_type_offset;
   objArrayOop resolved_references = cpool->resolved_references();
@@ -496,9 +501,10 @@ bool ConstantPoolCacheEntry::check_no_old_or_obsolete_entries() {
     // _f1 == NULL || !_f1->is_method() are OK here
     return true;
   }
-  // return false if _f1 refers to an old or an obsolete method
+  // return false if _f1 refers to a non-deleted old or obsolete method
   return (NOT_PRODUCT(_f1->is_valid() &&) _f1->is_method() &&
-          !((Method*)_f1)->is_old() && !((Method*)_f1)->is_obsolete());
+          (f1_as_method()->is_deleted() ||
+          (!f1_as_method()->is_old() && !f1_as_method()->is_obsolete())));
 }
 
 bool ConstantPoolCacheEntry::is_interesting_method_entry(Klass* k) {
@@ -667,7 +673,7 @@ void ConstantPoolCache::dump_cache() {
 
 void ConstantPoolCache::print_on(outputStream* st) const {
   assert(is_constantPoolCache(), "obj must be constant pool cache");
-  st->print_cr(internal_name());
+  st->print_cr("%s", internal_name());
   // print constant pool cache entries
   for (int i = 0; i < length(); i++) entry_at(i)->print(st, i);
 }

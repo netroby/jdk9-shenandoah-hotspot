@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1999, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1999, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -25,24 +25,7 @@
 #ifndef OS_LINUX_VM_OS_LINUX_INLINE_HPP
 #define OS_LINUX_VM_OS_LINUX_INLINE_HPP
 
-#include "runtime/atomic.inline.hpp"
 #include "runtime/os.hpp"
-
-#ifdef TARGET_OS_ARCH_linux_x86
-# include "orderAccess_linux_x86.inline.hpp"
-#endif
-#ifdef TARGET_OS_ARCH_linux_sparc
-# include "orderAccess_linux_sparc.inline.hpp"
-#endif
-#ifdef TARGET_OS_ARCH_linux_zero
-# include "orderAccess_linux_zero.inline.hpp"
-#endif
-#ifdef TARGET_OS_ARCH_linux_arm
-# include "orderAccess_linux_arm.inline.hpp"
-#endif
-#ifdef TARGET_OS_ARCH_linux_ppc
-# include "orderAccess_linux_ppc.inline.hpp"
-#endif
 
 // System includes
 
@@ -53,18 +36,6 @@
 
 inline void* os::thread_local_storage_at(int index) {
   return pthread_getspecific((pthread_key_t)index);
-}
-
-inline const char* os::file_separator() {
-  return "/";
-}
-
-inline const char* os::line_separator() {
-  return "\n";
-}
-
-inline const char* os::path_separator() {
-  return ":";
 }
 
 // File names are case-sensitive on windows only
@@ -286,6 +257,10 @@ inline int os::get_sock_opt(int fd, int level, int optname,
 inline int os::set_sock_opt(int fd, int level, int optname,
                             const char* optval, socklen_t optlen) {
   return ::setsockopt(fd, level, optname, optval, optlen);
+}
+
+inline bool os::supports_monotonic_clock() {
+  return Linux::_clock_gettime != NULL;
 }
 
 #endif // OS_LINUX_VM_OS_LINUX_INLINE_HPP

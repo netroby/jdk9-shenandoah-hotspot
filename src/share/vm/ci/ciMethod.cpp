@@ -80,6 +80,7 @@ ciMethod::ciMethod(methodHandle h_m) : ciMetadata(h_m()) {
   _code_size          = h_m()->code_size();
   _intrinsic_id       = h_m()->intrinsic_id();
   _handler_count      = h_m()->exception_table_length();
+  _size_of_parameters = h_m()->size_of_parameters();
   _uses_monitors      = h_m()->access_flags().has_monitor_bytecodes();
   _balanced_monitors  = !_uses_monitors || h_m()->access_flags().is_monitor_matching();
   _is_c1_compilable   = !h_m()->is_not_c1_compilable();
@@ -128,6 +129,7 @@ ciMethod::ciMethod(methodHandle h_m) : ciMetadata(h_m()) {
   constantPoolHandle cpool = h_m()->constants();
   _signature = new (env->arena()) ciSignature(_holder, cpool, sig_symbol);
   _method_data = NULL;
+  _nmethod_age = h_m()->nmethod_age();
   // Take a snapshot of these values, so they will be commensurate with the MDO.
   if (ProfileInterpreter || TieredCompilation) {
     int invcnt = h_m()->interpreter_invocation_count();
@@ -412,7 +414,7 @@ MethodLivenessResult ciMethod::raw_liveness_at_bci(int bci) {
 // information.
 MethodLivenessResult ciMethod::liveness_at_bci(int bci) {
   MethodLivenessResult result = raw_liveness_at_bci(bci);
-  if (CURRENT_ENV->jvmti_can_access_local_variables() || DeoptimizeALot || CompileTheWorld) {
+  if (CURRENT_ENV->should_retain_local_variables() || DeoptimizeALot || CompileTheWorld) {
     // Keep all locals live for the user's edification and amusement.
     result.at_put_range(0, result.size(), true);
   }
@@ -581,14 +583,14 @@ void ciMethod::assert_call_type_ok(int bci) {
  * Check whether profiling provides a type for the argument i to the
  * call at bci bci
  *
- * @param bci  bci of the call
- * @param i    argument number
- * @return     profiled type
+ * @param [in]bci         bci of the call
+ * @param [in]i           argument number
+ * @param [out]type       profiled type of argument, NULL if none
+ * @param [out]maybe_null true if null was seen for argument
+ * @return                true if profiling exists
  *
- * If the profile reports that the argument may be null, return false
- * at least for now.
  */
-ciKlass* ciMethod::argument_profiled_type(int bci, int i) {
+bool ciMethod::argument_profiled_type(int bci, int i, ciKlass*& type, bool& maybe_null) {
   if (MethodData::profile_parameters() && method_data() != NULL && method_data()->is_mature()) {
     ciProfileData* data = method_data()->bci_to_data(bci);
     if (data != NULL) {
@@ -596,82 +598,77 @@ ciKlass* ciMethod::argument_profiled_type(int bci, int i) {
         assert_virtual_call_type_ok(bci);
         ciVirtualCallTypeData* call = (ciVirtualCallTypeData*)data->as_VirtualCallTypeData();
         if (i >= call->number_of_arguments()) {
-          return NULL;
+          return false;
         }
-        ciKlass* type = call->valid_argument_type(i);
-        if (type != NULL && !call->argument_maybe_null(i)) {
-          return type;
-        }
+        type = call->valid_argument_type(i);
+        maybe_null = call->argument_maybe_null(i);
+        return true;
       } else if (data->is_CallTypeData()) {
         assert_call_type_ok(bci);
         ciCallTypeData* call = (ciCallTypeData*)data->as_CallTypeData();
         if (i >= call->number_of_arguments()) {
-          return NULL;
+          return false;
         }
-        ciKlass* type = call->valid_argument_type(i);
-        if (type != NULL && !call->argument_maybe_null(i)) {
-          return type;
-        }
+        type = call->valid_argument_type(i);
+        maybe_null = call->argument_maybe_null(i);
+        return true;
       }
     }
   }
-  return NULL;
+  return false;
 }
 
 /**
  * Check whether profiling provides a type for the return value from
  * the call at bci bci
  *
- * @param bci  bci of the call
- * @return     profiled type
+ * @param [in]bci         bci of the call
+ * @param [out]type       profiled type of argument, NULL if none
+ * @param [out]maybe_null true if null was seen for argument
+ * @return                true if profiling exists
  *
- * If the profile reports that the argument may be null, return false
- * at least for now.
  */
-ciKlass* ciMethod::return_profiled_type(int bci) {
+bool ciMethod::return_profiled_type(int bci, ciKlass*& type, bool& maybe_null) {
   if (MethodData::profile_return() && method_data() != NULL && method_data()->is_mature()) {
     ciProfileData* data = method_data()->bci_to_data(bci);
     if (data != NULL) {
       if (data->is_VirtualCallTypeData()) {
         assert_virtual_call_type_ok(bci);
         ciVirtualCallTypeData* call = (ciVirtualCallTypeData*)data->as_VirtualCallTypeData();
-        ciKlass* type = call->valid_return_type();
-        if (type != NULL && !call->return_maybe_null()) {
-          return type;
-        }
+        type = call->valid_return_type();
+        maybe_null = call->return_maybe_null();
+        return true;
       } else if (data->is_CallTypeData()) {
         assert_call_type_ok(bci);
         ciCallTypeData* call = (ciCallTypeData*)data->as_CallTypeData();
-        ciKlass* type = call->valid_return_type();
-        if (type != NULL && !call->return_maybe_null()) {
-          return type;
-        }
+        type = call->valid_return_type();
+        maybe_null = call->return_maybe_null();
+        return true;
       }
     }
   }
-  return NULL;
+  return false;
 }
 
 /**
  * Check whether profiling provides a type for the parameter i
  *
- * @param i    parameter number
- * @return     profiled type
+ * @param [in]i           parameter number
+ * @param [out]type       profiled type of parameter, NULL if none
+ * @param [out]maybe_null true if null was seen for parameter
+ * @return                true if profiling exists
  *
- * If the profile reports that the argument may be null, return false
- * at least for now.
  */
-ciKlass* ciMethod::parameter_profiled_type(int i) {
+bool ciMethod::parameter_profiled_type(int i, ciKlass*& type, bool& maybe_null) {
   if (MethodData::profile_parameters() && method_data() != NULL && method_data()->is_mature()) {
     ciParametersTypeData* parameters = method_data()->parameters_type_data();
     if (parameters != NULL && i < parameters->number_of_parameters()) {
-      ciKlass* type = parameters->valid_parameter_type(i);
-      if (type != NULL && !parameters->parameter_maybe_null(i)) {
-        return type;
-      }
+      type = parameters->valid_parameter_type(i);
+      maybe_null = parameters->parameter_maybe_null(i);
+      return true;
     }
   }
-  return NULL;
+  return false;
 }
 
 
@@ -1105,6 +1102,22 @@ bool ciMethod::has_option(const char* option) {
 }
 
 // ------------------------------------------------------------------
+// ciMethod::has_option_value
+//
+template<typename T>
+bool ciMethod::has_option_value(const char* option, T& value) {
+  check_is_loaded();
+  VM_ENTRY_MARK;
+  methodHandle mh(THREAD, get_Method());
+  return CompilerOracle::has_option_value(mh, option, value);
+}
+// Explicit instantiation for all OptionTypes supported.
+template bool ciMethod::has_option_value<intx>(const char* option, intx& value);
+template bool ciMethod::has_option_value<uintx>(const char* option, uintx& value);
+template bool ciMethod::has_option_value<bool>(const char* option, bool& value);
+template bool ciMethod::has_option_value<ccstr>(const char* option, ccstr& value);
+
+// ------------------------------------------------------------------
 // ciMethod::can_be_compiled
 //
 // Have previous compilations of this method succeeded?
@@ -1280,6 +1293,14 @@ bool ciMethod::check_call(int refinfo_index, bool is_static) const {
 }
 
 // ------------------------------------------------------------------
+// ciMethod::profile_aging
+//
+// Should the method be compiled with an age counter?
+bool ciMethod::profile_aging() const {
+  return UseCodeAging && (!MethodCounters::is_nmethod_hot(nmethod_age()) &&
+                          !MethodCounters::is_nmethod_age_unset(nmethod_age()));
+}
+// ------------------------------------------------------------------
 // ciMethod::print_codes
 //
 // Print the bytecodes for this method.
@@ -1362,15 +1383,21 @@ ciMethodBlocks  *ciMethod::get_method_blocks() {
 
 #undef FETCH_FLAG_FROM_VM
 
+void ciMethod::dump_name_as_ascii(outputStream* st) {
+  Method* method = get_Method();
+  st->print("%s %s %s",
+            method->klass_name()->as_quoted_ascii(),
+            method->name()->as_quoted_ascii(),
+            method->signature()->as_quoted_ascii());
+}
+
 void ciMethod::dump_replay_data(outputStream* st) {
   ResourceMark rm;
   Method* method = get_Method();
   MethodCounters* mcs = method->method_counters();
-  Klass*  holder = method->method_holder();
-  st->print_cr("ciMethod %s %s %s %d %d %d %d %d",
-               holder->name()->as_quoted_ascii(),
-               method->name()->as_quoted_ascii(),
-               method->signature()->as_quoted_ascii(),
+  st->print("ciMethod ");
+  dump_name_as_ascii(st);
+  st->print_cr(" %d %d %d %d %d",
                mcs == NULL ? 0 : mcs->invocation_counter()->raw_counter(),
                mcs == NULL ? 0 : mcs->backedge_counter()->raw_counter(),
                interpreter_invocation_count(),

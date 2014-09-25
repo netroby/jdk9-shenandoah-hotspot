@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2000, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -30,27 +30,7 @@
 #include "c1/c1_MacroAssembler.hpp"
 #include "c1/c1_ValueStack.hpp"
 #include "ci/ciInstance.hpp"
-#ifdef TARGET_ARCH_x86
-# include "nativeInst_x86.hpp"
-# include "vmreg_x86.inline.hpp"
-#endif
-#ifdef TARGET_ARCH_sparc
-# include "nativeInst_sparc.hpp"
-# include "vmreg_sparc.inline.hpp"
-#endif
-#ifdef TARGET_ARCH_zero
-# include "nativeInst_zero.hpp"
-# include "vmreg_zero.inline.hpp"
-#endif
-#ifdef TARGET_ARCH_arm
-# include "nativeInst_arm.hpp"
-# include "vmreg_arm.inline.hpp"
-#endif
-#ifdef TARGET_ARCH_ppc
-# include "nativeInst_ppc.hpp"
-# include "vmreg_ppc.inline.hpp"
-#endif
-
+#include "runtime/os.hpp"
 
 void LIR_Assembler::patching_epilog(PatchingStub* patch, LIR_PatchCode patch_code, Register obj, CodeEmitInfo* info) {
   // we must have enough patching space so that call can be inserted
@@ -58,7 +38,7 @@ void LIR_Assembler::patching_epilog(PatchingStub* patch, LIR_PatchCode patch_cod
     _masm->nop();
   }
   patch->install(_masm, patch_code, obj, info);
-  append_patching_stub(patch);
+  append_code_stub(patch);
 
 #ifdef ASSERT
   Bytecodes::Code code = info->scope()->method()->java_code_at_bci(info->stack()->bci());
@@ -131,11 +111,6 @@ LIR_Assembler::~LIR_Assembler() {
 }
 
 
-void LIR_Assembler::append_patching_stub(PatchingStub* stub) {
-  _slow_case_stubs->append(stub);
-}
-
-
 void LIR_Assembler::check_codespace() {
   CodeSection* cs = _masm->code_section();
   if (cs->remaining() < (int)(NOT_LP64(1*K)LP64_ONLY(2*K))) {
@@ -144,7 +119,7 @@ void LIR_Assembler::check_codespace() {
 }
 
 
-void LIR_Assembler::emit_code_stub(CodeStub* stub) {
+void LIR_Assembler::append_code_stub(CodeStub* stub) {
   _slow_case_stubs->append(stub);
 }
 
@@ -190,6 +165,13 @@ address LIR_Assembler::pc() const {
   return _masm->pc();
 }
 
+// To bang the stack of this compiled method we use the stack size
+// that the interpreter would need in case of a deoptimization. This
+// removes the need to bang the stack in the deoptimization blob which
+// in turn simplifies stack overflow handling.
+int LIR_Assembler::bang_size_in_bytes() const {
+  return MAX2(initial_frame_size_in_bytes() + os::extra_bang_size_in_bytes(), _compilation->interpreter_frame_size());
+}
 
 void LIR_Assembler::emit_exception_entries(ExceptionInfoList* info_list) {
   for (int i = 0; i < info_list->length(); i++) {
@@ -334,7 +316,6 @@ void LIR_Assembler::check_no_unbound_labels() {
 
 
 void LIR_Assembler::add_debug_info_for_branch(CodeEmitInfo* info) {
-  _masm->code_section()->relocate(pc(), relocInfo::poll_type);
   int pc_offset = code_offset();
   flush_debug_info(pc_offset);
   info->record_debug_info(compilation()->debug_info_recorder(), pc_offset);
@@ -435,7 +416,7 @@ void LIR_Assembler::add_debug_info_for_null_check_here(CodeEmitInfo* cinfo) {
 
 void LIR_Assembler::add_debug_info_for_null_check(int pc_offset, CodeEmitInfo* cinfo) {
   ImplicitNullCheckStub* stub = new ImplicitNullCheckStub(pc_offset, cinfo);
-  emit_code_stub(stub);
+  append_code_stub(stub);
 }
 
 void LIR_Assembler::add_debug_info_for_div0_here(CodeEmitInfo* info) {
@@ -444,7 +425,7 @@ void LIR_Assembler::add_debug_info_for_div0_here(CodeEmitInfo* info) {
 
 void LIR_Assembler::add_debug_info_for_div0(int pc_offset, CodeEmitInfo* cinfo) {
   DivByZeroStub* stub = new DivByZeroStub(pc_offset, cinfo);
-  emit_code_stub(stub);
+  append_code_stub(stub);
 }
 
 void LIR_Assembler::emit_rtcall(LIR_OpRTCall* op) {
@@ -797,7 +778,7 @@ void LIR_Assembler::emit_op2(LIR_Op2* op) {
 
 
 void LIR_Assembler::build_frame() {
-  _masm->build_frame(initial_frame_size_in_bytes());
+  _masm->build_frame(initial_frame_size_in_bytes(), bang_size_in_bytes());
 }
 
 
@@ -858,9 +839,7 @@ void LIR_Assembler::move_op(LIR_Opr src, LIR_Opr dest, BasicType type, LIR_Patch
 
 void LIR_Assembler::verify_oop_map(CodeEmitInfo* info) {
 #ifndef PRODUCT
-  if (VerifyOopMaps || VerifyOops) {
-    bool v = VerifyOops;
-    VerifyOops = true;
+  if (VerifyOops) {
     OopMapStream s(info->oop_map());
     while (!s.is_done()) {
       OopMapValue v = s.current();
@@ -870,7 +849,7 @@ void LIR_Assembler::verify_oop_map(CodeEmitInfo* info) {
           stringStream st;
           st.print("bad oop %s at %d", r->as_Register()->name(), _masm->offset());
 #ifdef SPARC
-          _masm->_verify_oop(r->as_Register(), strdup(st.as_string()), __FILE__, __LINE__);
+          _masm->_verify_oop(r->as_Register(), os::strdup(st.as_string(), mtCompiler), __FILE__, __LINE__);
 #else
           _masm->verify_oop(r->as_Register());
 #endif
@@ -883,7 +862,6 @@ void LIR_Assembler::verify_oop_map(CodeEmitInfo* info) {
 
       s.next();
     }
-    VerifyOops = v;
   }
 #endif
 }

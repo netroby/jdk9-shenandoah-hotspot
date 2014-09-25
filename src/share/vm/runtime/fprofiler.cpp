@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -24,6 +24,7 @@
 
 #include "precompiled.hpp"
 #include "classfile/classLoader.hpp"
+#include "code/codeCache.hpp"
 #include "code/vtableStubs.hpp"
 #include "gc_interface/collectedHeap.inline.hpp"
 #include "interpreter/interpreter.hpp"
@@ -38,8 +39,11 @@
 #include "runtime/stubCodeGenerator.hpp"
 #include "runtime/stubRoutines.hpp"
 #include "runtime/task.hpp"
+#include "runtime/thread.inline.hpp"
 #include "runtime/vframe.hpp"
 #include "utilities/macros.hpp"
+
+PRAGMA_FORMAT_MUTE_WARNINGS_FOR_GCC
 
 // Static fields of FlatProfiler
 int               FlatProfiler::received_gc_ticks   = 0;
@@ -308,7 +312,7 @@ class ProfilerNode {
     st->fill_to(col2);
     t->print_native(st);
     st->fill_to(col3);
-    st->print(msg);
+    st->print("%s", msg);
     st->cr();
   }
 
@@ -625,8 +629,14 @@ class vmNode : public ProfilerNode {
   }
 
   vmNode(const char* name, const TickPosition where) : ProfilerNode() {
-    _name = name;
+    _name = os::strdup(name);
     update(where);
+  }
+
+  ~vmNode() {
+    if (_name != NULL) {
+      os::free((void*)_name);
+    }
   }
 
   const char *name()    const { return _name; }
@@ -780,7 +790,7 @@ void ThreadProfiler::vm_update(const char* name, TickPosition where) {
   assert(index >= 0, "Must be positive");
   // Note that we call strdup below since the symbol may be resource allocated
   if (!table[index]) {
-    table[index] = new (this) vmNode(os::strdup(name), where);
+    table[index] = new (this) vmNode(name, where);
   } else {
     ProfilerNode* prev = table[index];
     for(ProfilerNode* node = prev; node; node = node->next()) {
@@ -790,7 +800,7 @@ void ThreadProfiler::vm_update(const char* name, TickPosition where) {
       }
       prev = node;
     }
-    prev->set_next(new (this) vmNode(os::strdup(name), where));
+    prev->set_next(new (this) vmNode(name, where));
   }
 }
 

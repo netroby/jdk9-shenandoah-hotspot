@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2001, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2001, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -32,6 +32,8 @@
 #include "gc_implementation/shared/spaceDecorator.hpp"
 #include "oops/oop.inline.hpp"
 #include "runtime/java.hpp"
+
+PRAGMA_FORMAT_MUTE_WARNINGS_FOR_GCC
 
 PSYoungGen::PSYoungGen(size_t        initial_size,
                        size_t        min_size,
@@ -99,7 +101,8 @@ void PSYoungGen::initialize_work() {
   }
 
   // Generation Counters - generation 0, 3 subspaces
-  _gen_counters = new PSGenerationCounters("new", 0, 3, _virtual_space);
+  _gen_counters = new PSGenerationCounters("new", 0, 3, _min_gen_size,
+                                           _max_gen_size, _virtual_space);
 
   // Compute maximum space sizes for performance counters
   ParallelScavengeHeap* heap = (ParallelScavengeHeap*)Universe::heap();
@@ -136,7 +139,7 @@ void PSYoungGen::initialize_work() {
     // generation - the less space committed, the smaller the survivor
     // space, possibly as small as an alignment. However, we are interested
     // in the case where the young generation is 100% committed, as this
-    // is the point where eden reachs its maximum size. At this point,
+    // is the point where eden reaches its maximum size. At this point,
     // the size of a survivor space is max_survivor_size.
     max_eden_size = size - 2 * max_survivor_size;
   }
@@ -288,7 +291,7 @@ bool PSYoungGen::resize_generation(size_t eden_size, size_t survivor_size) {
   // There used to be this guarantee there.
   // guarantee ((eden_size + 2*survivor_size)  <= _max_gen_size, "incorrect input arguments");
   // Code below forces this requirement.  In addition the desired eden
-  // size and disired survivor sizes are desired goals and may
+  // size and desired survivor sizes are desired goals and may
   // exceed the total generation size.
 
   assert(min_gen_size() <= orig_size && orig_size <= max_size(), "just checking");

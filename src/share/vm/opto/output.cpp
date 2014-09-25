@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1998, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1998, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -30,10 +30,12 @@
 #include "compiler/compileBroker.hpp"
 #include "compiler/oopMap.hpp"
 #include "memory/allocation.inline.hpp"
+#include "opto/ad.hpp"
 #include "opto/callnode.hpp"
 #include "opto/cfgnode.hpp"
 #include "opto/locknode.hpp"
 #include "opto/machnode.hpp"
+#include "opto/optoreg.hpp"
 #include "opto/output.hpp"
 #include "opto/regalloc.hpp"
 #include "opto/runtime.hpp"
@@ -42,17 +44,11 @@
 #include "runtime/handles.inline.hpp"
 #include "utilities/xmlstream.hpp"
 
-extern uint size_exception_handler();
-extern uint size_deopt_handler();
-
 #ifndef PRODUCT
 #define DEBUG_ARG(x) , x
 #else
 #define DEBUG_ARG(x)
 #endif
-
-extern int emit_exception_handler(CodeBuffer &cbuf);
-extern int emit_deopt_handler(CodeBuffer &cbuf);
 
 // Convert Nodes to instruction bits and pass off to the VM
 void Compile::Output() {
@@ -73,7 +69,7 @@ void Compile::Output() {
   const StartNode *start = entry->head()->as_Start();
 
   // Replace StartNode with prolog
-  MachPrologNode *prolog = new (this) MachPrologNode();
+  MachPrologNode *prolog = new MachPrologNode();
   entry->map_node(prolog, 0);
   _cfg->map_node_to_block(prolog, entry);
   _cfg->unmap_node_from_block(start); // start is no longer in any block
@@ -83,12 +79,12 @@ void Compile::Output() {
   if( is_osr_compilation() ) {
     if( PoisonOSREntry ) {
       // TODO: Should use a ShouldNotReachHereNode...
-      _cfg->insert( broot, 0, new (this) MachBreakpointNode() );
+      _cfg->insert( broot, 0, new MachBreakpointNode() );
     }
   } else {
     if( _method && !_method->flags().is_static() ) {
       // Insert unvalidated entry point
-      _cfg->insert( broot, 0, new (this) MachUEPNode() );
+      _cfg->insert( broot, 0, new MachUEPNode() );
     }
 
   }
@@ -104,7 +100,7 @@ void Compile::Output() {
     ) {
     // checking for _method means that OptoBreakpoint does not apply to
     // runtime stubs or frame converters
-    _cfg->insert( entry, 1, new (this) MachBreakpointNode() );
+    _cfg->insert( entry, 1, new MachBreakpointNode() );
   }
 
   // Insert epilogs before every return
@@ -113,7 +109,7 @@ void Compile::Output() {
     if (!block->is_connector() && block->non_connector_successor(0) == _cfg->get_root_block()) { // Found a program exit point?
       Node* m = block->end();
       if (m->is_Mach() && m->as_Mach()->ideal_Opcode() != Op_Halt) {
-        MachEpilogNode* epilog = new (this) MachEpilogNode(m->as_Mach()->ideal_Opcode() == Op_Return);
+        MachEpilogNode* epilog = new MachEpilogNode(m->as_Mach()->ideal_Opcode() == Op_Return);
         block->add_inst(epilog);
         _cfg->map_node_to_block(epilog, block);
       }
@@ -171,8 +167,13 @@ bool Compile::need_stack_bang(int frame_size_in_bytes) const {
   // Determine if we need to generate a stack overflow check.
   // Do it if the method is not a stub function and
   // has java calls or has frame size > vm_page_size/8.
+  // The debug VM checks that deoptimization doesn't trigger an
+  // unexpected stack overflow (compiled method stack banging should
+  // guarantee it doesn't happen) so we always need the stack bang in
+  // a debug VM.
   return (UseStackBanging && stub_function() == NULL &&
-          (has_java_calls() || frame_size_in_bytes > os::vm_page_size()>>3));
+          (has_java_calls() || frame_size_in_bytes > os::vm_page_size()>>3
+           DEBUG_ONLY(|| true)));
 }
 
 bool Compile::need_register_stack_bang() const {
@@ -269,7 +270,7 @@ void Compile::Insert_zap_nodes() {
 Node* Compile::call_zap_node(MachSafePointNode* node_to_check, int block_no) {
   const TypeFunc *tf = OptoRuntime::zap_dead_locals_Type();
   CallStaticJavaNode* ideal_node =
-    new (this) CallStaticJavaNode( tf,
+    new CallStaticJavaNode( tf,
          OptoRuntime::zap_dead_locals_stub(_method->flags().is_native()),
                        "call zap dead locals stub", 0, TypePtr::BOTTOM);
   // We need to copy the OopMap from the site we're zapping at.
@@ -344,6 +345,11 @@ void Compile::shorten_branches(uint* blk_starts, int& code_size, int& reloc_size
   uint*      jmp_offset = NEW_RESOURCE_ARRAY(uint,nblocks);
   uint*      jmp_size   = NEW_RESOURCE_ARRAY(uint,nblocks);
   int*       jmp_nidx   = NEW_RESOURCE_ARRAY(int ,nblocks);
+
+  // Collect worst case block paddings
+  int* block_worst_case_pad = NEW_RESOURCE_ARRAY(int, nblocks);
+  memset(block_worst_case_pad, 0, nblocks * sizeof(int));
+
   DEBUG_ONLY( uint *jmp_target = NEW_RESOURCE_ARRAY(uint,nblocks); )
   DEBUG_ONLY( uint *jmp_rule = NEW_RESOURCE_ARRAY(uint,nblocks); )
 
@@ -362,9 +368,9 @@ void Compile::shorten_branches(uint* blk_starts, int& code_size, int& reloc_size
   // third inserts nops where needed.
 
   // Step one, perform a pessimistic sizing pass.
-  uint last_call_adr = max_uint;
-  uint last_avoid_back_to_back_adr = max_uint;
-  uint nop_size = (new (this) MachNopNode())->size(_regalloc);
+  uint last_call_adr = max_juint;
+  uint last_avoid_back_to_back_adr = max_juint;
+  uint nop_size = (new MachNopNode())->size(_regalloc);
   for (uint i = 0; i < nblocks; i++) { // For all blocks
     Block* block = _cfg->get_block(i);
 
@@ -389,6 +395,11 @@ void Compile::shorten_branches(uint* blk_starts, int& code_size, int& reloc_size
         blk_size += (mach->alignment_required() - 1) * relocInfo::addr_unit(); // assume worst case padding
         reloc_size += mach->reloc();
         if (mach->is_MachCall()) {
+          // add size information for trampoline stub
+          // class CallStubImpl is platform-specific and defined in the *.ad files.
+          stub_size  += CallStubImpl::size_call_trampoline();
+          reloc_size += CallStubImpl::reloc_call_trampoline();
+
           MachCallNode *mcall = mach->as_MachCall();
           // This destination address is NOT PC-relative
 
@@ -407,7 +418,7 @@ void Compile::shorten_branches(uint* blk_starts, int& code_size, int& reloc_size
             blk_size += nop_size;
           }
         }
-        if (mach->avoid_back_to_back()) {
+        if (mach->avoid_back_to_back(MachNode::AVOID_BEFORE)) {
           // Nop is inserted between "avoid back to back" instructions.
           // ScheduleAndBundle() can rearrange nodes in a block,
           // check for all offsets inside this block.
@@ -435,7 +446,7 @@ void Compile::shorten_branches(uint* blk_starts, int& code_size, int& reloc_size
         last_call_adr = blk_starts[i]+blk_size;
       }
       // Remember end of avoid_back_to_back offset
-      if (nj->is_Mach() && nj->as_Mach()->avoid_back_to_back()) {
+      if (nj->is_Mach() && nj->as_Mach()->avoid_back_to_back(MachNode::AVOID_AFTER)) {
         last_avoid_back_to_back_adr = blk_starts[i]+blk_size;
       }
     }
@@ -460,6 +471,7 @@ void Compile::shorten_branches(uint* blk_starts, int& code_size, int& reloc_size
           last_avoid_back_to_back_adr += max_loop_pad;
         }
         blk_size += max_loop_pad;
+        block_worst_case_pad[i + 1] = max_loop_pad;
       }
     }
 
@@ -469,7 +481,7 @@ void Compile::shorten_branches(uint* blk_starts, int& code_size, int& reloc_size
 
   // Step two, replace eligible long jumps.
   bool progress = true;
-  uint last_may_be_short_branch_adr = max_uint;
+  uint last_may_be_short_branch_adr = max_juint;
   while (has_short_branch_candidate && progress) {
     progress = false;
     has_short_branch_candidate = false;
@@ -499,25 +511,32 @@ void Compile::shorten_branches(uint* blk_starts, int& code_size, int& reloc_size
         if (bnum > i) { // adjust following block's offset
           offset -= adjust_block_start;
         }
+
+        // This block can be a loop header, account for the padding
+        // in the previous block.
+        int block_padding = block_worst_case_pad[i];
+        assert(i == 0 || block_padding == 0 || br_offs >= block_padding, "Should have at least a padding on top");
         // In the following code a nop could be inserted before
         // the branch which will increase the backward distance.
-        bool needs_padding = ((uint)br_offs == last_may_be_short_branch_adr);
+        bool needs_padding = ((uint)(br_offs - block_padding) == last_may_be_short_branch_adr);
+        assert(!needs_padding || jmp_offset[i] == 0, "padding only branches at the beginning of block");
+
         if (needs_padding && offset <= 0)
           offset -= nop_size;
 
         if (_matcher->is_short_branch_offset(mach->rule(), br_size, offset)) {
           // We've got a winner.  Replace this branch.
-          MachNode* replacement = mach->as_MachBranch()->short_branch_version(this);
+          MachNode* replacement = mach->as_MachBranch()->short_branch_version();
 
           // Update the jmp_size.
           int new_size = replacement->size(_regalloc);
           int diff     = br_size - new_size;
           assert(diff >= (int)nop_size, "short_branch size should be smaller");
-          // Conservatively take into accound padding between
+          // Conservatively take into account padding between
           // avoid_back_to_back branches. Previous branch could be
           // converted into avoid_back_to_back branch during next
           // rounds.
-          if (needs_padding && replacement->avoid_back_to_back()) {
+          if (needs_padding && replacement->avoid_back_to_back(MachNode::AVOID_BEFORE)) {
             jmp_offset[i] += nop_size;
             diff -= nop_size;
           }
@@ -536,7 +555,7 @@ void Compile::shorten_branches(uint* blk_starts, int& code_size, int& reloc_size
         }
       } // (mach->may_be_short_branch())
       if (mach != NULL && (mach->may_be_short_branch() ||
-                           mach->avoid_back_to_back())) {
+                           mach->avoid_back_to_back(MachNode::AVOID_AFTER))) {
         last_may_be_short_branch_adr = blk_starts[i] + jmp_offset[i] + jmp_size[i];
       }
       blk_starts[i+1] -= adjust_block_start;
@@ -766,9 +785,10 @@ void Compile::FillLocArray( int idx, MachSafePointNode* sfpt, Node *local,
     // grow downwards in all implementations.
     // (If, on some machine, the interpreter's Java locals or stack
     // were to grow upwards, the embedded doubles would be word-swapped.)
-    jint   *dp = (jint*)&d;
-    array->append(new ConstantIntValue(dp[1]));
-    array->append(new ConstantIntValue(dp[0]));
+    jlong_accessor acc;
+    acc.long_value = jlong_cast(d);
+    array->append(new ConstantIntValue(acc.words[1]));
+    array->append(new ConstantIntValue(acc.words[0]));
 #endif
     break;
   }
@@ -785,9 +805,10 @@ void Compile::FillLocArray( int idx, MachSafePointNode* sfpt, Node *local,
     // grow downwards in all implementations.
     // (If, on some machine, the interpreter's Java locals or stack
     // were to grow upwards, the embedded doubles would be word-swapped.)
-    jint *dp = (jint*)&d;
-    array->append(new ConstantIntValue(dp[1]));
-    array->append(new ConstantIntValue(dp[0]));
+    jlong_accessor acc;
+    acc.long_value = d;
+    array->append(new ConstantIntValue(acc.words[1]));
+    array->append(new ConstantIntValue(acc.words[0]));
 #endif
     break;
   }
@@ -837,8 +858,7 @@ void Compile::Process_OopMap_Node(MachNode *mach, int current_offset) {
     }
 
     // Check if a call returns an object.
-    if (mcall->return_value_is_used() &&
-        mcall->tf()->range()->field_at(TypeFunc::Parms)->isa_ptr()) {
+    if (mcall->returns_pointer()) {
       return_oop = true;
     }
     safepoint_pc_offset += mcall->ret_addr_offset();
@@ -1065,7 +1085,7 @@ CodeBuffer* Compile::init_buffer(uint* blk_starts) {
   // Compute prolog code size
   _method_size = 0;
   _frame_slots = OptoReg::reg2stack(_matcher->_old_SP)+_regalloc->_framesize;
-#ifdef IA64
+#if defined(IA64) && !defined(AIX)
   if (save_argument_registers()) {
     // 4815101: this is a stub with implicit and unknown precision fp args.
     // The usual spill mechanism can only generate stfd's in this case, which
@@ -1083,6 +1103,7 @@ CodeBuffer* Compile::init_buffer(uint* blk_starts) {
   assert(_frame_slots >= 0 && _frame_slots < 1000000, "sanity check");
 
   if (has_mach_constant_base_node()) {
+    uint add_size = 0;
     // Fill the constant table.
     // Note:  This must happen before shorten_branches.
     for (uint i = 0; i < _cfg->number_of_blocks(); i++) {
@@ -1096,6 +1117,9 @@ CodeBuffer* Compile::init_buffer(uint* blk_starts) {
         if (n->is_MachConstant()) {
           MachConstantNode* machcon = n->as_MachConstant();
           machcon->eval_constant(C);
+        } else if (n->is_Mach()) {
+          // On Power there are more nodes that issue constants.
+          add_size += (n->as_Mach()->ins_num_consts() * 8);
         }
       }
     }
@@ -1103,7 +1127,7 @@ CodeBuffer* Compile::init_buffer(uint* blk_starts) {
     // Calculate the offsets of the constants and the size of the
     // constant table (including the padding to the next section).
     constant_table().calculate_offsets_and_size();
-    const_req = constant_table().size();
+    const_req = constant_table().size() + add_size;
   }
 
   // Initialize the space for the BufferBlob used to find and verify
@@ -1116,10 +1140,9 @@ CodeBuffer* Compile::init_buffer(uint* blk_starts) {
   shorten_branches(blk_starts, code_req, locs_req, stub_req);
 
   // nmethod and CodeBuffer count stubs & constants as part of method's code.
-  int exception_handler_req = size_exception_handler();
-  int deopt_handler_req = size_deopt_handler();
-  exception_handler_req += MAX_stubs_size; // add marginal slop for handler
-  deopt_handler_req += MAX_stubs_size; // add marginal slop for handler
+  // class HandlerImpl is platform-specific and defined in the *.ad files.
+  int exception_handler_req = HandlerImpl::size_exception_handler() + MAX_stubs_size; // add marginal slop for handler
+  int deopt_handler_req     = HandlerImpl::size_deopt_handler()     + MAX_stubs_size; // add marginal slop for handler
   stub_req += MAX_stubs_size;   // ensure per-stub margin
   code_req += MAX_inst_size;    // ensure per-instruction margin
 
@@ -1143,6 +1166,7 @@ CodeBuffer* Compile::init_buffer(uint* blk_starts) {
   // Have we run out of code space?
   if ((cb->blob() == NULL) || (!CompileBroker::should_compile_new_jobs())) {
     C->record_failure("CodeCache is full");
+    CompileBroker::handle_full_code_cache();
     return NULL;
   }
   // Configure the code buffer.
@@ -1152,7 +1176,7 @@ CodeBuffer* Compile::init_buffer(uint* blk_starts) {
 
   // fill in the nop array for bundling computations
   MachNode *_nop_list[Bundle::_nop_count];
-  Bundle::initialize_nops(_nop_list, this);
+  Bundle::initialize_nops(_nop_list);
 
   return cb;
 }
@@ -1181,7 +1205,7 @@ void Compile::fill_buffer(CodeBuffer* cb, uint* blk_starts) {
   uint *call_returns = NEW_RESOURCE_ARRAY(uint, nblocks+1);
 
   uint  return_offset = 0;
-  int nop_size = (new (this) MachNopNode())->size(_regalloc);
+  int nop_size = (new MachNopNode())->size(_regalloc);
 
   int previous_offset = 0;
   int current_offset  = 0;
@@ -1298,7 +1322,7 @@ void Compile::fill_buffer(CodeBuffer* cb, uint* blk_starts) {
         if (is_sfn && !is_mcall && padding == 0 && current_offset == last_call_offset) {
           padding = nop_size;
         }
-        if (padding == 0 && mach->avoid_back_to_back() &&
+        if (padding == 0 && mach->avoid_back_to_back(MachNode::AVOID_BEFORE) &&
             current_offset == last_avoid_back_to_back_offset) {
           // Avoid back to back some instructions.
           padding = nop_size;
@@ -1307,7 +1331,7 @@ void Compile::fill_buffer(CodeBuffer* cb, uint* blk_starts) {
         if(padding > 0) {
           assert((padding % nop_size) == 0, "padding is not a multiple of NOP size");
           int nops_cnt = padding / nop_size;
-          MachNode *nop = new (this) MachNopNode(nops_cnt);
+          MachNode *nop = new MachNopNode(nops_cnt);
           block->insert_node(nop, j++);
           last_inst++;
           _cfg->map_node_to_block(nop, block);
@@ -1374,7 +1398,7 @@ void Compile::fill_buffer(CodeBuffer* cb, uint* blk_starts) {
             int offset = blk_starts[block_num] - current_offset;
             if (block_num >= i) {
               // Current and following block's offset are not
-              // finilized yet, adjust distance by the difference
+              // finalized yet, adjust distance by the difference
               // between calculated and final offsets of current block.
               offset -= (blk_starts[i] - blk_offset);
             }
@@ -1386,14 +1410,14 @@ void Compile::fill_buffer(CodeBuffer* cb, uint* blk_starts) {
 
             if (_matcher->is_short_branch_offset(mach->rule(), br_size, offset)) {
               // We've got a winner.  Replace this branch.
-              MachNode* replacement = mach->as_MachBranch()->short_branch_version(this);
+              MachNode* replacement = mach->as_MachBranch()->short_branch_version();
 
               // Update the jmp_size.
               int new_size = replacement->size(_regalloc);
               assert((br_size - new_size) >= (int)nop_size, "short_branch size should be smaller");
               // Insert padding between avoid_back_to_back branches.
-              if (needs_padding && replacement->avoid_back_to_back()) {
-                MachNode *nop = new (this) MachNopNode();
+              if (needs_padding && replacement->avoid_back_to_back(MachNode::AVOID_BEFORE)) {
+                MachNode *nop = new MachNopNode();
                 block->insert_node(nop, j++);
                 _cfg->map_node_to_block(nop, block);
                 last_inst++;
@@ -1455,12 +1479,19 @@ void Compile::fill_buffer(CodeBuffer* cb, uint* blk_starts) {
           // Intel all the time, with add-to-memory kind of opcodes.
           previous_offset = current_offset;
         }
+
+        // Not an else-if!
+        // If this is a trap based cmp then add its offset to the list.
+        if (mach->is_TrapBasedCheckNode()) {
+          inct_starts[inct_cnt++] = current_offset;
+        }
       }
 
       // Verify that there is sufficient space remaining
       cb->insts()->maybe_expand_to_ensure_remaining(MAX_inst_size);
       if ((cb->blob() == NULL) || (!CompileBroker::should_compile_new_jobs())) {
         C->record_failure("CodeCache is full");
+        CompileBroker::handle_full_code_cache();
         return;
       }
 
@@ -1494,7 +1525,7 @@ void Compile::fill_buffer(CodeBuffer* cb, uint* blk_starts) {
         last_call_offset = current_offset;
       }
 
-      if (n->is_Mach() && n->as_Mach()->avoid_back_to_back()) {
+      if (n->is_Mach() && n->as_Mach()->avoid_back_to_back(MachNode::AVOID_AFTER)) {
         // Avoid back to back some instructions.
         last_avoid_back_to_back_offset = current_offset;
       }
@@ -1547,7 +1578,7 @@ void Compile::fill_buffer(CodeBuffer* cb, uint* blk_starts) {
       Block *nb = _cfg->get_block(i + 1);
       int padding = nb->alignment_padding(current_offset);
       if( padding > 0 ) {
-        MachNode *nop = new (this) MachNopNode(padding / nop_size);
+        MachNode *nop = new MachNopNode(padding / nop_size);
         block->insert_node(nop, block->number_of_nodes());
         _cfg->map_node_to_block(nop, block);
         nop->emit(*cb, _regalloc);
@@ -1599,23 +1630,25 @@ void Compile::fill_buffer(CodeBuffer* cb, uint* blk_starts) {
   FillExceptionTables(inct_cnt, call_returns, inct_starts, blk_labels);
 
   // Only java methods have exception handlers and deopt handlers
+  // class HandlerImpl is platform-specific and defined in the *.ad files.
   if (_method) {
     // Emit the exception handler code.
-    _code_offsets.set_value(CodeOffsets::Exceptions, emit_exception_handler(*cb));
+    _code_offsets.set_value(CodeOffsets::Exceptions, HandlerImpl::emit_exception_handler(*cb));
     // Emit the deopt handler code.
-    _code_offsets.set_value(CodeOffsets::Deopt, emit_deopt_handler(*cb));
+    _code_offsets.set_value(CodeOffsets::Deopt, HandlerImpl::emit_deopt_handler(*cb));
 
     // Emit the MethodHandle deopt handler code (if required).
     if (has_method_handle_invokes()) {
       // We can use the same code as for the normal deopt handler, we
       // just need a different entry point address.
-      _code_offsets.set_value(CodeOffsets::DeoptMH, emit_deopt_handler(*cb));
+      _code_offsets.set_value(CodeOffsets::DeoptMH, HandlerImpl::emit_deopt_handler(*cb));
     }
   }
 
   // One last check for failed CodeBuffer::expand:
   if ((cb->blob() == NULL) || (!CompileBroker::should_compile_new_jobs())) {
     C->record_failure("CodeCache is full");
+    CompileBroker::handle_full_code_cache();
     return;
   }
 
@@ -1721,6 +1754,12 @@ void Compile::FillExceptionTables(uint cnt, uint *call_returns, uint *inct_start
       _inc_table.append(inct_starts[inct_cnt++], blk_labels[block_num].loc_pos());
       continue;
     }
+    // Handle implicit exception table updates: trap instructions.
+    if (n->is_Mach() && n->as_Mach()->is_TrapBasedCheckNode()) {
+      uint block_num = block->non_connector_successor(0)->_pre_order;
+      _inc_table.append(inct_starts[inct_cnt++], blk_labels[block_num].loc_pos());
+      continue;
+    }
   } // End of for all blocks fill in exception table entries
 }
 
@@ -1753,7 +1792,7 @@ Scheduling::Scheduling(Arena *arena, Compile &compile)
 #endif
 {
   // Create a MachNopNode
-  _nop = new (&compile) MachNopNode();
+  _nop = new MachNopNode();
 
   // Now that the nops are in the array, save the count
   // (but allow entries for the nops)
@@ -2655,7 +2694,7 @@ void Scheduling::anti_do_def( Block *b, Node *def, OptoReg::Name def_reg, int is
     if ( _pinch_free_list.size() > 0) {
       pinch = _pinch_free_list.pop();
     } else {
-      pinch = new (_cfg->C) Node(1); // Pinch point to-be
+      pinch = new Node(1); // Pinch point to-be
     }
     if (pinch->_idx >= _regalloc->node_regs_max_index()) {
       _cfg->C->record_method_not_compilable("too many D-U pinch points");

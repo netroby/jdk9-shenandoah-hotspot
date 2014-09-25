@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1998, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1998, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -30,6 +30,7 @@
 #include "runtime/mutexLocker.hpp"
 #include "runtime/thread.inline.hpp"
 
+PRAGMA_FORMAT_MUTE_WARNINGS_FOR_GCC
 
 JNIHandleBlock* JNIHandles::_global_handles       = NULL;
 JNIHandleBlock* JNIHandles::_weak_global_handles  = NULL;
@@ -195,8 +196,10 @@ private:
   int _count;
 public:
   CountHandleClosure(): _count(0) {}
-  virtual void do_oop(oop* unused) {
-    _count++;
+  virtual void do_oop(oop* ooph) {
+    if (*ooph != JNIHandles::deleted_handle()) {
+      _count++;
+    }
   }
   virtual void do_oop(narrowOop* unused) { ShouldNotReachHere(); }
   int count() { return _count; }
@@ -295,6 +298,7 @@ JNIHandleBlock* JNIHandleBlock::allocate_block(Thread* thread)  {
   block->_top  = 0;
   block->_next = NULL;
   block->_pop_frame_link = NULL;
+  block->_planned_capacity = block_size_in_oops;
   // _last, _free_list & _allocate_before_rebuild initialized in allocate_handle
   debug_only(block->_last = NULL);
   debug_only(block->_free_list = NULL);
@@ -461,7 +465,7 @@ jobject JNIHandleBlock::allocate_handle(oop obj) {
     // Append new block
     Thread* thread = Thread::current();
     Handle obj_handle(thread, obj);
-    // This can block, so we need to preserve obj accross call.
+    // This can block, so we need to preserve obj across call.
     _last->_next = JNIHandleBlock::allocate_block(thread);
     _last = _last->_next;
     _allocate_before_rebuild--;
@@ -528,7 +532,13 @@ int JNIHandleBlock::length() const {
   return result;
 }
 
-// This method is not thread-safe, i.e., must be called whule holding a lock on the
+const size_t JNIHandleBlock::get_number_of_live_handles() {
+  CountHandleClosure counter;
+  oops_do(&counter);
+  return counter.count();
+}
+
+// This method is not thread-safe, i.e., must be called while holding a lock on the
 // structure.
 long JNIHandleBlock::memory_usage() const {
   return length() * sizeof(JNIHandleBlock);

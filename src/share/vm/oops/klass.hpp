@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -33,7 +33,6 @@
 #include "oops/klassPS.hpp"
 #include "oops/metadata.hpp"
 #include "oops/oop.hpp"
-#include "runtime/orderAccess.hpp"
 #include "trace/traceMacros.hpp"
 #include "utilities/accessFlags.hpp"
 #include "utilities/macros.hpp"
@@ -56,34 +55,6 @@
 // a vtbl and does the C++ dispatch depending on the object's
 // actual type.  (See oop.inline.hpp for some of the forwarding code.)
 // ALL FUNCTIONS IMPLEMENTING THIS DISPATCH ARE PREFIXED WITH "oop_"!
-
-//  Klass layout:
-//    [C++ vtbl ptr  ] (contained in Metadata)
-//    [layout_helper ]
-//    [super_check_offset   ] for fast subtype checks
-//    [name          ]
-//    [secondary_super_cache] for fast subtype checks
-//    [secondary_supers     ] array of 2ndary supertypes
-//    [primary_supers 0]
-//    [primary_supers 1]
-//    [primary_supers 2]
-//    ...
-//    [primary_supers 7]
-//    [java_mirror   ]
-//    [super         ]
-//    [subklass      ] first subclass
-//    [next_sibling  ] link to chain additional subklasses
-//    [next_link     ]
-//    [class_loader_data]
-//    [modifier_flags]
-//    [access_flags  ]
-//    [last_biased_lock_bulk_revocation_time] (64 bits)
-//    [prototype_header]
-//    [biased_lock_revocation_count]
-//    [_modified_oops]
-//    [_accumulated_modified_oops]
-//    [trace_id]
-
 
 // Forward declarations.
 template <class T> class Array;
@@ -177,12 +148,24 @@ class Klass : public Metadata {
   jbyte _modified_oops;             // Card Table Equivalent (YC/CMS support)
   jbyte _accumulated_modified_oops; // Mod Union Equivalent (CMS support)
 
+private:
+  // This is an index into FileMapHeader::_classpath_entry_table[], to
+  // associate this class with the JAR file where it's loaded from during
+  // dump time. If a class is not loaded from the shared archive, this field is
+  // -1.
+  jshort _shared_class_path_index;
+
+  friend class SharedClassUtil;
+protected:
+
   // Constructor
   Klass();
 
   void* operator new(size_t size, ClassLoaderData* loader_data, size_t word_size, TRAPS) throw();
 
  public:
+  enum MethodLookupMode { normal, skip_overpass, skip_defaults };
+
   bool is_klass() const volatile { return true; }
 
   // super
@@ -258,9 +241,9 @@ class Klass : public Metadata {
   // Use InstanceKlass::contains_field_offset to classify field offsets.
 
   // sub/superklass links
+  Klass* subklass() const              { return _subklass; }
+  Klass* next_sibling() const          { return _next_sibling; }
   InstanceKlass* superklass() const;
-  Klass* subklass() const;
-  Klass* next_sibling() const;
   void append_to_sibling_list();           // add newly created receiver to superklass' subklass list
 
   void set_next_link(Klass* k) { _next_link = k; }
@@ -281,9 +264,16 @@ class Klass : public Metadata {
   void clear_accumulated_modified_oops() { _accumulated_modified_oops = 0; }
   bool has_accumulated_modified_oops()   { return _accumulated_modified_oops == 1; }
 
+  int shared_classpath_index() const   {
+    return _shared_class_path_index;
+  };
+
+  void set_shared_classpath_index(int index) {
+    _shared_class_path_index = index;
+  };
+
+
  protected:                                // internal accessors
-  Klass* subklass_oop() const            { return _subklass; }
-  Klass* next_sibling_oop() const        { return _next_sibling; }
   void     set_subklass(Klass* s);
   void     set_next_sibling(Klass* s);
 
@@ -422,10 +412,10 @@ class Klass : public Metadata {
   virtual void initialize(TRAPS);
   // lookup operation for MethodLookupCache
   friend class MethodLookupCache;
-  virtual Method* uncached_lookup_method(Symbol* name, Symbol* signature) const;
+  virtual Method* uncached_lookup_method(Symbol* name, Symbol* signature, MethodLookupMode mode) const;
  public:
   Method* lookup_method(Symbol* name, Symbol* signature) const {
-    return uncached_lookup_method(name, signature);
+    return uncached_lookup_method(name, signature, normal);
   }
 
   // array class with specific rank
@@ -452,7 +442,7 @@ class Klass : public Metadata {
  public:
   // CDS support - remove and restore oops from metadata. Oops are not shared.
   virtual void remove_unshareable_info();
-  virtual void restore_unshareable_info(TRAPS);
+  virtual void restore_unshareable_info(ClassLoaderData* loader_data, Handle protection_domain, TRAPS);
 
  protected:
   // computes the subtype relationship
@@ -499,6 +489,7 @@ class Klass : public Metadata {
   virtual bool oop_is_objArray_slow()       const { return false; }
   virtual bool oop_is_typeArray_slow()      const { return false; }
  public:
+  virtual bool oop_is_instanceClassLoader() const { return false; }
   virtual bool oop_is_instanceMirror()      const { return false; }
   virtual bool oop_is_instanceRef()         const { return false; }
 
@@ -575,43 +566,16 @@ class Klass : public Metadata {
   TRACE_DEFINE_KLASS_METHODS;
 
   // garbage collection support
-  virtual void oops_do(OopClosure* cl);
+  void oops_do(OopClosure* cl);
 
   // Iff the class loader (or mirror for anonymous classes) is alive the
   // Klass is considered alive.
   // The is_alive closure passed in depends on the Garbage Collector used.
   bool is_loader_alive(BoolObjectClosure* is_alive);
 
-  static void clean_weak_klass_links(BoolObjectClosure* is_alive);
-
-  // Prefetch within oop iterators.  This is a macro because we
-  // can't guarantee that the compiler will inline it.  In 64-bit
-  // it generally doesn't.  Signature is
-  //
-  // static void prefetch_beyond(oop* const start,
-  //                             oop* const end,
-  //                             const intx foffset,
-  //                             const Prefetch::style pstyle);
-#define prefetch_beyond(start, end, foffset, pstyle) {   \
-    const intx foffset_ = (foffset);                     \
-    const Prefetch::style pstyle_ = (pstyle);            \
-    assert(foffset_ > 0, "prefetch beyond, not behind"); \
-    if (pstyle_ != Prefetch::do_none) {                  \
-      oop* ref = (start);                                \
-      if (ref < (end)) {                                 \
-        switch (pstyle_) {                               \
-        case Prefetch::do_read:                          \
-          Prefetch::read(*ref, foffset_);                \
-          break;                                         \
-        case Prefetch::do_write:                         \
-          Prefetch::write(*ref, foffset_);               \
-          break;                                         \
-        default:                                         \
-          ShouldNotReachHere();                          \
-          break;                                         \
-        }                                                \
-      }                                                  \
-    }                                                    \
+  static void clean_weak_klass_links(BoolObjectClosure* is_alive, bool clean_alive_klasses = true);
+  static void clean_subklass_tree(BoolObjectClosure* is_alive) {
+    clean_weak_klass_links(is_alive, false /* clean_alive_klasses */);
   }
 
   // iterators
@@ -696,8 +660,8 @@ class Klass : public Metadata {
   virtual const char* internal_name() const = 0;
 
   // Verification
-  virtual void verify_on(outputStream* st, bool check_dictionary);
-  void verify(bool check_dictionary = true) { verify_on(tty, check_dictionary); }
+  virtual void verify_on(outputStream* st);
+  void verify() { verify_on(tty); }
 
 #ifndef PRODUCT
   bool verify_vtable_index(int index);
@@ -719,7 +683,7 @@ class Klass : public Metadata {
  private:
   // barriers used by klass_oop_store
   void klass_update_barrier_set(oop v);
-  void klass_update_barrier_set_pre(void* p, oop v);
+  void klass_update_barrier_set_pre(oop* p, oop v);
 };
 
 #endif // SHARE_VM_OOPS_KLASS_HPP

@@ -25,8 +25,8 @@
 #include "precompiled.hpp"
 #include "memory/allocation.inline.hpp"
 #include "opto/callnode.hpp"
-#include "opto/connode.hpp"
 #include "opto/loopnode.hpp"
+#include "opto/movenode.hpp"
 
 
 //------------------------------split_thru_region------------------------------
@@ -35,7 +35,7 @@ Node *PhaseIdealLoop::split_thru_region( Node *n, Node *region ) {
   uint wins = 0;
   assert( n->is_CFG(), "" );
   assert( region->is_Region(), "" );
-  Node *r = new (C) RegionNode( region->req() );
+  Node *r = new RegionNode( region->req() );
   IdealLoopTree *loop = get_loop( n );
   for( uint i = 1; i < region->req(); i++ ) {
     Node *x = n->clone();

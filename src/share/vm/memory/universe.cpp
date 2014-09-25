@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -26,7 +26,10 @@
 #include "classfile/classLoader.hpp"
 #include "classfile/classLoaderData.hpp"
 #include "classfile/javaClasses.hpp"
-#include "classfile/symbolTable.hpp"
+#if INCLUDE_CDS
+#include "classfile/sharedClassUtil.hpp"
+#endif
+#include "classfile/stringTable.hpp"
 #include "classfile/systemDictionary.hpp"
 #include "classfile/vmSymbols.hpp"
 #include "code/codeCache.hpp"
@@ -34,6 +37,7 @@
 #include "gc_interface/collectedHeap.inline.hpp"
 #include "interpreter/interpreter.hpp"
 #include "memory/cardTableModRefBS.hpp"
+#include "memory/filemap.hpp"
 #include "memory/gcLocker.inline.hpp"
 #include "memory/genCollectedHeap.hpp"
 #include "memory/genRemSet.hpp"
@@ -53,6 +57,7 @@
 #include "oops/typeArrayKlass.hpp"
 #include "prims/jvmtiRedefineClassesTrace.hpp"
 #include "runtime/arguments.hpp"
+#include "runtime/atomic.inline.hpp"
 #include "runtime/deoptimization.hpp"
 #include "runtime/fprofiler.hpp"
 #include "runtime/handles.inline.hpp"
@@ -71,7 +76,7 @@
 #include "utilities/preserveException.hpp"
 #include "utilities/macros.hpp"
 #if INCLUDE_ALL_GCS
-#include "gc_implementation/concurrentMarkSweep/cmsAdaptiveSizePolicy.hpp"
+#include "gc_implementation/shared/adaptiveSizePolicy.hpp"
 #include "gc_implementation/concurrentMarkSweep/cmsCollectorPolicy.hpp"
 #include "gc_implementation/g1/g1CollectedHeap.inline.hpp"
 #include "gc_implementation/g1/g1CollectorPolicy.hpp"
@@ -79,6 +84,8 @@
 #include "gc_implementation/shenandoah/shenandoahHeap.hpp"
 #include "gc_implementation/shenandoah/shenandoahCollectorPolicy.hpp"
 #endif // INCLUDE_ALL_GCS
+
+PRAGMA_FORMAT_MUTE_WARNINGS_FOR_GCC
 
 // Known objects
 Klass* Universe::_boolArrayKlassObj                 = NULL;
@@ -238,8 +245,9 @@ void Universe::check_alignment(uintx size, uintx alignment, const char* name) {
 void initialize_basic_type_klass(Klass* k, TRAPS) {
   Klass* ok = SystemDictionary::Object_klass();
   if (UseSharedSpaces) {
+    ClassLoaderData* loader_data = ClassLoaderData::the_null_class_loader_data();
     assert(k->super() == ok, "u3");
-    k->restore_unshareable_info(CHECK);
+    k->restore_unshareable_info(loader_data, Handle(), CHECK);
   } else {
     k->initialize_supers(ok, CHECK);
   }
@@ -637,7 +645,6 @@ jint universe_init() {
   guarantee(sizeof(oop) % sizeof(HeapWord) == 0,
             "oop size is not not a multiple of HeapWord size");
   TraceTime timer("Genesis", TraceStartupTime);
-  GC_locker::lock();  // do not allow gc during bootstrapping
   JavaClasses::compute_hard_coded_offsets();
 
   jint status = Universe::initialize_heap();
@@ -669,6 +676,10 @@ jint universe_init() {
     SymbolTable::create_table();
     StringTable::create_table();
     ClassLoader::create_package_info_table();
+
+    if (DumpSharedSpaces) {
+      MetaspaceShared::prepare_for_dumping();
+    }
   }
 
   return JNI_OK;
@@ -764,7 +775,7 @@ char* Universe::preferred_heap_base(size_t heap_size, size_t alignment, NARROW_O
       // the correct no-access prefix.
       // The final value will be set in initialize_heap() below.
       Universe::set_narrow_oop_base((address)UnscaledOopHeapMax);
-#ifdef _WIN64
+#if defined(_WIN64) || defined(AIX)
       if (UseLargePages) {
         // Cannot allocate guard pages for implicit checks in indexed
         // addressing mode when large pages are specified on windows.
@@ -814,13 +825,9 @@ jint Universe::initialize_heap() {
       gc_policy = new MarkSweepPolicy();
     } else if (UseConcMarkSweepGC) {
 #if INCLUDE_ALL_GCS
-      if (UseAdaptiveSizePolicy) {
-        gc_policy = new ASConcurrentMarkSweepPolicy();
-      } else {
-        gc_policy = new ConcurrentMarkSweepPolicy();
-      }
+      gc_policy = new ConcurrentMarkSweepPolicy();
 #else  // INCLUDE_ALL_GCS
-    fatal("UseConcMarkSweepGC not supported in this VM.");
+      fatal("UseConcMarkSweepGC not supported in this VM.");
 #endif // INCLUDE_ALL_GCS
     } else { // default old generation
       gc_policy = new MarkSweepPolicy();
@@ -829,6 +836,8 @@ jint Universe::initialize_heap() {
 
     Universe::_collectedHeap = new GenCollectedHeap(gc_policy);
   }
+
+  ThreadLocalAllocBuffer::set_max_size(Universe::heap()->max_tlab_size());
 
   jint status = Universe::heap()->initialize();
   if (status != JNI_OK) {
@@ -853,6 +862,11 @@ jint Universe::initialize_heap() {
       // Can't reserve heap below 32Gb.
       // keep the Universe::narrow_oop_base() set in Universe::reserve_heap()
       Universe::set_narrow_oop_shift(LogMinObjAlignmentInBytes);
+#ifdef AIX
+      // There is no protected page before the heap. This assures all oops
+      // are decoded so that NULL is preserved, so this page will not be accessed.
+      Universe::set_narrow_oop_use_implicit_null_checks(false);
+#endif
       if (verbose) {
         tty->print(", %s: "PTR_FORMAT,
             narrow_oop_mode_to_string(HeapBasedNarrowOop),
@@ -1006,9 +1020,6 @@ void universe2_init() {
 }
 
 
-// This function is defined in JVM.cpp
-extern void initialize_converter_functions();
-
 bool universe_post_init() {
   assert(!is_init_completed(), "Error: initialization not yet completed!");
   Universe::_fully_initialized = true;
@@ -1150,11 +1161,6 @@ bool universe_post_init() {
       SystemDictionary::ProtectionDomain_klass(), m);;
   }
 
-  // The folowing is initializing converter functions for serialization in
-  // JVM.cpp. If we clean up the StrictMath code above we may want to find
-  // a better solution for this as well.
-  initialize_converter_functions();
-
   // This needs to be done before the first scavenge/gc, since
   // it's an input to soft ref clearing policy.
   {
@@ -1171,9 +1177,12 @@ bool universe_post_init() {
 
   MemoryService::add_metaspace_memory_pools();
 
-  GC_locker::unlock();  // allow gc after bootstrapping
-
   MemoryService::set_universe_heap(Universe::_collectedHeap);
+#if INCLUDE_CDS
+  if (UseSharedSpaces) {
+    SharedClassUtil::initialize(CHECK_false);
+  }
+#endif
   return true;
 }
 
@@ -1192,7 +1201,7 @@ void Universe::flush_dependents_on(instanceKlassHandle dependee) {
   if (CodeCache::number_of_nmethods_with_dependencies() == 0) return;
 
   // CodeCache can only be updated by a thread_in_VM and they will all be
-  // stopped dring the safepoint so CodeCache will be safe to update without
+  // stopped during the safepoint so CodeCache will be safe to update without
   // holding the CodeCache_lock.
 
   KlassDepChange changes(dependee);
@@ -1213,7 +1222,7 @@ void Universe::flush_dependents_on(Handle call_site, Handle method_handle) {
   if (CodeCache::number_of_nmethods_with_dependencies() == 0) return;
 
   // CodeCache can only be updated by a thread_in_VM and they will all be
-  // stopped dring the safepoint so CodeCache will be safe to update without
+  // stopped during the safepoint so CodeCache will be safe to update without
   // holding the CodeCache_lock.
 
   CallSiteDepChange changes(call_site(), method_handle());
@@ -1244,7 +1253,7 @@ void Universe::flush_evol_dependents_on(instanceKlassHandle ev_k_h) {
   if (CodeCache::number_of_nmethods_with_dependencies() == 0) return;
 
   // CodeCache can only be updated by a thread_in_VM and they will all be
-  // stopped dring the safepoint so CodeCache will be safe to update without
+  // stopped during the safepoint so CodeCache will be safe to update without
   // holding the CodeCache_lock.
 
   // Compute the dependent nmethods
@@ -1358,7 +1367,7 @@ void Universe::verify(VerifyOption option, const char* prefix, bool silent) {
   HandleMark hm;  // Handles created during verification can be zapped
   _verify_count++;
 
-  if (!silent) gclog_or_tty->print(prefix);
+  if (!silent) gclog_or_tty->print("%s", prefix);
   if (!silent) gclog_or_tty->print("[Verifying ");
   if (!silent) gclog_or_tty->print("threads ");
   Threads::verify();

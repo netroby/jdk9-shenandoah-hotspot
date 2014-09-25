@@ -45,7 +45,6 @@ define_pd_global(bool, ProfileInterpreter,           true);
 #endif // CC_INTERP
 define_pd_global(bool, TieredCompilation,            trueInTiered);
 define_pd_global(intx, CompileThreshold,             10000);
-define_pd_global(intx, BackEdgeThreshold,            100000);
 
 define_pd_global(intx, OnStackReplacePercentage,     140);
 define_pd_global(intx, ConditionalMoveLimit,         3);
@@ -87,6 +86,8 @@ define_pd_global(bool, OptoBundling,                 false);
 define_pd_global(intx, ReservedCodeCacheSize,        48*M);
 define_pd_global(uintx, CodeCacheMinBlockLength,     4);
 define_pd_global(uintx, CodeCacheMinimumUseSpace,    400*K);
+
+define_pd_global(bool,  TrapBasedRangeChecks,        false); // Not needed on x86.
 
 // Heap related flags
 define_pd_global(uintx,MetaspaceSize,    ScaleForWordSize(16*M));

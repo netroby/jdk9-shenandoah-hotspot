@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1999, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1999, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -43,11 +43,12 @@
 #include "runtime/sharedRuntime.hpp"
 
 
-Compiler::Compiler () {}
+Compiler::Compiler() : AbstractCompiler(c1) {
+}
 
 void Compiler::init_c1_runtime() {
   BufferBlob* buffer_blob = CompilerThread::current()->get_buffer_blob();
-  Arena* arena = new (mtCompiler) Arena();
+  Arena* arena = new (mtCompiler) Arena(mtCompiler);
   Runtime1::initialize(buffer_blob);
   FrameMap::initialize();
   // initialize data structures

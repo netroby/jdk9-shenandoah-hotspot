@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2001, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2001, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -28,6 +28,8 @@
 #include "gc_implementation/g1/heapRegion.hpp"
 #include "gc_implementation/g1/survRateGroup.hpp"
 #include "memory/allocation.hpp"
+
+PRAGMA_FORMAT_MUTE_WARNINGS_FOR_GCC
 
 SurvRateGroup::SurvRateGroup(G1CollectorPolicy* g1p,
                              const char* name,
@@ -187,10 +189,10 @@ SurvRateGroup::all_surviving_words_recorded(bool propagate) {
 #ifndef PRODUCT
 void
 SurvRateGroup::print() {
-  gclog_or_tty->print_cr("Surv Rate Group: %s (%d entries)",
+  gclog_or_tty->print_cr("Surv Rate Group: %s (" SIZE_FORMAT " entries)",
                 _name, _region_num);
   for (size_t i = 0; i < _region_num; ++i) {
-    gclog_or_tty->print_cr("    age %4d   surv rate %6.2lf %%   pred %6.2lf %%",
+    gclog_or_tty->print_cr("    age " SIZE_FORMAT_W(4) "   surv rate %6.2lf %%   pred %6.2lf %%",
                   i, _surv_rate[i] * 100.0,
                   _g1p->get_new_prediction(_surv_rate_pred[i]) * 100.0);
   }
@@ -202,15 +204,16 @@ SurvRateGroup::print_surv_rate_summary() {
   if (length == 0)
     return;
 
-  gclog_or_tty->print_cr("");
-  gclog_or_tty->print_cr("%s Rate Summary (for up to age %d)", _name, length-1);
+  gclog_or_tty->cr();
+  gclog_or_tty->print_cr("%s Rate Summary (for up to age " SIZE_FORMAT ")", _name, length-1);
   gclog_or_tty->print_cr("      age range     survival rate (avg)      samples (avg)");
   gclog_or_tty->print_cr("  ---------------------------------------------------------");
 
   size_t index = 0;
   size_t limit = MIN2((int) length, 10);
   while (index < limit) {
-    gclog_or_tty->print_cr("           %4d                 %6.2lf%%             %6.2lf",
+    gclog_or_tty->print_cr("           " SIZE_FORMAT_W(4)
+                  "                 %6.2lf%%             %6.2lf",
                   index, _summary_surv_rates[index]->avg() * 100.0,
                   (double) _summary_surv_rates[index]->num());
     ++index;
@@ -228,7 +231,8 @@ SurvRateGroup::print_surv_rate_summary() {
     ++index;
 
     if (index == length || num % 10 == 0) {
-      gclog_or_tty->print_cr("   %4d .. %4d                 %6.2lf%%             %6.2lf",
+      gclog_or_tty->print_cr("   " SIZE_FORMAT_W(4) " .. " SIZE_FORMAT_W(4)
+                    "                 %6.2lf%%             %6.2lf",
                     (index-1) / 10 * 10, index-1, sum / (double) num,
                     (double) samples / (double) num);
       sum = 0.0;

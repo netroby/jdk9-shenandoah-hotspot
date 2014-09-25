@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1998, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1998, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -25,31 +25,13 @@
 #ifndef SHARE_VM_CODE_VMREG_HPP
 #define SHARE_VM_CODE_VMREG_HPP
 
+#include "asm/register.hpp"
 #include "memory/allocation.hpp"
 #include "utilities/globalDefinitions.hpp"
-#include "asm/register.hpp"
 
 #ifdef COMPILER2
 #include "opto/adlcVMDeps.hpp"
 #include "utilities/ostream.hpp"
-#ifdef TARGET_ARCH_MODEL_x86_32
-# include "adfiles/adGlobals_x86_32.hpp"
-#endif
-#ifdef TARGET_ARCH_MODEL_x86_64
-# include "adfiles/adGlobals_x86_64.hpp"
-#endif
-#ifdef TARGET_ARCH_MODEL_sparc
-# include "adfiles/adGlobals_sparc.hpp"
-#endif
-#ifdef TARGET_ARCH_MODEL_zero
-# include "adfiles/adGlobals_zero.hpp"
-#endif
-#ifdef TARGET_ARCH_MODEL_arm
-# include "adfiles/adGlobals_arm.hpp"
-#endif
-#ifdef TARGET_ARCH_MODEL_ppc
-# include "adfiles/adGlobals_ppc.hpp"
-#endif
 #endif
 
 //------------------------------VMReg------------------------------------------
@@ -70,7 +52,7 @@ friend class OptoReg;
 // friend class Location;
 private:
   enum {
-    BAD = -1
+    BAD_REG = -1
   };
 
 
@@ -83,7 +65,7 @@ private:
 
 public:
 
-  static VMReg  as_VMReg(int val, bool bad_ok = false) { assert(val > BAD || bad_ok, "invalid"); return (VMReg) (intptr_t) val; }
+  static VMReg  as_VMReg(int val, bool bad_ok = false) { assert(val > BAD_REG || bad_ok, "invalid"); return (VMReg) (intptr_t) val; }
 
   const char*  name() {
     if (is_reg()) {
@@ -95,8 +77,8 @@ public:
       return "STACKED REG";
     }
   }
-  static VMReg Bad() { return (VMReg) (intptr_t) BAD; }
-  bool is_valid() const { return ((intptr_t) this) != BAD; }
+  static VMReg Bad() { return (VMReg) (intptr_t) BAD_REG; }
+  bool is_valid() const { return ((intptr_t) this) != BAD_REG; }
   bool is_stack() const { return (intptr_t) this >= (intptr_t) stack0; }
   bool is_reg()   const { return is_valid() && !is_stack(); }
 
@@ -104,7 +86,7 @@ public:
   // also a register you could use in the assembler. On machines with
   // 64bit registers only one half of the VMReg (and OptoReg) is considered
   // concrete.
-  bool is_concrete();
+  //  bool is_concrete();
 
   // VMRegs are 4 bytes wide on all platforms
   static const int stack_slot_size;

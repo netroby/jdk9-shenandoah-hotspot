@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2003, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2003, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -58,11 +58,11 @@
 
   // Interpreter-specific registers
   void save_bcp() {
-    movptr(Address(rbp, frame::interpreter_frame_bcx_offset * wordSize), r13);
+    movptr(Address(rbp, frame::interpreter_frame_bcp_offset * wordSize), r13);
   }
 
   void restore_bcp() {
-    movptr(r13, Address(rbp, frame::interpreter_frame_bcx_offset * wordSize));
+    movptr(r13, Address(rbp, frame::interpreter_frame_bcp_offset * wordSize));
   }
 
   void restore_locals() {
@@ -99,7 +99,6 @@
   void get_cache_and_index_and_bytecode_at_bcp(Register cache, Register index, Register bytecode, int byte_no, int bcp_offset, size_t index_size = sizeof(u2));
   void get_cache_entry_pointer_at_bcp(Register cache, Register tmp, int bcp_offset, size_t index_size = sizeof(u2));
   void get_cache_index_at_bcp(Register index, int bcp_offset, size_t index_size = sizeof(u2));
-  void get_method_counters(Register method, Register mcs, Label& skip);
 
   // load cpool->resolved_references(index);
   void load_resolved_reference_at_index(Register result, Register index);
@@ -172,6 +171,7 @@
                          bool install_monitor_exception = true,
                          bool notify_jvmdi = true);
 #endif // CC_INTERP
+  void get_method_counters(Register method, Register mcs, Label& skip);
 
   // Object locking
   void lock_object  (Register lock_reg);

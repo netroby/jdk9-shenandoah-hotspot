@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -24,21 +24,10 @@
 
 #include "precompiled.hpp"
 #include "memory/allocation.inline.hpp"
+#include "memory/resourceArea.hpp"
+#include "runtime/atomic.inline.hpp"
 #include "utilities/bitMap.inline.hpp"
 #include "utilities/copy.hpp"
-#ifdef TARGET_OS_FAMILY_linux
-# include "os_linux.inline.hpp"
-#endif
-#ifdef TARGET_OS_FAMILY_solaris
-# include "os_solaris.inline.hpp"
-#endif
-#ifdef TARGET_OS_FAMILY_windows
-# include "os_windows.inline.hpp"
-#endif
-#ifdef TARGET_OS_FAMILY_bsd
-# include "os_bsd.inline.hpp"
-#endif
-
 
 BitMap::BitMap(bm_word_t* map, idx_t size_in_bits) :
   _map(map), _size(size_in_bits), _map_allocator(false)
@@ -64,16 +53,14 @@ void BitMap::resize(idx_t size_in_bits, bool in_resource_area) {
   idx_t new_size_in_words = size_in_words();
   if (in_resource_area) {
     _map = NEW_RESOURCE_ARRAY(bm_word_t, new_size_in_words);
+    Copy::disjoint_words((HeapWord*)old_map, (HeapWord*) _map,
+                         MIN2(old_size_in_words, new_size_in_words));
   } else {
-    if (old_map != NULL) {
-      _map_allocator.free();
-    }
-    _map = _map_allocator.allocate(new_size_in_words);
+    _map = _map_allocator.reallocate(new_size_in_words);
   }
-  Copy::disjoint_words((HeapWord*)old_map, (HeapWord*) _map,
-                       MIN2(old_size_in_words, new_size_in_words));
+
   if (new_size_in_words > old_size_in_words) {
-    clear_range_of_words(old_size_in_words, size_in_words());
+    clear_range_of_words(old_size_in_words, new_size_in_words);
   }
 }
 
@@ -107,7 +94,7 @@ void BitMap::par_put_range_within_word(idx_t beg, idx_t end, bool value) {
     while (true) {
       intptr_t res = Atomic::cmpxchg_ptr(nw, pw, w);
       if (res == w) break;
-      w  = *pw;
+      w  = res;
       nw = value ? (w | ~mr) : (w & mr);
     }
   }
@@ -520,19 +507,96 @@ BitMap::idx_t BitMap::count_one_bits() const {
 
 void BitMap::print_on_error(outputStream* st, const char* prefix) const {
   st->print_cr("%s[" PTR_FORMAT ", " PTR_FORMAT ")",
-      prefix, map(), (char*)map() + (size() >> LogBitsPerByte));
+      prefix, p2i(map()), p2i((char*)map() + (size() >> LogBitsPerByte)));
 }
 
 #ifndef PRODUCT
 
 void BitMap::print_on(outputStream* st) const {
-  tty->print("Bitmap(%d):", size());
+  tty->print("Bitmap(" SIZE_FORMAT "):", size());
   for (idx_t index = 0; index < size(); index++) {
     tty->print("%c", at(index) ? '1' : '0');
   }
   tty->cr();
 }
 
+class TestBitMap : public AllStatic {
+  const static BitMap::idx_t BITMAP_SIZE = 1024;
+  static void fillBitMap(BitMap& map) {
+    map.set_bit(1);
+    map.set_bit(3);
+    map.set_bit(17);
+    map.set_bit(512);
+  }
+
+  static void testResize(bool in_resource_area) {
+    {
+      BitMap map(0, in_resource_area);
+      map.resize(BITMAP_SIZE, in_resource_area);
+      fillBitMap(map);
+
+      BitMap map2(BITMAP_SIZE, in_resource_area);
+      fillBitMap(map2);
+      assert(map.is_same(map2), "could be");
+    }
+
+    {
+      BitMap map(128, in_resource_area);
+      map.resize(BITMAP_SIZE, in_resource_area);
+      fillBitMap(map);
+
+      BitMap map2(BITMAP_SIZE, in_resource_area);
+      fillBitMap(map2);
+      assert(map.is_same(map2), "could be");
+    }
+
+    {
+      BitMap map(BITMAP_SIZE, in_resource_area);
+      map.resize(BITMAP_SIZE, in_resource_area);
+      fillBitMap(map);
+
+      BitMap map2(BITMAP_SIZE, in_resource_area);
+      fillBitMap(map2);
+      assert(map.is_same(map2), "could be");
+    }
+  }
+
+  static void testResizeResource() {
+    ResourceMark rm;
+    testResize(true);
+  }
+
+  static void testResizeNonResource() {
+    const size_t bitmap_bytes = BITMAP_SIZE / BitsPerByte;
+
+    // Test the default behavior
+    testResize(false);
+
+    {
+      // Make sure that AllocatorMallocLimit is larger than our allocation request
+      // forcing it to call standard malloc()
+      SizeTFlagSetting fs(ArrayAllocatorMallocLimit, bitmap_bytes * 4);
+      testResize(false);
+    }
+    {
+      // Make sure that AllocatorMallocLimit is smaller than our allocation request
+      // forcing it to call mmap() (or equivalent)
+      SizeTFlagSetting fs(ArrayAllocatorMallocLimit, bitmap_bytes / 4);
+      testResize(false);
+    }
+  }
+
+ public:
+  static void test() {
+    testResizeResource();
+    testResizeNonResource();
+  }
+
+};
+
+void TestBitMap_test() {
+  TestBitMap::test();
+}
 #endif
 
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2001, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2001, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -25,7 +25,7 @@
 #ifndef SHARE_VM_GC_IMPLEMENTATION_G1_SPARSEPRT_HPP
 #define SHARE_VM_GC_IMPLEMENTATION_G1_SPARSEPRT_HPP
 
-#include "gc_implementation/g1/g1CollectedHeap.inline.hpp"
+#include "gc_implementation/g1/g1CollectedHeap.hpp"
 #include "gc_implementation/g1/heapRegion.hpp"
 #include "memory/allocation.hpp"
 #include "memory/cardTableModRefBS.hpp"
@@ -122,12 +122,6 @@ class RSHashTable : public CHeapObj<mtGC> {
   // Requires that the caller hold a lock preventing parallel modifying
   // operations, and that the the table be less than completely full.  If
   // an entry for "region_ind" is already in the table, finds it and
-  // returns its address; otherwise returns "NULL."
-  SparsePRTEntry* entry_for_region_ind(RegionIdx_t region_ind) const;
-
-  // Requires that the caller hold a lock preventing parallel modifying
-  // operations, and that the the table be less than completely full.  If
-  // an entry for "region_ind" is already in the table, finds it and
   // returns its address; otherwise allocates, initializes, inserts and
   // returns a new entry for "region_ind".
   SparsePRTEntry* entry_for_region_ind_create(RegionIdx_t region_ind);
@@ -144,7 +138,7 @@ public:
 
   // Attempts to ensure that the given card_index in the given region is in
   // the sparse table.  If successful (because the card was already
-  // present, or because it was successfullly added) returns "true".
+  // present, or because it was successfully added) returns "true".
   // Otherwise, returns "false" to indicate that the addition would
   // overflow the entry for the region.  The caller must transfer these
   // entries to a larger-capacity representation.
@@ -158,7 +152,7 @@ public:
 
   void add_entry(SparsePRTEntry* e);
 
-  SparsePRTEntry* get_entry(RegionIdx_t region_id);
+  SparsePRTEntry* get_entry(RegionIdx_t region_id) const;
 
   void clear();
 
@@ -201,8 +195,7 @@ public:
   bool has_next(size_t& card_index);
 };
 
-// Concurrent accesss to a SparsePRT must be serialized by some external
-// mutex.
+// Concurrent access to a SparsePRT must be serialized by some external mutex.
 
 class SparsePRTIter;
 class SparsePRTCleanupTask;
@@ -248,7 +241,7 @@ public:
 
   // Attempts to ensure that the given card_index in the given region is in
   // the sparse table.  If successful (because the card was already
-  // present, or because it was successfullly added) returns "true".
+  // present, or because it was successfully added) returns "true".
   // Otherwise, returns "false" to indicate that the addition would
   // overflow the entry for the region.  The caller must transfer these
   // entries to a larger-capacity representation.

@@ -26,7 +26,6 @@
 #include "asm/macroAssembler.hpp"
 #include "asm/macroAssembler.inline.hpp"
 #include "asm/codeBuffer.hpp"
-#include "runtime/atomic.hpp"
 #include "runtime/atomic.inline.hpp"
 #include "runtime/icache.hpp"
 #include "runtime/os.hpp"
@@ -119,7 +118,7 @@ void AbstractAssembler::bind(Label& L) {
   L.patch_instructions((MacroAssembler*)this);
 }
 
-void AbstractAssembler::generate_stack_overflow_check( int frame_size_in_bytes) {
+void AbstractAssembler::generate_stack_overflow_check(int frame_size_in_bytes) {
   if (UseStackBanging) {
     // Each code entry causes one stack bang n pages down the stack where n
     // is configurable by StackShadowPages.  The setting depends on the maximum
@@ -134,7 +133,7 @@ void AbstractAssembler::generate_stack_overflow_check( int frame_size_in_bytes) 
     // is greater than a page.
 
     const int page_size = os::vm_page_size();
-    int bang_end = StackShadowPages*page_size;
+    int bang_end = StackShadowPages * page_size;
 
     // This is how far the previous frame's stack banging extended.
     const int bang_end_safe = bang_end;

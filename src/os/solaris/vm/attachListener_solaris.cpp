@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2005, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2005, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -24,11 +24,12 @@
 
 #include "precompiled.hpp"
 #include "runtime/interfaceSupport.hpp"
-#include "runtime/os.hpp"
+#include "runtime/os.inline.hpp"
 #include "services/attachListener.hpp"
 #include "services/dtraceAttacher.hpp"
 
 #include <door.h>
+#include <limits.h>
 #include <string.h>
 #include <signal.h>
 #include <sys/types.h>
@@ -198,23 +199,29 @@ class ArgumentIterator : public StackObj {
 // Calls from the door function to check that the client credentials
 // match this process. Returns 0 if credentials okay, otherwise -1.
 static int check_credentials() {
-  door_cred_t cred_info;
+  ucred_t *cred_info = NULL;
+  int ret = -1; // deny by default
 
   // get client credentials
-  if (door_cred(&cred_info) == -1) {
-    return -1; // unable to get them
+  if (door_ucred(&cred_info) == -1) {
+    return -1; // unable to get them, deny
   }
 
   // get our euid/eguid (probably could cache these)
   uid_t euid = geteuid();
   gid_t egid = getegid();
 
-  // check that the effective uid/gid matches - discuss this with Jeff.
-  if (cred_info.dc_euid == euid && cred_info.dc_egid == egid) {
-    return 0;  // okay
-  } else {
-    return -1; // denied
+  // get euid/egid from ucred_free
+  uid_t ucred_euid = ucred_geteuid(cred_info);
+  gid_t ucred_egid = ucred_getegid(cred_info);
+
+  // check that the effective uid/gid matches
+  if (ucred_euid == euid && ucred_egid == egid) {
+    ret =  0;  // allow
   }
+
+  ucred_free(cred_info);
+  return ret;
 }
 
 
@@ -668,11 +675,13 @@ static jint enable_dprobes(AttachOperation* op, outputStream* out) {
     out->print_cr("No probe specified");
     return JNI_ERR;
   } else {
-    int probe_typess = atoi(probe);
-    if (errno) {
+    char *end;
+    long val = strtol(probe, &end, 10);
+    if (end == probe || val < 0 || val > INT_MAX) {
       out->print_cr("invalid probe type");
       return JNI_ERR;
     } else {
+      int probe_typess = (int) val;
       DTrace::enable_dprobes(probe_typess);
       return JNI_OK;
     }
@@ -703,8 +712,9 @@ jint AttachListener::pd_set_flag(AttachOperation* op, outputStream* out) {
   bool flag = true;
   const char* arg1;
   if ((arg1 = op->arg(1)) != NULL) {
-    flag = (atoi(arg1) != 0);
-    if (errno) {
+    char *end;
+    flag = (strtol(arg1, &end, 10) != 0);
+    if (arg1 == end) {
       out->print_cr("flag value has to be an integer");
       return JNI_ERR;
     }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2001, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2001, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -32,6 +32,8 @@
 #include "memory/gcLocker.inline.hpp"
 #include "oops/oop.inline.hpp"
 #include "runtime/java.hpp"
+
+PRAGMA_FORMAT_MUTE_WARNINGS_FOR_GCC
 
 inline const char* PSOldGen::select_name() {
   return UseParallelOldGC ? "ParOldGen" : "PSOldGen";
@@ -147,8 +149,8 @@ void PSOldGen::initialize_work(const char* perf_data_name, int level) {
 
 void PSOldGen::initialize_performance_counters(const char* perf_data_name, int level) {
   // Generation Counters, generation 'level', 1 subspace
-  _gen_counters = new PSGenerationCounters(perf_data_name, level, 1,
-                                           virtual_space());
+  _gen_counters = new PSGenerationCounters(perf_data_name, level, 1, _min_gen_size,
+                                           _max_gen_size, virtual_space());
   _space_counters = new SpaceCounters(perf_data_name, 0,
                                       virtual_space()->reserved_size(),
                                       _object_space, _gen_counters);
@@ -280,7 +282,7 @@ bool PSOldGen::expand_by(size_t bytes) {
         "Should be true before post_resize()");
       MemRegion mangle_region(object_space()->end(), virtual_space_high);
       // Note that the object space has not yet been updated to
-      // coincede with the new underlying virtual space.
+      // coincide with the new underlying virtual space.
       SpaceMangler::mangle_region(mangle_region);
     }
     post_resize();

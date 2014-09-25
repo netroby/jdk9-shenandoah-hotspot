@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1999, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1999, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -38,6 +38,7 @@
 #include "prims/jvm.h"
 #include "prims/jvm_misc.hpp"
 #include "runtime/arguments.hpp"
+#include "runtime/atomic.inline.hpp"
 #include "runtime/extendedPC.hpp"
 #include "runtime/frame.inline.hpp"
 #include "runtime/interfaceSupport.hpp"
@@ -256,30 +257,6 @@ frame os::current_frame() {
   }
 }
 
-static int threadgetstate(thread_t tid, int *flags, lwpid_t *lwp, stack_t *ss, gregset_t rs, lwpstatus_t *lwpstatus) {
-  char lwpstatusfile[PROCFILE_LENGTH];
-  int lwpfd, err;
-
-  if (err = os::Solaris::thr_getstate(tid, flags, lwp, ss, rs))
-    return (err);
-  if (*flags == TRS_LWPID) {
-    sprintf(lwpstatusfile, "/proc/%d/lwp/%d/lwpstatus", getpid(),
-            *lwp);
-    if ((lwpfd = open(lwpstatusfile, O_RDONLY)) < 0) {
-      perror("thr_mutator_status: open lwpstatus");
-      return (EINVAL);
-    }
-    if (pread(lwpfd, lwpstatus, sizeof (lwpstatus_t), (off_t)0) !=
-        sizeof (lwpstatus_t)) {
-      perror("thr_mutator_status: read lwpstatus");
-      (void) close(lwpfd);
-      return (EINVAL);
-    }
-    (void) close(lwpfd);
-  }
-  return (0);
-}
-
 #ifndef AMD64
 
 // Detecting SSE support by OS
@@ -459,6 +436,11 @@ JVM_handle_solaris_signal(int sig, siginfo_t* info, void* ucVoid,
       }
     }
 
+    if ((sig == SIGSEGV) && VM_Version::is_cpuinfo_segv_addr(pc)) {
+      // Verify that OS save/restore AVX registers.
+      stub = VM_Version::cpuinfo_cont_addr();
+    }
+
     if (thread->thread_state() == _thread_in_vm) {
       if (sig == SIGBUS && info->si_code == BUS_OBJERR && thread->doing_unsafe_access()) {
         stub = StubRoutines::handler_for_unsafe_access();
@@ -475,9 +457,11 @@ JVM_handle_solaris_signal(int sig, siginfo_t* info, void* ucVoid,
         // here if the underlying file has been truncated.
         // Do not crash the VM in such a case.
         CodeBlob* cb = CodeCache::find_blob_unsafe(pc);
-        nmethod* nm = cb->is_nmethod() ? (nmethod*)cb : NULL;
-        if (nm != NULL && nm->has_unsafe_access()) {
-          stub = StubRoutines::handler_for_unsafe_access();
+        if (cb != NULL) {
+          nmethod* nm = cb->is_nmethod() ? (nmethod*)cb : NULL;
+          if (nm != NULL && nm->has_unsafe_access()) {
+            stub = StubRoutines::handler_for_unsafe_access();
+          }
         }
       }
       else
@@ -724,6 +708,7 @@ JVM_handle_solaris_signal(int sig, siginfo_t* info, void* ucVoid,
   err.report_and_die();
 
   ShouldNotReachHere();
+  return false;
 }
 
 void os::print_context(outputStream *st, void *context) {
@@ -933,3 +918,8 @@ void os::verify_stack_alignment() {
 #endif
 }
 #endif
+
+int os::extra_bang_size_in_bytes() {
+  // JDK-8050147 requires the full cache line bang for x86.
+  return VM_Version::L1_line_size();
+}

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1999, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1999, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -51,6 +51,7 @@
 #include "runtime/init.hpp"
 #include "runtime/reflection.hpp"
 #include "runtime/sharedRuntime.hpp"
+#include "runtime/thread.inline.hpp"
 #include "utilities/dtrace.hpp"
 #include "utilities/macros.hpp"
 #ifdef COMPILER1
@@ -85,7 +86,8 @@ static bool firstEnv = true;
 
 // ------------------------------------------------------------------
 // ciEnv::ciEnv
-ciEnv::ciEnv(CompileTask* task, int system_dictionary_modification_counter) {
+ciEnv::ciEnv(CompileTask* task, int system_dictionary_modification_counter)
+  : _ciEnv_arena(mtCompiler) {
   VM_ENTRY_MARK;
 
   // Set up ciEnv::current immediately, for the sake of ciObjectFactory, etc.
@@ -136,9 +138,14 @@ ciEnv::ciEnv(CompileTask* task, int system_dictionary_modification_counter) {
   _ClassCastException_instance = NULL;
   _the_null_string = NULL;
   _the_min_jint_string = NULL;
+
+  _jvmti_can_hotswap_or_post_breakpoint = false;
+  _jvmti_can_access_local_variables = false;
+  _jvmti_can_post_on_exceptions = false;
+  _jvmti_can_pop_frame = false;
 }
 
-ciEnv::ciEnv(Arena* arena) {
+ciEnv::ciEnv(Arena* arena) : _ciEnv_arena(mtCompiler) {
   ASSERT_IN_VM;
 
   // Set up ciEnv::current immediately, for the sake of ciObjectFactory, etc.
@@ -186,6 +193,11 @@ ciEnv::ciEnv(Arena* arena) {
   _ClassCastException_instance = NULL;
   _the_null_string = NULL;
   _the_min_jint_string = NULL;
+
+  _jvmti_can_hotswap_or_post_breakpoint = false;
+  _jvmti_can_access_local_variables = false;
+  _jvmti_can_post_on_exceptions = false;
+  _jvmti_can_pop_frame = false;
 }
 
 ciEnv::~ciEnv() {
@@ -205,6 +217,31 @@ void ciEnv::cache_jvmti_state() {
   _jvmti_can_hotswap_or_post_breakpoint = JvmtiExport::can_hotswap_or_post_breakpoint();
   _jvmti_can_access_local_variables     = JvmtiExport::can_access_local_variables();
   _jvmti_can_post_on_exceptions         = JvmtiExport::can_post_on_exceptions();
+  _jvmti_can_pop_frame                  = JvmtiExport::can_pop_frame();
+}
+
+bool ciEnv::should_retain_local_variables() const {
+  return _jvmti_can_access_local_variables || _jvmti_can_pop_frame;
+}
+
+bool ciEnv::jvmti_state_changed() const {
+  if (!_jvmti_can_access_local_variables &&
+      JvmtiExport::can_access_local_variables()) {
+    return true;
+  }
+  if (!_jvmti_can_hotswap_or_post_breakpoint &&
+      JvmtiExport::can_hotswap_or_post_breakpoint()) {
+    return true;
+  }
+  if (!_jvmti_can_post_on_exceptions &&
+      JvmtiExport::can_post_on_exceptions()) {
+    return true;
+  }
+  if (!_jvmti_can_pop_frame &&
+      JvmtiExport::can_pop_frame()) {
+    return true;
+  }
+  return false;
 }
 
 // ------------------------------------------------------------------
@@ -476,24 +513,9 @@ ciKlass* ciEnv::get_klass_by_index_impl(constantPoolHandle cpool,
   } else {
     // Check if it's resolved if it's not a symbol constant pool entry.
     klass = KlassHandle(THREAD, ConstantPool::klass_at_if_loaded(cpool, index));
-
-  if (klass.is_null()) {
-    // The klass has not been inserted into the constant pool.
     // Try to look it up by name.
-    {
-      // We have to lock the cpool to keep the oop from being resolved
-      // while we are accessing it.
-        MonitorLockerEx ml(cpool->lock());
-      constantTag tag = cpool->tag_at(index);
-      if (tag.is_klass()) {
-        // The klass has been inserted into the constant pool
-        // very recently.
-        klass = KlassHandle(THREAD, cpool->resolved_klass_at(index));
-      } else {
-        assert(cpool->tag_at(index).is_unresolved_klass(), "wrong tag");
-        klass_name = cpool->unresolved_klass_at(index);
-      }
-    }
+  if (klass.is_null()) {
+      klass_name = cpool->klass_name_at(index);
   }
   }
 
@@ -904,7 +926,7 @@ void ciEnv::validate_compile_task_dependencies(ciMethod* target) {
 #ifdef ASSERT
     if (!counter_changed && !PrintCompilation) {
       // Print out the compile task that failed
-      _task->print_line();
+      _task->print_tty();
     }
 #endif
     assert(counter_changed, "failed dependencies, but counter didn't change");
@@ -926,7 +948,8 @@ void ciEnv::register_method(ciMethod* target,
                             AbstractCompiler* compiler,
                             int comp_level,
                             bool has_unsafe_access,
-                            bool has_wide_vectors) {
+                            bool has_wide_vectors,
+                            RTMState  rtm_state) {
   VM_ENTRY_MARK;
   nmethod* nm = NULL;
   {
@@ -940,13 +963,7 @@ void ciEnv::register_method(ciMethod* target,
     No_Safepoint_Verifier nsv;
 
     // Change in Jvmti state may invalidate compilation.
-    if (!failing() &&
-        ( (!jvmti_can_hotswap_or_post_breakpoint() &&
-           JvmtiExport::can_hotswap_or_post_breakpoint()) ||
-          (!jvmti_can_access_local_variables() &&
-           JvmtiExport::can_access_local_variables()) ||
-          (!jvmti_can_post_on_exceptions() &&
-           JvmtiExport::can_post_on_exceptions()) )) {
+    if (!failing() && jvmti_state_changed()) {
       record_failure("Jvmti state change invalidated dependencies");
     }
 
@@ -972,6 +989,15 @@ void ciEnv::register_method(ciMethod* target,
     }
 
     methodHandle method(THREAD, target->get_Method());
+
+#if INCLUDE_RTM_OPT
+    if (!failing() && (rtm_state != NoRTM) &&
+        (method()->method_data() != NULL) &&
+        (method()->method_data()->rtm_state() != rtm_state)) {
+      // Preemptive decompile if rtm state was changed.
+      record_failure("RTM state change invalidated rtm code");
+    }
+#endif
 
     if (failing()) {
       // While not a true deoptimization, it is a preemptive decompile.
@@ -999,13 +1025,15 @@ void ciEnv::register_method(ciMethod* target,
                                frame_words, oop_map_set,
                                handler_table, inc_table,
                                compiler, comp_level);
-
     // Free codeBlobs
     code_buffer->free_blob();
 
     if (nm != NULL) {
       nm->set_has_unsafe_access(has_unsafe_access);
       nm->set_has_wide_vectors(has_wide_vectors);
+#if INCLUDE_RTM_OPT
+      nm->set_rtm_state(rtm_state);
+#endif
 
       // Record successful registration.
       // (Put nm into the task handle *before* publishing to the Java heap.)
@@ -1098,9 +1126,6 @@ int ciEnv::num_inlined_bytecodes() const {
 // ------------------------------------------------------------------
 // ciEnv::record_failure()
 void ciEnv::record_failure(const char* reason) {
-  if (log() != NULL) {
-    log()->elem("failure reason='%s'", reason);
-  }
   if (_failure_reason == NULL) {
     // Record the first failure reason.
     _failure_reason = reason;
@@ -1147,6 +1172,33 @@ ciInstance* ciEnv::unloaded_ciinstance() {
 
 // Don't change thread state and acquire any locks.
 // Safe to call from VM error reporter.
+
+void ciEnv::dump_compile_data(outputStream* out) {
+  CompileTask* task = this->task();
+  Method* method = task->method();
+  int entry_bci = task->osr_bci();
+  int comp_level = task->comp_level();
+  out->print("compile %s %s %s %d %d",
+                method->klass_name()->as_quoted_ascii(),
+                method->name()->as_quoted_ascii(),
+                method->signature()->as_quoted_ascii(),
+                entry_bci, comp_level);
+  if (compiler_data() != NULL) {
+    if (is_c2_compile(comp_level)) { // C2 or Shark
+#ifdef COMPILER2
+      // Dump C2 inlining data.
+      ((Compile*)compiler_data())->dump_inline_data(out);
+#endif
+    } else if (is_c1_compile(comp_level)) { // C1
+#ifdef COMPILER1
+      // Dump C1 inlining data.
+      ((Compilation*)compiler_data())->dump_inline_data(out);
+#endif
+    }
+  }
+  out->cr();
+}
+
 void ciEnv::dump_replay_data_unsafe(outputStream* out) {
   ResourceMark rm;
 #if INCLUDE_JVMTI
@@ -1160,16 +1212,7 @@ void ciEnv::dump_replay_data_unsafe(outputStream* out) {
   for (int i = 0; i < objects->length(); i++) {
     objects->at(i)->dump_replay_data(out);
   }
-  CompileTask* task = this->task();
-  Method* method = task->method();
-  int entry_bci = task->osr_bci();
-  int comp_level = task->comp_level();
-  // Klass holder = method->method_holder();
-  out->print_cr("compile %s %s %s %d %d",
-                method->klass_name()->as_quoted_ascii(),
-                method->name()->as_quoted_ascii(),
-                method->signature()->as_quoted_ascii(),
-                entry_bci, comp_level);
+  dump_compile_data(out);
   out->flush();
 }
 
@@ -1178,4 +1221,45 @@ void ciEnv::dump_replay_data(outputStream* out) {
     MutexLocker ml(Compile_lock);
     dump_replay_data_unsafe(out);
   )
+}
+
+void ciEnv::dump_replay_data(int compile_id) {
+  static char buffer[O_BUFLEN];
+  int ret = jio_snprintf(buffer, O_BUFLEN, "replay_pid%p_compid%d.log", os::current_process_id(), compile_id);
+  if (ret > 0) {
+    int fd = open(buffer, O_RDWR | O_CREAT | O_TRUNC, 0666);
+    if (fd != -1) {
+      FILE* replay_data_file = os::open(fd, "w");
+      if (replay_data_file != NULL) {
+        fileStream replay_data_stream(replay_data_file, /*need_close=*/true);
+        dump_replay_data(&replay_data_stream);
+        tty->print_cr("# Compiler replay data is saved as: %s", buffer);
+      } else {
+        tty->print_cr("# Can't open file to dump replay data.");
+      }
+    }
+  }
+}
+
+void ciEnv::dump_inline_data(int compile_id) {
+  static char buffer[O_BUFLEN];
+  int ret = jio_snprintf(buffer, O_BUFLEN, "inline_pid%p_compid%d.log", os::current_process_id(), compile_id);
+  if (ret > 0) {
+    int fd = open(buffer, O_RDWR | O_CREAT | O_TRUNC, 0666);
+    if (fd != -1) {
+      FILE* inline_data_file = os::open(fd, "w");
+      if (inline_data_file != NULL) {
+        fileStream replay_data_stream(inline_data_file, /*need_close=*/true);
+        GUARDED_VM_ENTRY(
+          MutexLocker ml(Compile_lock);
+          dump_compile_data(&replay_data_stream);
+        )
+        replay_data_stream.flush();
+        tty->print("# Compiler inline data is saved as: ");
+        tty->print_cr("%s", buffer);
+      } else {
+        tty->print_cr("# Can't open file to dump inline data.");
+      }
+    }
+  }
 }

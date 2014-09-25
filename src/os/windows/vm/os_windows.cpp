@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -40,10 +40,12 @@
 #include "mutex_windows.inline.hpp"
 #include "oops/oop.inline.hpp"
 #include "os_share_windows.hpp"
+#include "os_windows.inline.hpp"
 #include "prims/jniFastGetField.hpp"
 #include "prims/jvm.h"
 #include "prims/jvm_misc.hpp"
 #include "runtime/arguments.hpp"
+#include "runtime/atomic.inline.hpp"
 #include "runtime/extendedPC.hpp"
 #include "runtime/globals.hpp"
 #include "runtime/interfaceSupport.hpp"
@@ -51,6 +53,7 @@
 #include "runtime/javaCalls.hpp"
 #include "runtime/mutexLocker.hpp"
 #include "runtime/objectMonitor.hpp"
+#include "runtime/orderAccess.inline.hpp"
 #include "runtime/osThread.hpp"
 #include "runtime/perfMemory.hpp"
 #include "runtime/sharedRuntime.hpp"
@@ -59,6 +62,7 @@
 #include "runtime/thread.inline.hpp"
 #include "runtime/threadCritical.hpp"
 #include "runtime/timer.hpp"
+#include "runtime/vm_version.hpp"
 #include "services/attachListener.hpp"
 #include "services/memTracker.hpp"
 #include "services/runtimeService.hpp"
@@ -124,12 +128,13 @@ BOOL WINAPI DllMain(HINSTANCE hinst, DWORD reason, LPVOID reserved) {
   switch (reason) {
     case DLL_PROCESS_ATTACH:
       vm_lib_handle = hinst;
-      if(ForceTimeHighResolution)
+      if (ForceTimeHighResolution)
         timeBeginPeriod(1L);
       break;
     case DLL_PROCESS_DETACH:
-      if(ForceTimeHighResolution)
+      if (ForceTimeHighResolution)
         timeEndPeriod(1L);
+
       break;
     default:
       break;
@@ -152,6 +157,10 @@ bool os::getenv(const char* name, char* buffer, int len) {
  return result > 0 && result < len;
 }
 
+bool os::unsetenv(const char* name) {
+  assert(name != NULL, "Null pointer");
+  return (SetEnvironmentVariable(name, NULL) == TRUE);
+}
 
 // No setuid programs under Windows.
 bool os::have_special_privileges() {
@@ -166,12 +175,10 @@ void os::run_periodic_checks() {
   return;
 }
 
-#ifndef _WIN64
 // previous UnhandledExceptionFilter, if there is one
 static LPTOP_LEVEL_EXCEPTION_FILTER prev_uef_handler = NULL;
 
 LONG WINAPI Handle_FLT_Exception(struct _EXCEPTION_POINTERS* exceptionInfo);
-#endif
 void os::init_system_properties_values() {
   /* sysclasspath, java_home, dll_dir */
   {
@@ -310,15 +317,16 @@ extern "C" void breakpoint() {
  * So far, this method is only used by Native Memory Tracking, which is
  * only supported on Windows XP or later.
  */
-address os::get_caller_pc(int n) {
+int os::get_native_stack(address* stack, int frames, int toSkip) {
 #ifdef _NMT_NOINLINE_
-  n ++;
+  toSkip ++;
 #endif
-  address pc;
-  if (os::Kernel32Dll::RtlCaptureStackBackTrace(n + 1, 1, (PVOID*)&pc, NULL) == 1) {
-    return pc;
+  int captured = Kernel32Dll::RtlCaptureStackBackTrace(toSkip + 1, frames,
+    (PVOID*)stack, NULL);
+  for (int index = captured; index < frames; index ++) {
+    stack[index] = NULL;
   }
-  return NULL;
+  return captured;
 }
 
 
@@ -339,10 +347,10 @@ address os::current_stack_base() {
 
   // Add up the sizes of all the regions with the same
   // AllocationBase.
-  while( 1 )
+  while (1)
   {
     VirtualQuery(stack_bottom+stack_size, &minfo, sizeof(minfo));
-    if ( stack_bottom == (address)minfo.AllocationBase )
+    if (stack_bottom == (address)minfo.AllocationBase)
       stack_size += minfo.RegionSize;
     else
       break;
@@ -401,6 +409,8 @@ struct tm* os::localtime_pd(const time_t* clock, struct tm* res) {
 
 LONG WINAPI topLevelExceptionFilter(struct _EXCEPTION_POINTERS* exceptionInfo);
 
+extern jint volatile vm_getting_terminated;
+
 // Thread start routine for all new Java threads
 static unsigned __stdcall java_start(Thread* thread) {
   // Try to randomize the cache line index of hot stack frames.
@@ -422,9 +432,17 @@ static unsigned __stdcall java_start(Thread* thread) {
     }
   }
 
+  // Diagnostic code to investigate JDK-6573254 (Part I)
+  unsigned res = 90115;  // non-java thread
+  if (thread->is_Java_thread()) {
+    JavaThread* java_thread = (JavaThread*)thread;
+    res = java_lang_Thread::is_daemon(java_thread->threadObj())
+          ? 70115        // java daemon thread
+          : 80115;       // java non-daemon thread
+  }
 
   // Install a win32 structured exception handler around every thread created
-  // by VM, so VM can genrate error dump when an exception occurred in non-
+  // by VM, so VM can generate error dump when an exception occurred in non-
   // Java thread (e.g. VM thread).
   __try {
      thread->run();
@@ -438,6 +456,11 @@ static unsigned __stdcall java_start(Thread* thread) {
   // which frees the CodeHeap containing the Atomic::add code
   if (thread != VMThread::vm_thread() && VMThread::vm_thread() != NULL) {
     Atomic::dec_ptr((intptr_t*)&os::win32::_os_thread_count);
+  }
+
+  // Diagnostic code to investigate JDK-6573254 (Part II)
+  if (OrderAccess::load_acquire(&vm_getting_terminated)) {
+    return res;
   }
 
   return 0;
@@ -630,8 +653,6 @@ void os::free_thread(OSThread* osthread) {
   delete osthread;
 }
 
-
-static int    has_performance_count = 0;
 static jlong first_filetime;
 static jlong initial_performance_count;
 static jlong performance_frequency;
@@ -640,14 +661,14 @@ static jlong performance_frequency;
 jlong as_long(LARGE_INTEGER x) {
   jlong result = 0; // initialization to avoid warning
   set_high(&result, x.HighPart);
-  set_low(&result,  x.LowPart);
+  set_low(&result, x.LowPart);
   return result;
 }
 
 
 jlong os::elapsed_counter() {
   LARGE_INTEGER count;
-  if (has_performance_count) {
+  if (win32::_has_performance_count) {
     QueryPerformanceCounter(&count);
     return as_long(count) - initial_performance_count;
   } else {
@@ -659,7 +680,7 @@ jlong os::elapsed_counter() {
 
 
 jlong os::elapsed_frequency() {
-  if (has_performance_count) {
+  if (win32::_has_performance_count) {
     return performance_frequency;
   } else {
    // the FILETIME time is the number of 100-nanosecond intervals since January 1,1601.
@@ -738,15 +759,15 @@ bool os::bind_to_processor(uint processor_id) {
   return false;
 }
 
-static void initialize_performance_counter() {
+void os::win32::initialize_performance_counter() {
   LARGE_INTEGER count;
   if (QueryPerformanceFrequency(&count)) {
-    has_performance_count = 1;
+    win32::_has_performance_count = 1;
     performance_frequency = as_long(count);
     QueryPerformanceCounter(&count);
     initial_performance_count = as_long(count);
   } else {
-    has_performance_count = 0;
+    win32::_has_performance_count = 0;
     FILETIME wt;
     GetSystemTimeAsFileTime(&wt);
     first_filetime = jlong_from(wt.dwHighDateTime, wt.dwLowDateTime);
@@ -841,7 +862,7 @@ jlong os::javaTimeMillis() {
 }
 
 jlong os::javaTimeNanos() {
-  if (!has_performance_count) {
+  if (!win32::_has_performance_count) {
     return javaTimeMillis() * NANOSECS_PER_MILLISEC; // the best we can do.
   } else {
     LARGE_INTEGER current_count;
@@ -854,7 +875,7 @@ jlong os::javaTimeNanos() {
 }
 
 void os::javaTimeNanos_info(jvmtiTimerInfo *info_ptr) {
-  if (!has_performance_count) {
+  if (!win32::_has_performance_count) {
     // javaTimeMillis() doesn't have much percision,
     // but it is not going to wrap -- so all 64 bits
     info_ptr->max_value = ALL_64_BITS;
@@ -995,7 +1016,7 @@ void os::check_or_create_dump(void* exceptionRecord, void* contextRecord, char* 
 #endif
 
   cwd = get_current_directory(NULL, 0);
-  jio_snprintf(buffer, bufferSize, "%s\\hs_err_pid%u.mdmp",cwd, current_process_id());
+  jio_snprintf(buffer, bufferSize, "%s\\hs_err_pid%u.mdmp", cwd, current_process_id());
   dumpFile = CreateFile(buffer, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
 
   if (dumpFile == INVALID_HANDLE_VALUE) {
@@ -1213,7 +1234,7 @@ bool os::dll_build_name(char *buffer, size_t buflen,
     if (pelements == NULL) {
       return false;
     }
-    for (int i = 0 ; i < n ; i++) {
+    for (int i = 0; i < n; i++) {
       char* path = pelements[i];
       // Really shouldn't be NULL, but check can't hurt
       size_t plen = (path == NULL) ? 0 : strlen(path);
@@ -1232,7 +1253,7 @@ bool os::dll_build_name(char *buffer, size_t buflen,
       }
     }
     // release the storage
-    for (int i = 0 ; i < n ; i++) {
+    for (int i = 0; i < n; i++) {
       if (pelements[i] != NULL) {
         FREE_C_HEAP_ARRAY(char, pelements[i], mtInternal);
       }
@@ -1267,132 +1288,18 @@ static bool _addr_in_ntdll( address addr )
   MODULEINFO minfo;
 
   hmod = GetModuleHandle("NTDLL.DLL");
-  if ( hmod == NULL ) return false;
-  if ( !os::PSApiDll::GetModuleInformation( GetCurrentProcess(), hmod,
+  if (hmod == NULL) return false;
+  if (!os::PSApiDll::GetModuleInformation( GetCurrentProcess(), hmod,
                                &minfo, sizeof(MODULEINFO)) )
     return false;
 
-  if ( (addr >= minfo.lpBaseOfDll) &&
+  if ((addr >= minfo.lpBaseOfDll) &&
        (addr < (address)((uintptr_t)minfo.lpBaseOfDll + (uintptr_t)minfo.SizeOfImage)))
     return true;
   else
     return false;
 }
 #endif
-
-
-// Enumerate all modules for a given process ID
-//
-// Notice that Windows 95/98/Me and Windows NT/2000/XP have
-// different API for doing this. We use PSAPI.DLL on NT based
-// Windows and ToolHelp on 95/98/Me.
-
-// Callback function that is called by enumerate_modules() on
-// every DLL module.
-// Input parameters:
-//    int       pid,
-//    char*     module_file_name,
-//    address   module_base_addr,
-//    unsigned  module_size,
-//    void*     param
-typedef int (*EnumModulesCallbackFunc)(int, char *, address, unsigned, void *);
-
-// enumerate_modules for Windows NT, using PSAPI
-static int _enumerate_modules_winnt( int pid, EnumModulesCallbackFunc func, void * param)
-{
-  HANDLE   hProcess ;
-
-# define MAX_NUM_MODULES 128
-  HMODULE     modules[MAX_NUM_MODULES];
-  static char filename[ MAX_PATH ];
-  int         result = 0;
-
-  if (!os::PSApiDll::PSApiAvailable()) {
-    return 0;
-  }
-
-  hProcess = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ,
-                         FALSE, pid ) ;
-  if (hProcess == NULL) return 0;
-
-  DWORD size_needed;
-  if (!os::PSApiDll::EnumProcessModules(hProcess, modules,
-                           sizeof(modules), &size_needed)) {
-      CloseHandle( hProcess );
-      return 0;
-  }
-
-  // number of modules that are currently loaded
-  int num_modules = size_needed / sizeof(HMODULE);
-
-  for (int i = 0; i < MIN2(num_modules, MAX_NUM_MODULES); i++) {
-    // Get Full pathname:
-    if(!os::PSApiDll::GetModuleFileNameEx(hProcess, modules[i],
-                             filename, sizeof(filename))) {
-        filename[0] = '\0';
-    }
-
-    MODULEINFO modinfo;
-    if (!os::PSApiDll::GetModuleInformation(hProcess, modules[i],
-                               &modinfo, sizeof(modinfo))) {
-        modinfo.lpBaseOfDll = NULL;
-        modinfo.SizeOfImage = 0;
-    }
-
-    // Invoke callback function
-    result = func(pid, filename, (address)modinfo.lpBaseOfDll,
-                  modinfo.SizeOfImage, param);
-    if (result) break;
-  }
-
-  CloseHandle( hProcess ) ;
-  return result;
-}
-
-
-// enumerate_modules for Windows 95/98/ME, using TOOLHELP
-static int _enumerate_modules_windows( int pid, EnumModulesCallbackFunc func, void *param)
-{
-  HANDLE                hSnapShot ;
-  static MODULEENTRY32  modentry ;
-  int                   result = 0;
-
-  if (!os::Kernel32Dll::HelpToolsAvailable()) {
-    return 0;
-  }
-
-  // Get a handle to a Toolhelp snapshot of the system
-  hSnapShot = os::Kernel32Dll::CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, pid ) ;
-  if( hSnapShot == INVALID_HANDLE_VALUE ) {
-      return FALSE ;
-  }
-
-  // iterate through all modules
-  modentry.dwSize = sizeof(MODULEENTRY32) ;
-  bool not_done = os::Kernel32Dll::Module32First( hSnapShot, &modentry ) != 0;
-
-  while( not_done ) {
-    // invoke the callback
-    result=func(pid, modentry.szExePath, (address)modentry.modBaseAddr,
-                modentry.modBaseSize, param);
-    if (result) break;
-
-    modentry.dwSize = sizeof(MODULEENTRY32) ;
-    not_done = os::Kernel32Dll::Module32Next( hSnapShot, &modentry ) != 0;
-  }
-
-  CloseHandle(hSnapShot);
-  return result;
-}
-
-int enumerate_modules( int pid, EnumModulesCallbackFunc func, void * param )
-{
-  // Get current process ID if caller doesn't provide it.
-  if (!pid) pid = os::current_process_id();
-
-  if (os::win32::is_nt()) return _enumerate_modules_winnt  (pid, func, param);
-  else                    return _enumerate_modules_windows(pid, func, param);
-}
 
 struct _modinfo {
    address addr;
@@ -1401,13 +1308,13 @@ struct _modinfo {
    address base_addr;
 };
 
-static int _locate_module_by_addr(int pid, char * mod_fname, address base_addr,
-                                  unsigned size, void * param) {
+static int _locate_module_by_addr(const char * mod_fname, address base_addr,
+                                  address top_address, void * param) {
    struct _modinfo *pmod = (struct _modinfo *)param;
    if (!pmod) return -1;
 
-   if (base_addr     <= pmod->addr &&
-       base_addr+size > pmod->addr) {
+   if (base_addr   <= pmod->addr &&
+       top_address > pmod->addr) {
      // if a buffer is provided, copy path name to the buffer
      if (pmod->full_path) {
        jio_snprintf(pmod->full_path, pmod->buflen, "%s", mod_fname);
@@ -1432,8 +1339,7 @@ bool os::dll_address_to_library_name(address addr, char* buf,
   mi.addr      = addr;
   mi.full_path = buf;
   mi.buflen    = buflen;
-  int pid = os::current_process_id();
-  if (enumerate_modules(pid, _locate_module_by_addr, (void *)&mi)) {
+  if (get_loaded_modules_info(_locate_module_by_addr, (void *)&mi)) {
     // buf already contains path name
     if (offset) *offset = addr - mi.base_addr;
     return true;
@@ -1458,14 +1364,14 @@ bool os::dll_address_to_function_name(address addr, char *buf,
 }
 
 // save the start and end address of jvm.dll into param[0] and param[1]
-static int _locate_jvm_dll(int pid, char* mod_fname, address base_addr,
-                    unsigned size, void * param) {
+static int _locate_jvm_dll(const char* mod_fname, address base_addr,
+                    address top_address, void * param) {
    if (!param) return -1;
 
-   if (base_addr     <= (address)_locate_jvm_dll &&
-       base_addr+size > (address)_locate_jvm_dll) {
+   if (base_addr   <= (address)_locate_jvm_dll &&
+       top_address > (address)_locate_jvm_dll) {
          ((address*)param)[0] = base_addr;
-         ((address*)param)[1] = base_addr + size;
+         ((address*)param)[1] = top_address;
          return 1;
    }
    return 0;
@@ -1476,8 +1382,7 @@ address vm_lib_location[2];    // start and end address of jvm.dll
 // check if addr is inside jvm.dll
 bool os::address_is_in_vm(address addr) {
   if (!vm_lib_location[0] || !vm_lib_location[1]) {
-    int pid = os::current_process_id();
-    if (!enumerate_modules(pid, _locate_jvm_dll, (void *)vm_lib_location)) {
+    if (!get_loaded_modules_info(_locate_jvm_dll, (void *)vm_lib_location)) {
       assert(false, "Can't find jvm module.");
       return false;
     }
@@ -1487,14 +1392,13 @@ bool os::address_is_in_vm(address addr) {
 }
 
 // print module info; param is outputStream*
-static int _print_module(int pid, char* fname, address base,
-                         unsigned size, void* param) {
+static int _print_module(const char* fname, address base_address,
+                         address top_address, void* param) {
    if (!param) return -1;
 
    outputStream* st = (outputStream*)param;
 
-   address end_addr = base + size;
-   st->print(PTR_FORMAT " - " PTR_FORMAT " \t%s\n", base, end_addr, fname);
+   st->print(PTR_FORMAT " - " PTR_FORMAT " \t%s\n", base_address, top_address, fname);
    return 0;
 }
 
@@ -1623,11 +1527,60 @@ void * os::dll_load(const char *name, char *ebuf, int ebuflen)
   return NULL;
 }
 
-
 void os::print_dll_info(outputStream *st) {
-   int pid = os::current_process_id();
    st->print_cr("Dynamic libraries:");
-   enumerate_modules(pid, _print_module, (void *)st);
+   get_loaded_modules_info(_print_module, (void *)st);
+}
+
+int os::get_loaded_modules_info(os::LoadedModulesCallbackFunc callback, void *param) {
+  HANDLE   hProcess;
+
+# define MAX_NUM_MODULES 128
+  HMODULE     modules[MAX_NUM_MODULES];
+  static char filename[MAX_PATH];
+  int         result = 0;
+
+  if (!os::PSApiDll::PSApiAvailable()) {
+    return 0;
+  }
+
+  int pid = os::current_process_id();
+  hProcess = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ,
+                         FALSE, pid);
+  if (hProcess == NULL) return 0;
+
+  DWORD size_needed;
+  if (!os::PSApiDll::EnumProcessModules(hProcess, modules,
+                           sizeof(modules), &size_needed)) {
+      CloseHandle(hProcess);
+      return 0;
+  }
+
+  // number of modules that are currently loaded
+  int num_modules = size_needed / sizeof(HMODULE);
+
+  for (int i = 0; i < MIN2(num_modules, MAX_NUM_MODULES); i++) {
+    // Get Full pathname:
+    if (!os::PSApiDll::GetModuleFileNameEx(hProcess, modules[i],
+                             filename, sizeof(filename))) {
+        filename[0] = '\0';
+    }
+
+    MODULEINFO modinfo;
+    if (!os::PSApiDll::GetModuleInformation(hProcess, modules[i],
+                               &modinfo, sizeof(modinfo))) {
+        modinfo.lpBaseOfDll = NULL;
+        modinfo.SizeOfImage = 0;
+    }
+
+    // Invoke callback function
+    result = callback(filename, (address)modinfo.lpBaseOfDll,
+                  (address)((u8)modinfo.lpBaseOfDll + (u8)modinfo.SizeOfImage), param);
+    if (result) break;
+  }
+
+  CloseHandle(hProcess);
+  return result;
 }
 
 void os::print_os_info_brief(outputStream* st) {
@@ -1635,8 +1588,17 @@ void os::print_os_info_brief(outputStream* st) {
 }
 
 void os::print_os_info(outputStream* st) {
-  st->print("OS:");
-
+#ifdef ASSERT
+  char buffer[1024];
+  DWORD size = sizeof(buffer);
+  st->print(" HostName: ");
+  if (GetComputerNameEx(ComputerNameDnsHostname, buffer, &size)) {
+    st->print("%s", buffer);
+  } else {
+    st->print("N/A");
+  }
+#endif
+  st->print(" OS:");
   os::win32::print_windows_version(st);
 }
 
@@ -1812,34 +1774,34 @@ void os::jvm_path(char *buf, jint buflen) {
   }
 
   buf[0] = '\0';
-  if (Arguments::created_by_gamma_launcher()) {
-     // Support for the gamma launcher. Check for an
-     // JAVA_HOME environment variable
-     // and fix up the path so it looks like
-     // libjvm.so is installed there (append a fake suffix
-     // hotspot/libjvm.so).
-     char* java_home_var = ::getenv("JAVA_HOME");
-     if (java_home_var != NULL && java_home_var[0] != 0) {
+  if (Arguments::sun_java_launcher_is_altjvm()) {
+    // Support for the java launcher's '-XXaltjvm=<path>' option. Check
+    // for a JAVA_HOME environment variable and fix up the path so it
+    // looks like jvm.dll is installed there (append a fake suffix
+    // hotspot/jvm.dll).
+    char* java_home_var = ::getenv("JAVA_HOME");
+    if (java_home_var != NULL && java_home_var[0] != 0 &&
+        strlen(java_home_var) < (size_t)buflen) {
 
-        strncpy(buf, java_home_var, buflen);
+      strncpy(buf, java_home_var, buflen);
 
-        // determine if this is a legacy image or modules image
-        // modules image doesn't have "jre" subdirectory
-        size_t len = strlen(buf);
-        char* jrebin_p = buf + len;
-        jio_snprintf(jrebin_p, buflen-len, "\\jre\\bin\\");
-        if (0 != _access(buf, 0)) {
-          jio_snprintf(jrebin_p, buflen-len, "\\bin\\");
-        }
-        len = strlen(buf);
-        jio_snprintf(buf + len, buflen-len, "hotspot\\jvm.dll");
-     }
+      // determine if this is a legacy image or modules image
+      // modules image doesn't have "jre" subdirectory
+      size_t len = strlen(buf);
+      char* jrebin_p = buf + len;
+      jio_snprintf(jrebin_p, buflen-len, "\\jre\\bin\\");
+      if (0 != _access(buf, 0)) {
+        jio_snprintf(jrebin_p, buflen-len, "\\bin\\");
+      }
+      len = strlen(buf);
+      jio_snprintf(buf + len, buflen-len, "hotspot\\jvm.dll");
+    }
   }
 
-  if(buf[0] == '\0') {
-  GetModuleFileName(vm_lib_handle, buf, buflen);
+  if (buf[0] == '\0') {
+    GetModuleFileName(vm_lib_handle, buf, buflen);
   }
-  strcpy(saved_jvm_path, buf);
+  strncpy(saved_jvm_path, buf, MAX_PATH);
 }
 
 
@@ -1939,7 +1901,7 @@ void os::signal_raise(int signal_number) {
 // that raises SIGTERM for the latter cases.
 //
 static BOOL WINAPI consoleHandler(DWORD event) {
-  switch(event) {
+  switch (event) {
     case CTRL_C_EVENT:
       if (is_error_reported()) {
         // Ctrl-C is pressed during error reporting, likely because the error
@@ -1963,7 +1925,7 @@ static BOOL WINAPI consoleHandler(DWORD event) {
       HANDLE handle = GetProcessWindowStation();
       if (handle != NULL &&
           GetUserObjectInformation(handle, UOI_FLAGS, &flags,
-            sizeof( USEROBJECTFLAGS), NULL)) {
+            sizeof(USEROBJECTFLAGS), NULL)) {
         // If it is a non-interactive session, let next handler to deal
         // with it.
         if ((flags.dwFlags & WSF_VISIBLE) == 0) {
@@ -1989,7 +1951,7 @@ static BOOL WINAPI consoleHandler(DWORD event) {
 
 // Return maximum OS signal used + 1 for internal use only
 // Used as exit signal for signal_thread
-int os::sigexitnum_pd(){
+int os::sigexitnum_pd() {
   return NSIG;
 }
 
@@ -2240,11 +2202,11 @@ LONG Handle_IDiv_Exception(struct _EXCEPTION_POINTERS* exceptionInfo) {
   return EXCEPTION_CONTINUE_EXECUTION;
 }
 
-#ifndef  _WIN64
 //-----------------------------------------------------------------------------
 LONG WINAPI Handle_FLT_Exception(struct _EXCEPTION_POINTERS* exceptionInfo) {
-  // handle exception caused by native method modifying control word
   PCONTEXT ctx = exceptionInfo->ContextRecord;
+#ifndef  _WIN64
+  // handle exception caused by native method modifying control word
   DWORD exception_code = exceptionInfo->ExceptionRecord->ExceptionCode;
 
   switch (exception_code) {
@@ -2270,17 +2232,11 @@ LONG WINAPI Handle_FLT_Exception(struct _EXCEPTION_POINTERS* exceptionInfo) {
     // UnhandledExceptionFilter.
     return (prev_uef_handler)(exceptionInfo);
   }
-
-  return EXCEPTION_CONTINUE_SEARCH;
-}
-#else //_WIN64
+#else // !_WIN64
 /*
   On Windows, the mxcsr control bits are non-volatile across calls
   See also CR 6192333
-  If EXCEPTION_FLT_* happened after some native method modified
-  mxcsr - it is not a jvm fault.
-  However should we decide to restore of mxcsr after a faulty
-  native method we can uncomment following code
+  */
       jint MxCsr = INITIAL_MXCSR;
         // we can't use StubRoutines::addr_mxcsr_std()
         // because in Win64 mxcsr is not saved there
@@ -2288,20 +2244,9 @@ LONG WINAPI Handle_FLT_Exception(struct _EXCEPTION_POINTERS* exceptionInfo) {
         ctx->MxCsr = MxCsr;
         return EXCEPTION_CONTINUE_EXECUTION;
       }
+#endif // !_WIN64
 
-*/
-#endif //_WIN64
-
-
-// Fatal error reporting is single threaded so we can make this a
-// static and preallocated.  If it's more than MAX_PATH silently ignore
-// it.
-static char saved_error_file[MAX_PATH] = {0};
-
-void os::set_error_file(const char *logfile) {
-  if (strlen(logfile) <= MAX_PATH) {
-    strncpy(saved_error_file, logfile, MAX_PATH);
-  }
+  return EXCEPTION_CONTINUE_SEARCH;
 }
 
 static inline void report_error(Thread* t, DWORD exception_code,
@@ -2426,15 +2371,21 @@ LONG WINAPI topLevelExceptionFilter(struct _EXCEPTION_POINTERS* exceptionInfo) {
   // process of write protecting the memory serialization page.
   // It write enables the page immediately after protecting it
   // so just return.
-  if ( exception_code == EXCEPTION_ACCESS_VIOLATION ) {
+  if (exception_code == EXCEPTION_ACCESS_VIOLATION) {
     JavaThread* thread = (JavaThread*) t;
     PEXCEPTION_RECORD exceptionRecord = exceptionInfo->ExceptionRecord;
     address addr = (address) exceptionRecord->ExceptionInformation[1];
-    if ( os::is_memory_serialize_page(thread, addr) ) {
+    if (os::is_memory_serialize_page(thread, addr)) {
       // Block current thread until the memory serialize page permission restored.
       os::block_on_serialize_page_trap();
       return EXCEPTION_CONTINUE_EXECUTION;
     }
+  }
+
+  if ((exception_code == EXCEPTION_ACCESS_VIOLATION) &&
+      VM_Version::is_cpuinfo_segv_addr(pc)) {
+    // Verify that OS save/restore AVX registers.
+    return Handle_Exception(exceptionInfo, VM_Version::cpuinfo_cont_addr());
   }
 
   if (t != NULL && t->is_Java_thread()) {
@@ -2541,7 +2492,7 @@ LONG WINAPI topLevelExceptionFilter(struct _EXCEPTION_POINTERS* exceptionInfo) {
           //
           PEXCEPTION_RECORD exceptionRecord = exceptionInfo->ExceptionRecord;
           address addr = (address) exceptionRecord->ExceptionInformation[1];
-          if (addr > thread->stack_yellow_zone_base() && addr < thread->stack_base() ) {
+          if (addr > thread->stack_yellow_zone_base() && addr < thread->stack_base()) {
                   addr = (address)((uintptr_t)addr &
                          (~((uintptr_t)os::vm_page_size() - (uintptr_t)1)));
                   os::commit_memory((char *)addr, thread->stack_base() - addr,
@@ -2621,7 +2572,7 @@ LONG WINAPI topLevelExceptionFilter(struct _EXCEPTION_POINTERS* exceptionInfo) {
       // Compiled method patched to be non entrant? Following conditions must apply:
       // 1. must be first instruction in bundle
       // 2. must be a break instruction with appropriate code
-      if((((uint64_t) pc & 0x0F) == 0) &&
+      if ((((uint64_t) pc & 0x0F) == 0) &&
          (((IPF_Bundle*) pc)->get_slot0() == handle_wrong_method_break.bits())) {
         return Handle_Exception(exceptionInfo,
                                 (address)SharedRuntime::get_handle_wrong_method_stub());
@@ -2640,7 +2591,6 @@ LONG WINAPI topLevelExceptionFilter(struct _EXCEPTION_POINTERS* exceptionInfo) {
 
       } // switch
     }
-#ifndef _WIN64
     if (((thread->thread_state() == _thread_in_Java) ||
         (thread->thread_state() == _thread_in_native)) &&
         exception_code != EXCEPTION_UNCAUGHT_CXX_EXCEPTION)
@@ -2648,7 +2598,6 @@ LONG WINAPI topLevelExceptionFilter(struct _EXCEPTION_POINTERS* exceptionInfo) {
       LONG result=Handle_FLT_Exception(exceptionInfo);
       if (result==EXCEPTION_CONTINUE_EXECUTION) return result;
     }
-#endif //_WIN64
   }
 
   if (exception_code != EXCEPTION_BREAKPOINT) {
@@ -2710,7 +2659,6 @@ address os::win32::fast_jni_accessor_wrapper(BasicType type) {
 }
 #endif
 
-#ifndef PRODUCT
 void os::win32::call_test_func_with_wrapper(void (*funcPtr)(void)) {
   // Install a win32 structured exception handler around the test
   // function call so the VM can generate an error dump if needed.
@@ -2721,7 +2669,6 @@ void os::win32::call_test_func_with_wrapper(void (*funcPtr)(void)) {
     // Nothing to do.
   }
 }
-#endif
 
 // Virtual Memory
 
@@ -2796,7 +2743,7 @@ public:
     return (_numa_used_node_count > 1);
   }
 
-  int get_count() {return _numa_used_node_count;}
+  int get_count() { return _numa_used_node_count; }
   int get_node_list_entry(int n) {
     // for indexes out of range, returns -1
     return (n < _numa_used_node_count ? _numa_used_node_list[n] : -1);
@@ -2909,7 +2856,7 @@ static char* allocate_pages_individually(size_t bytes, char* addr, DWORD flags, 
                                 PAGE_READWRITE);
   // If reservation failed, return NULL
   if (p_buf == NULL) return NULL;
-  MemTracker::record_virtual_memory_reserve((address)p_buf, size_of_reserve, mtNone, CALLER_PC);
+  MemTracker::record_virtual_memory_reserve((address)p_buf, size_of_reserve, CALLER_PC);
   os::release_memory(p_buf, bytes + chunk_size);
 
   // we still need to round up to a page boundary (in case we are using large pages)
@@ -2975,7 +2922,7 @@ static char* allocate_pages_individually(size_t bytes, char* addr, DWORD flags, 
         // need to create a dummy 'reserve' record to match
         // the release.
         MemTracker::record_virtual_memory_reserve((address)p_buf,
-          bytes_to_release, mtNone, CALLER_PC);
+          bytes_to_release, CALLER_PC);
         os::release_memory(p_buf, bytes_to_release);
       }
 #ifdef ASSERT
@@ -2994,11 +2941,10 @@ static char* allocate_pages_individually(size_t bytes, char* addr, DWORD flags, 
   }
   // Although the memory is allocated individually, it is returned as one.
   // NMT records it as one block.
-  address pc = CALLER_PC;
   if ((flags & MEM_COMMIT) != 0) {
-    MemTracker::record_virtual_memory_reserve_and_commit((address)p_buf, bytes, mtNone, pc);
+    MemTracker::record_virtual_memory_reserve_and_commit((address)p_buf, bytes, CALLER_PC);
   } else {
-    MemTracker::record_virtual_memory_reserve((address)p_buf, bytes, mtNone, pc);
+    MemTracker::record_virtual_memory_reserve((address)p_buf, bytes, CALLER_PC);
   }
 
   // made it this far, success
@@ -3114,14 +3060,14 @@ char* os::pd_reserve_memory(size_t bytes, char* addr, size_t alignment_hint) {
     res = (char*)VirtualAlloc(addr, bytes, MEM_RESERVE, PAGE_READWRITE);
   } else {
     elapsedTimer reserveTimer;
-    if( Verbose && PrintMiscellaneous ) reserveTimer.start();
+    if (Verbose && PrintMiscellaneous) reserveTimer.start();
     // in numa interleaving, we have to allocate pages individually
     // (well really chunks of NUMAInterleaveGranularity size)
     res = allocate_pages_individually(bytes, addr, MEM_RESERVE, PAGE_READWRITE);
     if (res == NULL) {
       warning("NUMA page allocation failed");
     }
-    if( Verbose && PrintMiscellaneous ) {
+    if (Verbose && PrintMiscellaneous) {
       reserveTimer.stop();
       tty->print_cr("reserve_memory of %Ix bytes took " JLONG_FORMAT " ms (" JLONG_FORMAT " ticks)", bytes,
                     reserveTimer.milliseconds(), reserveTimer.ticks());
@@ -3196,8 +3142,7 @@ char* os::reserve_memory_special(size_t bytes, size_t alignment, char* addr, boo
     DWORD flag = MEM_RESERVE | MEM_COMMIT | MEM_LARGE_PAGES;
     char * res = (char *)VirtualAlloc(addr, bytes, flag, prot);
     if (res != NULL) {
-      address pc = CALLER_PC;
-      MemTracker::record_virtual_memory_reserve_and_commit((address)res, bytes, mtNone, pc);
+      MemTracker::record_virtual_memory_reserve_and_commit((address)res, bytes, CALLER_PC);
     }
 
     return res;
@@ -3452,14 +3397,14 @@ public:
 int os::sleep(Thread* thread, jlong ms, bool interruptable) {
   jlong limit = (jlong) MAXDWORD;
 
-  while(ms > limit) {
+  while (ms > limit) {
     int res;
     if ((res = sleep(thread, limit, interruptable)) != OS_TIMEOUT)
       return res;
     ms -= limit;
   }
 
-  assert(thread == Thread::current(),  "thread consistency check");
+  assert(thread == Thread::current(), "thread consistency check");
   OSThread* osthread = thread->osthread();
   OSThreadWaitState osts(osthread, false /* not Object.wait() */);
   int result;
@@ -3475,8 +3420,8 @@ int os::sleep(Thread* thread, jlong ms, bool interruptable) {
     HANDLE events[1];
     events[0] = osthread->interrupt_event();
     HighResolutionInterval *phri=NULL;
-    if(!ForceTimeHighResolution)
-      phri = new HighResolutionInterval( ms );
+    if (!ForceTimeHighResolution)
+      phri = new HighResolutionInterval(ms);
     if (WaitForMultipleObjects(1, events, FALSE, (DWORD)ms) == WAIT_TIMEOUT) {
       result = OS_TIMEOUT;
     } else {
@@ -3496,6 +3441,16 @@ int os::sleep(Thread* thread, jlong ms, bool interruptable) {
   return result;
 }
 
+//
+// Short sleep, direct OS call.
+//
+// ms = 0, means allow others (if any) to run.
+//
+void os::naked_short_sleep(jlong ms) {
+  assert(ms < 1000, "Un-interruptable sleep, short time use only");
+  Sleep(ms);
+}
+
 // Sleep forever; naked call to OS-specific sleep; use with CAUTION
 void os::infinite_sleep() {
   while (true) {    // sleep forever ...
@@ -3503,24 +3458,16 @@ void os::infinite_sleep() {
   }
 }
 
-typedef BOOL (WINAPI * STTSignature)(void) ;
+typedef BOOL (WINAPI * STTSignature)(void);
 
-os::YieldResult os::NakedYield() {
+void os::naked_yield() {
   // Use either SwitchToThread() or Sleep(0)
   // Consider passing back the return value from SwitchToThread().
   if (os::Kernel32Dll::SwitchToThreadAvailable()) {
-    return SwitchToThread() ? os::YIELD_SWITCHED : os::YIELD_NONEREADY ;
+    SwitchToThread();
   } else {
     Sleep(0);
   }
-  return os::YIELD_UNKNOWN ;
-}
-
-void os::yield() {  os::NakedYield(); }
-
-void os::yield_all(int attempts) {
-  // Yields to all threads, including threads with lower priorities
-  Sleep(1);
 }
 
 // Win32 only gives you access to seven real priorities at a time,
@@ -3566,7 +3513,7 @@ static int prio_init() {
     }
   }
   if (UseCriticalJavaThreadPriority) {
-    os::java_to_os_priority[MaxPriority] = os::java_to_os_priority[CriticalPriority] ;
+    os::java_to_os_priority[MaxPriority] = os::java_to_os_priority[CriticalPriority];
   }
   return 0;
 }
@@ -3578,7 +3525,7 @@ OSReturn os::set_native_priority(Thread* thread, int priority) {
 }
 
 OSReturn os::get_native_priority(const Thread* const thread, int* priority_ptr) {
-  if ( !UseThreadPriorities ) {
+  if (!UseThreadPriorities) {
     *priority_ptr = java_to_os_priority[NormPriority];
     return OS_OK;
   }
@@ -3612,8 +3559,8 @@ void os::interrupt(Thread* thread) {
   if (thread->is_Java_thread())
     ((JavaThread*)thread)->parker()->unpark();
 
-  ParkEvent * ev = thread->_ParkEvent ;
-  if (ev != NULL) ev->unpark() ;
+  ParkEvent * ev = thread->_ParkEvent;
+  if (ev != NULL) ev->unpark();
 
 }
 
@@ -3623,13 +3570,14 @@ bool os::is_interrupted(Thread* thread, bool clear_interrupted) {
          "possibility of dangling Thread pointer");
 
   OSThread* osthread = thread->osthread();
-  bool interrupted = osthread->interrupted();
   // There is no synchronization between the setting of the interrupt
   // and it being cleared here. It is critical - see 6535709 - that
   // we only clear the interrupt state, and reset the interrupt event,
   // if we are going to report that we were indeed interrupted - else
   // an interrupt can be "lost", leading to spurious wakeups or lost wakeups
-  // depending on the timing
+  // depending on the timing. By checking thread interrupt event to see
+  // if the thread gets real interrupt thus prevent spurious wakeup.
+  bool interrupted = osthread->interrupted() && (WaitForSingleObject(osthread->interrupt_event(), 0) == WAIT_OBJECT_0);
   if (interrupted && clear_interrupted) {
     osthread->set_interrupted(false);
     ResetEvent(osthread->interrupt_event());
@@ -3684,6 +3632,8 @@ bool   os::win32::_is_nt              = false;
 bool   os::win32::_is_windows_2003    = false;
 bool   os::win32::_is_windows_server  = false;
 
+bool   os::win32::_has_performance_count = 0;
+
 void os::win32::initialize_system_info() {
   SYSTEM_INFO si;
   GetSystemInfo(&si);
@@ -3704,7 +3654,7 @@ void os::win32::initialize_system_info() {
   OSVERSIONINFOEX oi;
   oi.dwOSVersionInfoSize = sizeof(OSVERSIONINFOEX);
   GetVersionEx((OSVERSIONINFO*)&oi);
-  switch(oi.dwPlatformId) {
+  switch (oi.dwPlatformId) {
     case VER_PLATFORM_WIN32_WINDOWS: _is_nt = false; break;
     case VER_PLATFORM_WIN32_NT:
       _is_nt = true;
@@ -3861,12 +3811,6 @@ void os::init(void) {
   win32::setmode_streams();
   init_page_sizes((size_t) win32::vm_page_size());
 
-  // For better scalability on MP systems (must be called after initialize_system_info)
-#ifndef PRODUCT
-  if (is_MP()) {
-    NoYieldsInMicrolock = true;
-  }
-#endif
   // This may be overridden later when argument processing is done.
   FLAG_SET_ERGO(bool, UseLargePagesIndividualAllocation,
     os::win32::is_windows_2003());
@@ -3893,29 +3837,29 @@ static jint initSock();
 jint os::init_2(void) {
   // Allocate a single page and mark it as readable for safepoint polling
   address polling_page = (address)VirtualAlloc(NULL, os::vm_page_size(), MEM_RESERVE, PAGE_READONLY);
-  guarantee( polling_page != NULL, "Reserve Failed for polling page");
+  guarantee(polling_page != NULL, "Reserve Failed for polling page");
 
   address return_page  = (address)VirtualAlloc(polling_page, os::vm_page_size(), MEM_COMMIT, PAGE_READONLY);
-  guarantee( return_page != NULL, "Commit Failed for polling page");
+  guarantee(return_page != NULL, "Commit Failed for polling page");
 
-  os::set_polling_page( polling_page );
+  os::set_polling_page(polling_page);
 
 #ifndef PRODUCT
-  if( Verbose && PrintMiscellaneous )
+  if (Verbose && PrintMiscellaneous)
     tty->print("[SafePoint Polling address: " INTPTR_FORMAT "]\n", (intptr_t)polling_page);
 #endif
 
   if (!UseMembar) {
     address mem_serialize_page = (address)VirtualAlloc(NULL, os::vm_page_size(), MEM_RESERVE, PAGE_READWRITE);
-    guarantee( mem_serialize_page != NULL, "Reserve Failed for memory serialize page");
+    guarantee(mem_serialize_page != NULL, "Reserve Failed for memory serialize page");
 
     return_page  = (address)VirtualAlloc(mem_serialize_page, os::vm_page_size(), MEM_COMMIT, PAGE_READWRITE);
-    guarantee( return_page != NULL, "Commit Failed for memory serialize page");
+    guarantee(return_page != NULL, "Commit Failed for memory serialize page");
 
-    os::set_memory_serialize_page( mem_serialize_page );
+    os::set_memory_serialize_page(mem_serialize_page);
 
 #ifndef PRODUCT
-    if(Verbose && PrintMiscellaneous)
+    if (Verbose && PrintMiscellaneous)
       tty->print("[Memory Serialize  Page address: " INTPTR_FORMAT "]\n", (intptr_t)mem_serialize_page);
 #endif
   }
@@ -4031,14 +3975,14 @@ void os::init_3(void) {
 // Mark the polling page as unreadable
 void os::make_polling_page_unreadable(void) {
   DWORD old_status;
-  if( !VirtualProtect((char *)_polling_page, os::vm_page_size(), PAGE_NOACCESS, &old_status) )
+  if (!VirtualProtect((char *)_polling_page, os::vm_page_size(), PAGE_NOACCESS, &old_status))
     fatal("Could not disable polling page");
 };
 
 // Mark the polling page as readable
 void os::make_polling_page_readable(void) {
   DWORD old_status;
-  if( !VirtualProtect((char *)_polling_page, os::vm_page_size(), PAGE_READONLY, &old_status) )
+  if (!VirtualProtect((char *)_polling_page, os::vm_page_size(), PAGE_READONLY, &old_status))
     fatal("Could not enable polling page");
 };
 
@@ -4116,7 +4060,7 @@ jlong os::thread_cpu_time(Thread* thread, bool user_sys_cpu_time) {
     FILETIME KernelTime;
     FILETIME UserTime;
 
-    if ( GetThreadTimes(thread->osthread()->thread_handle(),
+    if (GetThreadTimes(thread->osthread()->thread_handle(),
                     &CreationTime, &ExitTime, &KernelTime, &UserTime) == 0)
       return -1;
     else
@@ -4152,7 +4096,7 @@ bool os::is_thread_cpu_time_supported() {
     FILETIME KernelTime;
     FILETIME UserTime;
 
-    if ( GetThreadTimes(GetCurrentThread(),
+    if (GetThreadTimes(GetCurrentThread(),
                     &CreationTime, &ExitTime, &KernelTime, &UserTime) == 0)
       return false;
     else
@@ -4386,7 +4330,7 @@ int os::ftruncate(int fd, jlong length) {
 int os::fsync(int fd) {
   HANDLE handle = (HANDLE)::_get_osfhandle(fd);
 
-  if ( (!::FlushFileBuffers(handle)) &&
+  if ((!::FlushFileBuffers(handle)) &&
          (GetLastError() != ERROR_ACCESS_DENIED) ) {
     /* from winerror.h */
     return -1;
@@ -4507,7 +4451,7 @@ static int stdinAvailable(int fd, long *pbytes) {
   }
 
   /* Examine input records for the number of bytes available */
-  for(i=0; i<numEvents; i++) {
+  for (i=0; i<numEvents; i++) {
     if (lpBuffer[i].EventType == KEY_EVENT) {
 
       KEY_EVENT_RECORD *keyRecord = (KEY_EVENT_RECORD *)
@@ -4522,7 +4466,7 @@ static int stdinAvailable(int fd, long *pbytes) {
     }
   }
 
-  if(lpBuffer != NULL) {
+  if (lpBuffer != NULL) {
     os::free(lpBuffer, mtInternal);
   }
 
@@ -4785,19 +4729,19 @@ bool os::WatcherThreadCrashProtection::call(os::CrashProtectionCallback& cb) {
 // with explicit "PARKED" and "SIGNALED" bits.
 
 int os::PlatformEvent::park (jlong Millis) {
-    guarantee (_ParkHandle != NULL , "Invariant") ;
-    guarantee (Millis > 0          , "Invariant") ;
-    int v ;
+    guarantee(_ParkHandle != NULL , "Invariant");
+    guarantee(Millis > 0          , "Invariant");
+    int v;
 
     // CONSIDER: defer assigning a CreateEvent() handle to the Event until
     // the initial park() operation.
 
     for (;;) {
-        v = _Event ;
-        if (Atomic::cmpxchg (v-1, &_Event, v) == v) break ;
+        v = _Event;
+        if (Atomic::cmpxchg(v-1, &_Event, v) == v) break;
     }
-    guarantee ((v == 0) || (v == 1), "invariant") ;
-    if (v != 0) return OS_OK ;
+    guarantee((v == 0) || (v == 1), "invariant");
+    if (v != 0) return OS_OK;
 
     // Do this the hard way by blocking ...
     // TODO: consider a brief spin here, gated on the success of recent
@@ -4815,67 +4759,66 @@ int os::PlatformEvent::park (jlong Millis) {
     // In the future, however, we might want to track the accumulated wait time and
     // adjust Millis accordingly if we encounter a spurious wakeup.
 
-    const int MAXTIMEOUT = 0x10000000 ;
-    DWORD rv = WAIT_TIMEOUT ;
+    const int MAXTIMEOUT = 0x10000000;
+    DWORD rv = WAIT_TIMEOUT;
     while (_Event < 0 && Millis > 0) {
-       DWORD prd = Millis ;     // set prd = MAX (Millis, MAXTIMEOUT)
+       DWORD prd = Millis;     // set prd = MAX (Millis, MAXTIMEOUT)
        if (Millis > MAXTIMEOUT) {
-          prd = MAXTIMEOUT ;
+          prd = MAXTIMEOUT;
        }
-       rv = ::WaitForSingleObject (_ParkHandle, prd) ;
-       assert (rv == WAIT_OBJECT_0 || rv == WAIT_TIMEOUT, "WaitForSingleObject failed") ;
+       rv = ::WaitForSingleObject(_ParkHandle, prd);
+       assert(rv == WAIT_OBJECT_0 || rv == WAIT_TIMEOUT, "WaitForSingleObject failed");
        if (rv == WAIT_TIMEOUT) {
-           Millis -= prd ;
+           Millis -= prd;
        }
     }
-    v = _Event ;
-    _Event = 0 ;
+    v = _Event;
+    _Event = 0;
     // see comment at end of os::PlatformEvent::park() below:
-    OrderAccess::fence() ;
+    OrderAccess::fence();
     // If we encounter a nearly simultanous timeout expiry and unpark()
     // we return OS_OK indicating we awoke via unpark().
     // Implementor's license -- returning OS_TIMEOUT would be equally valid, however.
-    return (v >= 0) ? OS_OK : OS_TIMEOUT ;
+    return (v >= 0) ? OS_OK : OS_TIMEOUT;
 }
 
-void os::PlatformEvent::park () {
-    guarantee (_ParkHandle != NULL, "Invariant") ;
+void os::PlatformEvent::park() {
+    guarantee(_ParkHandle != NULL, "Invariant");
     // Invariant: Only the thread associated with the Event/PlatformEvent
     // may call park().
-    int v ;
+    int v;
     for (;;) {
-        v = _Event ;
-        if (Atomic::cmpxchg (v-1, &_Event, v) == v) break ;
+        v = _Event;
+        if (Atomic::cmpxchg(v-1, &_Event, v) == v) break;
     }
-    guarantee ((v == 0) || (v == 1), "invariant") ;
-    if (v != 0) return ;
+    guarantee((v == 0) || (v == 1), "invariant");
+    if (v != 0) return;
 
     // Do this the hard way by blocking ...
     // TODO: consider a brief spin here, gated on the success of recent
     // spin attempts by this thread.
     while (_Event < 0) {
-       DWORD rv = ::WaitForSingleObject (_ParkHandle, INFINITE) ;
-       assert (rv == WAIT_OBJECT_0, "WaitForSingleObject failed") ;
+       DWORD rv = ::WaitForSingleObject(_ParkHandle, INFINITE);
+       assert(rv == WAIT_OBJECT_0, "WaitForSingleObject failed");
     }
 
     // Usually we'll find _Event == 0 at this point, but as
     // an optional optimization we clear it, just in case can
     // multiple unpark() operations drove _Event up to 1.
-    _Event = 0 ;
-    OrderAccess::fence() ;
-    guarantee (_Event >= 0, "invariant") ;
+    _Event = 0;
+    OrderAccess::fence();
+    guarantee(_Event >= 0, "invariant");
 }
 
 void os::PlatformEvent::unpark() {
-  guarantee (_ParkHandle != NULL, "Invariant") ;
+  guarantee(_ParkHandle != NULL, "Invariant");
 
   // Transitions for _Event:
   //    0 :=> 1
   //    1 :=> 1
   //   -1 :=> either 0 or 1; must signal target thread
   //          That is, we can safely transition _Event from -1 to either
-  //          0 or 1. Forcing 1 is slightly more efficient for back-to-back
-  //          unpark() calls.
+  //          0 or 1.
   // See also: "Semaphores in Plan 9" by Mullender & Cox
   //
   // Note: Forcing a transition from "-1" to "1" on an unpark() means
@@ -4902,7 +4845,7 @@ void os::PlatformEvent::unpark() {
 
 
 void Parker::park(bool isAbsolute, jlong time) {
-  guarantee (_ParkEvent != NULL, "invariant") ;
+  guarantee(_ParkEvent != NULL, "invariant");
   // First, demultiplex/decode time arguments
   if (time < 0) { // don't wait
     return;
@@ -4936,7 +4879,7 @@ void Parker::park(bool isAbsolute, jlong time) {
     OSThreadWaitState osts(thread->osthread(), false /* not Object.wait() */);
     jt->set_suspend_equivalent();
 
-    WaitForSingleObject(_ParkEvent,  time);
+    WaitForSingleObject(_ParkEvent, time);
     ResetEvent(_ParkEvent);
 
     // If externally suspended while waiting, re-suspend
@@ -4947,7 +4890,7 @@ void Parker::park(bool isAbsolute, jlong time) {
 }
 
 void Parker::unpark() {
-  guarantee (_ParkEvent != NULL, "invariant") ;
+  guarantee(_ParkEvent != NULL, "invariant");
   SetEvent(_ParkEvent);
 }
 
@@ -5000,7 +4943,11 @@ bool os::check_heap(bool force) {
     // wrong; at these points, eax contains the address of the offending block (I think).
     // To get to the exlicit error message(s) below, just continue twice.
     HANDLE heap = GetProcessHeap();
-    { HeapLock(heap);
+
+    // If we fail to lock the heap, then gflags.exe has been used
+    // or some other special heap flag has been set that prevents
+    // locking. We don't try to walk a heap we can't lock.
+    if (HeapLock(heap) != 0) {
       PROCESS_HEAP_ENTRY phe;
       phe.lpData = NULL;
       while (HeapWalk(heap, &phe) != 0) {
@@ -5031,7 +4978,7 @@ bool os::find(address addr, outputStream* st) {
 LONG WINAPI os::win32::serialize_fault_filter(struct _EXCEPTION_POINTERS* e) {
   DWORD exception_code = e->ExceptionRecord->ExceptionCode;
 
-  if ( exception_code == EXCEPTION_ACCESS_VIOLATION ) {
+  if (exception_code == EXCEPTION_ACCESS_VIOLATION) {
     JavaThread* thread = (JavaThread*)ThreadLocalStorage::get_thread_slow();
     PEXCEPTION_RECORD exceptionRecord = e->ExceptionRecord;
     address addr = (address) exceptionRecord->ExceptionInformation[1];

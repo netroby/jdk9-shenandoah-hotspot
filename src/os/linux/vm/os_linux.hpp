@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1999, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1999, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -29,6 +29,9 @@
 
 /* pthread_getattr_np comes with LinuxThreads-0.9-7 on RedHat 7.1 */
 typedef int (*pthread_getattr_func_type) (pthread_t, pthread_attr_t *);
+
+// Information about the protection of the page at address '0' on this os.
+static bool zero_page_read_protected() { return true; }
 
 class Linux {
   friend class os;
@@ -105,6 +108,7 @@ class Linux {
   static char* reserve_memory_special_huge_tlbfs_only(size_t bytes, char* req_addr, bool exec);
   static char* reserve_memory_special_huge_tlbfs_mixed(size_t bytes, size_t alignment, char* req_addr, bool exec);
 
+  static bool release_memory_special_impl(char* base, size_t bytes);
   static bool release_memory_special_shm(char* base, size_t bytes);
   static bool release_memory_special_huge_tlbfs(char* base, size_t bytes);
 
@@ -203,10 +207,6 @@ class Linux {
   // fast POSIX clocks support
   static void fast_thread_clock_init(void);
 
-  static inline bool supports_monotonic_clock() {
-    return _clock_gettime != NULL;
-  }
-
   static int clock_gettime(clockid_t clock_id, struct timespec *tp) {
     return _clock_gettime ? _clock_gettime(clock_id, tp) : -1;
   }
@@ -288,16 +288,16 @@ public:
 
 class PlatformEvent : public CHeapObj<mtInternal> {
   private:
-    double CachePad [4] ;   // increase odds that _mutex is sole occupant of cache line
-    volatile int _Event ;
-    volatile int _nParked ;
-    pthread_mutex_t _mutex  [1] ;
-    pthread_cond_t  _cond   [1] ;
-    double PostPad  [2] ;
-    Thread * _Assoc ;
+    double CachePad[4];   // increase odds that _mutex is sole occupant of cache line
+    volatile int _Event;
+    volatile int _nParked;
+    pthread_mutex_t _mutex[1];
+    pthread_cond_t  _cond[1];
+    double PostPad[2];
+    Thread * _Assoc;
 
   public:       // TODO-FIXME: make dtor private
-    ~PlatformEvent() { guarantee (0, "invariant") ; }
+    ~PlatformEvent() { guarantee(0, "invariant"); }
 
   public:
     PlatformEvent() {
@@ -306,20 +306,19 @@ class PlatformEvent : public CHeapObj<mtInternal> {
       assert_status(status == 0, status, "cond_init");
       status = pthread_mutex_init (_mutex, NULL);
       assert_status(status == 0, status, "mutex_init");
-      _Event   = 0 ;
-      _nParked = 0 ;
-      _Assoc   = NULL ;
+      _Event   = 0;
+      _nParked = 0;
+      _Assoc   = NULL;
     }
 
     // Use caution with reset() and fired() -- they may require MEMBARs
-    void reset() { _Event = 0 ; }
+    void reset() { _Event = 0; }
     int  fired() { return _Event; }
-    void park () ;
-    void unpark () ;
-    int  TryPark () ;
-    int  park (jlong millis) ; // relative timed-wait only
-    void SetAssociation (Thread * a) { _Assoc = a ; }
-} ;
+    void park();
+    void unpark();
+    int  park(jlong millis); // relative timed-wait only
+    void SetAssociation(Thread * a) { _Assoc = a; }
+};
 
 class PlatformParker : public CHeapObj<mtInternal> {
   protected:
@@ -328,11 +327,11 @@ class PlatformParker : public CHeapObj<mtInternal> {
         ABS_INDEX = 1
     };
     int _cur_index;  // which cond is in use: -1, 0, 1
-    pthread_mutex_t _mutex [1] ;
-    pthread_cond_t  _cond  [2] ; // one for relative times and one for abs.
+    pthread_mutex_t _mutex[1];
+    pthread_cond_t  _cond[2]; // one for relative times and one for abs.
 
   public:       // TODO-FIXME: make dtor private
-    ~PlatformParker() { guarantee (0, "invariant") ; }
+    ~PlatformParker() { guarantee(0, "invariant"); }
 
   public:
     PlatformParker() {

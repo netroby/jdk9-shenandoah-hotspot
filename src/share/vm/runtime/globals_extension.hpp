@@ -31,7 +31,7 @@
 
 // Construct enum of Flag_<cmdline-arg> constants.
 
-// Parens left off in the following for the enum decl below.
+// Parenthesis left off in the following for the enum decl below.
 #define FLAG_MEMBER(flag) Flag_##flag
 
 #define RUNTIME_PRODUCT_FLAG_MEMBER(type, name, value, doc)      FLAG_MEMBER(name),
@@ -200,7 +200,9 @@ class CommandLineFlagsEx : CommandLineFlags {
   static void intxAtPut(CommandLineFlagWithType flag, intx value, Flag::Flags origin);
   static void uintxAtPut(CommandLineFlagWithType flag, uintx value, Flag::Flags origin);
   static void uint64_tAtPut(CommandLineFlagWithType flag, uint64_t value, Flag::Flags origin);
+  static void size_tAtPut(CommandLineFlagWithType flag, size_t value, Flag::Flags origin);
   static void doubleAtPut(CommandLineFlagWithType flag, double value, Flag::Flags origin);
+  // Contract:  Flag will make private copy of the incoming value
   static void ccstrAtPut(CommandLineFlagWithType flag, ccstr value, Flag::Flags origin);
 
   static bool is_default(CommandLineFlag flag);

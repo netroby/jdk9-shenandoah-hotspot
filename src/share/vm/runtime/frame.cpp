@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -23,6 +23,8 @@
  */
 
 #include "precompiled.hpp"
+#include "code/codeCache.hpp"
+#include "code/vmreg.inline.hpp"
 #include "compiler/abstractCompiler.hpp"
 #include "compiler/disassembler.hpp"
 #include "gc_interface/collectedHeap.inline.hpp"
@@ -40,27 +42,16 @@
 #include "runtime/handles.inline.hpp"
 #include "runtime/javaCalls.hpp"
 #include "runtime/monitorChunk.hpp"
+#include "runtime/os.hpp"
 #include "runtime/sharedRuntime.hpp"
 #include "runtime/signature.hpp"
 #include "runtime/stubCodeGenerator.hpp"
 #include "runtime/stubRoutines.hpp"
+#include "runtime/thread.inline.hpp"
 #include "utilities/decoder.hpp"
 
-#ifdef TARGET_ARCH_x86
-# include "nativeInst_x86.hpp"
-#endif
-#ifdef TARGET_ARCH_sparc
-# include "nativeInst_sparc.hpp"
-#endif
-#ifdef TARGET_ARCH_zero
-# include "nativeInst_zero.hpp"
-#endif
-#ifdef TARGET_ARCH_arm
-# include "nativeInst_arm.hpp"
-#endif
-#ifdef TARGET_ARCH_ppc
-# include "nativeInst_ppc.hpp"
-#endif
+
+PRAGMA_FORMAT_MUTE_WARNINGS_FOR_GCC
 
 RegisterMap::RegisterMap(JavaThread *thread, bool update_map) {
   _thread         = thread;
@@ -408,91 +399,33 @@ void frame::interpreter_frame_set_method(Method* method) {
   *interpreter_frame_method_addr() = method;
 }
 
-void frame::interpreter_frame_set_bcx(intptr_t bcx) {
-  assert(is_interpreted_frame(), "Not an interpreted frame");
-  if (ProfileInterpreter) {
-    bool formerly_bci = is_bci(interpreter_frame_bcx());
-    bool is_now_bci = is_bci(bcx);
-    *interpreter_frame_bcx_addr() = bcx;
-
-    intptr_t mdx = interpreter_frame_mdx();
-
-    if (mdx != 0) {
-      if (formerly_bci) {
-        if (!is_now_bci) {
-          // The bcx was just converted from bci to bcp.
-          // Convert the mdx in parallel.
-          MethodData* mdo = interpreter_frame_method()->method_data();
-          assert(mdo != NULL, "");
-          int mdi = mdx - 1; // We distinguish valid mdi from zero by adding one.
-          address mdp = mdo->di_to_dp(mdi);
-          interpreter_frame_set_mdx((intptr_t)mdp);
-        }
-      } else {
-        if (is_now_bci) {
-          // The bcx was just converted from bcp to bci.
-          // Convert the mdx in parallel.
-          MethodData* mdo = interpreter_frame_method()->method_data();
-          assert(mdo != NULL, "");
-          int mdi = mdo->dp_to_di((address)mdx);
-          interpreter_frame_set_mdx((intptr_t)mdi + 1); // distinguish valid from 0.
-        }
-      }
-    }
-  } else {
-    *interpreter_frame_bcx_addr() = bcx;
-  }
-}
-
 jint frame::interpreter_frame_bci() const {
   assert(is_interpreted_frame(), "interpreted frame expected");
-  intptr_t bcx = interpreter_frame_bcx();
-  return is_bci(bcx) ? bcx : interpreter_frame_method()->bci_from((address)bcx);
-}
-
-void frame::interpreter_frame_set_bci(jint bci) {
-  assert(is_interpreted_frame(), "interpreted frame expected");
-  assert(!is_bci(interpreter_frame_bcx()), "should not set bci during GC");
-  interpreter_frame_set_bcx((intptr_t)interpreter_frame_method()->bcp_from(bci));
+  address bcp = interpreter_frame_bcp();
+  return interpreter_frame_method()->bci_from(bcp);
 }
 
 address frame::interpreter_frame_bcp() const {
   assert(is_interpreted_frame(), "interpreted frame expected");
-  intptr_t bcx = interpreter_frame_bcx();
-  return is_bci(bcx) ? interpreter_frame_method()->bcp_from(bcx) : (address)bcx;
+  address bcp = (address)*interpreter_frame_bcp_addr();
+  return interpreter_frame_method()->bcp_from(bcp);
 }
 
 void frame::interpreter_frame_set_bcp(address bcp) {
   assert(is_interpreted_frame(), "interpreted frame expected");
-  assert(!is_bci(interpreter_frame_bcx()), "should not set bcp during GC");
-  interpreter_frame_set_bcx((intptr_t)bcp);
-}
-
-void frame::interpreter_frame_set_mdx(intptr_t mdx) {
-  assert(is_interpreted_frame(), "Not an interpreted frame");
-  assert(ProfileInterpreter, "must be profiling interpreter");
-  *interpreter_frame_mdx_addr() = mdx;
+  *interpreter_frame_bcp_addr() = (intptr_t)bcp;
 }
 
 address frame::interpreter_frame_mdp() const {
   assert(ProfileInterpreter, "must be profiling interpreter");
   assert(is_interpreted_frame(), "interpreted frame expected");
-  intptr_t bcx = interpreter_frame_bcx();
-  intptr_t mdx = interpreter_frame_mdx();
-
-  assert(!is_bci(bcx), "should not access mdp during GC");
-  return (address)mdx;
+  return (address)*interpreter_frame_mdp_addr();
 }
 
 void frame::interpreter_frame_set_mdp(address mdp) {
   assert(is_interpreted_frame(), "interpreted frame expected");
-  if (mdp == NULL) {
-    // Always allow the mdp to be cleared.
-    interpreter_frame_set_mdx((intptr_t)mdp);
-  }
-  intptr_t bcx = interpreter_frame_bcx();
-  assert(!is_bci(bcx), "should not set mdp during GC");
-  interpreter_frame_set_mdx((intptr_t)mdp);
+  assert(ProfileInterpreter, "must be profiling interpreter");
+  *interpreter_frame_mdp_addr() = (intptr_t)mdp;
 }
 
 BasicObjectLock* frame::next_monitor_in_interpreter_frame(BasicObjectLock* current) const {
@@ -531,13 +464,16 @@ jint frame::interpreter_frame_expression_stack_size() const {
   // Number of elements on the interpreter expression stack
   // Callers should span by stackElementWords
   int element_size = Interpreter::stackElementWords;
+  size_t stack_size = 0;
   if (frame::interpreter_frame_expression_stack_direction() < 0) {
-    return (interpreter_frame_expression_stack() -
-            interpreter_frame_tos_address() + 1)/element_size;
+    stack_size = (interpreter_frame_expression_stack() -
+                  interpreter_frame_tos_address() + 1)/element_size;
   } else {
-    return (interpreter_frame_tos_address() -
-            interpreter_frame_expression_stack() + 1)/element_size;
+    stack_size = (interpreter_frame_tos_address() -
+                  interpreter_frame_expression_stack() + 1)/element_size;
   }
+  assert( stack_size <= (size_t)max_jint, "stack size too big");
+  return ((jint)stack_size);
 }
 
 
@@ -649,7 +585,7 @@ void frame::interpreter_frame_print_on(outputStream* st) const {
 #endif
 }
 
-// Return whether the frame is in the VM or os indicating a Hotspot problem.
+// Print whether the frame is in the VM or OS indicating a HotSpot problem.
 // Otherwise, it's likely a bug in the native library that the Java code calls,
 // hopefully indicating where to submit bugs.
 void frame::print_C_frame(outputStream* st, char* buf, int buflen, address pc) {
@@ -895,7 +831,7 @@ oop* frame::interpreter_callee_receiver_addr(Symbol* signature) {
 }
 
 
-void frame::oops_interpreted_do(OopClosure* f, CLDToOopClosure* cld_f,
+void frame::oops_interpreted_do(OopClosure* f, CLDClosure* cld_f,
     const RegisterMap* map, bool query_oop_map_cache) {
   assert(is_interpreted_frame(), "Not an interpreted frame");
   assert(map != NULL, "map must be set");
@@ -928,25 +864,14 @@ void frame::oops_interpreted_do(OopClosure* f, CLDToOopClosure* cld_f,
     // klass, and the klass needs to be kept alive while executing. The GCs
     // don't trace through method pointers, so typically in similar situations
     // the mirror or the class loader of the klass are installed as a GC root.
-    // To minimze the overhead of doing that here, we ask the GC to pass down a
+    // To minimize the overhead of doing that here, we ask the GC to pass down a
     // closure that knows how to keep klasses alive given a ClassLoaderData.
     cld_f->do_cld(m->method_holder()->class_loader_data());
   }
 
-#if !defined(PPC) || defined(ZERO)
-  if (m->is_native()) {
-#ifdef CC_INTERP
-    interpreterState istate = get_interpreterState();
-    f->do_oop((oop*)&istate->_oop_temp);
-#else
-    f->do_oop((oop*)( fp() + interpreter_frame_oop_temp_offset ));
-#endif /* CC_INTERP */
+  if (m->is_native() PPC32_ONLY(&& m->is_static())) {
+    f->do_oop(interpreter_frame_temp_oop_addr());
   }
-#else // PPC
-  if (m->is_native() && m->is_static()) {
-    f->do_oop(interpreter_frame_mirror_addr());
-  }
-#endif // PPC
 
   int max_locals = m->is_native() ? m->size_of_parameters() : m->max_locals();
 
@@ -1146,7 +1071,7 @@ void frame::oops_entry_do(OopClosure* f, const RegisterMap* map) {
 }
 
 
-void frame::oops_do_internal(OopClosure* f, CLDToOopClosure* cld_f, CodeBlobClosure* cf, RegisterMap* map, bool use_interpreter_oop_map_cache) {
+void frame::oops_do_internal(OopClosure* f, CLDClosure* cld_f, CodeBlobClosure* cf, RegisterMap* map, bool use_interpreter_oop_map_cache) {
 #ifndef PRODUCT
   // simulate GC crash here to dump java thread in error report
   if (CrashGCForDumpingJavaThread) {
@@ -1185,24 +1110,6 @@ void frame::metadata_do(void f(Metadata*)) {
     f(m);
   }
 }
-
-void frame::gc_prologue() {
-  if (is_interpreted_frame()) {
-    // set bcx to bci to become Method* position independent during GC
-    interpreter_frame_set_bcx(interpreter_frame_bci());
-  }
-}
-
-
-void frame::gc_epilogue() {
-  if (is_interpreted_frame()) {
-    // set bcx back to bcp for interpreter
-    interpreter_frame_set_bcx((intptr_t)interpreter_frame_bcp());
-  }
-  // call processor specific epilog function
-  pd_gc_epilog();
-}
-
 
 # ifdef ENABLE_ZAP_DEAD_LOCALS
 

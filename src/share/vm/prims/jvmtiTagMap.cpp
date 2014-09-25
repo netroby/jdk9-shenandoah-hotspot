@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2003, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2003, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -26,6 +26,7 @@
 #include "classfile/symbolTable.hpp"
 #include "classfile/systemDictionary.hpp"
 #include "classfile/vmSymbols.hpp"
+#include "code/codeCache.hpp"
 #include "jvmtifiles/jvmtiEnv.hpp"
 #include "oops/instanceMirrorKlass.hpp"
 #include "oops/objArrayKlass.hpp"
@@ -2790,6 +2791,7 @@ inline bool VM_HeapWalkOperation::iterate_over_type_array(oop o) {
   return true;
 }
 
+#ifdef ASSERT
 // verify that a static oop field is in range
 static inline bool verify_static_oop(InstanceKlass* ik,
                                      oop mirror, int offset) {
@@ -2804,6 +2806,7 @@ static inline bool verify_static_oop(InstanceKlass* ik,
     return false;
   }
 }
+#endif // #ifdef ASSERT
 
 // a class references its super class, interfaces, class loader, ...
 // and finally its static fields
@@ -3017,7 +3020,7 @@ inline bool VM_HeapWalkOperation::collect_simple_roots() {
 
   // If there are any non-perm roots in the code cache, visit them.
   blk.set_kind(JVMTI_HEAP_REFERENCE_OTHER);
-  CodeBlobToOopClosure look_in_blobs(&blk, false);
+  CodeBlobToOopClosure look_in_blobs(&blk, !CodeBlobToOopClosure::FixRelocations);
   CodeCache::scavenge_root_nmethods_do(&look_in_blobs);
 
   return true;
@@ -3079,6 +3082,23 @@ inline bool VM_HeapWalkOperation::collect_stack_roots(JavaThread* java_thread,
               }
             }
           }
+
+          StackValueCollection* exprs = jvf->expressions();
+          for (int index=0; index < exprs->size(); index++) {
+            if (exprs->at(index)->type() == T_OBJECT) {
+              oop o = exprs->obj_at(index)();
+              if (o == NULL) {
+                continue;
+              }
+
+              // stack reference
+              if (!CallbackInvoker::report_stack_ref_root(thread_tag, tid, depth, method,
+                                                   bci, locals->size() + index, o)) {
+                return false;
+              }
+            }
+          }
+
         } else {
           blk->set_context(thread_tag, tid, depth, method);
           if (is_top_frame) {

@@ -1,6 +1,6 @@
 
 /*
- * Copyright (c) 2006, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2006, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -28,7 +28,10 @@
 #include "gc_implementation/shared/spaceDecorator.hpp"
 #include "memory/sharedHeap.hpp"
 #include "oops/oop.inline.hpp"
+#include "runtime/atomic.inline.hpp"
 #include "runtime/thread.inline.hpp"
+
+PRAGMA_FORMAT_MUTE_WARNINGS_FOR_GCC
 
 MutableNUMASpace::MutableNUMASpace(size_t alignment) : MutableSpace(alignment) {
   _lgrp_spaces = new (ResourceObj::C_HEAP, mtGC) GrowableArray<LGRPSpace*>(0, true);
@@ -72,7 +75,7 @@ void MutableNUMASpace::check_mangled_unused_area_complete() {
 #endif  // NOT_PRODUCT
 
 // There may be unallocated holes in the middle chunks
-// that should be filled with dead objects to ensure parseability.
+// that should be filled with dead objects to ensure parsability.
 void MutableNUMASpace::ensure_parsability() {
   for (int i = 0; i < lgrp_spaces()->length(); i++) {
     LGRPSpace *ls = lgrp_spaces()->at(i);
@@ -172,6 +175,26 @@ size_t MutableNUMASpace::tlab_capacity(Thread *thr) const {
   }
   return lgrp_spaces()->at(i)->space()->capacity_in_bytes();
 }
+
+size_t MutableNUMASpace::tlab_used(Thread *thr) const {
+  // Please see the comments for tlab_capacity().
+  guarantee(thr != NULL, "No thread");
+  int lgrp_id = thr->lgrp_id();
+  if (lgrp_id == -1) {
+    if (lgrp_spaces()->length() > 0) {
+      return (used_in_bytes()) / lgrp_spaces()->length();
+    } else {
+      assert(false, "There should be at least one locality group");
+      return 0;
+    }
+  }
+  int i = lgrp_spaces()->find(&lgrp_id, LGRPSpace::equals);
+  if (i == -1) {
+    return 0;
+  }
+  return lgrp_spaces()->at(i)->space()->used_in_bytes();
+}
+
 
 size_t MutableNUMASpace::unsafe_max_tlab_alloc(Thread *thr) const {
   // Please see the comments for tlab_capacity().
@@ -539,7 +562,7 @@ void MutableNUMASpace::initialize(MemRegion mr,
                                   bool clear_space,
                                   bool mangle_space,
                                   bool setup_pages) {
-  assert(clear_space, "Reallocation will destory data!");
+  assert(clear_space, "Reallocation will destroy data!");
   assert(lgrp_spaces()->length() > 0, "There should be at least one space");
 
   MemRegion old_region = region(), new_region;
@@ -868,7 +891,9 @@ void MutableNUMASpace::print_on(outputStream* st) const {
       for (int i = 0; i < lgrp_spaces()->length(); i++) {
         lgrp_spaces()->at(i)->accumulate_statistics(page_size());
       }
-      st->print("    local/remote/unbiased/uncommitted: %dK/%dK/%dK/%dK, large/small pages: %d/%d\n",
+      st->print("    local/remote/unbiased/uncommitted: " SIZE_FORMAT "K/"
+                SIZE_FORMAT "K/" SIZE_FORMAT "K/" SIZE_FORMAT
+                "K, large/small pages: " SIZE_FORMAT "/" SIZE_FORMAT "\n",
                 ls->space_stats()->_local_space / K,
                 ls->space_stats()->_remote_space / K,
                 ls->space_stats()->_unbiased_space / K,
@@ -880,8 +905,8 @@ void MutableNUMASpace::print_on(outputStream* st) const {
 }
 
 void MutableNUMASpace::verify() {
-  // This can be called after setting an arbitary value to the space's top,
-  // so an object can cross the chunk boundary. We ensure the parsablity
+  // This can be called after setting an arbitrary value to the space's top,
+  // so an object can cross the chunk boundary. We ensure the parsability
   // of the space and just walk the objects in linear fashion.
   ensure_parsability();
   MutableSpace::verify();

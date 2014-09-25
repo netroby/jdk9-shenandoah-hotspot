@@ -26,6 +26,7 @@
 #define SHARE_VM_GC_IMPLEMENTATION_G1_G1ALLOCREGION_INLINE_HPP
 
 #include "gc_implementation/g1/g1AllocRegion.hpp"
+#include "gc_implementation/g1/heapRegion.inline.hpp"
 
 inline HeapWord* G1AllocRegion::allocate(HeapRegion* alloc_region,
                                          size_t word_size,
@@ -70,7 +71,7 @@ inline HeapWord* G1AllocRegion::attempt_allocation(size_t word_size,
 
 inline HeapWord* G1AllocRegion::attempt_allocation_locked(size_t word_size,
                                                           bool bot_updates) {
-  // First we have to tedo the allocation, assuming we're holding the
+  // First we have to redo the allocation, assuming we're holding the
   // appropriate lock, in case another thread changed the region while
   // we were waiting to get the lock.
   HeapWord* result = attempt_allocation(word_size, bot_updates);

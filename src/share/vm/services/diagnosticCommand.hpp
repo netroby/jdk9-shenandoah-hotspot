@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2011, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -25,17 +25,16 @@
 #ifndef SHARE_VM_SERVICES_DIAGNOSTICCOMMAND_HPP
 #define SHARE_VM_SERVICES_DIAGNOSTICCOMMAND_HPP
 
-#include "runtime/arguments.hpp"
 #include "classfile/vmSymbols.hpp"
-#include "utilities/ostream.hpp"
-#include "runtime/vm_version.hpp"
-#include "runtime/vmThread.hpp"
+#include "runtime/arguments.hpp"
 #include "runtime/os.hpp"
+#include "runtime/vmThread.hpp"
 #include "services/diagnosticArgument.hpp"
 #include "services/diagnosticCommand.hpp"
-#include "services/diagnosticFramework.hpp"
 #include "services/diagnosticCommand_ext.hpp"
+#include "services/diagnosticFramework.hpp"
 #include "utilities/macros.hpp"
+#include "utilities/ostream.hpp"
 
 class HelpDCmd : public DCmdWithParser {
 protected:
@@ -129,6 +128,29 @@ public:
     return p;
   }
   static int num_arguments();
+  virtual void execute(DCmdSource source, TRAPS);
+};
+
+class VMDynamicLibrariesDCmd : public DCmd {
+public:
+  VMDynamicLibrariesDCmd(outputStream* output, bool heap);
+  static const char* name() {
+    return "VM.dynlibs";
+  }
+  static const char* description() {
+    return "Print loaded dynamic libraries.";
+  }
+  static const char* impact() {
+    return "Low";
+  }
+  static const JavaPermission permission() {
+    JavaPermission p = {"java.lang.management.ManagementPermission",
+                        "monitor", NULL};
+    return p;
+  }
+  static int num_arguments() {
+    return 0;
+  };
   virtual void execute(DCmdSource source, TRAPS);
 };
 
@@ -357,6 +379,87 @@ public:
     return "Stop remote management agent.";
   }
 
+  virtual void execute(DCmdSource source, TRAPS);
+};
+
+class RotateGCLogDCmd : public DCmd {
+public:
+  RotateGCLogDCmd(outputStream* output, bool heap) : DCmd(output, heap) {}
+  static const char* name() { return "GC.rotate_log"; }
+  static const char* description() {
+    return "Force the GC log file to be rotated.";
+  }
+  static const char* impact() { return "Low"; }
+  virtual void execute(DCmdSource source, TRAPS);
+  static int num_arguments() { return 0; }
+  static const JavaPermission permission() {
+    JavaPermission p = {"java.lang.management.ManagementPermission",
+                        "control", NULL};
+    return p;
+  }
+};
+
+class CompileQueueDCmd : public DCmd {
+public:
+  CompileQueueDCmd(outputStream* output, bool heap) : DCmd(output, heap) {}
+  static const char* name() {
+    return "Compiler.queue";
+  }
+  static const char* description() {
+    return "Print methods queued for compilation.";
+  }
+  static const char* impact() {
+    return "Low";
+  }
+  static const JavaPermission permission() {
+    JavaPermission p = {"java.lang.management.ManagementPermission",
+                        "monitor", NULL};
+    return p;
+  }
+  static int num_arguments() { return 0; }
+  virtual void execute(DCmdSource source, TRAPS);
+};
+
+class CodeListDCmd : public DCmd {
+public:
+  CodeListDCmd(outputStream* output, bool heap) : DCmd(output, heap) {}
+  static const char* name() {
+    return "Compiler.codelist";
+  }
+  static const char* description() {
+    return "Print all compiled methods in code cache.";
+  }
+  static const char* impact() {
+    return "Medium";
+  }
+  static const JavaPermission permission() {
+    JavaPermission p = {"java.lang.management.ManagementPermission",
+                        "monitor", NULL};
+    return p;
+  }
+  static int num_arguments() { return 0; }
+  virtual void execute(DCmdSource source, TRAPS);
+};
+
+
+class CodeCacheDCmd : public DCmd {
+public:
+  CodeCacheDCmd(outputStream* output, bool heap) : DCmd(output, heap) {}
+  static const char* name() {
+    return "Compiler.codecache";
+  }
+  static const char* description() {
+    return "Print code cache layout and bounds.";
+  }
+  static const char* impact() {
+    return "Low";
+  }
+  static const JavaPermission permission() {
+    JavaPermission p = {"java.lang.management.ManagementPermission",
+                        "monitor", NULL};
+    return p;
+  }
+  static int num_arguments() { return 0; }
   virtual void execute(DCmdSource source, TRAPS);
 };
 

@@ -19,7 +19,7 @@
 # Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
 # or visit www.oracle.com if you need additional information or have any
 # questions.
-#  
+#
 #
 
 #------------------------------------------------------------------------
@@ -62,7 +62,6 @@ else
   CC_VER_MINOR := $(shell $(CC) -dumpversion | sed 's/egcs-//' | cut -d'.' -f2)
 endif
 
-
 ifeq ($(USE_CLANG), true)
   # Clang has precompiled headers support by default, but the user can switch
   # it off by using 'USE_PRECOMPILED_HEADER=0'.
@@ -104,7 +103,7 @@ ifeq ($(USE_CLANG), true)
     # But Clang doesn't support a precompiled header which was compiled with -O3
     # to be used in a compilation unit which uses '-O0'. We could also prepare an
     # extra '-O0' PCH file for the opt build and use it here, but it's probably
-    # not worth the effoert as long as only two files need this special handling.
+    # not worth the effort as long as only two files need this special handling.
     PCH_FLAG/loopTransform.o = $(PCH_FLAG/NO_PCH)
     PCH_FLAG/sharedRuntimeTrig.o = $(PCH_FLAG/NO_PCH)
     PCH_FLAG/sharedRuntimeTrans.o = $(PCH_FLAG/NO_PCH)
@@ -181,6 +180,7 @@ ARCHFLAG/zero    = $(ZERO_ARCHFLAG)
 ifndef E500V2
 ARCHFLAG/ppc     =  -mcpu=powerpc
 endif
+ARCHFLAG/ppc64   =  -m64
 
 CFLAGS     += $(ARCHFLAG)
 AOUT_FLAGS += $(ARCHFLAG)
@@ -214,7 +214,7 @@ ifeq ($(USE_CLANG), true)
   WARNINGS_ARE_ERRORS += -Wno-return-type -Wno-empty-body
 endif
 
-WARNING_FLAGS = -Wpointer-arith -Wsign-compare -Wundef -Wunused-function -Wunused-value
+WARNING_FLAGS = -Wpointer-arith -Wsign-compare -Wundef -Wunused-function -Wunused-value -Wformat=2
 
 ifeq ($(USE_CLANG),)
   # Since GCC 4.3, -Wconversion has changed its meanings to warn these implicit
@@ -225,19 +225,22 @@ ifeq ($(USE_CLANG),)
 endif
 
 CFLAGS_WARN/DEFAULT = $(WARNINGS_ARE_ERRORS) $(WARNING_FLAGS)
-# Special cases
-CFLAGS_WARN/BYFILE = $(CFLAGS_WARN/$@)$(CFLAGS_WARN/DEFAULT$(CFLAGS_WARN/$@)) 
 
-# The flags to use for an Optimized g++ build
+# Special cases
+CFLAGS_WARN/BYFILE = $(CFLAGS_WARN/$@)$(CFLAGS_WARN/DEFAULT$(CFLAGS_WARN/$@))
+
+# optimization control flags (Used by fastdebug and release variants)
+OPT_CFLAGS/NOOPT=-O0
+OPT_CFLAGS/DEBUG=-O0
 OPT_CFLAGS/SIZE=-Os
 OPT_CFLAGS/SPEED=-O3 -D_NMT_NOINLINE_
+
+OPT_CFLAGS_DEFAULT ?= SPEED
 
 # Hotspot uses very unstrict aliasing turn this optimization off
 # This option is added to CFLAGS rather than OPT_CFLAGS
 # so that OPT_CFLAGS overrides get this option too.
-CFLAGS += -fno-strict-aliasing 
-
-OPT_CFLAGS_DEFAULT ?= SPEED
+CFLAGS += -fno-strict-aliasing
 
 ifdef OPT_CFLAGS
   ifneq ("$(origin OPT_CFLAGS)", "command line")
@@ -247,13 +250,11 @@ endif
 
 OPT_CFLAGS = $(OPT_CFLAGS/$(OPT_CFLAGS_DEFAULT)) $(OPT_EXTRAS)
 
-# The gcc compiler segv's on ia64 when compiling bytecodeInterpreter.cpp 
+# The gcc compiler segv's on ia64 when compiling bytecodeInterpreter.cpp
 # if we use expensive-optimizations
 ifeq ($(BUILDARCH), ia64)
 OPT_CFLAGS += -fno-expensive-optimizations
 endif
-
-OPT_CFLAGS/NOOPT=-O0
 
 # Work around some compiler bugs.
 ifeq ($(USE_CLANG), true)
@@ -270,7 +271,7 @@ endif
 # Flags for generating make dependency flags.
 DEPFLAGS = -MMD -MP -MF $(DEP_DIR)/$(@:%=%.d)
 ifeq ($(USE_CLANG),)
-  ifneq ("${CC_VER_MAJOR}", "2")
+  ifneq ($(CC_VER_MAJOR), 2)
     DEPFLAGS += -fpch-deps
   endif
 endif
@@ -281,21 +282,26 @@ endif
 # statically link libstdc++.so, work with gcc but ignored by g++
 STATIC_STDCXX = -Wl,-Bstatic -lstdc++ -Wl,-Bdynamic
 
+# Enable linker optimization
+LFLAGS += -Xlinker -O1
+
 ifeq ($(USE_CLANG),)
-  # statically link libgcc and/or libgcc_s, libgcc does not exist before gcc-3.x.
-  ifneq ("${CC_VER_MAJOR}", "2")
-    STATIC_LIBGCC += -static-libgcc
+  STATIC_LIBGCC += -static-libgcc
+
+  ifneq (, findstring(debug,$(BUILD_FLAVOR)))
+    # for relocations read-only
+    LFLAGS += -Xlinker -z -Xlinker relro
+
+    ifeq ($(BUILD_FLAVOR), debug)
+      # disable incremental relocations linking
+      LFLAGS += -Xlinker -z -Xlinker now
+    endif
   endif
 
   ifeq ($(BUILDARCH), ia64)
     LFLAGS += -Wl,-relax
   endif
-endif
 
-# Enable linker optimization
-LFLAGS += -Xlinker -O1
-
-ifeq ($(USE_CLANG),)
   # If this is a --hash-style=gnu system, use --hash-style=both
   #   The gnu .hash section won't work on some Linux systems like SuSE 10.
   _HAS_HASH_STYLE_GNU:=$(shell $(CC) -dumpspecs | grep -- '--hash-style=gnu')
@@ -332,63 +338,39 @@ ifeq ($(USE_CLANG), true)
   CFLAGS += -flimit-debug-info
 endif
 
+# Allow no optimizations.
+DEBUG_CFLAGS=-O0
+
 # DEBUG_BINARIES uses full -g debug information for all configs
 ifeq ($(DEBUG_BINARIES), true)
   CFLAGS += -g
 else
-  # Use the stabs format for debugging information (this is the default
-  # on gcc-2.91). It's good enough, has all the information about line
-  # numbers and local variables, and libjvm.so is only about 16M.
-  # Change this back to "-g" if you want the most expressive format.
-  # (warning: that could easily inflate libjvm.so to 150M!)
-  # Note: The Itanium gcc compiler crashes when using -gstabs.
-  DEBUG_CFLAGS/ia64  = -g
-  DEBUG_CFLAGS/amd64 = -g
-  DEBUG_CFLAGS/arm   = -g
-  DEBUG_CFLAGS/ppc   = -g
-  DEBUG_CFLAGS/zero   = -g
   DEBUG_CFLAGS += $(DEBUG_CFLAGS/$(BUILDARCH))
   ifeq ($(DEBUG_CFLAGS/$(BUILDARCH)),)
-      ifeq ($(USE_CLANG), true)
-        # Clang doesn't understand -gstabs
-        DEBUG_CFLAGS += -g
-      else
-        DEBUG_CFLAGS += -gstabs
-      endif
+    DEBUG_CFLAGS += -g
   endif
-  
+
   ifeq ($(ENABLE_FULL_DEBUG_SYMBOLS),1)
-    FASTDEBUG_CFLAGS/ia64  = -g
-    FASTDEBUG_CFLAGS/amd64 = -g
-    FASTDEBUG_CFLAGS/arm   = -g
-    FASTDEBUG_CFLAGS/ppc   = -g
-    FASTDEBUG_CFLAGS/zero  = -g
-    FASTDEBUG_CFLAGS += $(DEBUG_CFLAGS/$(BUILDARCH))
+    FASTDEBUG_CFLAGS += $(FASTDEBUG_CFLAGS/$(BUILDARCH))
     ifeq ($(FASTDEBUG_CFLAGS/$(BUILDARCH)),)
-      ifeq ($(USE_CLANG), true)
-        # Clang doesn't understand -gstabs
-        FASTDEBUG_CFLAGS += -g
-      else
-        FASTDEBUG_CFLAGS += -gstabs
-      endif
+      FASTDEBUG_CFLAGS += -g
     endif
-  
-    OPT_CFLAGS/ia64  = -g
-    OPT_CFLAGS/amd64 = -g
-    OPT_CFLAGS/arm   = -g
-    OPT_CFLAGS/ppc   = -g
-    OPT_CFLAGS/zero   = -g
+
     OPT_CFLAGS += $(OPT_CFLAGS/$(BUILDARCH))
     ifeq ($(OPT_CFLAGS/$(BUILDARCH)),)
-      ifeq ($(USE_CLANG), true)
-        # Clang doesn't understand -gstabs
-        OPT_CFLAGS += -g
-      else
-        OPT_CFLAGS += -gstabs
-      endif
+      OPT_CFLAGS += -g
     endif
   endif
 endif
+
+ifeq ($(USE_CLANG),)
+  # Enable bounds checking.
+  ifeq "$(shell expr \( $(CC_VER_MAJOR) \> 3 \) )" "1"
+    # stack smashing checks.
+    DEBUG_CFLAGS += -fstack-protector-all --param ssp-buffer-size=1
+  endif
+endif
+
 
 # If we are building HEADLESS, pass on to VM
 # so it can set the java.awt.headless property

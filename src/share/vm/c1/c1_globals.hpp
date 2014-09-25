@@ -47,6 +47,9 @@
 #ifdef TARGET_OS_FAMILY_windows
 # include "c1_globals_windows.hpp"
 #endif
+#ifdef TARGET_OS_FAMILY_aix
+# include "c1_globals_aix.hpp"
+#endif
 #ifdef TARGET_OS_FAMILY_bsd
 # include "c1_globals_bsd.hpp"
 #endif
@@ -269,9 +272,6 @@
   develop(bool, PrintNotLoaded, false,                                      \
           "Prints where classes are not loaded during code generation")     \
                                                                             \
-  notproduct(bool, VerifyOopMaps, false,                                    \
-          "Adds oopmap verification code to the generated code")            \
-                                                                            \
   develop(bool, PrintLIR, false,                                            \
           "print low-level IR")                                             \
                                                                             \
@@ -307,9 +307,6 @@
                                                                             \
   develop(intx, InstructionCountCutoff, 37000,                              \
           "If GraphBuilder adds this many instructions, bails out")         \
-                                                                            \
-  product_pd(intx, SafepointPollOffset,                                     \
-          "Offset added to polling address (Intel only)")                   \
                                                                             \
   develop(bool, ComputeExactFPURegisterUsage, true,                         \
           "Compute additional live set for fpu registers to simplify fpu stack merge (Intel only)") \

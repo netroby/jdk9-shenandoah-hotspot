@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -26,26 +26,7 @@
 #define SHARE_VM_OPTO_REGMASK_HPP
 
 #include "code/vmreg.hpp"
-#include "libadt/port.hpp"
 #include "opto/optoreg.hpp"
-#ifdef TARGET_ARCH_MODEL_x86_32
-# include "adfiles/adGlobals_x86_32.hpp"
-#endif
-#ifdef TARGET_ARCH_MODEL_x86_64
-# include "adfiles/adGlobals_x86_64.hpp"
-#endif
-#ifdef TARGET_ARCH_MODEL_sparc
-# include "adfiles/adGlobals_sparc.hpp"
-#endif
-#ifdef TARGET_ARCH_MODEL_zero
-# include "adfiles/adGlobals_zero.hpp"
-#endif
-#ifdef TARGET_ARCH_MODEL_arm
-# include "adfiles/adGlobals_arm.hpp"
-#endif
-#ifdef TARGET_ARCH_MODEL_ppc
-# include "adfiles/adGlobals_ppc.hpp"
-#endif
 
 // Some fun naming (textual) substitutions:
 //
@@ -65,9 +46,9 @@
 
 //-------------Non-zero bit search methods used by RegMask---------------------
 // Find lowest 1, or return 32 if empty
-int find_lowest_bit( uint32 mask );
+int find_lowest_bit( uint32_t mask );
 // Find highest 1, or return 32 if empty
-int find_hihghest_bit( uint32 mask );
+int find_hihghest_bit( uint32_t mask );
 
 //------------------------------RegMask----------------------------------------
 // The ADL file describes how to print the machine-specific registers, as well

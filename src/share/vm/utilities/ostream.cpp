@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -24,24 +24,15 @@
 
 #include "precompiled.hpp"
 #include "compiler/compileLog.hpp"
+#include "gc_implementation/shared/gcId.hpp"
 #include "oops/oop.inline.hpp"
 #include "runtime/arguments.hpp"
+#include "runtime/os.hpp"
+#include "runtime/vm_version.hpp"
 #include "utilities/defaultStream.hpp"
 #include "utilities/ostream.hpp"
 #include "utilities/top.hpp"
 #include "utilities/xmlstream.hpp"
-#ifdef TARGET_OS_FAMILY_linux
-# include "os_linux.inline.hpp"
-#endif
-#ifdef TARGET_OS_FAMILY_solaris
-# include "os_solaris.inline.hpp"
-#endif
-#ifdef TARGET_OS_FAMILY_windows
-# include "os_windows.inline.hpp"
-#endif
-#ifdef TARGET_OS_FAMILY_bsd
-# include "os_bsd.inline.hpp"
-#endif
 
 extern "C" void jio_print(const char* s); // Declarationtion of jvm method
 
@@ -237,6 +228,14 @@ void outputStream::date_stamp(bool guard,
   return;
 }
 
+void outputStream::gclog_stamp(const GCId& gc_id) {
+  date_stamp(PrintGCDateStamps);
+  stamp(PrintGCTimeStamps);
+  if (PrintGCID) {
+    print("#%u: ", gc_id.id());
+  }
+}
+
 outputStream& outputStream::indent() {
   while (_position < _indentation) sp();
   return *this;
@@ -265,7 +264,7 @@ void outputStream::print_data(void* data, size_t len, bool with_ascii) {
   size_t limit = (len + 16) / 16 * 16;
   for (size_t i = 0; i < limit; ++i) {
     if (i % 16 == 0) {
-      indent().print("%07x:", i);
+      indent().print(INTPTR_FORMAT_W(07)":", i);
     }
     if (i % 2 == 0) {
       print(" ");
@@ -286,7 +285,7 @@ void outputStream::print_data(void* data, size_t len, bool with_ascii) {
           }
         }
       }
-      print_cr("");
+      cr();
     }
   }
 }
@@ -353,6 +352,7 @@ stringStream::~stringStream() {}
 xmlStream*   xtty;
 outputStream* tty;
 outputStream* gclog_or_tty;
+CDS_ONLY(fileStream* classlist_file;) // Only dump the classes that can be stored into the CDS archive
 extern Mutex* tty_lock;
 
 #define EXTRACHARLEN   32
@@ -464,7 +464,8 @@ static const char* make_log_name_internal(const char* log_name, const char* forc
   return buf;
 }
 
-// log_name comes from -XX:LogFile=log_name or -Xloggc:log_name
+// log_name comes from -XX:LogFile=log_name, -Xloggc:log_name or
+// -XX:DumpLoadedClassList=<file_name>
 // in log_name, %p => pid1234 and
 //              %t => YYYY-MM-DD_HH-MM-SS
 static const char* make_log_name(const char* log_name, const char* force_directory) {
@@ -603,7 +604,7 @@ void fdStream::write(const char* s, size_t len) {
 // memory usage and command line flags into header
 void gcLogFileStream::dump_loggc_header() {
   if (is_open()) {
-    print_cr(Abstract_VM_Version::internal_vm_info_string());
+    print_cr("%s", Abstract_VM_Version::internal_vm_info_string());
     os::print_memory_info(this);
     print("CommandLine flags: ");
     CommandLineFlags::printSetFlags(this);
@@ -659,13 +660,13 @@ void gcLogFileStream::write(const char* s, size_t len) {
 // write to gc log file at safepoint. If in future, changes made for mutator threads or
 // concurrent GC threads to run parallel with VMThread at safepoint, write and rotate_log
 // must be synchronized.
-void gcLogFileStream::rotate_log() {
+void gcLogFileStream::rotate_log(bool force, outputStream* out) {
   char time_msg[FILENAMEBUFLEN];
   char time_str[EXTRACHARLEN];
   char current_file_name[FILENAMEBUFLEN];
   char renamed_file_name[FILENAMEBUFLEN];
 
-  if (_bytes_written < (jlong)GCLogFileSize) {
+  if (!should_rotate(force)) {
     return;
   }
 
@@ -682,6 +683,11 @@ void gcLogFileStream::rotate_log() {
     jio_snprintf(time_msg, sizeof(time_msg), "File  %s rotated at %s\n",
                  _file_name, os::local_time_string((char *)time_str, sizeof(time_str)));
     write(time_msg, strlen(time_msg));
+
+    if (out != NULL) {
+      out->print("%s", time_msg);
+    }
+
     dump_loggc_header();
     return;
   }
@@ -703,11 +709,17 @@ void gcLogFileStream::rotate_log() {
                  _file_name, _cur_file_num);
     jio_snprintf(current_file_name, filename_len + EXTRACHARLEN, "%s.%d" CURRENTAPPX,
                  _file_name, _cur_file_num);
-    jio_snprintf(time_msg, sizeof(time_msg), "%s GC log file has reached the"
-                           " maximum size. Saved as %s\n",
-                           os::local_time_string((char *)time_str, sizeof(time_str)),
-                           renamed_file_name);
+
+    const char* msg = force ? "GC log rotation request has been received."
+                            : "GC log file has reached the maximum size.";
+    jio_snprintf(time_msg, sizeof(time_msg), "%s %s Saved as %s\n",
+                     os::local_time_string((char *)time_str, sizeof(time_str)),
+                                                         msg, renamed_file_name);
     write(time_msg, strlen(time_msg));
+
+    if (out != NULL) {
+      out->print("%s", time_msg);
+    }
 
     fclose(_file);
     _file = NULL;
@@ -749,6 +761,11 @@ void gcLogFileStream::rotate_log() {
                            os::local_time_string((char *)time_str, sizeof(time_str)),
                            current_file_name);
     write(time_msg, strlen(time_msg));
+
+    if (out != NULL) {
+      out->print("%s", time_msg);
+    }
+
     dump_loggc_header();
     // remove the existing file
     if (access(current_file_name, F_OK) == 0) {
@@ -826,7 +843,7 @@ void defaultStream::init_log() {
     xs->head("hotspot_log version='%d %d'"
              " process='%d' time_ms='"INT64_FORMAT"'",
              LOG_MAJOR_VERSION, LOG_MINOR_VERSION,
-             os::current_process_id(), time_ms);
+             os::current_process_id(), (int64_t)time_ms);
     // Write VM version header immediately.
     xs->head("vm_version");
     xs->head("name"); xs->text("%s", VM_Version::vm_name()); xs->cr();
@@ -1088,6 +1105,16 @@ void ostream_init_log() {
     gclog_or_tty = gclog;
   }
 
+#if INCLUDE_CDS
+  // For -XX:DumpLoadedClassList=<file> option
+  if (DumpLoadedClassList != NULL) {
+    const char* list_name = make_log_name(DumpLoadedClassList, NULL);
+    classlist_file = new(ResourceObj::C_HEAP, mtInternal)
+                         fileStream(list_name);
+    FREE_C_HEAP_ARRAY(char, list_name, mtInternal);
+  }
+#endif
+
   // If we haven't lazily initialized the logfile yet, do it now,
   // to avoid the possibility of lazy initialization during a VM
   // crash, which can affect the stability of the fatal error handler.
@@ -1100,6 +1127,11 @@ void ostream_exit() {
   static bool ostream_exit_called = false;
   if (ostream_exit_called)  return;
   ostream_exit_called = true;
+#if INCLUDE_CDS
+  if (classlist_file != NULL) {
+    delete classlist_file;
+  }
+#endif
   if (gclog_or_tty != tty) {
       delete gclog_or_tty;
   }
@@ -1238,7 +1270,7 @@ bufferedStream::~bufferedStream() {
 
 #ifndef PRODUCT
 
-#if defined(SOLARIS) || defined(LINUX) || defined(_ALLBSD_SOURCE)
+#if defined(SOLARIS) || defined(LINUX) || defined(AIX) || defined(_ALLBSD_SOURCE)
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>

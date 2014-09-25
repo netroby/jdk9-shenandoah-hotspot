@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1999, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1999, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -27,7 +27,6 @@
 
 #include "runtime/atomic.hpp"
 #include "runtime/os.hpp"
-#include "vm_version_sparc.hpp"
 
 // Implementation of class atomic
 
@@ -78,12 +77,12 @@ inline intptr_t Atomic::add_ptr(intptr_t add_value, volatile intptr_t* dest) {
   __asm__ volatile(
     "1: \n\t"
     " ldx    [%2], %%o2\n\t"
-    " add    %0, %%o2, %%o3\n\t"
+    " add    %1, %%o2, %%o3\n\t"
     " casx   [%2], %%o2, %%o3\n\t"
     " cmp    %%o2, %%o3\n\t"
     " bne    %%xcc, 1b\n\t"
     "  nop\n\t"
-    " add    %0, %%o2, %0\n\t"
+    " add    %1, %%o2, %0\n\t"
     : "=r" (rv)
     : "r" (add_value), "r" (dest)
     : "memory", "o2", "o3");

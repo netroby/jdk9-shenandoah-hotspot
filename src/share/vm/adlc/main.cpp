@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -29,7 +29,6 @@
 static void  usage(ArchDesc& AD);          // Print usage message and exit
 static char *strip_ext(char *fname);       // Strip off name extension
 static char *base_plus_suffix(const char* base, const char *suffix);// New concatenated string
-static char *prefix_plus_base_plus_suffix(const char* prefix, const char* base, const char *suffix);// New concatenated string
 static int get_legal_text(FileBuff &fbuf, char **legal_text); // Get pointer to legal text
 
 ArchDesc* globalAD = NULL;      // global reference to Architecture Description object
@@ -214,7 +213,8 @@ int main(int argc, char *argv[])
   AD.addInclude(AD._CPP_file, "memory/allocation.inline.hpp");
   AD.addInclude(AD._CPP_file, "asm/macroAssembler.inline.hpp");
   AD.addInclude(AD._CPP_file, "code/compiledIC.hpp");
-  AD.addInclude(AD._CPP_file, "code/vmreg.hpp");
+  AD.addInclude(AD._CPP_file, "code/nativeInst.hpp");
+  AD.addInclude(AD._CPP_file, "code/vmreg.inline.hpp");
   AD.addInclude(AD._CPP_file, "gc_interface/collectedHeap.inline.hpp");
   AD.addInclude(AD._CPP_file, "oops/compiledICHolder.hpp");
   AD.addInclude(AD._CPP_file, "oops/markOop.hpp");
@@ -231,19 +231,8 @@ int main(int argc, char *argv[])
   AD.addInclude(AD._CPP_file, "runtime/sharedRuntime.hpp");
   AD.addInclude(AD._CPP_file, "runtime/stubRoutines.hpp");
   AD.addInclude(AD._CPP_file, "utilities/growableArray.hpp");
-#ifdef TARGET_ARCH_x86
-  AD.addInclude(AD._CPP_file, "nativeInst_x86.hpp");
-  AD.addInclude(AD._CPP_file, "vmreg_x86.inline.hpp");
-#endif
-#ifdef TARGET_ARCH_sparc
-  AD.addInclude(AD._CPP_file, "nativeInst_sparc.hpp");
-  AD.addInclude(AD._CPP_file, "vmreg_sparc.inline.hpp");
-#endif
-#ifdef TARGET_ARCH_arm
-  AD.addInclude(AD._CPP_file, "nativeInst_arm.hpp");
-  AD.addInclude(AD._CPP_file, "vmreg_arm.inline.hpp");
-#endif
   AD.addInclude(AD._HPP_file, "memory/allocation.hpp");
+  AD.addInclude(AD._HPP_file, "code/nativeInst.hpp");
   AD.addInclude(AD._HPP_file, "opto/machnode.hpp");
   AD.addInclude(AD._HPP_file, "opto/node.hpp");
   AD.addInclude(AD._HPP_file, "opto/regalloc.hpp");
@@ -267,8 +256,10 @@ int main(int argc, char *argv[])
   AD.addInclude(AD._CPP_PIPELINE_file, "adfiles", get_basename(AD._HPP_file._name));
   AD.addInclude(AD._DFA_file, "precompiled.hpp");
   AD.addInclude(AD._DFA_file, "adfiles", get_basename(AD._HPP_file._name));
+  AD.addInclude(AD._DFA_file, "opto/cfgnode.hpp");  // Use PROB_MAX in predicate.
   AD.addInclude(AD._DFA_file, "opto/matcher.hpp");
   AD.addInclude(AD._DFA_file, "opto/opcodes.hpp");
+  AD.addInclude(AD._DFA_file, "opto/convertnode.hpp");
   // Make sure each .cpp file starts with include lines:
   // files declaring and defining generators for Mach* Objects (hpp,cpp)
   // Generate the result files:
@@ -300,6 +291,7 @@ int main(int argc, char *argv[])
   AD.buildInstructMatchCheck(AD._CPP_file._fp);  // .cpp
   // define methods for machine dependent frame management
   AD.buildFrameMethods(AD._CPP_file._fp);         // .cpp
+  AD.generate_needs_clone_jvms(AD._CPP_file._fp);
 
   // do this last:
   AD.addPreprocessorChecks(AD._CPP_file._fp);     // .cpp

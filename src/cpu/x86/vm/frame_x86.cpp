@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -33,7 +33,7 @@
 #include "runtime/handles.inline.hpp"
 #include "runtime/javaCalls.hpp"
 #include "runtime/monitorChunk.hpp"
-#include "runtime/os.hpp"
+#include "runtime/os.inline.hpp"
 #include "runtime/signature.hpp"
 #include "runtime/stubCodeGenerator.hpp"
 #include "runtime/stubRoutines.hpp"
@@ -48,6 +48,7 @@ void RegisterMap::check_location_valid() {
 }
 #endif
 
+PRAGMA_FORMAT_MUTE_WARNINGS_FOR_GCC
 
 // Profiling/safepoint support
 
@@ -536,10 +537,6 @@ bool frame::interpreter_frame_equals_unpacked_fp(intptr_t* fp) {
   return _fp == (fp - diff);
 }
 
-void frame::pd_gc_epilog() {
-  // nothing done here now
-}
-
 bool frame::is_interpreted_frame_valid(JavaThread* thread) const {
 // QQQ
 #ifdef CC_INTERP
@@ -576,10 +573,10 @@ bool frame::is_interpreted_frame_valid(JavaThread* thread) const {
     return false;
   }
 
-  // validate bci/bcx
+  // validate bci/bcp
 
-  intptr_t  bcx    = interpreter_frame_bcx();
-  if (m->validate_bci_from_bcx(bcx) < 0) {
+  address bcp = interpreter_frame_bcp();
+  if (m->validate_bci_from_bcp(bcp) < 0) {
     return false;
   }
 
@@ -687,14 +684,16 @@ intptr_t* frame::interpreter_frame_tos_at(jint offset) const {
 
 void frame::describe_pd(FrameValues& values, int frame_no) {
   if (is_interpreted_frame()) {
+#ifndef CC_INTERP
     DESCRIBE_FP_OFFSET(interpreter_frame_sender_sp);
     DESCRIBE_FP_OFFSET(interpreter_frame_last_sp);
     DESCRIBE_FP_OFFSET(interpreter_frame_method);
-    DESCRIBE_FP_OFFSET(interpreter_frame_mdx);
+    DESCRIBE_FP_OFFSET(interpreter_frame_mdp);
     DESCRIBE_FP_OFFSET(interpreter_frame_cache);
     DESCRIBE_FP_OFFSET(interpreter_frame_locals);
-    DESCRIBE_FP_OFFSET(interpreter_frame_bcx);
+    DESCRIBE_FP_OFFSET(interpreter_frame_bcp);
     DESCRIBE_FP_OFFSET(interpreter_frame_initial_sp);
+#endif
   }
 }
 #endif

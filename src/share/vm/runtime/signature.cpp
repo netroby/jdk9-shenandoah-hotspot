@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -32,6 +32,7 @@
 #include "oops/typeArrayKlass.hpp"
 #include "runtime/signature.hpp"
 
+PRAGMA_FORMAT_MUTE_WARNINGS_FOR_GCC
 
 // Implementation of SignatureIterator
 
@@ -152,7 +153,7 @@ void SignatureIterator::iterate_parameters() {
   _parameter_index = 0;
 }
 
-// Optimized version of iterat_parameters when fingerprint is known
+// Optimized version of iterate_parameters when fingerprint is known
 void SignatureIterator::iterate_parameters( uint64_t fingerprint ) {
   uint64_t saved_fingerprint = fingerprint;
 

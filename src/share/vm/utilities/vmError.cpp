@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2003, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2003, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -23,14 +23,16 @@
  */
 
 #include "precompiled.hpp"
+#include "code/codeCache.hpp"
 #include "compiler/compileBroker.hpp"
 #include "gc_interface/collectedHeap.hpp"
 #include "prims/whitebox.hpp"
 #include "runtime/arguments.hpp"
+#include "runtime/atomic.inline.hpp"
 #include "runtime/frame.inline.hpp"
 #include "runtime/init.hpp"
 #include "runtime/os.hpp"
-#include "runtime/thread.hpp"
+#include "runtime/thread.inline.hpp"
 #include "runtime/vmThread.hpp"
 #include "runtime/vm_operations.hpp"
 #include "services/memTracker.hpp"
@@ -41,6 +43,8 @@
 #include "utilities/events.hpp"
 #include "utilities/top.hpp"
 #include "utilities/vmError.hpp"
+
+PRAGMA_FORMAT_MUTE_WARNINGS_FOR_GCC
 
 // List of environment variables that should be reported in error log file.
 const char *env_list[] = {
@@ -358,17 +362,17 @@ void VMError::report(outputStream* st) {
            st->print((_id == (int)OOM_MALLOC_ERROR) ? "(malloc) failed to allocate " :
                                                  "(mmap) failed to map ");
            jio_snprintf(buf, sizeof(buf), SIZE_FORMAT, _size);
-           st->print(buf);
+           st->print("%s", buf);
            st->print(" bytes");
            if (_message != NULL) {
              st->print(" for ");
-             st->print(_message);
+             st->print("%s", _message);
            }
            st->cr();
          } else {
            if (_message != NULL)
              st->print("# ");
-             st->print_cr(_message);
+             st->print_cr("%s", _message);
          }
          // In error file give some solutions
          if (_verbose) {
@@ -485,7 +489,7 @@ void VMError::report(outputStream* st) {
     } else {
       st->print("Failed to write core dump. %s", coredump_message);
     }
-    st->print_cr("");
+    st->cr();
     st->print_cr("#");
 
   STEP(65, "(printing bug submit message)")
@@ -592,13 +596,24 @@ void VMError::report(outputStream* st) {
              st->cr();
              // Compiled code may use EBP register on x86 so it looks like
              // non-walkable C frame. Use frame.sender() for java frames.
-             if (_thread && _thread->is_Java_thread() && fr.is_java_frame()) {
-               RegisterMap map((JavaThread*)_thread, false); // No update
-               fr = fr.sender(&map);
-               continue;
+             if (_thread && _thread->is_Java_thread()) {
+               // Catch very first native frame by using stack address.
+               // For JavaThread stack_base and stack_size should be set.
+               if (!_thread->on_local_stack((address)(fr.sender_sp() + 1))) {
+                 break;
+               }
+               if (fr.is_java_frame()) {
+                 RegisterMap map((JavaThread*)_thread, false); // No update
+                 fr = fr.sender(&map);
+               } else {
+                 fr = os::get_sender_for_C_frame(&fr);
+               }
+             } else {
+               // is_first_C_frame() does only simple checks for frame pointer,
+               // it will pass if java compiled code has a pointer in EBP.
+               if (os::is_first_C_frame(&fr)) break;
+               fr = os::get_sender_for_C_frame(&fr);
              }
-             if (os::is_first_C_frame(&fr)) break;
-             fr = os::get_sender_for_C_frame(&fr);
           }
 
           if (count > StackPrintLimit) {
@@ -759,6 +774,11 @@ void VMError::report(outputStream* st) {
        st->cr();
      }
 
+  STEP(228, "(Native Memory Tracking)" )
+     if (_verbose) {
+       MemTracker::final_report(st);
+     }
+
   STEP(230, "" )
 
      if (_verbose) {
@@ -882,9 +902,6 @@ void VMError::report_and_die() {
   static bool log_done = false;         // done saving error log
   static bool transmit_report_done = false; // done error reporting
 
-  // disble NMT to avoid further exception
-  MemTracker::shutdown(MemTracker::NMT_error_reporting);
-
   if (SuppressFatalErrorMessage) {
       os::abort();
   }
@@ -975,7 +992,6 @@ void VMError::report_and_die() {
       if (fd != -1) {
         out.print_raw("# An error report file with more information is saved as:\n# ");
         out.print_raw_cr(buffer);
-        os::set_error_file(buffer);
 
         log.set_fd(fd);
       } else {
@@ -1040,7 +1056,7 @@ void VMError::report_and_die() {
     OnError = NULL;
   }
 
-  static bool skip_replay = false;
+  static bool skip_replay = ReplayCompiles; // Do not overwrite file during replay
   if (DumpReplayDataOnError && _thread && _thread->is_Compiler_thread() && !skip_replay) {
     skip_replay = true;
     ciEnv* env = ciEnv::current();

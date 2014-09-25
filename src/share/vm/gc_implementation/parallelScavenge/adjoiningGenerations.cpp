@@ -35,14 +35,14 @@
 AdjoiningGenerations::AdjoiningGenerations(ReservedSpace old_young_rs,
                                            GenerationSizer* policy,
                                            size_t alignment) :
-  _virtual_spaces(old_young_rs, policy->min_gen1_size(),
-                  policy->min_gen0_size(), alignment) {
-  size_t init_low_byte_size = policy->initial_gen1_size();
-  size_t min_low_byte_size = policy->min_gen1_size();
-  size_t max_low_byte_size = policy->max_gen1_size();
-  size_t init_high_byte_size = policy->initial_gen0_size();
-  size_t min_high_byte_size = policy->min_gen0_size();
-  size_t max_high_byte_size = policy->max_gen0_size();
+  _virtual_spaces(old_young_rs, policy->min_old_size(),
+                  policy->min_young_size(), alignment) {
+  size_t init_low_byte_size = policy->initial_old_size();
+  size_t min_low_byte_size = policy->min_old_size();
+  size_t max_low_byte_size = policy->max_old_size();
+  size_t init_high_byte_size = policy->initial_young_size();
+  size_t min_high_byte_size = policy->min_young_size();
+  size_t max_high_byte_size = policy->max_young_size();
 
   assert(min_low_byte_size <= init_low_byte_size &&
          init_low_byte_size <= max_low_byte_size, "Parameter check");
@@ -118,8 +118,8 @@ size_t AdjoiningGenerations::reserved_byte_size() {
 
 
 // Make checks on the current sizes of the generations and
-// the contraints on the sizes of the generations.  Push
-// up the boundary within the contraints.  A partial
+// the constraints on the sizes of the generations.  Push
+// up the boundary within the constraints.  A partial
 // push can occur.
 void AdjoiningGenerations::request_old_gen_expansion(size_t expand_in_bytes) {
   assert(UseAdaptiveSizePolicy && UseAdaptiveGCBoundary, "runtime check");
@@ -143,7 +143,8 @@ void AdjoiningGenerations::request_old_gen_expansion(size_t expand_in_bytes) {
 
   if (TraceAdaptiveGCBoundary) {
     gclog_or_tty->print_cr("Before expansion of old gen with boundary move");
-    gclog_or_tty->print_cr("  Requested change: 0x%x  Attempted change: 0x%x",
+    gclog_or_tty->print_cr("  Requested change: " SIZE_FORMAT_HEX
+                           "  Attempted change: " SIZE_FORMAT_HEX,
       expand_in_bytes, change_in_bytes);
     if (!PrintHeapAtGC) {
       Universe::print_on(gclog_or_tty);
@@ -201,7 +202,7 @@ bool AdjoiningGenerations::request_young_gen_expansion(size_t expand_in_bytes) {
 
   if (TraceAdaptiveGCBoundary) {
     gclog_or_tty->print_cr("Before expansion of young gen with boundary move");
-    gclog_or_tty->print_cr("  Requested change: 0x%x  Attempted change: 0x%x",
+    gclog_or_tty->print_cr("  Requested change: " SIZE_FORMAT_HEX "  Attempted change: " SIZE_FORMAT_HEX,
       expand_in_bytes, change_in_bytes);
     if (!PrintHeapAtGC) {
       Universe::print_on(gclog_or_tty);

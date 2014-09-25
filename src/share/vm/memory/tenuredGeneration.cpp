@@ -53,9 +53,11 @@ TenuredGeneration::TenuredGeneration(ReservedSpace rs,
   // initialize performance counters
 
   const char* gen_name = "old";
+  GenCollectorPolicy* gcp = (GenCollectorPolicy*) GenCollectedHeap::heap()->collector_policy();
 
   // Generation Counters -- generation 1, 1 subspace
-  _gen_counters = new GenerationCounters(gen_name, 1, 1, &_virtual_space);
+  _gen_counters = new GenerationCounters(gen_name, 1, 1,
+      gcp->min_old_size(), gcp->max_old_size(), &_virtual_space);
 
   _gc_counters = new CollectorCounters("MSC", 1);
 
@@ -135,7 +137,7 @@ bool TenuredGeneration::should_collect(bool  full,
                     free());
     }
   }
-  // If we had to expand to accomodate promotions from younger generations
+  // If we had to expand to accommodate promotions from younger generations
   if (!result && _capacity_at_prologue < capacity()) {
     result = true;
     if (PrintGC && Verbose) {

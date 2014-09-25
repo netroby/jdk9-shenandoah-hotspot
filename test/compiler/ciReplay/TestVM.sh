@@ -1,6 +1,6 @@
 #!/bin/sh
 # 
-# Copyright (c) 2013, Oracle and/or its affiliates. All rights reserved.
+# Copyright (c) 2013, 2014, Oracle and/or its affiliates. All rights reserved.
 # DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
 # 
 # This code is free software; you can redistribute it and/or modify it
@@ -78,8 +78,8 @@ then
         positive_test `expr $stop_level + 50` "TIERED LEVEL $stop_level :: REPLAY" \
                 "-XX:TieredStopAtLevel=$stop_level"
         stop_level=`expr $stop_level + 1`
+        cleanup
     done
-    cleanup
 fi
 
 echo TEST PASSED

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2003, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2003, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -28,6 +28,7 @@
 #include "interpreter/interpreter.hpp"
 #include "interpreter/interpreterGenerator.hpp"
 #include "interpreter/interpreterRuntime.hpp"
+#include "interpreter/interp_masm.hpp"
 #include "interpreter/templateTable.hpp"
 #include "oops/arrayOop.hpp"
 #include "oops/methodData.hpp"
@@ -51,6 +52,7 @@
 
 #define __ _masm->
 
+PRAGMA_FORMAT_MUTE_WARNINGS_FOR_GCC
 
 #ifdef _WIN64
 address AbstractInterpreterGenerator::generate_slow_signature_handler() {
@@ -297,64 +299,6 @@ address InterpreterGenerator::generate_math_entry(AbstractInterpreter::MethodKin
   __ jmp(rax);
 
   return entry_point;
-}
-
-
-// Abstract method entry
-// Attempt to execute abstract method. Throw exception
-address InterpreterGenerator::generate_abstract_entry(void) {
-  // rbx: Method*
-  // r13: sender SP
-
-  address entry_point = __ pc();
-
-  // abstract method entry
-
-  //  pop return address, reset last_sp to NULL
-  __ empty_expression_stack();
-  __ restore_bcp();      // rsi must be correct for exception handler   (was destroyed)
-  __ restore_locals();   // make sure locals pointer is correct as well (was destroyed)
-
-  // throw exception
-  __ call_VM(noreg, CAST_FROM_FN_PTR(address,
-                             InterpreterRuntime::throw_AbstractMethodError));
-  // the call_VM checks for exception, so we should never return here.
-  __ should_not_reach_here();
-
-  return entry_point;
-}
-
-
-// Empty method, generate a very fast return.
-
-address InterpreterGenerator::generate_empty_entry(void) {
-  // rbx: Method*
-  // r13: sender sp must set sp to this value on return
-
-  if (!UseFastEmptyMethods) {
-    return NULL;
-  }
-
-  address entry_point = __ pc();
-
-  // If we need a safepoint check, generate full interpreter entry.
-  Label slow_path;
-  __ cmp32(ExternalAddress(SafepointSynchronize::address_of_state()),
-           SafepointSynchronize::_not_synchronized);
-  __ jcc(Assembler::notEqual, slow_path);
-
-  // do nothing for empty methods (do not even increment invocation counter)
-  // Code: _return
-  // _return
-  // return w/o popping parameters
-  __ pop(rax);
-  __ mov(rsp, r13);
-  __ jmp(rax);
-
-  __ bind(slow_path);
-  (void) generate_normal_entry(false);
-  return entry_point;
-
 }
 
 void Deoptimization::unwind_callee_save_values(frame* f, vframeArray* vframe_array) {

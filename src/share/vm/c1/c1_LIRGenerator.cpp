@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2005, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2005, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -34,6 +34,7 @@
 #include "ci/ciObjArray.hpp"
 #include "runtime/sharedRuntime.hpp"
 #include "runtime/stubRoutines.hpp"
+#include "runtime/vm_version.hpp"
 #include "utilities/bitMap.inline.hpp"
 #include "utilities/macros.hpp"
 #if INCLUDE_ALL_GCS
@@ -468,8 +469,11 @@ CodeEmitInfo* LIRGenerator::state_for(Instruction* x) {
 }
 
 
-void LIRGenerator::klass2reg_with_patching(LIR_Opr r, ciMetadata* obj, CodeEmitInfo* info) {
-  if (!obj->is_loaded() || PatchALot) {
+void LIRGenerator::klass2reg_with_patching(LIR_Opr r, ciMetadata* obj, CodeEmitInfo* info, bool need_resolve) {
+  /* C2 relies on constant pool entries being resolved (ciTypeFlow), so if TieredCompilation
+   * is active and the class hasn't yet been resolved we need to emit a patch that resolves
+   * the class. */
+  if ((TieredCompilation && need_resolve) || !obj->is_loaded() || PatchALot) {
     assert(info != NULL, "info must be set if class is not loaded");
     __ klass2reg_patch(NULL, r, info);
   } else {
@@ -662,9 +666,18 @@ void LIRGenerator::monitor_exit(LIR_Opr object, LIR_Opr lock, LIR_Opr new_hdr, L
   __ unlock_object(hdr, object, lock, scratch, slow_path);
 }
 
+#ifndef PRODUCT
+void LIRGenerator::print_if_not_loaded(const NewInstance* new_instance) {
+  if (PrintNotLoaded && !new_instance->klass()->is_loaded()) {
+    tty->print_cr("   ###class not loaded at new bci %d", new_instance->printable_bci());
+  } else if (PrintNotLoaded && (TieredCompilation && new_instance->is_unresolved())) {
+    tty->print_cr("   ###class not resolved at new bci %d", new_instance->printable_bci());
+  }
+}
+#endif
 
-void LIRGenerator::new_instance(LIR_Opr dst, ciInstanceKlass* klass, LIR_Opr scratch1, LIR_Opr scratch2, LIR_Opr scratch3, LIR_Opr scratch4, LIR_Opr klass_reg, CodeEmitInfo* info) {
-  klass2reg_with_patching(klass_reg, klass, info);
+void LIRGenerator::new_instance(LIR_Opr dst, ciInstanceKlass* klass, bool is_unresolved, LIR_Opr scratch1, LIR_Opr scratch2, LIR_Opr scratch3, LIR_Opr scratch4, LIR_Opr klass_reg, CodeEmitInfo* info) {
+  klass2reg_with_patching(klass_reg, klass, info, is_unresolved);
   // If klass is not loaded we do not know if the klass has finalizers:
   if (UseFastNewInstance && klass->is_loaded()
       && !Klass::layout_helper_needs_slow_path(klass->layout_helper())) {
@@ -1751,7 +1764,8 @@ void LIRGenerator::do_StoreField(StoreField* x) {
                 (info ? new CodeEmitInfo(info) : NULL));
   }
 
-  if (is_volatile && !needs_patching) {
+  bool needs_atomic_access = is_volatile || AlwaysAtomicAccesses;
+  if (needs_atomic_access && !needs_patching) {
     volatile_field_store(value.result(), address, info);
   } else {
     LIR_PatchCode patch_code = needs_patching ? lir_patch_normal : lir_patch_none;
@@ -1825,7 +1839,8 @@ void LIRGenerator::do_LoadField(LoadField* x) {
   }
 
   read_barrier(object.result(), info, x->needs_null_check() && x->explicit_null_check() != NULL);
-  if (is_volatile && !needs_patching) {
+  bool needs_atomic_access = is_volatile || AlwaysAtomicAccesses;
+  if (needs_atomic_access && !needs_patching) {
     volatile_field_load(address, reg, info);
   } else {
     LIR_PatchCode patch_code = needs_patching ? lir_patch_normal : lir_patch_none;
@@ -2587,7 +2602,7 @@ void LIRGenerator::do_Goto(Goto* x) {
     // need to free up storage used for OSR entry point
     LIR_Opr osrBuffer = block()->next()->operand();
     BasicTypeList signature;
-    signature.append(T_INT);
+    signature.append(NOT_LP64(T_INT) LP64_ONLY(T_LONG)); // pass a pointer to osrBuffer
     CallingConvention* cc = frame_map()->c_calling_convention(&signature);
     __ move(osrBuffer, cc->args()->at(0));
     __ call_runtime_leaf(CAST_FROM_FN_PTR(address, SharedRuntime::OSR_migration_end),
@@ -2697,8 +2712,10 @@ ciKlass* LIRGenerator::profile_type(ciMethodData* md, int md_base_offset, int md
       // LIR_Assembler::emit_profile_type() from emitting useless code
       profiled_k = ciTypeEntries::with_status(result, profiled_k);
     }
-    if (exact_signature_k != NULL && exact_klass != exact_signature_k) {
-      assert(exact_klass == NULL, "obj and signature disagree?");
+    // exact_klass and exact_signature_k can be both non NULL but
+    // different if exact_klass is loaded after the ciObject for
+    // exact_signature_k is created.
+    if (exact_klass == NULL && exact_signature_k != NULL && exact_klass != exact_signature_k) {
       // sometimes the type of the signature is better than the best type
       // the compiler has
       exact_klass = exact_signature_k;
@@ -2709,8 +2726,7 @@ ciKlass* LIRGenerator::profile_type(ciMethodData* md, int md_base_offset, int md
       if (improved_klass == NULL) {
         improved_klass = comp->cha_exact_type(callee_signature_k);
       }
-      if (improved_klass != NULL && exact_klass != improved_klass) {
-        assert(exact_klass == NULL, "obj and signature disagree?");
+      if (exact_klass == NULL && improved_klass != NULL && exact_klass != improved_klass) {
         exact_klass = exact_signature_k;
       }
     }
@@ -2842,7 +2858,10 @@ void LIRGenerator::do_Base(Base* x) {
       __ lock_object(syncTempOpr(), obj, lock, new_register(T_OBJECT), slow_path, NULL);
     }
   }
-
+  if (compilation()->age_code()) {
+    CodeEmitInfo* info = new CodeEmitInfo(scope()->start()->state()->copy(ValueStack::StateBefore, 0), NULL, false);
+    decrement_age(info);
+  }
   // increment invocation counters if needed
   if (!method()->is_accessor()) { // Accessors do not have MDOs, so no counting.
     profile_parameters(x);
@@ -3266,8 +3285,8 @@ void LIRGenerator::profile_arguments(ProfileCall* x) {
 #ifdef ASSERT
       Bytecodes::Code code = x->method()->raw_code_at_bci(x->bci_of_invoke());
       int n = x->nb_profiled_args();
-      assert(MethodData::profile_parameters() && x->inlined() &&
-             ((code == Bytecodes::_invokedynamic && n <= 1) || (code == Bytecodes::_invokehandle && n <= 2)),
+      assert(MethodData::profile_parameters() && (MethodData::profile_arguments_jsr292_only() ||
+                                                  (x->inlined() && ((code == Bytecodes::_invokedynamic && n <= 1) || (code == Bytecodes::_invokehandle && n <= 2)))),
              "only at JSR292 bytecodes");
 #endif
     }
@@ -3368,7 +3387,10 @@ void LIRGenerator::do_ProfileReturnType(ProfileReturnType* x) {
   ciSignature* signature_at_call = NULL;
   x->method()->get_method_at_bci(bci, ignored_will_link, &signature_at_call);
 
-  ciKlass* exact = profile_type(md, 0, md->byte_offset_of_slot(data, ret->type_offset()),
+  // The offset within the MDO of the entry to update may be too large
+  // to be used in load/store instructions on some platforms. So have
+  // profile_type() compute the address of the profile in a register.
+  ciKlass* exact = profile_type(md, md->byte_offset_of_slot(data, ret->type_offset()), 0,
                                 ret->type(), x->ret(), mdp,
                                 !x->needs_null_check(),
                                 signature_at_call->return_type()->as_klass(),
@@ -3401,6 +3423,27 @@ void LIRGenerator::increment_event_counter(CodeEmitInfo* info, int bci, bool bac
   // Increment the appropriate invocation/backedge counter and notify the runtime.
   increment_event_counter_impl(info, info->scope()->method(), (1 << freq_log) - 1, bci, backedge, true);
 }
+
+void LIRGenerator::decrement_age(CodeEmitInfo* info) {
+  ciMethod* method = info->scope()->method();
+  MethodCounters* mc_adr = method->ensure_method_counters();
+  if (mc_adr != NULL) {
+    LIR_Opr mc = new_pointer_register();
+    __ move(LIR_OprFact::intptrConst(mc_adr), mc);
+    int offset = in_bytes(MethodCounters::nmethod_age_offset());
+    LIR_Address* counter = new LIR_Address(mc, offset, T_INT);
+    LIR_Opr result = new_register(T_INT);
+    __ load(counter, result);
+    __ sub(result, LIR_OprFact::intConst(1), result);
+    __ store(result, counter);
+    // DeoptimizeStub will reexecute from the current state in code info.
+    CodeStub* deopt = new DeoptimizeStub(info, Deoptimization::Reason_tenured,
+                                         Deoptimization::Action_make_not_entrant);
+    __ cmp(lir_cond_lessEqual, result, LIR_OprFact::intConst(0));
+    __ branch(lir_cond_lessEqual, T_INT, deopt);
+  }
+}
+
 
 void LIRGenerator::increment_event_counter_impl(CodeEmitInfo* info,
                                                 ciMethod *method, int frequency,

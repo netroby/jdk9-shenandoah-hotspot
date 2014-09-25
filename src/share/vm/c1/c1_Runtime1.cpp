@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1999, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1999, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -47,6 +47,7 @@
 #include "memory/resourceArea.hpp"
 #include "oops/objArrayKlass.hpp"
 #include "oops/oop.inline.hpp"
+#include "runtime/atomic.inline.hpp"
 #include "runtime/biasedLocking.hpp"
 #include "runtime/compilationPolicy.hpp"
 #include "runtime/interfaceSupport.hpp"
@@ -55,6 +56,7 @@
 #include "runtime/threadCritical.hpp"
 #include "runtime/vframe.hpp"
 #include "runtime/vframeArray.hpp"
+#include "runtime/vm_version.hpp"
 #include "utilities/copy.hpp"
 #include "utilities/events.hpp"
 #include "gc_implementation/shenandoah/shenandoahBarrierSet.hpp"
@@ -124,24 +126,24 @@ int Runtime1::_throw_incompatible_class_change_error_count = 0;
 int Runtime1::_throw_array_store_exception_count = 0;
 int Runtime1::_throw_count = 0;
 
-static int _byte_arraycopy_cnt = 0;
-static int _short_arraycopy_cnt = 0;
-static int _int_arraycopy_cnt = 0;
-static int _long_arraycopy_cnt = 0;
-static int _oop_arraycopy_cnt = 0;
+static int _byte_arraycopy_stub_cnt = 0;
+static int _short_arraycopy_stub_cnt = 0;
+static int _int_arraycopy_stub_cnt = 0;
+static int _long_arraycopy_stub_cnt = 0;
+static int _oop_arraycopy_stub_cnt = 0;
 
 address Runtime1::arraycopy_count_address(BasicType type) {
   switch (type) {
   case T_BOOLEAN:
-  case T_BYTE:   return (address)&_byte_arraycopy_cnt;
+  case T_BYTE:   return (address)&_byte_arraycopy_stub_cnt;
   case T_CHAR:
-  case T_SHORT:  return (address)&_short_arraycopy_cnt;
+  case T_SHORT:  return (address)&_short_arraycopy_stub_cnt;
   case T_FLOAT:
-  case T_INT:    return (address)&_int_arraycopy_cnt;
+  case T_INT:    return (address)&_int_arraycopy_stub_cnt;
   case T_DOUBLE:
-  case T_LONG:   return (address)&_long_arraycopy_cnt;
+  case T_LONG:   return (address)&_long_arraycopy_stub_cnt;
   case T_ARRAY:
-  case T_OBJECT: return (address)&_oop_arraycopy_cnt;
+  case T_OBJECT: return (address)&_oop_arraycopy_stub_cnt;
   default:
     ShouldNotReachHere();
     return NULL;
@@ -535,8 +537,8 @@ JRT_ENTRY_NO_ASYNC(static address, exception_handler_for_pc_helper(JavaThread* t
     if (TraceExceptions) {
       ttyLocker ttyl;
       ResourceMark rm;
-      tty->print_cr("Exception <%s> (0x%x) thrown in compiled method <%s> at PC " PTR_FORMAT " for thread 0x%x",
-                    exception->print_value_string(), (address)exception(), nm->method()->print_value_string(), pc, thread);
+      tty->print_cr("Exception <%s> (" INTPTR_FORMAT ") thrown in compiled method <%s> at PC " INTPTR_FORMAT " for thread " INTPTR_FORMAT "",
+                    exception->print_value_string(), p2i((address)exception()), nm->method()->print_value_string(), p2i(pc), p2i(thread));
     }
     // for AbortVMOnException flag
     NOT_PRODUCT(Exceptions::debug_check_abort(exception));
@@ -547,13 +549,18 @@ JRT_ENTRY_NO_ASYNC(static address, exception_handler_for_pc_helper(JavaThread* t
     // normal bytecode execution.
     thread->clear_exception_oop_and_pc();
 
+    Handle original_exception(thread, exception());
+
     continuation = SharedRuntime::compute_compiled_exc_handler(nm, pc, exception, false, false);
     // If an exception was thrown during exception dispatch, the exception oop may have changed
     thread->set_exception_oop(exception());
     thread->set_exception_pc(pc);
 
     // the exception cache is used only by non-implicit exceptions
-    if (continuation != NULL) {
+    // Update the exception cache only when there didn't happen
+    // another exception during the computation of the compiled
+    // exception handler.
+    if (continuation != NULL && original_exception() == exception()) {
       nm->add_handler_for_exception_and_pc(exception, pc, continuation);
     }
   }
@@ -566,7 +573,7 @@ JRT_ENTRY_NO_ASYNC(static address, exception_handler_for_pc_helper(JavaThread* t
     ttyLocker ttyl;
     ResourceMark rm;
     tty->print_cr("Thread " PTR_FORMAT " continuing at PC " PTR_FORMAT " for exception thrown at PC " PTR_FORMAT,
-                  thread, continuation, pc);
+                  p2i(thread), p2i(continuation), p2i(pc));
   }
 
   return continuation;
@@ -688,19 +695,32 @@ JRT_LEAF(void, Runtime1::monitorexit(JavaThread* thread, BasicObjectLock* lock))
 JRT_END
 
 // Cf. OptoRuntime::deoptimize_caller_frame
-JRT_ENTRY(void, Runtime1::deoptimize(JavaThread* thread))
+JRT_ENTRY(void, Runtime1::deoptimize(JavaThread* thread, jint trap_request))
   // Called from within the owner thread, so no need for safepoint
   RegisterMap reg_map(thread, false);
   frame stub_frame = thread->last_frame();
-  assert(stub_frame.is_runtime_frame(), "sanity check");
+  assert(stub_frame.is_runtime_frame(), "Sanity check");
   frame caller_frame = stub_frame.sender(&reg_map);
+  nmethod* nm = caller_frame.cb()->as_nmethod_or_null();
+  assert(nm != NULL, "Sanity check");
+  methodHandle method(thread, nm->method());
+  assert(nm == CodeCache::find_nmethod(caller_frame.pc()), "Should be the same");
+  Deoptimization::DeoptAction action = Deoptimization::trap_request_action(trap_request);
+  Deoptimization::DeoptReason reason = Deoptimization::trap_request_reason(trap_request);
 
-  // We are coming from a compiled method; check this is true.
-  assert(CodeCache::find_nmethod(caller_frame.pc()) != NULL, "sanity");
+  if (action == Deoptimization::Action_make_not_entrant) {
+    if (nm->make_not_entrant()) {
+      if (reason == Deoptimization::Reason_tenured) {
+        MethodData* trap_mdo = Deoptimization::get_method_data(thread, method, true /*create_if_missing*/);
+        if (trap_mdo != NULL) {
+          trap_mdo->inc_tenure_traps();
+        }
+      }
+    }
+  }
 
   // Deoptimize the caller frame.
   Deoptimization::deoptimize_frame(thread, caller_frame.id());
-
   // Return to the now deoptimized frame.
 JRT_END
 
@@ -812,11 +832,10 @@ JRT_ENTRY(void, Runtime1::patch_code(JavaThread* thread, Runtime1::StubID stub_i
   int bci = vfst.bci();
   Bytecodes::Code code = caller_method()->java_code_at(bci);
 
-#ifndef PRODUCT
   // this is used by assertions in the access_field_patching_id
   BasicType patch_field_type = T_ILLEGAL;
-#endif // PRODUCT
   bool deoptimize_for_volatile = false;
+  bool deoptimize_for_atomic = false;
   int patch_field_offset = -1;
   KlassHandle init_klass(THREAD, NULL); // klass needed by load_klass_patching code
   KlassHandle load_klass(THREAD, NULL); // klass needed by load_klass_patching code
@@ -842,11 +861,24 @@ JRT_ENTRY(void, Runtime1::patch_code(JavaThread* thread, Runtime1::StubID stub_i
     // is the path for patching field offsets.  load_klass is only
     // used for patching references to oops which don't need special
     // handling in the volatile case.
+
     deoptimize_for_volatile = result.access_flags().is_volatile();
 
-#ifndef PRODUCT
+    // If we are patching a field which should be atomic, then
+    // the generated code is not correct either, force deoptimizing.
+    // We need to only cover T_LONG and T_DOUBLE fields, as we can
+    // break access atomicity only for them.
+
+    // Strictly speaking, the deoptimizaation on 64-bit platforms
+    // is unnecessary, and T_LONG stores on 32-bit platforms need
+    // to be handled by special patching code when AlwaysAtomicAccesses
+    // becomes product feature. At this point, we are still going
+    // for the deoptimization for consistency against volatile
+    // accesses.
+
     patch_field_type = result.field_type();
-#endif
+    deoptimize_for_atomic = (AlwaysAtomicAccesses && (patch_field_type == T_DOUBLE || patch_field_type == T_LONG));
+
   } else if (load_klass_or_mirror_patch_id) {
     Klass* k = NULL;
     switch (code) {
@@ -921,13 +953,19 @@ JRT_ENTRY(void, Runtime1::patch_code(JavaThread* thread, Runtime1::StubID stub_i
     ShouldNotReachHere();
   }
 
-  if (deoptimize_for_volatile) {
-    // At compile time we assumed the field wasn't volatile but after
-    // loading it turns out it was volatile so we have to throw the
+  if (deoptimize_for_volatile || deoptimize_for_atomic) {
+    // At compile time we assumed the field wasn't volatile/atomic but after
+    // loading it turns out it was volatile/atomic so we have to throw the
     // compiled code out and let it be regenerated.
     if (TracePatching) {
-      tty->print_cr("Deoptimizing for patching volatile field reference");
+      if (deoptimize_for_volatile) {
+        tty->print_cr("Deoptimizing for patching volatile field reference");
+      }
+      if (deoptimize_for_atomic) {
+        tty->print_cr("Deoptimizing for patching atomic field reference");
+      }
     }
+
     // It's possible the nmethod was invalidated in the last
     // safepoint, but if it's still alive then make it not_entrant.
     nmethod* nm = CodeCache::find_nmethod(caller_frame.pc());
@@ -973,8 +1011,8 @@ JRT_ENTRY(void, Runtime1::patch_code(JavaThread* thread, Runtime1::StubID stub_i
         address copy_buff = stub_location - *byte_skip - *byte_count;
         address being_initialized_entry = stub_location - *being_initialized_entry_offset;
         if (TracePatching) {
-          tty->print_cr(" Patching %s at bci %d at address 0x%x  (%s)", Bytecodes::name(code), bci,
-                        instr_pc, (stub_id == Runtime1::access_field_patching_id) ? "field" : "klass");
+          tty->print_cr(" Patching %s at bci %d at address " INTPTR_FORMAT "  (%s)", Bytecodes::name(code), bci,
+                        p2i(instr_pc), (stub_id == Runtime1::access_field_patching_id) ? "field" : "klass");
           nmethod* caller_code = CodeCache::find_nmethod(caller_frame.pc());
           assert(caller_code != NULL, "nmethod not found");
 
@@ -1021,6 +1059,7 @@ JRT_ENTRY(void, Runtime1::patch_code(JavaThread* thread, Runtime1::StubID stub_i
               n_copy->set_data((intx) (load_klass()));
             } else {
               assert(mirror() != NULL, "klass not set");
+              // Don't need a G1 pre-barrier here since we assert above that data isn't an oop.
               n_copy->set_data(cast_from_oop<intx>(mirror()));
             }
 
@@ -1437,7 +1476,7 @@ JRT_ENTRY(void, Runtime1::predicate_failed_trap(JavaThread* thread))
     methodHandle inlinee = methodHandle(vfst.method());
     inlinee->print_short_name(&ss1);
     m->print_short_name(&ss2);
-    tty->print_cr("Predicate failed trap in method %s at bci %d inlined in %s at pc %x", ss1.as_string(), vfst.bci(), ss2.as_string(), caller_frame.pc());
+    tty->print_cr("Predicate failed trap in method %s at bci %d inlined in %s at pc " INTPTR_FORMAT, ss1.as_string(), vfst.bci(), ss2.as_string(), p2i(caller_frame.pc()));
   }
 
 
@@ -1455,13 +1494,13 @@ void Runtime1::print_statistics() {
   tty->print_cr(" _ic_miss_cnt:                    %d", SharedRuntime::_ic_miss_ctr);
   tty->print_cr(" _generic_arraycopy_cnt:          %d", _generic_arraycopy_cnt);
   tty->print_cr(" _generic_arraycopystub_cnt:      %d", _generic_arraycopystub_cnt);
-  tty->print_cr(" _byte_arraycopy_cnt:             %d", _byte_arraycopy_cnt);
-  tty->print_cr(" _short_arraycopy_cnt:            %d", _short_arraycopy_cnt);
-  tty->print_cr(" _int_arraycopy_cnt:              %d", _int_arraycopy_cnt);
-  tty->print_cr(" _long_arraycopy_cnt:             %d", _long_arraycopy_cnt);
+  tty->print_cr(" _byte_arraycopy_cnt:             %d", _byte_arraycopy_stub_cnt);
+  tty->print_cr(" _short_arraycopy_cnt:            %d", _short_arraycopy_stub_cnt);
+  tty->print_cr(" _int_arraycopy_cnt:              %d", _int_arraycopy_stub_cnt);
+  tty->print_cr(" _long_arraycopy_cnt:             %d", _long_arraycopy_stub_cnt);
   tty->print_cr(" _primitive_arraycopy_cnt:        %d", _primitive_arraycopy_cnt);
   tty->print_cr(" _oop_arraycopy_cnt (C):          %d", Runtime1::_oop_arraycopy_cnt);
-  tty->print_cr(" _oop_arraycopy_cnt (stub):       %d", _oop_arraycopy_cnt);
+  tty->print_cr(" _oop_arraycopy_cnt (stub):       %d", _oop_arraycopy_stub_cnt);
   tty->print_cr(" _arraycopy_slowcase_cnt:         %d", _arraycopy_slowcase_cnt);
   tty->print_cr(" _arraycopy_checkcast_cnt:        %d", _arraycopy_checkcast_cnt);
   tty->print_cr(" _arraycopy_checkcast_attempt_cnt:%d", _arraycopy_checkcast_attempt_cnt);

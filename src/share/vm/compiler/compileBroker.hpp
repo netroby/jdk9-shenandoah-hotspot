@@ -40,6 +40,11 @@ class CompileTask : public CHeapObj<mtCompiler> {
   friend class VMStructs;
 
  private:
+  static CompileTask* _task_free_list;
+#ifdef ASSERT
+  static int          _num_allocated_tasks;
+#endif
+
   Monitor*     _lock;
   uint         _compile_id;
   Method*      _method;
@@ -52,13 +57,14 @@ class CompileTask : public CHeapObj<mtCompiler> {
   int          _num_inlined_bytecodes;
   nmethodLocker* _code_handle;  // holder of eventual result
   CompileTask* _next, *_prev;
-
+  bool         _is_free;
   // Fields used for logging why the compilation was initiated:
   jlong        _time_queued;  // in units of os::elapsed_counter()
   Method*      _hot_method;   // which method actually triggered this task
   jobject      _hot_method_holder;
   int          _hot_count;    // information about its invocation counter
   const char*  _comment;      // more info about the task
+  const char*  _failure_reason;
 
  public:
   CompileTask() {
@@ -69,7 +75,8 @@ class CompileTask : public CHeapObj<mtCompiler> {
                   methodHandle hot_method, int hot_count, const char* comment,
                   bool is_blocking);
 
-  void free();
+  static CompileTask* allocate();
+  static void         free(CompileTask* task);
 
   int          compile_id() const                { return _compile_id; }
   Method*      method() const                    { return _method; }
@@ -98,18 +105,20 @@ class CompileTask : public CHeapObj<mtCompiler> {
   void         set_next(CompileTask* next)       { _next = next; }
   CompileTask* prev() const                      { return _prev; }
   void         set_prev(CompileTask* prev)       { _prev = prev; }
+  bool         is_free() const                   { return _is_free; }
+  void         set_is_free(bool val)             { _is_free = val; }
 
 private:
   static void  print_compilation_impl(outputStream* st, Method* method, int compile_id, int comp_level,
                                       bool is_osr_method = false, int osr_bci = -1, bool is_blocking = false,
-                                      const char* msg = NULL, bool short_form = false);
+                                      const char* msg = NULL, bool short_form = false, bool cr = true);
 
 public:
-  void         print_compilation(outputStream* st = tty, const char* msg = NULL, bool short_form = false);
-  static void  print_compilation(outputStream* st, const nmethod* nm, const char* msg = NULL, bool short_form = false) {
+  void         print_compilation(outputStream* st = tty, const char* msg = NULL, bool short_form = false, bool cr = true);
+  static void  print_compilation(outputStream* st, const nmethod* nm, const char* msg = NULL, bool short_form = false, bool cr = true) {
     print_compilation_impl(st, nm->method(), nm->compile_id(), nm->comp_level(),
                            nm->is_osr_method(), nm->is_osr_method() ? nm->osr_entry_bci() : -1, /*is_blocking*/ false,
-                           msg, short_form);
+                           msg, short_form, cr);
   }
 
   static void  print_inlining(outputStream* st, ciMethod* method, int inline_level, int bci, const char* msg = NULL);
@@ -122,14 +131,17 @@ public:
 
   static void  print_inline_indent(int inline_level, outputStream* st = tty);
 
-  void         print();
-  void         print_line();
+  void         print_tty();
   void         print_line_on_error(outputStream* st, char* buf, int buflen);
 
   void         log_task(xmlStream* log);
   void         log_task_queued();
   void         log_task_start(CompileLog* log);
   void         log_task_done(CompileLog* log);
+
+  void         set_failure_reason(const char* reason) {
+    _failure_reason = reason;
+  }
 };
 
 // CompilerCounters
@@ -188,7 +200,11 @@ class CompileQueue : public CHeapObj<mtCompiler> {
   CompileTask* _first;
   CompileTask* _last;
 
+  CompileTask* _first_stale;
+
   int _size;
+
+  void purge_stale_tasks();
  public:
   CompileQueue(const char* name, Monitor* lock) {
     _name = name;
@@ -196,6 +212,7 @@ class CompileQueue : public CHeapObj<mtCompiler> {
     _first = NULL;
     _last = NULL;
     _size = 0;
+    _first_stale = NULL;
   }
 
   const char*  name() const                      { return _name; }
@@ -203,6 +220,7 @@ class CompileQueue : public CHeapObj<mtCompiler> {
 
   void         add(CompileTask* task);
   void         remove(CompileTask* task);
+  void         remove_and_mark_stale(CompileTask* task);
   CompileTask* first()                           { return _first; }
   CompileTask* last()                            { return _last;  }
 
@@ -211,10 +229,12 @@ class CompileQueue : public CHeapObj<mtCompiler> {
   bool         is_empty() const                  { return _first == NULL; }
   int          size()     const                  { return _size;          }
 
+
   // Redefine Classes support
   void mark_on_stack();
-  void delete_all();
-  void         print();
+  void free_all();
+  void print_tty();
+  void print(outputStream* st = tty);
 
   ~CompileQueue() {
     assert (is_empty(), " Compile Queue must be empty");
@@ -246,6 +266,8 @@ class CompileBroker: AllStatic {
 
   // Compile type Information for print_last_compile() and CompilerCounters
   enum { no_compile, normal_compile, osr_compile, native_compile };
+  static int assign_compile_id (methodHandle method, int osr_bci);
+
 
  private:
   static bool _initialized;
@@ -258,17 +280,15 @@ class CompileBroker: AllStatic {
   static AbstractCompiler* _compilers[2];
 
   // These counters are used for assigning id's to each compilation
-  static uint _compilation_id;
-  static uint _osr_compilation_id;
-  static uint _native_compilation_id;
+  static volatile jint _compilation_id;
+  static volatile jint _osr_compilation_id;
 
   static int  _last_compile_type;
   static int  _last_compile_level;
   static char _last_method_compiled[name_buffer_length];
 
-  static CompileQueue* _c2_method_queue;
-  static CompileQueue* _c1_method_queue;
-  static CompileTask* _task_free_list;
+  static CompileQueue* _c2_compile_queue;
+  static CompileQueue* _c1_compile_queue;
 
   static GrowableArray<CompilerThread*>* _compiler_threads;
 
@@ -321,8 +341,7 @@ class CompileBroker: AllStatic {
   static void init_compiler_threads(int c1_compiler_count, int c2_compiler_count);
   static bool compilation_is_complete  (methodHandle method, int osr_bci, int comp_level);
   static bool compilation_is_prohibited(methodHandle method, int osr_bci, int comp_level);
-  static uint assign_compile_id        (methodHandle method, int osr_bci);
-  static bool is_compile_blocking      (methodHandle method, int osr_bci);
+  static bool is_compile_blocking();
   static void preload_classes          (methodHandle method, TRAPS);
 
   static CompileTask* create_compile_task(CompileQueue* queue,
@@ -334,8 +353,6 @@ class CompileBroker: AllStatic {
                                           int           hot_count,
                                           const char*   comment,
                                           bool          blocking);
-  static CompileTask* allocate_task();
-  static void free_task(CompileTask* task);
   static void wait_for_completion(CompileTask* task);
 
   static void invoke_compiler_on_method(CompileTask* task);
@@ -352,11 +369,8 @@ class CompileBroker: AllStatic {
                                   int hot_count,
                                   const char* comment,
                                   Thread* thread);
-  static CompileQueue* compile_queue(int comp_level) {
-    if (is_c2_compile(comp_level)) return _c2_method_queue;
-    if (is_c1_compile(comp_level)) return _c1_method_queue;
-    return NULL;
-  }
+
+  static CompileQueue* compile_queue(int comp_level);
   static bool init_compiler_runtime();
   static void shutdown_compiler_runtime(AbstractCompiler* comp, CompilerThread* thread);
 
@@ -372,7 +386,8 @@ class CompileBroker: AllStatic {
     return NULL;
   }
 
-  static bool compilation_is_in_queue(methodHandle method, int osr_bci);
+  static bool compilation_is_in_queue(methodHandle method);
+  static void print_compile_queues(outputStream* st);
   static int queue_size(int comp_level) {
     CompileQueue *q = compile_queue(comp_level);
     return q != NULL ? q->size() : 0;

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1999, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1999, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -30,6 +30,7 @@
 #include "c1/c1_Instruction.hpp"
 #include "c1/c1_LIR.hpp"
 #include "c1/c1_Runtime1.hpp"
+#include "code/nativeInst.hpp"
 #include "utilities/array.hpp"
 #include "utilities/macros.hpp"
 
@@ -450,9 +451,11 @@ class PatchingStub: public CodeStub {
 class DeoptimizeStub : public CodeStub {
 private:
   CodeEmitInfo* _info;
+  jint _trap_request;
 
 public:
-  DeoptimizeStub(CodeEmitInfo* info) : _info(new CodeEmitInfo(info)) {}
+  DeoptimizeStub(CodeEmitInfo* info, Deoptimization::DeoptReason reason, Deoptimization::DeoptAction action) :
+    _info(new CodeEmitInfo(info)), _trap_request(Deoptimization::make_trap_request(reason, action)) {}
 
   virtual void emit_code(LIR_Assembler* e);
   virtual CodeEmitInfo* info() const           { return _info; }

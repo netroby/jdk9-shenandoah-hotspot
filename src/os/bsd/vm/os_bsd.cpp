@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1999, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1999, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -36,11 +36,13 @@
 #include "memory/filemap.hpp"
 #include "mutex_bsd.inline.hpp"
 #include "oops/oop.inline.hpp"
+#include "os_bsd.inline.hpp"
 #include "os_share_bsd.hpp"
 #include "prims/jniFastGetField.hpp"
 #include "prims/jvm.h"
 #include "prims/jvm_misc.hpp"
 #include "runtime/arguments.hpp"
+#include "runtime/atomic.inline.hpp"
 #include "runtime/extendedPC.hpp"
 #include "runtime/globals.hpp"
 #include "runtime/interfaceSupport.hpp"
@@ -48,6 +50,7 @@
 #include "runtime/javaCalls.hpp"
 #include "runtime/mutexLocker.hpp"
 #include "runtime/objectMonitor.hpp"
+#include "runtime/orderAccess.inline.hpp"
 #include "runtime/osThread.hpp"
 #include "runtime/perfMemory.hpp"
 #include "runtime/sharedRuntime.hpp"
@@ -123,12 +126,19 @@
 #define ALL_64_BITS CONST64(0xFFFFFFFFFFFFFFFF)
 
 #define LARGEPAGES_BIT (1 << 6)
+
+PRAGMA_FORMAT_MUTE_WARNINGS_FOR_GCC
+
 ////////////////////////////////////////////////////////////////////////////////
 // global variables
 julong os::Bsd::_physical_memory = 0;
 
-
+#ifdef __APPLE__
+mach_timebase_info_data_t os::Bsd::_timebase_info = {0, 0};
+volatile uint64_t         os::Bsd::_max_abstime   = 0;
+#else
 int (*os::Bsd::_clock_gettime)(clockid_t, struct timespec *) = NULL;
+#endif
 pthread_t os::Bsd::_main_thread;
 int os::Bsd::_page_size = -1;
 
@@ -219,7 +229,7 @@ static char cpu_arch[] = "i386";
 static char cpu_arch[] = "amd64";
 #elif defined(ARM)
 static char cpu_arch[] = "arm";
-#elif defined(PPC)
+#elif defined(PPC32)
 static char cpu_arch[] = "ppc";
 #elif defined(SPARC)
 #  ifdef _LP64
@@ -306,9 +316,6 @@ static const char *get_home() {
 #endif
 
 void os::init_system_properties_values() {
-//  char arch[12];
-//  sysinfo(SI_ARCHITECTURE, arch, sizeof(arch));
-
   // The next steps are taken in the product version:
   //
   // Obtain the JAVA_HOME value from the location of libjvm.so.
@@ -335,199 +342,205 @@ void os::init_system_properties_values() {
   // Important note: if the location of libjvm.so changes this
   // code needs to be changed accordingly.
 
-  // The next few definitions allow the code to be verbatim:
-#define malloc(n) (char*)NEW_C_HEAP_ARRAY(char, (n), mtInternal)
-#define getenv(n) ::getenv(n)
-
-/*
- * See ld(1):
- *      The linker uses the following search paths to locate required
- *      shared libraries:
- *        1: ...
- *        ...
- *        7: The default directories, normally /lib and /usr/lib.
- */
+// See ld(1):
+//      The linker uses the following search paths to locate required
+//      shared libraries:
+//        1: ...
+//        ...
+//        7: The default directories, normally /lib and /usr/lib.
 #ifndef DEFAULT_LIBPATH
 #define DEFAULT_LIBPATH "/lib:/usr/lib"
 #endif
 
+// Base path of extensions installed on the system.
+#define SYS_EXT_DIR     "/usr/java/packages"
 #define EXTENSIONS_DIR  "/lib/ext"
 #define ENDORSED_DIR    "/lib/endorsed"
-#define REG_DIR         "/usr/java/packages"
 
-#ifdef __APPLE__
-#define SYS_EXTENSIONS_DIR   "/Library/Java/Extensions"
-#define SYS_EXTENSIONS_DIRS  SYS_EXTENSIONS_DIR ":/Network" SYS_EXTENSIONS_DIR ":/System" SYS_EXTENSIONS_DIR ":/usr/lib/java"
-        const char *user_home_dir = get_home();
-        // the null in SYS_EXTENSIONS_DIRS counts for the size of the colon after user_home_dir
-        int system_ext_size = strlen(user_home_dir) + sizeof(SYS_EXTENSIONS_DIR) +
-            sizeof(SYS_EXTENSIONS_DIRS);
-#endif
-
-  {
-    /* sysclasspath, java_home, dll_dir */
-    {
-        char *home_path;
-        char *dll_path;
-        char *pslash;
-        char buf[MAXPATHLEN];
-        os::jvm_path(buf, sizeof(buf));
-
-        // Found the full path to libjvm.so.
-        // Now cut the path to <java_home>/jre if we can.
-        *(strrchr(buf, '/')) = '\0';  /* get rid of /libjvm.so */
-        pslash = strrchr(buf, '/');
-        if (pslash != NULL)
-            *pslash = '\0';           /* get rid of /{client|server|hotspot} */
-        dll_path = malloc(strlen(buf) + 1);
-        if (dll_path == NULL)
-            return;
-        strcpy(dll_path, buf);
-        Arguments::set_dll_dir(dll_path);
-
-        if (pslash != NULL) {
-            pslash = strrchr(buf, '/');
-            if (pslash != NULL) {
-                *pslash = '\0';       /* get rid of /<arch> (/lib on macosx) */
 #ifndef __APPLE__
-                pslash = strrchr(buf, '/');
-                if (pslash != NULL)
-                    *pslash = '\0';   /* get rid of /lib */
-#endif
-            }
-        }
 
-        home_path = malloc(strlen(buf) + 1);
-        if (home_path == NULL)
-            return;
-        strcpy(home_path, buf);
-        Arguments::set_java_home(home_path);
+  // Buffer that fits several sprintfs.
+  // Note that the space for the colon and the trailing null are provided
+  // by the nulls included by the sizeof operator.
+  const size_t bufsize =
+    MAX3((size_t)MAXPATHLEN,  // For dll_dir & friends.
+         (size_t)MAXPATHLEN + sizeof(EXTENSIONS_DIR) + sizeof(SYS_EXT_DIR) + sizeof(EXTENSIONS_DIR), // extensions dir
+         (size_t)MAXPATHLEN + sizeof(ENDORSED_DIR)); // endorsed dir
+  char *buf = (char *)NEW_C_HEAP_ARRAY(char, bufsize, mtInternal);
 
-        if (!set_boot_path('/', ':'))
-            return;
+  // sysclasspath, java_home, dll_dir
+  {
+    char *pslash;
+    os::jvm_path(buf, bufsize);
+
+    // Found the full path to libjvm.so.
+    // Now cut the path to <java_home>/jre if we can.
+    *(strrchr(buf, '/')) = '\0'; // Get rid of /libjvm.so.
+    pslash = strrchr(buf, '/');
+    if (pslash != NULL) {
+      *pslash = '\0';            // Get rid of /{client|server|hotspot}.
     }
+    Arguments::set_dll_dir(buf);
 
-    /*
-     * Where to look for native libraries
-     *
-     * Note: Due to a legacy implementation, most of the library path
-     * is set in the launcher.  This was to accomodate linking restrictions
-     * on legacy Bsd implementations (which are no longer supported).
-     * Eventually, all the library path setting will be done here.
-     *
-     * However, to prevent the proliferation of improperly built native
-     * libraries, the new path component /usr/java/packages is added here.
-     * Eventually, all the library path setting will be done here.
-     */
-    {
-        char *ld_library_path;
-
-        /*
-         * Construct the invariant part of ld_library_path. Note that the
-         * space for the colon and the trailing null are provided by the
-         * nulls included by the sizeof operator (so actually we allocate
-         * a byte more than necessary).
-         */
-#ifdef __APPLE__
-        ld_library_path = (char *) malloc(system_ext_size);
-        sprintf(ld_library_path, "%s" SYS_EXTENSIONS_DIR ":" SYS_EXTENSIONS_DIRS, user_home_dir);
-#else
-        ld_library_path = (char *) malloc(sizeof(REG_DIR) + sizeof("/lib/") +
-            strlen(cpu_arch) + sizeof(DEFAULT_LIBPATH));
-        sprintf(ld_library_path, REG_DIR "/lib/%s:" DEFAULT_LIBPATH, cpu_arch);
-#endif
-
-        /*
-         * Get the user setting of LD_LIBRARY_PATH, and prepended it.  It
-         * should always exist (until the legacy problem cited above is
-         * addressed).
-         */
-#ifdef __APPLE__
-        // Prepend the default path with the JAVA_LIBRARY_PATH so that the app launcher code can specify a directory inside an app wrapper
-        char *l = getenv("JAVA_LIBRARY_PATH");
-        if (l != NULL) {
-            char *t = ld_library_path;
-            /* That's +1 for the colon and +1 for the trailing '\0' */
-            ld_library_path = (char *) malloc(strlen(l) + 1 + strlen(t) + 1);
-            sprintf(ld_library_path, "%s:%s", l, t);
-            free(t);
+    if (pslash != NULL) {
+      pslash = strrchr(buf, '/');
+      if (pslash != NULL) {
+        *pslash = '\0';          // Get rid of /<arch>.
+        pslash = strrchr(buf, '/');
+        if (pslash != NULL) {
+          *pslash = '\0';        // Get rid of /lib.
         }
-
-        char *v = getenv("DYLD_LIBRARY_PATH");
-#else
-        char *v = getenv("LD_LIBRARY_PATH");
-#endif
-        if (v != NULL) {
-            char *t = ld_library_path;
-            /* That's +1 for the colon and +1 for the trailing '\0' */
-            ld_library_path = (char *) malloc(strlen(v) + 1 + strlen(t) + 1);
-            sprintf(ld_library_path, "%s:%s", v, t);
-            free(t);
-        }
-
-#ifdef __APPLE__
-        // Apple's Java6 has "." at the beginning of java.library.path.
-        // OpenJDK on Windows has "." at the end of java.library.path.
-        // OpenJDK on Linux and Solaris don't have "." in java.library.path
-        // at all. To ease the transition from Apple's Java6 to OpenJDK7,
-        // "." is appended to the end of java.library.path. Yes, this
-        // could cause a change in behavior, but Apple's Java6 behavior
-        // can be achieved by putting "." at the beginning of the
-        // JAVA_LIBRARY_PATH environment variable.
-        {
-            char *t = ld_library_path;
-            // that's +3 for appending ":." and the trailing '\0'
-            ld_library_path = (char *) malloc(strlen(t) + 3);
-            sprintf(ld_library_path, "%s:%s", t, ".");
-            free(t);
-        }
-#endif
-
-        Arguments::set_library_path(ld_library_path);
+      }
     }
-
-    /*
-     * Extensions directories.
-     *
-     * Note that the space for the colon and the trailing null are provided
-     * by the nulls included by the sizeof operator (so actually one byte more
-     * than necessary is allocated).
-     */
-    {
-#ifdef __APPLE__
-        char *buf = malloc(strlen(Arguments::get_java_home()) +
-            sizeof(EXTENSIONS_DIR) + system_ext_size);
-        sprintf(buf, "%s" SYS_EXTENSIONS_DIR ":%s" EXTENSIONS_DIR ":"
-            SYS_EXTENSIONS_DIRS, user_home_dir, Arguments::get_java_home());
-#else
-        char *buf = malloc(strlen(Arguments::get_java_home()) +
-            sizeof(EXTENSIONS_DIR) + sizeof(REG_DIR) + sizeof(EXTENSIONS_DIR));
-        sprintf(buf, "%s" EXTENSIONS_DIR ":" REG_DIR EXTENSIONS_DIR,
-            Arguments::get_java_home());
-#endif
-
-        Arguments::set_ext_dirs(buf);
-    }
-
-    /* Endorsed standards default directory. */
-    {
-        char * buf;
-        buf = malloc(strlen(Arguments::get_java_home()) + sizeof(ENDORSED_DIR));
-        sprintf(buf, "%s" ENDORSED_DIR, Arguments::get_java_home());
-        Arguments::set_endorsed_dirs(buf);
-    }
+    Arguments::set_java_home(buf);
+    set_boot_path('/', ':');
   }
 
-#ifdef __APPLE__
+  // Where to look for native libraries.
+  //
+  // Note: Due to a legacy implementation, most of the library path
+  // is set in the launcher. This was to accomodate linking restrictions
+  // on legacy Bsd implementations (which are no longer supported).
+  // Eventually, all the library path setting will be done here.
+  //
+  // However, to prevent the proliferation of improperly built native
+  // libraries, the new path component /usr/java/packages is added here.
+  // Eventually, all the library path setting will be done here.
+  {
+    // Get the user setting of LD_LIBRARY_PATH, and prepended it. It
+    // should always exist (until the legacy problem cited above is
+    // addressed).
+    const char *v = ::getenv("LD_LIBRARY_PATH");
+    const char *v_colon = ":";
+    if (v == NULL) { v = ""; v_colon = ""; }
+    // That's +1 for the colon and +1 for the trailing '\0'.
+    char *ld_library_path = (char *)NEW_C_HEAP_ARRAY(char,
+                                                     strlen(v) + 1 +
+                                                     sizeof(SYS_EXT_DIR) + sizeof("/lib/") + strlen(cpu_arch) + sizeof(DEFAULT_LIBPATH) + 1,
+                                                     mtInternal);
+    sprintf(ld_library_path, "%s%s" SYS_EXT_DIR "/lib/%s:" DEFAULT_LIBPATH, v, v_colon, cpu_arch);
+    Arguments::set_library_path(ld_library_path);
+    FREE_C_HEAP_ARRAY(char, ld_library_path, mtInternal);
+  }
+
+  // Extensions directories.
+  sprintf(buf, "%s" EXTENSIONS_DIR ":" SYS_EXT_DIR EXTENSIONS_DIR, Arguments::get_java_home());
+  Arguments::set_ext_dirs(buf);
+
+  // Endorsed standards default directory.
+  sprintf(buf, "%s" ENDORSED_DIR, Arguments::get_java_home());
+  Arguments::set_endorsed_dirs(buf);
+
+  FREE_C_HEAP_ARRAY(char, buf, mtInternal);
+
+#else // __APPLE__
+
+#define SYS_EXTENSIONS_DIR   "/Library/Java/Extensions"
+#define SYS_EXTENSIONS_DIRS  SYS_EXTENSIONS_DIR ":/Network" SYS_EXTENSIONS_DIR ":/System" SYS_EXTENSIONS_DIR ":/usr/lib/java"
+
+  const char *user_home_dir = get_home();
+  // The null in SYS_EXTENSIONS_DIRS counts for the size of the colon after user_home_dir.
+  size_t system_ext_size = strlen(user_home_dir) + sizeof(SYS_EXTENSIONS_DIR) +
+    sizeof(SYS_EXTENSIONS_DIRS);
+
+  // Buffer that fits several sprintfs.
+  // Note that the space for the colon and the trailing null are provided
+  // by the nulls included by the sizeof operator.
+  const size_t bufsize =
+    MAX3((size_t)MAXPATHLEN,  // for dll_dir & friends.
+         (size_t)MAXPATHLEN + sizeof(EXTENSIONS_DIR) + system_ext_size, // extensions dir
+         (size_t)MAXPATHLEN + sizeof(ENDORSED_DIR)); // endorsed dir
+  char *buf = (char *)NEW_C_HEAP_ARRAY(char, bufsize, mtInternal);
+
+  // sysclasspath, java_home, dll_dir
+  {
+    char *pslash;
+    os::jvm_path(buf, bufsize);
+
+    // Found the full path to libjvm.so.
+    // Now cut the path to <java_home>/jre if we can.
+    *(strrchr(buf, '/')) = '\0'; // Get rid of /libjvm.so.
+    pslash = strrchr(buf, '/');
+    if (pslash != NULL) {
+      *pslash = '\0';            // Get rid of /{client|server|hotspot}.
+    }
+    Arguments::set_dll_dir(buf);
+
+    if (pslash != NULL) {
+      pslash = strrchr(buf, '/');
+      if (pslash != NULL) {
+        *pslash = '\0';          // Get rid of /lib.
+      }
+    }
+    Arguments::set_java_home(buf);
+    set_boot_path('/', ':');
+  }
+
+  // Where to look for native libraries.
+  //
+  // Note: Due to a legacy implementation, most of the library path
+  // is set in the launcher. This was to accomodate linking restrictions
+  // on legacy Bsd implementations (which are no longer supported).
+  // Eventually, all the library path setting will be done here.
+  //
+  // However, to prevent the proliferation of improperly built native
+  // libraries, the new path component /usr/java/packages is added here.
+  // Eventually, all the library path setting will be done here.
+  {
+    // Get the user setting of LD_LIBRARY_PATH, and prepended it. It
+    // should always exist (until the legacy problem cited above is
+    // addressed).
+    // Prepend the default path with the JAVA_LIBRARY_PATH so that the app launcher code
+    // can specify a directory inside an app wrapper
+    const char *l = ::getenv("JAVA_LIBRARY_PATH");
+    const char *l_colon = ":";
+    if (l == NULL) { l = ""; l_colon = ""; }
+
+    const char *v = ::getenv("DYLD_LIBRARY_PATH");
+    const char *v_colon = ":";
+    if (v == NULL) { v = ""; v_colon = ""; }
+
+    // Apple's Java6 has "." at the beginning of java.library.path.
+    // OpenJDK on Windows has "." at the end of java.library.path.
+    // OpenJDK on Linux and Solaris don't have "." in java.library.path
+    // at all. To ease the transition from Apple's Java6 to OpenJDK7,
+    // "." is appended to the end of java.library.path. Yes, this
+    // could cause a change in behavior, but Apple's Java6 behavior
+    // can be achieved by putting "." at the beginning of the
+    // JAVA_LIBRARY_PATH environment variable.
+    char *ld_library_path = (char *)NEW_C_HEAP_ARRAY(char,
+                                                     strlen(v) + 1 + strlen(l) + 1 +
+                                                     system_ext_size + 3,
+                                                     mtInternal);
+    sprintf(ld_library_path, "%s%s%s%s%s" SYS_EXTENSIONS_DIR ":" SYS_EXTENSIONS_DIRS ":.",
+            v, v_colon, l, l_colon, user_home_dir);
+    Arguments::set_library_path(ld_library_path);
+    FREE_C_HEAP_ARRAY(char, ld_library_path, mtInternal);
+  }
+
+  // Extensions directories.
+  //
+  // Note that the space for the colon and the trailing null are provided
+  // by the nulls included by the sizeof operator (so actually one byte more
+  // than necessary is allocated).
+  sprintf(buf, "%s" SYS_EXTENSIONS_DIR ":%s" EXTENSIONS_DIR ":" SYS_EXTENSIONS_DIRS,
+          user_home_dir, Arguments::get_java_home());
+  Arguments::set_ext_dirs(buf);
+
+  // Endorsed standards default directory.
+  sprintf(buf, "%s" ENDORSED_DIR, Arguments::get_java_home());
+  Arguments::set_endorsed_dirs(buf);
+
+  FREE_C_HEAP_ARRAY(char, buf, mtInternal);
+
 #undef SYS_EXTENSIONS_DIR
-#endif
-#undef malloc
-#undef getenv
+#undef SYS_EXTENSIONS_DIRS
+
+#endif // __APPLE__
+
+#undef SYS_EXT_DIR
 #undef EXTENSIONS_DIR
 #undef ENDORSED_DIR
-
-  // Done
-  return;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -775,7 +788,7 @@ bool os::create_thread(Thread* thread, ThreadType thr_type, size_t stack_size) {
       case os::java_thread:
         // Java threads use ThreadStackSize which default value can be
         // changed with the flag -Xss
-        assert (JavaThread::stack_size_at_create() > 0, "this should be set");
+        assert(JavaThread::stack_size_at_create() > 0, "this should be set");
         stack_size = JavaThread::stack_size_at_create();
         break;
       case os::compiler_thread:
@@ -914,9 +927,20 @@ void os::free_thread(OSThread* osthread) {
 //////////////////////////////////////////////////////////////////////////////
 // thread local storage
 
+// Restore the thread pointer if the destructor is called. This is in case
+// someone from JNI code sets up a destructor with pthread_key_create to run
+// detachCurrentThread on thread death. Unless we restore the thread pointer we
+// will hang or crash. When detachCurrentThread is called the key will be set
+// to null and we will not be called again. If detachCurrentThread is never
+// called we could loop forever depending on the pthread implementation.
+static void restore_thread_pointer(void* p) {
+  Thread* thread = (Thread*) p;
+  os::thread_local_storage_at_put(ThreadLocalStorage::thread_index(), thread);
+}
+
 int os::allocate_thread_local_storage() {
   pthread_key_t key;
-  int rslt = pthread_key_create(&key, NULL);
+  int rslt = pthread_key_create(&key, restore_thread_pointer);
   assert(rslt == 0, "cannot allocate thread local storage");
   return (int)key;
 }
@@ -972,13 +996,15 @@ jlong os::javaTimeMillis() {
   return jlong(time.tv_sec) * 1000  +  jlong(time.tv_usec / 1000);
 }
 
+#ifndef __APPLE__
 #ifndef CLOCK_MONOTONIC
 #define CLOCK_MONOTONIC (1)
+#endif
 #endif
 
 #ifdef __APPLE__
 void os::Bsd::clock_init() {
-        // XXXDARWIN: Investigate replacement monotonic clock
+  mach_timebase_info(&_timebase_info);
 }
 #else
 void os::Bsd::clock_init() {
@@ -993,10 +1019,39 @@ void os::Bsd::clock_init() {
 #endif
 
 
+
+#ifdef __APPLE__
+
 jlong os::javaTimeNanos() {
-  if (Bsd::supports_monotonic_clock()) {
+    const uint64_t tm = mach_absolute_time();
+    const uint64_t now = (tm * Bsd::_timebase_info.numer) / Bsd::_timebase_info.denom;
+    const uint64_t prev = Bsd::_max_abstime;
+    if (now <= prev) {
+      return prev;   // same or retrograde time;
+    }
+    const uint64_t obsv = Atomic::cmpxchg(now, (volatile jlong*)&Bsd::_max_abstime, prev);
+    assert(obsv >= prev, "invariant");   // Monotonicity
+    // If the CAS succeeded then we're done and return "now".
+    // If the CAS failed and the observed value "obsv" is >= now then
+    // we should return "obsv".  If the CAS failed and now > obsv > prv then
+    // some other thread raced this thread and installed a new value, in which case
+    // we could either (a) retry the entire operation, (b) retry trying to install now
+    // or (c) just return obsv.  We use (c).   No loop is required although in some cases
+    // we might discard a higher "now" value in deference to a slightly lower but freshly
+    // installed obsv value.   That's entirely benign -- it admits no new orderings compared
+    // to (a) or (b) -- and greatly reduces coherence traffic.
+    // We might also condition (c) on the magnitude of the delta between obsv and now.
+    // Avoiding excessive CAS operations to hot RW locations is critical.
+    // See https://blogs.oracle.com/dave/entry/cas_and_cache_trivia_invalidate
+    return (prev == obsv) ? now : obsv;
+}
+
+#else // __APPLE__
+
+jlong os::javaTimeNanos() {
+  if (os::supports_monotonic_clock()) {
     struct timespec tp;
-    int status = Bsd::clock_gettime(CLOCK_MONOTONIC, &tp);
+    int status = Bsd::_clock_gettime(CLOCK_MONOTONIC, &tp);
     assert(status == 0, "gettime error");
     jlong result = jlong(tp.tv_sec) * (1000 * 1000 * 1000) + jlong(tp.tv_nsec);
     return result;
@@ -1009,8 +1064,10 @@ jlong os::javaTimeNanos() {
   }
 }
 
+#endif // __APPLE__
+
 void os::javaTimeNanos_info(jvmtiTimerInfo *info_ptr) {
-  if (Bsd::supports_monotonic_clock()) {
+  if (os::supports_monotonic_clock()) {
     info_ptr->max_value = ALL_64_BITS;
 
     // CLOCK_MONOTONIC - amount of time since some arbitrary point in the past
@@ -1114,10 +1171,6 @@ void os::die() {
   // _exit() on BsdThreads only kills current thread
   ::abort();
 }
-
-// unused on bsd for now.
-void os::set_error_file(const char *logfile) {}
-
 
 // This method is a copy of JDK's sysGetLastErrorString
 // from src/solaris/hpi/src/system_md.c
@@ -1248,7 +1301,7 @@ bool os::dll_build_name(char* buffer, size_t buflen,
     if (pelements == NULL) {
       return false;
     }
-    for (int i = 0 ; i < n ; i++) {
+    for (int i = 0; i < n; i++) {
       // Really shouldn't be NULL, but check can't hurt
       if (pelements[i] == NULL || strlen(pelements[i]) == 0) {
         continue; // skip the empty path values
@@ -1261,7 +1314,7 @@ bool os::dll_build_name(char* buffer, size_t buflen,
       }
     }
     // release the storage
-    for (int i = 0 ; i < n ; i++) {
+    for (int i = 0; i < n; i++) {
       if (pelements[i] != NULL) {
         FREE_C_HEAP_ARRAY(char, pelements[i], mtInternal);
       }
@@ -1412,7 +1465,7 @@ void * os::dll_load(const char *filename, char *ebuf, int ebuflen)
 
   bool failed_to_read_elf_head=
     (sizeof(elf_head)!=
-        (::read(file_descriptor, &elf_head,sizeof(elf_head)))) ;
+        (::read(file_descriptor, &elf_head,sizeof(elf_head))));
 
   ::close(file_descriptor);
   if (failed_to_read_elf_head) {
@@ -1510,7 +1563,7 @@ void * os::dll_load(const char *filename, char *ebuf, int ebuflen)
   arch_t lib_arch={elf_head.e_machine,0,elf_head.e_ident[EI_CLASS], elf_head.e_ident[EI_DATA], NULL};
   int running_arch_index=-1;
 
-  for (unsigned int i=0 ; i < ARRAY_SIZE(arch_array) ; i++ ) {
+  for (unsigned int i=0; i < ARRAY_SIZE(arch_array); i++) {
     if (running_arch_code == arch_array[i].code) {
       running_arch_index    = i;
     }
@@ -1541,7 +1594,7 @@ void * os::dll_load(const char *filename, char *ebuf, int ebuflen)
 #endif // !S390
 
   if (lib_arch.compat_class != arch_array[running_arch_index].compat_class) {
-    if ( lib_arch.name!=NULL ) {
+    if (lib_arch.name!=NULL) {
       ::snprintf(diag_msg_buf, diag_msg_max_length-1,
         " (Possible cause: can't load %s-bit .so on a %s-bit platform)",
         lib_arch.name, arch_array[running_arch_index].name);
@@ -1556,6 +1609,17 @@ void * os::dll_load(const char *filename, char *ebuf, int ebuflen)
   return NULL;
 }
 #endif /* !__APPLE__ */
+
+void* os::get_default_process_handle() {
+#ifdef __APPLE__
+  // MacOS X needs to use RTLD_FIRST instead of RTLD_LAZY
+  // to avoid finding unexpected symbols on second (or later)
+  // loads of a library.
+  return (void*)::dlopen(NULL, RTLD_FIRST);
+#else
+  return (void*)::dlopen(NULL, RTLD_LAZY);
+#endif
+}
 
 // XXX: Do we need a lock around this as per Linux?
 void* os::dll_lookup(void* handle, const char* name) {
@@ -1580,8 +1644,20 @@ static bool _print_ascii_file(const char* filename, outputStream* st) {
   return true;
 }
 
+int _print_dll_info_cb(const char * name, address base_address, address top_address, void * param) {
+  outputStream * out = (outputStream *) param;
+  out->print_cr(PTR_FORMAT " \t%s", base_address, name);
+  return 0;
+}
+
 void os::print_dll_info(outputStream *st) {
   st->print_cr("Dynamic libraries:");
+  if (get_loaded_modules_info(_print_dll_info_cb, (void *)st)) {
+    st->print_cr("Error: Cannot print dynamic libraries.");
+  }
+}
+
+int os::get_loaded_modules_info(os::LoadedModulesCallbackFunc callback, void *param) {
 #ifdef RTLD_DI_LINKMAP
   Dl_info dli;
   void *handle;
@@ -1590,41 +1666,41 @@ void os::print_dll_info(outputStream *st) {
 
   if (dladdr(CAST_FROM_FN_PTR(void *, os::print_dll_info), &dli) == 0 ||
       dli.dli_fname == NULL) {
-    st->print_cr("Error: Cannot print dynamic libraries.");
-    return;
+    return 1;
   }
   handle = dlopen(dli.dli_fname, RTLD_LAZY);
   if (handle == NULL) {
-    st->print_cr("Error: Cannot print dynamic libraries.");
-    return;
+    return 1;
   }
   dlinfo(handle, RTLD_DI_LINKMAP, &map);
   if (map == NULL) {
-    st->print_cr("Error: Cannot print dynamic libraries.");
-    return;
+    dlclose(handle);
+    return 1;
   }
 
   while (map->l_prev != NULL)
     map = map->l_prev;
 
   while (map != NULL) {
-    st->print_cr(PTR_FORMAT " \t%s", map->l_addr, map->l_name);
+    // Value for top_address is returned as 0 since we don't have any information about module size
+    if (callback(map->l_name, (address)map->l_addr, (address)0, param)) {
+      dlclose(handle);
+      return 1;
+    }
     map = map->l_next;
   }
 
   dlclose(handle);
 #elif defined(__APPLE__)
-  uint32_t count;
-  uint32_t i;
-
-  count = _dyld_image_count();
-  for (i = 1; i < count; i++) {
-    const char *name = _dyld_get_image_name(i);
-    intptr_t slide = _dyld_get_image_vmaddr_slide(i);
-    st->print_cr(PTR_FORMAT " \t%s", slide, name);
+  for (uint32_t i = 1; i < _dyld_image_count(); i++) {
+    // Value for top_address is returned as 0 since we don't have any information about module size
+    if (callback(_dyld_get_image_name(i), (address)_dyld_get_image_header(i), (address)0, param)) {
+      return 1;
+    }
   }
+  return 0;
 #else
-  st->print_cr("Error: Cannot print dynamic libraries.");
+  return 1;
 #endif
 }
 
@@ -1666,58 +1742,12 @@ void os::print_memory_info(outputStream* st) {
   st->cr();
 }
 
-// Taken from /usr/include/bits/siginfo.h  Supposed to be architecture specific
-// but they're the same for all the bsd arch that we support
-// and they're the same for solaris but there's no common place to put this.
-const char *ill_names[] = { "ILL0", "ILL_ILLOPC", "ILL_ILLOPN", "ILL_ILLADR",
-                          "ILL_ILLTRP", "ILL_PRVOPC", "ILL_PRVREG",
-                          "ILL_COPROC", "ILL_BADSTK" };
-
-const char *fpe_names[] = { "FPE0", "FPE_INTDIV", "FPE_INTOVF", "FPE_FLTDIV",
-                          "FPE_FLTOVF", "FPE_FLTUND", "FPE_FLTRES",
-                          "FPE_FLTINV", "FPE_FLTSUB", "FPE_FLTDEN" };
-
-const char *segv_names[] = { "SEGV0", "SEGV_MAPERR", "SEGV_ACCERR" };
-
-const char *bus_names[] = { "BUS0", "BUS_ADRALN", "BUS_ADRERR", "BUS_OBJERR" };
-
 void os::print_siginfo(outputStream* st, void* siginfo) {
-  st->print("siginfo:");
+  const siginfo_t* si = (const siginfo_t*)siginfo;
 
-  const int buflen = 100;
-  char buf[buflen];
-  siginfo_t *si = (siginfo_t*)siginfo;
-  st->print("si_signo=%s: ", os::exception_name(si->si_signo, buf, buflen));
-  if (si->si_errno != 0 && strerror_r(si->si_errno, buf, buflen) == 0) {
-    st->print("si_errno=%s", buf);
-  } else {
-    st->print("si_errno=%d", si->si_errno);
-  }
-  const int c = si->si_code;
-  assert(c > 0, "unexpected si_code");
-  switch (si->si_signo) {
-  case SIGILL:
-    st->print(", si_code=%d (%s)", c, c > 8 ? "" : ill_names[c]);
-    st->print(", si_addr=" PTR_FORMAT, si->si_addr);
-    break;
-  case SIGFPE:
-    st->print(", si_code=%d (%s)", c, c > 9 ? "" : fpe_names[c]);
-    st->print(", si_addr=" PTR_FORMAT, si->si_addr);
-    break;
-  case SIGSEGV:
-    st->print(", si_code=%d (%s)", c, c > 2 ? "" : segv_names[c]);
-    st->print(", si_addr=" PTR_FORMAT, si->si_addr);
-    break;
-  case SIGBUS:
-    st->print(", si_code=%d (%s)", c, c > 3 ? "" : bus_names[c]);
-    st->print(", si_addr=" PTR_FORMAT, si->si_addr);
-    break;
-  default:
-    st->print(", si_code=%d", si->si_code);
-    // no si_addr
-  }
+  os::Posix::print_siginfo_brief(st, si);
 
-  if ((si->si_signo == SIGBUS || si->si_signo == SIGSEGV) &&
+  if (si && (si->si_signo == SIGBUS || si->si_signo == SIGSEGV) &&
       UseSharedSpaces) {
     FileMapInfo* mapinfo = FileMapInfo::current_info();
     if (mapinfo->is_in_shared_space(si->si_addr)) {
@@ -1777,12 +1807,14 @@ void os::jvm_path(char *buf, jint buflen) {
   if (rp == NULL)
     return;
 
-  if (Arguments::created_by_gamma_launcher()) {
-    // Support for the gamma launcher.  Typical value for buf is
-    // "<JAVA_HOME>/jre/lib/<arch>/<vmtype>/libjvm".  If "/jre/lib/" appears at
-    // the right place in the string, then assume we are installed in a JDK and
-    // we're done.  Otherwise, check for a JAVA_HOME environment variable and
-    // construct a path to the JVM being overridden.
+  if (Arguments::sun_java_launcher_is_altjvm()) {
+    // Support for the java launcher's '-XXaltjvm=<path>' option. Typical
+    // value for buf is "<JAVA_HOME>/jre/lib/<arch>/<vmtype>/libjvm.so"
+    // or "<JAVA_HOME>/jre/lib/<vmtype>/libjvm.dylib". If "/jre/lib/"
+    // appears at the right place in the string, then assume we are
+    // installed in a JDK and we're done. Otherwise, check for a
+    // JAVA_HOME environment variable and construct a path to the JVM
+    // being overridden.
 
     const char *p = buf + strlen(buf) - 1;
     for (int count = 0; p > buf && count < 5; ++count) {
@@ -1808,6 +1840,7 @@ void os::jvm_path(char *buf, jint buflen) {
         // determine if this is a legacy image or modules image
         // modules image doesn't have "jre" subdirectory
         len = strlen(buf);
+        assert(len < buflen, "Ran out of buffer space");
         jrelib_p = buf + len;
 
         // Add the appropriate library subdir
@@ -1821,7 +1854,7 @@ void os::jvm_path(char *buf, jint buflen) {
         jrelib_p = buf + len;
         snprintf(jrelib_p, buflen-len, "/%s", COMPILER_VARIANT);
         if (0 != access(buf, F_OK)) {
-          snprintf(jrelib_p, buflen-len, "");
+          snprintf(jrelib_p, buflen-len, "%s", "");
         }
 
         // If the path exists within JAVA_HOME, add the JVM library name
@@ -1841,7 +1874,7 @@ void os::jvm_path(char *buf, jint buflen) {
     }
   }
 
-  strcpy(saved_jvm_path, buf);
+  strncpy(saved_jvm_path, buf, MAXPATHLEN);
 }
 
 void os::print_jni_name_prefix_on(outputStream* st, int args_size) {
@@ -2375,7 +2408,6 @@ char* os::reserve_memory_special(size_t bytes, size_t alignment, char* req_addr,
                         (!FLAG_IS_DEFAULT(UseLargePages) ||
                          !FLAG_IS_DEFAULT(LargePageSizeInBytes)
                         );
-  char msg[128];
 
   // Create a large shared memory region to attach to based on size.
   // Currently, size is the total size of the heap
@@ -2396,8 +2428,7 @@ char* os::reserve_memory_special(size_t bytes, size_t alignment, char* req_addr,
      //            coalesce into large pages. Try to reserve large pages when
      //            the system is still "fresh".
      if (warn_on_failure) {
-       jio_snprintf(msg, sizeof(msg), "Failed to reserve shared memory (errno = %d).", errno);
-       warning(msg);
+       warning("Failed to reserve shared memory (errno = %d).", errno);
      }
      return NULL;
   }
@@ -2414,30 +2445,31 @@ char* os::reserve_memory_special(size_t bytes, size_t alignment, char* req_addr,
 
   if ((intptr_t)addr == -1) {
      if (warn_on_failure) {
-       jio_snprintf(msg, sizeof(msg), "Failed to attach shared memory (errno = %d).", err);
-       warning(msg);
+       warning("Failed to attach shared memory (errno = %d).", err);
      }
      return NULL;
   }
 
   // The memory is committed
-  MemTracker::record_virtual_memory_reserve_and_commit((address)addr, bytes, mtNone, CALLER_PC);
+  MemTracker::record_virtual_memory_reserve_and_commit((address)addr, bytes, CALLER_PC);
 
   return addr;
 }
 
 bool os::release_memory_special(char* base, size_t bytes) {
-  MemTracker::Tracker tkr = MemTracker::get_virtual_memory_release_tracker();
-  // detaching the SHM segment will also delete it, see reserve_memory_special()
-  int rslt = shmdt(base);
-  if (rslt == 0) {
-    tkr.record((address)base, bytes);
-    return true;
+  if (MemTracker::tracking_level() > NMT_minimal) {
+    Tracker tkr = MemTracker::get_virtual_memory_release_tracker();
+    // detaching the SHM segment will also delete it, see reserve_memory_special()
+    int rslt = shmdt(base);
+    if (rslt == 0) {
+      tkr.record((address)base, bytes);
+      return true;
+    } else {
+      return false;
+    }
   } else {
-    tkr.discard();
-    return false;
+    return shmdt(base) == 0;
   }
-
 }
 
 size_t os::large_page_size() {
@@ -2546,88 +2578,21 @@ size_t os::read(int fd, void *buf, unsigned int nBytes) {
   RESTARTABLE_RETURN_INT(::read(fd, buf, nBytes));
 }
 
-// TODO-FIXME: reconcile Solaris' os::sleep with the bsd variation.
-// Solaris uses poll(), bsd uses park().
-// Poll() is likely a better choice, assuming that Thread.interrupt()
-// generates a SIGUSRx signal. Note that SIGUSR1 can interfere with
-// SIGSEGV, see 4355769.
+void os::naked_short_sleep(jlong ms) {
+  struct timespec req;
 
-int os::sleep(Thread* thread, jlong millis, bool interruptible) {
-  assert(thread == Thread::current(),  "thread consistency check");
-
-  ParkEvent * const slp = thread->_SleepEvent ;
-  slp->reset() ;
-  OrderAccess::fence() ;
-
-  if (interruptible) {
-    jlong prevtime = javaTimeNanos();
-
-    for (;;) {
-      if (os::is_interrupted(thread, true)) {
-        return OS_INTRPT;
-      }
-
-      jlong newtime = javaTimeNanos();
-
-      if (newtime - prevtime < 0) {
-        // time moving backwards, should only happen if no monotonic clock
-        // not a guarantee() because JVM should not abort on kernel/glibc bugs
-        assert(!Bsd::supports_monotonic_clock(), "time moving backwards");
-      } else {
-        millis -= (newtime - prevtime) / NANOSECS_PER_MILLISEC;
-      }
-
-      if(millis <= 0) {
-        return OS_OK;
-      }
-
-      prevtime = newtime;
-
-      {
-        assert(thread->is_Java_thread(), "sanity check");
-        JavaThread *jt = (JavaThread *) thread;
-        ThreadBlockInVM tbivm(jt);
-        OSThreadWaitState osts(jt->osthread(), false /* not Object.wait() */);
-
-        jt->set_suspend_equivalent();
-        // cleared by handle_special_suspend_equivalent_condition() or
-        // java_suspend_self() via check_and_wait_while_suspended()
-
-        slp->park(millis);
-
-        // were we externally suspended while we were waiting?
-        jt->check_and_wait_while_suspended();
-      }
-    }
-  } else {
-    OSThreadWaitState osts(thread->osthread(), false /* not Object.wait() */);
-    jlong prevtime = javaTimeNanos();
-
-    for (;;) {
-      // It'd be nice to avoid the back-to-back javaTimeNanos() calls on
-      // the 1st iteration ...
-      jlong newtime = javaTimeNanos();
-
-      if (newtime - prevtime < 0) {
-        // time moving backwards, should only happen if no monotonic clock
-        // not a guarantee() because JVM should not abort on kernel/glibc bugs
-        assert(!Bsd::supports_monotonic_clock(), "time moving backwards");
-      } else {
-        millis -= (newtime - prevtime) / NANOSECS_PER_MILLISEC;
-      }
-
-      if(millis <= 0) break ;
-
-      prevtime = newtime;
-      slp->park(millis);
-    }
-    return OS_OK ;
+  assert(ms < 1000, "Un-interruptable sleep, short time use only");
+  req.tv_sec = 0;
+  if (ms > 0) {
+    req.tv_nsec = (ms % 1000) * 1000000;
   }
-}
+  else {
+    req.tv_nsec = 1;
+  }
 
-int os::naked_sleep() {
-  // %% make the sleep time an integer flag. for now use 1 millisec.
-  return os::sleep(Thread::current(), 1, false);
+  nanosleep(&req, NULL);
+
+  return;
 }
 
 // Sleep forever; naked call to OS-specific sleep; use with CAUTION
@@ -2642,22 +2607,8 @@ bool os::dont_yield() {
   return DontYieldALot;
 }
 
-void os::yield() {
+void os::naked_yield() {
   sched_yield();
-}
-
-os::YieldResult os::NakedYield() { sched_yield(); return os::YIELD_UNKNOWN ;}
-
-void os::yield_all(int attempts) {
-  // Yields to all threads, including threads with lower priorities
-  // Threads on Bsd are all with same priority. The Solaris style
-  // os::yield_all() with nanosleep(1ms) is not necessary.
-  sched_yield();
-}
-
-// Called from the tight loops to possibly influence time-sharing heuristics
-void os::loop_breaker(int attempts) {
-  os::yield_all(attempts);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -2739,7 +2690,7 @@ static int prio_init() {
 }
 
 OSReturn os::set_native_priority(Thread* thread, int newpri) {
-  if ( !UseThreadPriorities || ThreadPriorityPolicy == 0 ) return OS_OK;
+  if (!UseThreadPriorities || ThreadPriorityPolicy == 0) return OS_OK;
 
 #ifdef __OpenBSD__
   // OpenBSD pthread_setprio starves low priority threads
@@ -2766,7 +2717,7 @@ OSReturn os::set_native_priority(Thread* thread, int newpri) {
 }
 
 OSReturn os::get_native_priority(const Thread* const thread, int *priority_ptr) {
-  if ( !UseThreadPriorities || ThreadPriorityPolicy == 0 ) {
+  if (!UseThreadPriorities || ThreadPriorityPolicy == 0) {
     *priority_ptr = java_to_os_priority[NormPriority];
     return OS_OK;
   }
@@ -3008,50 +2959,6 @@ static void do_resume(OSThread* osthread) {
   guarantee(osthread->sr.is_running(), "Must be running!");
 }
 
-////////////////////////////////////////////////////////////////////////////////
-// interrupt support
-
-void os::interrupt(Thread* thread) {
-  assert(Thread::current() == thread || Threads_lock->owned_by_self(),
-    "possibility of dangling Thread pointer");
-
-  OSThread* osthread = thread->osthread();
-
-  if (!osthread->interrupted()) {
-    osthread->set_interrupted(true);
-    // More than one thread can get here with the same value of osthread,
-    // resulting in multiple notifications.  We do, however, want the store
-    // to interrupted() to be visible to other threads before we execute unpark().
-    OrderAccess::fence();
-    ParkEvent * const slp = thread->_SleepEvent ;
-    if (slp != NULL) slp->unpark() ;
-  }
-
-  // For JSR166. Unpark even if interrupt status already was set
-  if (thread->is_Java_thread())
-    ((JavaThread*)thread)->parker()->unpark();
-
-  ParkEvent * ev = thread->_ParkEvent ;
-  if (ev != NULL) ev->unpark() ;
-
-}
-
-bool os::is_interrupted(Thread* thread, bool clear_interrupted) {
-  assert(Thread::current() == thread || Threads_lock->owned_by_self(),
-    "possibility of dangling Thread pointer");
-
-  OSThread* osthread = thread->osthread();
-
-  bool interrupted = osthread->interrupted();
-
-  if (interrupted && clear_interrupted) {
-    osthread->set_interrupted(false);
-    // consider thread->_SleepEvent->reset() ... optional optimization
-  }
-
-  return interrupted;
-}
-
 ///////////////////////////////////////////////////////////////////////////////////
 // signal handling (except suspend/resume)
 
@@ -3176,7 +3083,7 @@ bool os::Bsd::chained_handler(int sig, siginfo_t* siginfo, void* context) {
 }
 
 struct sigaction* os::Bsd::get_preinstalled_handler(int sig) {
-  if ((( (unsigned int)1 << sig ) & sigs) != 0) {
+  if ((((unsigned int)1 << sig) & sigs) != 0) {
     return &sigact[sig];
   }
   return NULL;
@@ -3235,7 +3142,7 @@ void os::Bsd::set_signal_handler(int sig, bool set_installed) {
     sigAct.sa_sigaction = signalHandler;
     sigAct.sa_flags = SA_SIGINFO|SA_RESTART;
   }
-#if __APPLE__
+#ifdef __APPLE__
   // Needed for main thread as XNU (Mac OS X kernel) will only deliver SIGSEGV
   // (which starts as SIGBUS) on main thread with faulting address inside "stack+guard pages"
   // if the signal handler declares it will handle it on alternate stack.
@@ -3392,23 +3299,25 @@ static void print_signal_handler(outputStream* st, int sig,
     st->print("[%s]", get_signal_handler_name(handler, buf, buflen));
   }
 
-  st->print(", sa_mask[0]=" PTR32_FORMAT, *(uint32_t*)&sa.sa_mask);
+  st->print(", sa_mask[0]=");
+  os::Posix::print_signal_set_short(st, &sa.sa_mask);
 
   address rh = VMError::get_resetted_sighandler(sig);
   // May be, handler was resetted by VMError?
-  if(rh != NULL) {
+  if (rh != NULL) {
     handler = rh;
     sa.sa_flags = VMError::get_resetted_sigflags(sig) & SIGNIFICANT_SIGNAL_MASK;
   }
 
-  st->print(", sa_flags="   PTR32_FORMAT, sa.sa_flags);
+  st->print(", sa_flags=");
+  os::Posix::print_sa_flags(st, sa.sa_flags);
 
   // Check: is it our handler?
-  if(handler == CAST_FROM_FN_PTR(address, (sa_sigaction_t)signalHandler) ||
+  if (handler == CAST_FROM_FN_PTR(address, (sa_sigaction_t)signalHandler) ||
      handler == CAST_FROM_FN_PTR(address, (sa_sigaction_t)SR_handler)) {
     // It is our signal handler
     // check for flags, reset system-used one!
-    if((int)sa.sa_flags != os::Bsd::get_our_sigflags(sig)) {
+    if ((int)sa.sa_flags != os::Bsd::get_our_sigflags(sig)) {
       st->print(
                 ", flags was changed from " PTR32_FORMAT ", consider using jsig library",
                 os::Bsd::get_our_sigflags(sig));
@@ -3477,10 +3386,10 @@ void os::Bsd::check_signal_handler(int sig) {
 
   address thisHandler = (act.sa_flags & SA_SIGINFO)
     ? CAST_FROM_FN_PTR(address, act.sa_sigaction)
-    : CAST_FROM_FN_PTR(address, act.sa_handler) ;
+    : CAST_FROM_FN_PTR(address, act.sa_handler);
 
 
-  switch(sig) {
+  switch (sig) {
   case SIGSEGV:
   case SIGBUS:
   case SIGFPE:
@@ -3516,6 +3425,11 @@ void os::Bsd::check_signal_handler(int sig) {
     tty->print_cr("  found:%s", get_signal_handler_name(thisHandler, buf, O_BUFLEN));
     // No need to check this sig any longer
     sigaddset(&check_signal_done, sig);
+    // Running under non-interactive shell, SHUTDOWN2_SIGNAL will be reassigned SIG_IGN
+    if (sig == SHUTDOWN2_SIGNAL && !isatty(fileno(stdin))) {
+      tty->print_cr("Running in non-interactive shell, %s handler is replaced by shell",
+                    exception_name(sig, buf, O_BUFLEN));
+    }
   } else if(os::Bsd::get_our_sigflags(sig) != 0 && (int)act.sa_flags != os::Bsd::get_our_sigflags(sig)) {
     tty->print("Warning: %s handler flags ", exception_name(sig, buf, O_BUFLEN));
     tty->print("expected:" PTR32_FORMAT, os::Bsd::get_our_sigflags(sig));
@@ -3605,22 +3519,22 @@ jint os::init_2(void)
 {
   // Allocate a single page and mark it as readable for safepoint polling
   address polling_page = (address) ::mmap(NULL, Bsd::page_size(), PROT_READ, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
-  guarantee( polling_page != MAP_FAILED, "os::init_2: failed to allocate polling page" );
+  guarantee(polling_page != MAP_FAILED, "os::init_2: failed to allocate polling page");
 
-  os::set_polling_page( polling_page );
+  os::set_polling_page(polling_page);
 
 #ifndef PRODUCT
-  if(Verbose && PrintMiscellaneous)
+  if (Verbose && PrintMiscellaneous)
     tty->print("[SafePoint Polling address: " INTPTR_FORMAT "]\n", (intptr_t)polling_page);
 #endif
 
   if (!UseMembar) {
     address mem_serialize_page = (address) ::mmap(NULL, Bsd::page_size(), PROT_READ | PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
-    guarantee( mem_serialize_page != MAP_FAILED, "mmap Failed for memory serialize page");
-    os::set_memory_serialize_page( mem_serialize_page );
+    guarantee(mem_serialize_page != MAP_FAILED, "mmap Failed for memory serialize page");
+    os::set_memory_serialize_page(mem_serialize_page);
 
 #ifndef PRODUCT
-    if(Verbose && PrintMiscellaneous)
+    if (Verbose && PrintMiscellaneous)
       tty->print("[Memory Serialize  Page address: " INTPTR_FORMAT "]\n", (intptr_t)mem_serialize_page);
 #endif
   }
@@ -3721,13 +3635,13 @@ void os::init_3(void) { }
 
 // Mark the polling page as unreadable
 void os::make_polling_page_unreadable(void) {
-  if( !guard_memory((char*)_polling_page, Bsd::page_size()) )
+  if (!guard_memory((char*)_polling_page, Bsd::page_size()))
     fatal("Could not disable polling page");
 };
 
 // Mark the polling page as readable
 void os::make_polling_page_readable(void) {
-  if( !bsd_mprotect((char *)_polling_page, Bsd::page_size(), PROT_READ)) {
+  if (!bsd_mprotect((char *)_polling_page, Bsd::page_size(), PROT_READ)) {
     fatal("Could not enable polling page");
   }
 };
@@ -3900,6 +3814,7 @@ bool os::check_heap(bool force) {
   return true;
 }
 
+ATTRIBUTE_PRINTF(3, 0)
 int local_vsnprintf(char* buf, size_t count, const char* format, va_list args) {
   return ::vsnprintf(buf, count, format, args);
 }
@@ -4312,34 +4227,24 @@ static struct timespec* compute_abstime(struct timespec* abstime, jlong millis) 
   return abstime;
 }
 
-
-// Test-and-clear _Event, always leaves _Event set to 0, returns immediately.
-// Conceptually TryPark() should be equivalent to park(0).
-
-int os::PlatformEvent::TryPark() {
-  for (;;) {
-    const int v = _Event ;
-    guarantee ((v == 0) || (v == 1), "invariant") ;
-    if (Atomic::cmpxchg (0, &_Event, v) == v) return v  ;
-  }
-}
-
 void os::PlatformEvent::park() {       // AKA "down()"
   // Invariant: Only the thread associated with the Event/PlatformEvent
   // may call park().
   // TODO: assert that _Assoc != NULL or _Assoc == Self
-  int v ;
+  assert(_nParked == 0, "invariant");
+
+  int v;
   for (;;) {
-      v = _Event ;
-      if (Atomic::cmpxchg (v-1, &_Event, v) == v) break ;
+      v = _Event;
+      if (Atomic::cmpxchg(v-1, &_Event, v) == v) break;
   }
-  guarantee (v >= 0, "invariant") ;
+  guarantee(v >= 0, "invariant");
   if (v == 0) {
      // Do this the hard way by blocking ...
      int status = pthread_mutex_lock(_mutex);
      assert_status(status == 0, status, "mutex_lock");
-     guarantee (_nParked == 0, "invariant") ;
-     ++ _nParked ;
+     guarantee(_nParked == 0, "invariant");
+     ++_nParked;
      while (_Event < 0) {
         status = pthread_cond_wait(_cond, _mutex);
         // for some reason, under 2.7 lwp_cond_wait() may return ETIME ...
@@ -4347,28 +4252,28 @@ void os::PlatformEvent::park() {       // AKA "down()"
         if (status == ETIMEDOUT) { status = EINTR; }
         assert_status(status == 0 || status == EINTR, status, "cond_wait");
      }
-     -- _nParked ;
+     --_nParked;
 
-    _Event = 0 ;
+    _Event = 0;
      status = pthread_mutex_unlock(_mutex);
      assert_status(status == 0, status, "mutex_unlock");
     // Paranoia to ensure our locked and lock-free paths interact
     // correctly with each other.
     OrderAccess::fence();
   }
-  guarantee (_Event >= 0, "invariant") ;
+  guarantee(_Event >= 0, "invariant");
 }
 
 int os::PlatformEvent::park(jlong millis) {
-  guarantee (_nParked == 0, "invariant") ;
+  guarantee(_nParked == 0, "invariant");
 
-  int v ;
+  int v;
   for (;;) {
-      v = _Event ;
-      if (Atomic::cmpxchg (v-1, &_Event, v) == v) break ;
+      v = _Event;
+      if (Atomic::cmpxchg(v-1, &_Event, v) == v) break;
   }
-  guarantee (v >= 0, "invariant") ;
-  if (v != 0) return OS_OK ;
+  guarantee(v >= 0, "invariant");
+  if (v != 0) return OS_OK;
 
   // We do this the hard way, by blocking the thread.
   // Consider enforcing a minimum timeout value.
@@ -4378,8 +4283,8 @@ int os::PlatformEvent::park(jlong millis) {
   int ret = OS_TIMEOUT;
   int status = pthread_mutex_lock(_mutex);
   assert_status(status == 0, status, "mutex_lock");
-  guarantee (_nParked == 0, "invariant") ;
-  ++_nParked ;
+  guarantee(_nParked == 0, "invariant");
+  ++_nParked;
 
   // Object.wait(timo) will return because of
   // (a) notification
@@ -4388,10 +4293,8 @@ int os::PlatformEvent::park(jlong millis) {
   //
   // Thread.interrupt and object.notify{All} both call Event::set.
   // That is, we treat thread.interrupt as a special case of notification.
-  // The underlying Solaris implementation, cond_timedwait, admits
-  // spurious/premature wakeups, but the JLS/JVM spec prevents the
-  // JVM from making those visible to Java code.  As such, we must
-  // filter out spurious wakeups.  We assume all ETIME returns are valid.
+  // We ignore spurious OS wakeups unless FilterSpuriousWakeups is false.
+  // We assume all ETIME returns are valid.
   //
   // TODO: properly differentiate simultaneous notify+interrupt.
   // In that case, we should propagate the notify to another waiter.
@@ -4399,24 +4302,24 @@ int os::PlatformEvent::park(jlong millis) {
   while (_Event < 0) {
     status = os::Bsd::safe_cond_timedwait(_cond, _mutex, &abst);
     if (status != 0 && WorkAroundNPTLTimedWaitHang) {
-      pthread_cond_destroy (_cond);
-      pthread_cond_init (_cond, NULL) ;
+      pthread_cond_destroy(_cond);
+      pthread_cond_init(_cond, NULL);
     }
     assert_status(status == 0 || status == EINTR ||
                   status == ETIMEDOUT,
                   status, "cond_timedwait");
-    if (!FilterSpuriousWakeups) break ;                 // previous semantics
-    if (status == ETIMEDOUT) break ;
+    if (!FilterSpuriousWakeups) break;                 // previous semantics
+    if (status == ETIMEDOUT) break;
     // We consume and ignore EINTR and spurious wakeups.
   }
-  --_nParked ;
+  --_nParked;
   if (_Event >= 0) {
      ret = OS_OK;
   }
-  _Event = 0 ;
+  _Event = 0;
   status = pthread_mutex_unlock(_mutex);
   assert_status(status == 0, status, "mutex_unlock");
-  assert (_nParked == 0, "invariant") ;
+  assert(_nParked == 0, "invariant");
   // Paranoia to ensure our locked and lock-free paths interact
   // correctly with each other.
   OrderAccess::fence();
@@ -4429,8 +4332,7 @@ void os::PlatformEvent::unpark() {
   //    1 :=> 1
   //   -1 :=> either 0 or 1; must signal target thread
   //          That is, we can safely transition _Event from -1 to either
-  //          0 or 1. Forcing 1 is slightly more efficient for back-to-back
-  //          unpark() calls.
+  //          0 or 1.
   // See also: "Semaphores in Plan 9" by Mullender & Cox
   //
   // Note: Forcing a transition from "-1" to "1" on an unpark() means
@@ -4500,7 +4402,7 @@ void os::PlatformEvent::unpark() {
  */
 
 static void unpackTime(struct timespec* absTime, bool isAbsolute, jlong time) {
-  assert (time > 0, "convertTime");
+  assert(time > 0, "convertTime");
 
   struct timeval now;
   int status = gettimeofday(&now, NULL);
@@ -4561,7 +4463,7 @@ void Parker::park(bool isAbsolute, jlong time) {
 
   // Next, demultiplex/decode time arguments
   struct timespec absTime;
-  if (time < 0 || (isAbsolute && time == 0) ) { // don't wait at all
+  if (time < 0 || (isAbsolute && time == 0)) { // don't wait at all
     return;
   }
   if (time > 0) {
@@ -4583,11 +4485,11 @@ void Parker::park(bool isAbsolute, jlong time) {
     return;
   }
 
-  int status ;
+  int status;
   if (_counter > 0)  { // no wait needed
     _counter = 0;
     status = pthread_mutex_unlock(_mutex);
-    assert (status == 0, "invariant") ;
+    assert(status == 0, "invariant");
     // Paranoia to ensure our locked and lock-free paths interact
     // correctly with each other and Java-level accesses.
     OrderAccess::fence();
@@ -4607,12 +4509,12 @@ void Parker::park(bool isAbsolute, jlong time) {
   // cleared by handle_special_suspend_equivalent_condition() or java_suspend_self()
 
   if (time == 0) {
-    status = pthread_cond_wait (_cond, _mutex) ;
+    status = pthread_cond_wait(_cond, _mutex);
   } else {
-    status = os::Bsd::safe_cond_timedwait (_cond, _mutex, &absTime) ;
+    status = os::Bsd::safe_cond_timedwait(_cond, _mutex, &absTime);
     if (status != 0 && WorkAroundNPTLTimedWaitHang) {
-      pthread_cond_destroy (_cond) ;
-      pthread_cond_init    (_cond, NULL);
+      pthread_cond_destroy(_cond);
+      pthread_cond_init(_cond, NULL);
     }
   }
   assert_status(status == 0 || status == EINTR ||
@@ -4623,9 +4525,9 @@ void Parker::park(bool isAbsolute, jlong time) {
   pthread_sigmask(SIG_SETMASK, &oldsigs, NULL);
 #endif
 
-  _counter = 0 ;
-  status = pthread_mutex_unlock(_mutex) ;
-  assert_status(status == 0, status, "invariant") ;
+  _counter = 0;
+  status = pthread_mutex_unlock(_mutex);
+  assert_status(status == 0, status, "invariant");
   // Paranoia to ensure our locked and lock-free paths interact
   // correctly with each other and Java-level accesses.
   OrderAccess::fence();
@@ -4637,26 +4539,25 @@ void Parker::park(bool isAbsolute, jlong time) {
 }
 
 void Parker::unpark() {
-  int s, status ;
-  status = pthread_mutex_lock(_mutex);
-  assert (status == 0, "invariant") ;
-  s = _counter;
+  int status = pthread_mutex_lock(_mutex);
+  assert(status == 0, "invariant");
+  const int s = _counter;
   _counter = 1;
   if (s < 1) {
      if (WorkAroundNPTLTimedWaitHang) {
-        status = pthread_cond_signal (_cond) ;
-        assert (status == 0, "invariant") ;
+        status = pthread_cond_signal(_cond);
+        assert(status == 0, "invariant");
         status = pthread_mutex_unlock(_mutex);
-        assert (status == 0, "invariant") ;
+        assert(status == 0, "invariant");
      } else {
         status = pthread_mutex_unlock(_mutex);
-        assert (status == 0, "invariant") ;
-        status = pthread_cond_signal (_cond) ;
-        assert (status == 0, "invariant") ;
+        assert(status == 0, "invariant");
+        status = pthread_cond_signal(_cond);
+        assert(status == 0, "invariant");
      }
   } else {
     pthread_mutex_unlock(_mutex);
-    assert (status == 0, "invariant") ;
+    assert(status == 0, "invariant");
   }
 }
 

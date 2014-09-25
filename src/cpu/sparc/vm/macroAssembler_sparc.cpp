@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -23,7 +23,7 @@
  */
 
 #include "precompiled.hpp"
-#include "asm/assembler.inline.hpp"
+#include "asm/macroAssembler.inline.hpp"
 #include "compiler/disassembler.hpp"
 #include "gc_interface/collectedHeap.inline.hpp"
 #include "interpreter/interpreter.hpp"
@@ -34,7 +34,7 @@
 #include "runtime/biasedLocking.hpp"
 #include "runtime/interfaceSupport.hpp"
 #include "runtime/objectMonitor.hpp"
-#include "runtime/os.hpp"
+#include "runtime/os.inline.hpp"
 #include "runtime/sharedRuntime.hpp"
 #include "runtime/stubRoutines.hpp"
 #include "utilities/macros.hpp"
@@ -1202,7 +1202,7 @@ void RegistersForDebugging::print(outputStream* s) {
     if ( j != last )  s->print(" - f%d", last);
     s->print(" = %f", val);
     s->fill_to(25);
-    s->print_cr(" (0x%x)", val);
+    s->print_cr(" (0x%x)", *(int*)&val);
     j = last + 1;
   }
   s->cr();
@@ -3531,7 +3531,7 @@ void MacroAssembler::bang_stack_size(Register Rsize, Register Rtsp,
   // was post-decremented.)  Skip this address by starting at i=1, and
   // touch a few more pages below.  N.B.  It is important to touch all
   // the way down to and including i=StackShadowPages.
-  for (int i = 1; i <= StackShadowPages; i++) {
+  for (int i = 1; i < StackShadowPages; i++) {
     set((-i*offset)+STACK_BIAS, Rscratch);
     st(G0, Rtsp, Rscratch);
   }

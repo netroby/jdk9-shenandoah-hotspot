@@ -1,5 +1,5 @@
 # 
-#  Copyright (c) 1998, 2013, Oracle and/or its affiliates. All rights reserved.
+#  Copyright (c) 1998, 2014, Oracle and/or its affiliates. All rights reserved.
 #  DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
 # 
 #  This code is free software; you can redistribute it and/or modify it
@@ -22,7 +22,6 @@
 # 
 
 
-# @ignore 8028733
 # @test @(#)Test6626217.sh
 # @bug 6626217
 # @summary Loader-constraint table allows arrays instead of only the base-classes
@@ -48,9 +47,14 @@ ${CP} ${TESTSRC}${FS}* ${THIS_DIR}
 # A Clean Compile: this line will probably fail within jtreg as have a clean dir:
 ${RM} -f *.class *.impl many_loader.java
 
+# Make sure that the compilation steps occurs in the future as not to allow fast systems
+# to copy and compile bug_21227.java so fast as to make the class and java have the same
+# time stamp, which later on would make the compilation step of many_loader.java fail
+sleep 2
+
 # Compile all the usual suspects, including the default 'many_loader'
 ${CP} many_loader1.java.foo many_loader.java
-${JAVAC} ${TESTJAVACOPTS} -source 1.4 -target 1.4 -Xlint *.java
+${JAVAC} ${TESTJAVACOPTS} -Xlint *.java
 
 # Rename the class files, so the custom loader (and not the system loader) will find it
 ${MV} from_loader2.class from_loader2.impl2
@@ -58,14 +62,14 @@ ${MV} from_loader2.class from_loader2.impl2
 # Compile the next version of 'many_loader'
 ${MV} many_loader.class many_loader.impl1
 ${CP} many_loader2.java.foo many_loader.java
-${JAVAC} ${TESTJAVACOPTS} -source 1.4 -target 1.4 -Xlint many_loader.java
+${JAVAC} ${TESTJAVACOPTS} -Xlint many_loader.java
 
 # Rename the class file, so the custom loader (and not the system loader) will find it
 ${MV} many_loader.class many_loader.impl2
 ${MV} many_loader.impl1 many_loader.class
 ${RM} many_loader.java
 
-${JAVA} ${TESTVMOPTS} -Xverify -Xint -cp . bug_21227 >test.out 2>&1
+${JAVA} ${TESTOPTS} -Xverify -Xint -cp . bug_21227 >test.out 2>&1
 grep "loader constraint" test.out
 exit $?
 

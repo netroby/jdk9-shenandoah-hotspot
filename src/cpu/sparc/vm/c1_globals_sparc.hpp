@@ -40,7 +40,6 @@ define_pd_global(bool, ProfileTraps,                 false);
 define_pd_global(bool, UseOnStackReplacement,        true );
 define_pd_global(bool, TieredCompilation,            false);
 define_pd_global(intx, CompileThreshold,             1000 ); // Design center runs on 1.3.1
-define_pd_global(intx, BackEdgeThreshold,            100000);
 
 define_pd_global(intx, OnStackReplacePercentage,     1400 );
 define_pd_global(bool, UseTLAB,                      true );
@@ -65,7 +64,5 @@ define_pd_global(bool, LIRFillDelaySlots,            true );
 define_pd_global(bool, OptimizeSinglePrecision,      false);
 define_pd_global(bool, CSEArrayLength,               true );
 define_pd_global(bool, TwoOperandLIRForm,            false);
-
-define_pd_global(intx, SafepointPollOffset,          0    );
 
 #endif // CPU_SPARC_VM_C1_GLOBALS_SPARC_HPP

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -24,6 +24,7 @@
 
 #include "precompiled.hpp"
 #include "classfile/systemDictionary.hpp"
+#include "code/codeCache.hpp"
 #include "code/debugInfoRec.hpp"
 #include "code/nmethod.hpp"
 #include "code/pcDesc.hpp"
@@ -50,41 +51,8 @@
 #include "runtime/vframe_hp.hpp"
 #include "utilities/events.hpp"
 #include "utilities/xmlstream.hpp"
-#ifdef TARGET_ARCH_x86
-# include "vmreg_x86.inline.hpp"
-#endif
-#ifdef TARGET_ARCH_sparc
-# include "vmreg_sparc.inline.hpp"
-#endif
-#ifdef TARGET_ARCH_zero
-# include "vmreg_zero.inline.hpp"
-#endif
-#ifdef TARGET_ARCH_arm
-# include "vmreg_arm.inline.hpp"
-#endif
-#ifdef TARGET_ARCH_ppc
-# include "vmreg_ppc.inline.hpp"
-#endif
-#ifdef COMPILER2
-#ifdef TARGET_ARCH_MODEL_x86_32
-# include "adfiles/ad_x86_32.hpp"
-#endif
-#ifdef TARGET_ARCH_MODEL_x86_64
-# include "adfiles/ad_x86_64.hpp"
-#endif
-#ifdef TARGET_ARCH_MODEL_sparc
-# include "adfiles/ad_sparc.hpp"
-#endif
-#ifdef TARGET_ARCH_MODEL_zero
-# include "adfiles/ad_zero.hpp"
-#endif
-#ifdef TARGET_ARCH_MODEL_arm
-# include "adfiles/ad_arm.hpp"
-#endif
-#ifdef TARGET_ARCH_MODEL_ppc
-# include "adfiles/ad_ppc.hpp"
-#endif
-#endif
+
+PRAGMA_FORMAT_MUTE_WARNINGS_FOR_GCC
 
 bool DeoptimizationMarker::_is_active = false;
 
@@ -223,7 +191,8 @@ Deoptimization::UnrollBlock* Deoptimization::fetch_unroll_info_helper(JavaThread
       // It is not guaranteed that we can get such information here only
       // by analyzing bytecode in deoptimized frames. This is why this flag
       // is set during method compilation (see Compile::Process_OopMap_Node()).
-      bool save_oop_result = chunk->at(0)->scope()->return_oop();
+      // If the previous frame was popped, we don't have a result.
+      bool save_oop_result = chunk->at(0)->scope()->return_oop() && !thread->popframe_forcing_deopt_reexecution();
       Handle return_value;
       if (save_oop_result) {
         // Reallocation may trigger GC. If deoptimization happened on return from
@@ -380,7 +349,7 @@ Deoptimization::UnrollBlock* Deoptimization::fetch_unroll_info_helper(JavaThread
   frame deopt_sender = stub_frame.sender(&dummy_map); // First is the deoptee frame
   deopt_sender = deopt_sender.sender(&dummy_map);     // Now deoptee caller
 
-  // It's possible that the number of paramters at the call site is
+  // It's possible that the number of parameters at the call site is
   // different than number of arguments in the callee when method
   // handles are used.  If the caller is interpreted get the real
   // value so that the proper amount of space can be added to it's
@@ -417,15 +386,9 @@ Deoptimization::UnrollBlock* Deoptimization::fetch_unroll_info_helper(JavaThread
     // frame[number_of_frames - 1 ] = on_stack_size(youngest)
     // frame[number_of_frames - 2 ] = on_stack_size(sender(youngest))
     // frame[number_of_frames - 3 ] = on_stack_size(sender(sender(youngest)))
-    int caller_parms = callee_parameters;
-    if ((index == array->frames() - 1) && caller_was_method_handle) {
-      caller_parms = 0;
-    }
-    frame_sizes[number_of_frames - 1 - index] = BytesPerWord * array->element(index)->on_stack_size(caller_parms,
-                                                                                                    callee_parameters,
+    frame_sizes[number_of_frames - 1 - index] = BytesPerWord * array->element(index)->on_stack_size(callee_parameters,
                                                                                                     callee_locals,
                                                                                                     index == 0,
-                                                                                                    index == array->frames() - 1,
                                                                                                     popframe_extra_args);
     // This pc doesn't have to be perfect just good enough to identify the frame
     // as interpreted so the skeleton frame will be walkable
@@ -540,7 +503,7 @@ void Deoptimization::cleanup_deopt_info(JavaThread *thread,
     // popframe condition bit set, we should always clear it now
     thread->clear_popframe_condition();
 #else
-    // C++ interpeter will clear has_pending_popframe when it enters
+    // C++ interpreter will clear has_pending_popframe when it enters
     // with method_resume. For deopt_resume2 we clear it now.
     if (thread->popframe_forcing_deopt_reexecution())
         thread->clear_popframe_condition();
@@ -699,7 +662,7 @@ JRT_LEAF(BasicType, Deoptimization::unpack_frames(JavaThread* thread, int exec_m
              (iframe->interpreter_frame_expression_stack_size() == (next_mask_expression_stack_size -
                                                                     top_frame_expression_stack_adjustment))) ||
             (is_top_frame && (exec_mode == Unpack_exception) && iframe->interpreter_frame_expression_stack_size() == 0) ||
-            (is_top_frame && (exec_mode == Unpack_uncommon_trap || exec_mode == Unpack_reexecute) &&
+            (is_top_frame && (exec_mode == Unpack_uncommon_trap || exec_mode == Unpack_reexecute || el->should_reexecute()) &&
              (iframe->interpreter_frame_expression_stack_size() == mask.expression_stack_size() + cur_invoke_parameter_size))
             )) {
         ttyLocker ttyl;
@@ -745,6 +708,8 @@ int Deoptimization::deoptimize_dependents() {
   return 0;
 }
 
+Deoptimization::DeoptAction Deoptimization::_unloaded_action
+  = Deoptimization::Action_reinterpret;
 
 #ifdef COMPILER2
 bool Deoptimization::realloc_objects(JavaThread* thread, frame* fr, GrowableArray<ScopeValue*>* objects, TRAPS) {
@@ -1186,6 +1151,23 @@ JRT_LEAF(void, Deoptimization::popframe_preserve_args(JavaThread* thread, int by
 }
 JRT_END
 
+MethodData*
+Deoptimization::get_method_data(JavaThread* thread, methodHandle m,
+                                bool create_if_missing) {
+  Thread* THREAD = thread;
+  MethodData* mdo = m()->method_data();
+  if (mdo == NULL && create_if_missing && !HAS_PENDING_EXCEPTION) {
+    // Build an MDO.  Ignore errors like OutOfMemory;
+    // that simply means we won't have an MDO to update.
+    Method::build_interpreter_method_data(m, THREAD);
+    if (HAS_PENDING_EXCEPTION) {
+      assert((PENDING_EXCEPTION->is_a(SystemDictionary::OutOfMemoryError_klass())), "we expect only an OOM error here");
+      CLEAR_PENDING_EXCEPTION;
+    }
+    mdo = m()->method_data();
+  }
+  return mdo;
+}
 
 #if defined(COMPILER2) || defined(SHARK)
 void Deoptimization::load_class_by_index(constantPoolHandle constant_pool, int index, TRAPS) {
@@ -1224,9 +1206,19 @@ void Deoptimization::load_class_by_index(constantPoolHandle constant_pool, int i
   load_class_by_index(constant_pool, index, THREAD);
   if (HAS_PENDING_EXCEPTION) {
     // Exception happened during classloading. We ignore the exception here, since it
-    // is going to be rethrown since the current activation is going to be deoptimzied and
+    // is going to be rethrown since the current activation is going to be deoptimized and
     // the interpreter will re-execute the bytecode.
     CLEAR_PENDING_EXCEPTION;
+    // Class loading called java code which may have caused a stack
+    // overflow. If the exception was thrown right before the return
+    // to the runtime the stack is no longer guarded. Reguard the
+    // stack otherwise if we return to the uncommon trap blob and the
+    // stack bang causes a stack overflow we crash.
+    assert(THREAD->is_Java_thread(), "only a java thread can be here");
+    JavaThread* thread = (JavaThread*)THREAD;
+    bool guard_pages_enabled = thread->stack_yellow_zone_enabled();
+    if (!guard_pages_enabled) guard_pages_enabled = thread->reguard_stack();
+    assert(guard_pages_enabled, "stack banging in uncommon trap blob may cause crash");
   }
 }
 
@@ -1275,7 +1267,8 @@ JRT_ENTRY(void, Deoptimization::uncommon_trap_inner(JavaThread* thread, jint tra
     gather_statistics(reason, action, trap_bc);
 
     // Ensure that we can record deopt. history:
-    bool create_if_missing = ProfileTraps;
+    // Need MDO to record RTM code generation state.
+    bool create_if_missing = ProfileTraps || UseCodeAging RTM_OPT_ONLY( || UseRTMLocking );
 
     MethodData* trap_mdo =
       get_method_data(thread, trap_method, create_if_missing);
@@ -1311,7 +1304,7 @@ JRT_ENTRY(void, Deoptimization::uncommon_trap_inner(JavaThread* thread, jint tra
         if (xtty != NULL)
           xtty->name(class_name);
       }
-      if (xtty != NULL && trap_mdo != NULL) {
+      if (xtty != NULL && trap_mdo != NULL && (int)reason < (int)MethodData::_trap_hist_limit) {
         // Dump the relevant MDO state.
         // This is the deopt count for the current reason, any previous
         // reasons or recompiles seen at this point.
@@ -1411,7 +1404,7 @@ JRT_ENTRY(void, Deoptimization::uncommon_trap_inner(JavaThread* thread, jint tra
     //
     // The other actions cause immediate removal of the present code.
 
-    bool update_trap_state = true;
+    bool update_trap_state = (reason != Reason_tenured);
     bool make_not_entrant = false;
     bool make_not_compilable = false;
     bool reprofile = false;
@@ -1476,6 +1469,7 @@ JRT_ENTRY(void, Deoptimization::uncommon_trap_inner(JavaThread* thread, jint tra
       bool maybe_prior_trap = false;
       bool maybe_prior_recompile = false;
       pdata = query_update_method_data(trap_mdo, trap_bci, reason,
+                                   nm->method(),
                                    //outputs:
                                    this_trap_count,
                                    maybe_prior_trap,
@@ -1521,7 +1515,7 @@ JRT_ENTRY(void, Deoptimization::uncommon_trap_inner(JavaThread* thread, jint tra
       }
 
       // Go back to the compiler if there are too many traps in this method.
-      if (this_trap_count >= (uint)PerMethodTrapLimit) {
+      if (this_trap_count >= per_method_trap_limit(reason)) {
         // If there are too many traps in this method, force a recompile.
         // This will allow the compiler to see the limit overflow, and
         // take corrective action, if possible.
@@ -1537,7 +1531,6 @@ JRT_ENTRY(void, Deoptimization::uncommon_trap_inner(JavaThread* thread, jint tra
       if (make_not_entrant && maybe_prior_recompile && maybe_prior_trap) {
         reprofile = true;
       }
-
     }
 
     // Take requested actions on the method:
@@ -1554,6 +1547,22 @@ JRT_ENTRY(void, Deoptimization::uncommon_trap_inner(JavaThread* thread, jint tra
         int tstate1 = trap_state_set_recompiled(tstate0, true);
         if (tstate1 != tstate0)
           pdata->set_trap_state(tstate1);
+      }
+
+#if INCLUDE_RTM_OPT
+      // Restart collecting RTM locking abort statistic if the method
+      // is recompiled for a reason other than RTM state change.
+      // Assume that in new recompiled code the statistic could be different,
+      // for example, due to different inlining.
+      if ((reason != Reason_rtm_state_change) && (trap_mdo != NULL) &&
+          UseRTMDeopt && (nm->rtm_state() != ProfileRTM)) {
+        trap_mdo->atomic_set_rtm_state(ProfileRTM);
+      }
+#endif
+      // For code aging we count traps separately here, using make_not_entrant()
+      // as a guard against simultaneous deopts in multiple threads.
+      if (reason == Reason_tenured && trap_mdo != NULL) {
+        trap_mdo->inc_tenure_traps();
       }
     }
 
@@ -1587,28 +1596,11 @@ JRT_ENTRY(void, Deoptimization::uncommon_trap_inner(JavaThread* thread, jint tra
 }
 JRT_END
 
-MethodData*
-Deoptimization::get_method_data(JavaThread* thread, methodHandle m,
-                                bool create_if_missing) {
-  Thread* THREAD = thread;
-  MethodData* mdo = m()->method_data();
-  if (mdo == NULL && create_if_missing && !HAS_PENDING_EXCEPTION) {
-    // Build an MDO.  Ignore errors like OutOfMemory;
-    // that simply means we won't have an MDO to update.
-    Method::build_interpreter_method_data(m, THREAD);
-    if (HAS_PENDING_EXCEPTION) {
-      assert((PENDING_EXCEPTION->is_a(SystemDictionary::OutOfMemoryError_klass())), "we expect only an OOM error here");
-      CLEAR_PENDING_EXCEPTION;
-    }
-    mdo = m()->method_data();
-  }
-  return mdo;
-}
-
 ProfileData*
 Deoptimization::query_update_method_data(MethodData* trap_mdo,
                                          int trap_bci,
                                          Deoptimization::DeoptReason reason,
+                                         Method* compiled_method,
                                          //outputs:
                                          uint& ret_this_trap_count,
                                          bool& ret_maybe_prior_trap,
@@ -1632,9 +1624,16 @@ Deoptimization::query_update_method_data(MethodData* trap_mdo,
     // Find the profile data for this BCI.  If there isn't one,
     // try to allocate one from the MDO's set of spares.
     // This will let us detect a repeated trap at this point.
-    pdata = trap_mdo->allocate_bci_to_data(trap_bci);
+    pdata = trap_mdo->allocate_bci_to_data(trap_bci, reason_is_speculate(reason) ? compiled_method : NULL);
 
     if (pdata != NULL) {
+      if (reason_is_speculate(reason) && !pdata->is_SpeculativeTrapData()) {
+        if (LogCompilation && xtty != NULL) {
+          ttyLocker ttyl;
+          // no more room for speculative traps in this MDO
+          xtty->elem("speculative_traps_oom");
+        }
+      }
       // Query the trap state of this profile datum.
       int tstate0 = pdata->trap_state();
       if (!trap_state_has_reason(tstate0, per_bc_reason))
@@ -1672,8 +1671,10 @@ Deoptimization::update_method_data_from_interpreter(MethodData* trap_mdo, int tr
   uint ignore_this_trap_count;
   bool ignore_maybe_prior_trap;
   bool ignore_maybe_prior_recompile;
+  assert(!reason_is_speculate(reason), "reason speculate only used by compiler");
   query_update_method_data(trap_mdo, trap_bci,
                            (DeoptReason)reason,
+                           NULL,
                            ignore_this_trap_count,
                            ignore_maybe_prior_trap,
                            ignore_maybe_prior_recompile);
@@ -1781,9 +1782,7 @@ const char* Deoptimization::format_trap_state(char* buf, size_t buflen,
 
 
 //--------------------------------statics--------------------------------------
-Deoptimization::DeoptAction Deoptimization::_unloaded_action
-  = Deoptimization::Action_reinterpret;
-const char* Deoptimization::_trap_reason_name[Reason_LIMIT] = {
+const char* Deoptimization::_trap_reason_name[] = {
   // Note:  Keep this in sync. with enum DeoptReason.
   "none",
   "null_check",
@@ -1801,9 +1800,14 @@ const char* Deoptimization::_trap_reason_name[Reason_LIMIT] = {
   "div0_check",
   "age",
   "predicate",
-  "loop_limit_check"
+  "loop_limit_check",
+  "speculate_class_check",
+  "speculate_null_check",
+  "rtm_state_change",
+  "unstable_if",
+  "tenured"
 };
-const char* Deoptimization::_trap_action_name[Action_LIMIT] = {
+const char* Deoptimization::_trap_action_name[] = {
   // Note:  Keep this in sync. with enum DeoptAction.
   "none",
   "maybe_recompile",
@@ -1813,6 +1817,9 @@ const char* Deoptimization::_trap_action_name[Action_LIMIT] = {
 };
 
 const char* Deoptimization::trap_reason_name(int reason) {
+  // Check that every reason has a name
+  STATIC_ASSERT(sizeof(_trap_reason_name)/sizeof(const char*) == Reason_LIMIT);
+
   if (reason == Reason_many)  return "many";
   if ((uint)reason < Reason_LIMIT)
     return _trap_reason_name[reason];
@@ -1821,6 +1828,9 @@ const char* Deoptimization::trap_reason_name(int reason) {
   return buf;
 }
 const char* Deoptimization::trap_action_name(int action) {
+  // Check that every action has a name
+  STATIC_ASSERT(sizeof(_trap_action_name)/sizeof(const char*) == Action_LIMIT);
+
   if ((uint)action < Action_LIMIT)
     return _trap_action_name[action];
   static char buf[20];

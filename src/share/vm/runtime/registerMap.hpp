@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2002, 2011, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2002, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -27,21 +27,6 @@
 
 #include "code/vmreg.hpp"
 #include "utilities/globalDefinitions.hpp"
-#ifdef TARGET_ARCH_x86
-# include "register_x86.hpp"
-#endif
-#ifdef TARGET_ARCH_sparc
-# include "register_sparc.hpp"
-#endif
-#ifdef TARGET_ARCH_zero
-# include "register_zero.hpp"
-#endif
-#ifdef TARGET_ARCH_arm
-# include "register_arm.hpp"
-#endif
-#ifdef TARGET_ARCH_ppc
-# include "register_ppc.hpp"
-#endif
 
 class JavaThread;
 
@@ -70,7 +55,7 @@ class JavaThread;
 //   3) The RegisterMap keeps track of the values of callee-saved registers
 //      from frame to frame (hence, the name).  For some stack traversal the
 //      values of the callee-saved registers does not matter, e.g., if you
-//      only need the static properies such as frame type, pc, and such.
+//      only need the static properties such as frame type, pc, and such.
 //      Updating of the RegisterMap can be turned off by instantiating the
 //      register map as: RegisterMap map(thread, false);
 

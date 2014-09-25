@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -37,6 +37,7 @@
 #include "runtime/interfaceSupport.hpp"
 #include "runtime/javaCalls.hpp"
 #include "runtime/mutexLocker.hpp"
+#include "runtime/os.inline.hpp"
 #include "runtime/signature.hpp"
 #include "runtime/stubRoutines.hpp"
 #include "runtime/thread.inline.hpp"
@@ -302,12 +303,16 @@ void JavaCalls::call(JavaValue* result, methodHandle method, JavaCallArguments* 
   // Check if we need to wrap a potential OS exception handler around thread
   // This is used for e.g. Win32 structured exception handlers
   assert(THREAD->is_Java_thread(), "only JavaThreads can make JavaCalls");
-  // Need to wrap each and everytime, since there might be native code down the
+  // Need to wrap each and every time, since there might be native code down the
   // stack that has installed its own exception handlers
   os::os_exception_wrapper(call_helper, result, &method, args, THREAD);
 }
 
 void JavaCalls::call_helper(JavaValue* result, methodHandle* m, JavaCallArguments* args, TRAPS) {
+  // During dumping, Java execution environment is not fully initialized. Also, Java execution
+  // may cause undesirable side-effects in the class metadata.
+  assert(!DumpSharedSpaces, "must not execute Java bytecodes when dumping");
+
   methodHandle method = *m;
   JavaThread* thread = (JavaThread*)THREAD;
   assert(thread->is_Java_thread(), "must be called by a java thread");
@@ -337,7 +342,7 @@ void JavaCalls::call_helper(JavaValue* result, methodHandle* m, JavaCallArgument
     // A klass might not be initialized since JavaCall's might be used during the executing of
     // the <clinit>. For example, a Thread.start might start executing on an object that is
     // not fully initialized! (bad Java programming style)
-    assert(holder->is_linked(), "rewritting must have taken place");
+    assert(holder->is_linked(), "rewriting must have taken place");
   }
 #endif
 

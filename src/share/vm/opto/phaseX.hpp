@@ -92,14 +92,14 @@ public:
   }
 
   void   remove_useless_nodes(VectorSet &useful); // replace with sentinel
-  void replace_with(NodeHash* nh);
+  void   replace_with(NodeHash* nh);
+  void   check_no_speculative_types(); // Check no speculative part for type nodes in table
 
   Node  *sentinel() { return _sentinel; }
 
 #ifndef PRODUCT
   Node  *find_index(uint idx);  // For debugging
   void   dump();                // For debugging, dump statistics
-#endif
   uint   _grows;                // For debugging, count of table grow()s
   uint   _look_probes;          // For debugging, count of hash probes
   uint   _lookup_hits;          // For debugging, count of hash_finds
@@ -110,6 +110,7 @@ public:
   uint   _delete_misses;        // For debugging, count of hash probes for deletes
   uint   _total_inserts;        // For debugging, total inserts into hash table
   uint   _total_insert_probes;  // For debugging, total probes while inserting
+#endif
 };
 
 
@@ -310,6 +311,9 @@ public:
                                const Type* limit_type) const
   { ShouldNotCallThis(); return NULL; }
 
+  // Delayed node rehash if this is an IGVN phase
+  virtual void igvn_rehash_node_delayed(Node* n) {}
+
 #ifndef PRODUCT
   void dump_old2new_map() const;
   void dump_new( uint new_lidx ) const;
@@ -386,6 +390,9 @@ public:
   // in a faster or cheaper fashion.
   Node  *transform( Node *n );
   Node  *transform_no_reclaim( Node *n );
+  virtual void record_for_igvn(Node *n) {
+    C->record_for_igvn(n);
+  }
 
   void replace_with(PhaseGVN* gvn) {
     _table.replace_with(&gvn->_table);
@@ -414,9 +421,6 @@ class PhaseIterGVN : public PhaseGVN {
 
 protected:
 
-  // Idealize new Node 'n' with respect to its inputs and its value
-  virtual Node *transform( Node *a_node );
-
   // Warm up hash table, type table and initial worklist
   void init_worklist( Node *a_root );
 
@@ -430,6 +434,10 @@ public:
   PhaseIterGVN( PhaseGVN *gvn ); // Used after Parser
   PhaseIterGVN( PhaseIterGVN *igvn, const char *dummy ); // Used after +VerifyOpto
 
+  // Idealize new Node 'n' with respect to its inputs and its value
+  virtual Node *transform( Node *a_node );
+  virtual void record_for_igvn(Node *n) { }
+
   virtual PhaseIterGVN *is_IterGVN() { return this; }
 
   Unique_Node_List _worklist;       // Iterative worklist
@@ -438,6 +446,17 @@ public:
   // Node::Value, Node::Identity, hash-based value numbering, Node::Ideal_DU
   // and dominator info to a fixed point.
   void optimize();
+
+#ifndef PRODUCT
+  void trace_PhaseIterGVN(Node* n, Node* nn, const Type* old_type);
+  void init_verifyPhaseIterGVN();
+  void verify_PhaseIterGVN();
+#endif
+
+#ifdef ASSERT
+  void dump_infinite_loop_info(Node* n);
+  void trace_PhaseIterGVN_verbose(Node* n, int num_processed);
+#endif
 
   // Register a new node with the iter GVN pass without transforming it.
   // Used when we need to restructure a Region/Phi area and all the Regions
@@ -476,6 +495,10 @@ public:
     _worklist.push(n);
   }
 
+  void igvn_rehash_node_delayed(Node* n) {
+    rehash_node_delayed(n);
+  }
+
   // Replace ith edge of "n" with "in"
   void replace_input_of(Node* n, int i, Node* in) {
     rehash_node_delayed(n);
@@ -501,6 +524,9 @@ public:
                                         Deoptimization::DeoptReason reason);
 
   void remove_speculative_types();
+  void check_no_speculative_types() {
+    _table.check_no_speculative_types();
+  }
 
 #ifndef PRODUCT
 protected:

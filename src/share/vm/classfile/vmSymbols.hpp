@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -91,11 +91,17 @@
   template(java_lang_CharSequence,                    "java/lang/CharSequence")                   \
   template(java_lang_SecurityManager,                 "java/lang/SecurityManager")                \
   template(java_security_AccessControlContext,        "java/security/AccessControlContext")       \
+  template(java_security_CodeSource,                  "java/security/CodeSource")                 \
   template(java_security_ProtectionDomain,            "java/security/ProtectionDomain")           \
+  template(java_security_SecureClassLoader,           "java/security/SecureClassLoader")          \
+  template(java_net_URLClassLoader,                   "java/net/URLClassLoader")                  \
+  template(java_net_URL,                              "java/net/URL")                             \
+  template(java_util_jar_Manifest,                    "java/util/jar/Manifest")                   \
   template(impliesCreateAccessControlContext_name,    "impliesCreateAccessControlContext")        \
   template(java_io_OutputStream,                      "java/io/OutputStream")                     \
   template(java_io_Reader,                            "java/io/Reader")                           \
   template(java_io_BufferedReader,                    "java/io/BufferedReader")                   \
+  template(java_io_File,                              "java/io/File")                             \
   template(java_io_FileInputStream,                   "java/io/FileInputStream")                  \
   template(java_io_ByteArrayInputStream,              "java/io/ByteArrayInputStream")             \
   template(java_io_Serializable,                      "java/io/Serializable")                     \
@@ -106,6 +112,7 @@
   template(java_util_Hashtable,                       "java/util/Hashtable")                      \
   template(java_lang_Compiler,                        "java/lang/Compiler")                       \
   template(sun_misc_Signal,                           "sun/misc/Signal")                          \
+  template(sun_misc_Launcher,                         "sun/misc/Launcher")                        \
   template(java_lang_AssertionStatusDirectives,       "java/lang/AssertionStatusDirectives")      \
   template(getBootClassPathEntryForClass_name,        "getBootClassPathEntryForClass")            \
   template(sun_misc_PostVMInitHook,                   "sun/misc/PostVMInitHook")                  \
@@ -320,7 +327,6 @@
   template(reference_discovered_name,                 "discovered")                               \
   template(run_finalization_name,                     "runFinalization")                          \
   template(run_finalizers_on_exit_name,               "runFinalizersOnExit")                      \
-  template(uncaughtException_name,                    "uncaughtException")                        \
   template(dispatchUncaughtException_name,            "dispatchUncaughtException")                \
   template(initializeSystemClass_name,                "initializeSystemClass")                    \
   template(loadClass_name,                            "loadClass")                                \
@@ -393,10 +399,17 @@
   template(oop_size_name,                             "oop_size")                                 \
   template(static_oop_field_count_name,               "static_oop_field_count")                   \
   template(protection_domain_name,                    "protection_domain")                        \
-  template(init_lock_name,                            "init_lock")                                \
   template(signers_name,                              "signers_name")                             \
   template(loader_data_name,                          "loader_data")                              \
   template(dependencies_name,                         "dependencies")                             \
+  template(input_stream_void_signature,               "(Ljava/io/InputStream;)V")                 \
+  template(getFileURL_name,                           "getFileURL")                               \
+  template(getFileURL_signature,                      "(Ljava/io/File;)Ljava/net/URL;")           \
+  template(definePackageInternal_name,                "definePackageInternal")                    \
+  template(definePackageInternal_signature,           "(Ljava/lang/String;Ljava/util/jar/Manifest;Ljava/net/URL;)V") \
+  template(getProtectionDomain_name,                  "getProtectionDomain")                      \
+  template(getProtectionDomain_signature,             "(Ljava/security/CodeSource;)Ljava/security/ProtectionDomain;") \
+  template(url_code_signer_array_void_signature,      "(Ljava/net/URL;[Ljava/security/CodeSigner;)V") \
                                                                                                   \
   /* non-intrinsic name/signature pairs: */                                                       \
   template(register_method_name,                      "register")                                 \
@@ -497,6 +510,7 @@
   template(int_StringBuffer_signature,                "(I)Ljava/lang/StringBuffer;")                              \
   template(char_StringBuffer_signature,               "(C)Ljava/lang/StringBuffer;")                              \
   template(int_String_signature,                      "(I)Ljava/lang/String;")                                    \
+  template(codesource_permissioncollection_signature, "(Ljava/security/CodeSource;Ljava/security/PermissionCollection;)V") \
   /* signature symbols needed by intrinsics */                                                                    \
   VM_INTRINSICS_DO(VM_INTRINSIC_IGNORE, VM_SYMBOL_IGNORE, VM_SYMBOL_IGNORE, template, VM_ALIAS_IGNORE)            \
                                                                                                                   \
@@ -572,6 +586,8 @@
   template(serializePropertiesToByteArray_signature,   "()[B")                                                    \
   template(serializeAgentPropertiesToByteArray_name,   "serializeAgentPropertiesToByteArray")                     \
   template(classRedefinedCount_name,                   "classRedefinedCount")                                     \
+  template(classLoader_name,                           "classLoader")                                             \
+  template(componentType_name,                         "componentType")                                           \
                                                                                                                   \
   /* trace signatures */                                                                                          \
   TRACE_TEMPLATES(template)                                                                                       \
@@ -654,9 +670,9 @@
   do_intrinsic(_addExactI,                java_lang_Math,         addExact_name, int2_int_signature,             F_S)   \
   do_intrinsic(_addExactL,                java_lang_Math,         addExact_name, long2_long_signature,           F_S)   \
   do_intrinsic(_decrementExactI,          java_lang_Math,         decrementExact_name, int_int_signature,        F_S)   \
-  do_intrinsic(_decrementExactL,          java_lang_Math,         decrementExact_name, long2_long_signature,     F_S)   \
+  do_intrinsic(_decrementExactL,          java_lang_Math,         decrementExact_name, long_long_signature,      F_S)   \
   do_intrinsic(_incrementExactI,          java_lang_Math,         incrementExact_name, int_int_signature,        F_S)   \
-  do_intrinsic(_incrementExactL,          java_lang_Math,         incrementExact_name, long2_long_signature,     F_S)   \
+  do_intrinsic(_incrementExactL,          java_lang_Math,         incrementExact_name, long_long_signature,      F_S)   \
   do_intrinsic(_multiplyExactI,           java_lang_Math,         multiplyExact_name, int2_int_signature,        F_S)   \
   do_intrinsic(_multiplyExactL,           java_lang_Math,         multiplyExact_name, long2_long_signature,      F_S)   \
   do_intrinsic(_negateExactI,             java_lang_Math,         negateExact_name, int_int_signature,           F_S)   \
@@ -730,8 +746,6 @@
    do_name(     isPrimitive_name,                                "isPrimitive")                                         \
   do_intrinsic(_getSuperclass,            java_lang_Class,        getSuperclass_name, void_class_signature,      F_RN)  \
    do_name(     getSuperclass_name,                              "getSuperclass")                                       \
-  do_intrinsic(_getComponentType,         java_lang_Class,        getComponentType_name, void_class_signature,   F_RN)  \
-   do_name(     getComponentType_name,                           "getComponentType")                                    \
                                                                                                                         \
   do_intrinsic(_getClassAccessFlags,      sun_reflect_Reflection, getClassAccessFlags_name, class_int_signature, F_SN)  \
    do_name(     getClassAccessFlags_name,                        "getClassAccessFlags")                                 \
@@ -771,10 +785,15 @@
    do_name(     encodeISOArray_name,                             "encodeISOArray")                                      \
    do_signature(encodeISOArray_signature,                        "([CI[BII)I")                                          \
                                                                                                                         \
+  do_class(java_math_BigInteger,                      "java/math/BigInteger")                                           \
+  do_intrinsic(_multiplyToLen,      java_math_BigInteger, multiplyToLen_name, multiplyToLen_signature, F_R)             \
+   do_name(     multiplyToLen_name,                             "multiplyToLen")                                        \
+   do_signature(multiplyToLen_signature,                        "([II[II[I)[I")                                         \
+                                                                                                                        \
   /* java/lang/ref/Reference */                                                                                         \
   do_intrinsic(_Reference_get,            java_lang_ref_Reference, get_name,    void_object_signature, F_R)             \
                                                                                                                         \
-  /* support for com.sum.crypto.provider.AESCrypt and some of its callers */                                            \
+  /* support for com.sun.crypto.provider.AESCrypt and some of its callers */                                            \
   do_class(com_sun_crypto_provider_aescrypt,      "com/sun/crypto/provider/AESCrypt")                                   \
   do_intrinsic(_aescrypt_encryptBlock, com_sun_crypto_provider_aescrypt, encryptBlock_name, byteArray_int_byteArray_int_signature, F_R)   \
   do_intrinsic(_aescrypt_decryptBlock, com_sun_crypto_provider_aescrypt, decryptBlock_name, byteArray_int_byteArray_int_signature, F_R)   \
@@ -787,7 +806,27 @@
    do_intrinsic(_cipherBlockChaining_decryptAESCrypt, com_sun_crypto_provider_cipherBlockChaining, decrypt_name, byteArray_int_int_byteArray_int_signature, F_R)   \
    do_name(     encrypt_name,                                      "encrypt")                                           \
    do_name(     decrypt_name,                                      "decrypt")                                           \
-   do_signature(byteArray_int_int_byteArray_int_signature,         "([BII[BI)V")                                        \
+   do_signature(byteArray_int_int_byteArray_int_signature,         "([BII[BI)I")                                        \
+                                                                                                                        \
+  /* support for sun.security.provider.SHA */                                                                           \
+  do_class(sun_security_provider_sha,                              "sun/security/provider/SHA")                         \
+  do_intrinsic(_sha_implCompress, sun_security_provider_sha, implCompress_name, implCompress_signature, F_R)            \
+   do_name(     implCompress_name,                                 "implCompress")                                      \
+   do_signature(implCompress_signature,                            "([BI)V")                                            \
+                                                                                                                        \
+  /* support for sun.security.provider.SHA2 */                                                                          \
+  do_class(sun_security_provider_sha2,                             "sun/security/provider/SHA2")                        \
+  do_intrinsic(_sha2_implCompress, sun_security_provider_sha2, implCompress_name, implCompress_signature, F_R)          \
+                                                                                                                        \
+  /* support for sun.security.provider.SHA5 */                                                                          \
+  do_class(sun_security_provider_sha5,                             "sun/security/provider/SHA5")                        \
+  do_intrinsic(_sha5_implCompress, sun_security_provider_sha5, implCompress_name, implCompress_signature, F_R)          \
+                                                                                                                        \
+  /* support for sun.security.provider.DigestBase */                                                                    \
+  do_class(sun_security_provider_digestbase,                       "sun/security/provider/DigestBase")                  \
+  do_intrinsic(_digestBase_implCompressMB, sun_security_provider_digestbase, implCompressMB_name, implCompressMB_signature, F_R)   \
+   do_name(     implCompressMB_name,                               "implCompressMultiBlock")                            \
+   do_signature(implCompressMB_signature,                          "([BII)I")                                           \
                                                                                                                         \
   /* support for java.util.zip */                                                                                       \
   do_class(java_util_zip_CRC32,           "java/util/zip/CRC32")                                                        \

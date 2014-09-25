@@ -141,6 +141,13 @@ public:
   GrowableArray<InlineTree*> subtrees() { return _subtrees; }
 
   void print_value_on(outputStream* st) const PRODUCT_RETURN;
+
+  bool        _forced_inline;     // Inlining was forced by CompilerOracle, ciReplay or annotation
+  bool        forced_inline()     const { return _forced_inline; }
+  // Count number of nodes in this subtree
+  int         count() const;
+  // Dump inlining replay data to the stream.
+  void dump_replay_data(outputStream* out);
 };
 
 
@@ -330,7 +337,10 @@ class Parse : public GraphKit {
 
   GraphKit      _exits;         // Record all normal returns and throws here.
   bool          _wrote_final;   // Did we write a final field?
-  bool          _count_invocations; // update and test invocation counter
+  bool          _wrote_volatile;     // Did we write a volatile field?
+  bool          _wrote_stable;       // Did we write a @Stable field?
+  bool          _wrote_fields;       // Did we write any field?
+  bool          _count_invocations;  // update and test invocation counter
   bool          _method_data_update; // update method data oop
   Node*         _alloc_with_final;   // An allocation node with final field
 
@@ -349,12 +359,13 @@ class Parse : public GraphKit {
   int _est_switch_depth;        // Debugging SwitchRanges.
 #endif
 
-  // parser for the caller of the method of this object
-  Parse* const _parent;
+  bool         _first_return;                  // true if return is the first to be parsed
+  bool         _replaced_nodes_for_exceptions; // needs processing of replaced nodes in exception paths?
+  uint         _new_idx;                       // any node with _idx above were new during this parsing. Used to trim the replaced nodes list.
 
  public:
   // Constructor
-  Parse(JVMState* caller, ciMethod* parse_method, float expected_uses, Parse* parent);
+  Parse(JVMState* caller, ciMethod* parse_method, float expected_uses);
 
   virtual Parse* is_Parse() const { return (Parse*)this; }
 
@@ -373,6 +384,12 @@ class Parse : public GraphKit {
   GraphKit&     exits()               { return _exits; }
   bool          wrote_final() const   { return _wrote_final; }
   void      set_wrote_final(bool z)   { _wrote_final = z; }
+  bool          wrote_volatile() const { return _wrote_volatile; }
+  void      set_wrote_volatile(bool z) { _wrote_volatile = z; }
+  bool          wrote_stable() const  { return _wrote_stable; }
+  void      set_wrote_stable(bool z)  { _wrote_stable = z; }
+  bool         wrote_fields() const   { return _wrote_fields; }
+  void     set_wrote_fields(bool z)   { _wrote_fields = z; }
   bool          count_invocations() const  { return _count_invocations; }
   bool          method_data_update() const { return _method_data_update; }
   Node*    alloc_with_final() const   { return _alloc_with_final; }
@@ -408,8 +425,6 @@ class Parse : public GraphKit {
   Block* successor_for_bci(int bci) {
     return block()->successor_for_bci(bci);
   }
-
-  Parse* parent_parser() const { return _parent; }
 
  private:
   // Create a JVMS & map for the initial state of this method.
@@ -469,6 +484,8 @@ class Parse : public GraphKit {
   void array_store(BasicType etype);
   // Helper function to compute array addressing
   Node* array_addressing(BasicType type, int vals, bool is_store, const Type* *result2=NULL);
+
+  void rtm_deopt();
 
   // Pass current map to exits
   void return_current(Node* value);
@@ -540,8 +557,9 @@ class Parse : public GraphKit {
 
   float   dynamic_branch_prediction(float &cnt);
   float   branch_prediction(float &cnt, BoolTest::mask btest, int target_bci);
-  bool    seems_never_taken(float prob);
-  bool    seems_stable_comparison(BoolTest::mask btest, Node* c);
+  bool    seems_never_taken(float prob) const;
+  bool    path_is_suitable_for_uncommon_trap(float prob) const;
+  bool    seems_stable_comparison() const;
 
   void    do_ifnull(BoolTest::mask btest, Node* c);
   void    do_if(BoolTest::mask btest, Node* c);
@@ -563,6 +581,7 @@ class Parse : public GraphKit {
   void    jump_switch_ranges(Node* a, SwitchRange* lo, SwitchRange* hi, int depth = 0);
   bool    create_jump_tables(Node* a, SwitchRange* lo, SwitchRange* hi);
 
+  void decrement_age();
   // helper functions for methodData style profiling
   void test_counter_against_threshold(Node* cnt, int limit);
   void increment_and_test_invocation_counter(int limit);

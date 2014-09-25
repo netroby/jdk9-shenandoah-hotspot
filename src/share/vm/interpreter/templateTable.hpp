@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -28,21 +28,6 @@
 #include "interpreter/bytecodes.hpp"
 #include "memory/allocation.hpp"
 #include "runtime/frame.hpp"
-#ifdef TARGET_ARCH_x86
-# include "interp_masm_x86.hpp"
-#endif
-#ifdef TARGET_ARCH_MODEL_sparc
-# include "interp_masm_sparc.hpp"
-#endif
-#ifdef TARGET_ARCH_MODEL_zero
-# include "interp_masm_zero.hpp"
-#endif
-#ifdef TARGET_ARCH_MODEL_arm
-# include "interp_masm_arm.hpp"
-#endif
-#ifdef TARGET_ARCH_MODEL_ppc
-# include "interp_masm_ppc.hpp"
-#endif
 
 #ifndef CC_INTERP
 // All the necessary definitions used for (bytecode) template generation. Instead of
@@ -50,6 +35,7 @@
 // and the snippet generator, a template is assigned to each bytecode which can be
 // used to generate the bytecode's implementation if needed.
 
+class InterpreterMacroAssembler;
 
 // A Template describes the properties of a code template for a given bytecode
 // and provides a generator to generate the code template.
@@ -370,8 +356,11 @@ class TemplateTable: AllStatic {
 #ifdef TARGET_ARCH_MODEL_arm
 # include "templateTable_arm.hpp"
 #endif
-#ifdef TARGET_ARCH_MODEL_ppc
-# include "templateTable_ppc.hpp"
+#ifdef TARGET_ARCH_MODEL_ppc_32
+# include "templateTable_ppc_32.hpp"
+#endif
+#ifdef TARGET_ARCH_MODEL_ppc_64
+# include "templateTable_ppc_64.hpp"
 #endif
 
 };

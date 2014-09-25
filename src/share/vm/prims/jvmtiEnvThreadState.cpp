@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2003, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2003, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -113,7 +113,7 @@ void JvmtiFramePops::print() {
     JvmtiFramePop fp = JvmtiFramePop(_pops->at(i));
     tty->print("%d: ", i);
     fp.print();
-    tty->print_cr("");
+    tty->cr();
   }
 }
 #endif
@@ -190,12 +190,8 @@ void JvmtiEnvThreadState::compare_and_set_current_location(Method* new_method,
 
 
 JvmtiFramePops* JvmtiEnvThreadState::get_frame_pops() {
-#ifdef ASSERT
-  uint32_t debug_bits = 0;
-#endif
-  assert(get_thread() == Thread::current() || JvmtiEnv::is_thread_fully_suspended(get_thread(), false, &debug_bits),
-         "frame pop data only accessible from same thread or while suspended");
-
+  assert(get_thread() == Thread::current() || SafepointSynchronize::is_at_safepoint(),
+         "frame pop data only accessible from same thread or at safepoint");
   if (_frame_pops == NULL) {
     _frame_pops = new JvmtiFramePops();
     assert(_frame_pops != NULL, "_frame_pops != NULL");
@@ -209,44 +205,32 @@ bool JvmtiEnvThreadState::has_frame_pops() {
 }
 
 void JvmtiEnvThreadState::set_frame_pop(int frame_number) {
-#ifdef ASSERT
-  uint32_t debug_bits = 0;
-#endif
-  assert(get_thread() == Thread::current() || JvmtiEnv::is_thread_fully_suspended(get_thread(), false, &debug_bits),
-         "frame pop data only accessible from same thread or while suspended");
+  assert(get_thread() == Thread::current() || SafepointSynchronize::is_at_safepoint(),
+         "frame pop data only accessible from same thread or at safepoint");
   JvmtiFramePop fpop(frame_number);
   JvmtiEventController::set_frame_pop(this, fpop);
 }
 
 
 void JvmtiEnvThreadState::clear_frame_pop(int frame_number) {
-#ifdef ASSERT
-  uint32_t debug_bits = 0;
-#endif
-  assert(get_thread() == Thread::current() || JvmtiEnv::is_thread_fully_suspended(get_thread(), false, &debug_bits),
-         "frame pop data only accessible from same thread or while suspended");
+  assert(get_thread() == Thread::current() || SafepointSynchronize::is_at_safepoint(),
+         "frame pop data only accessible from same thread or at safepoint");
   JvmtiFramePop fpop(frame_number);
   JvmtiEventController::clear_frame_pop(this, fpop);
 }
 
 
 void JvmtiEnvThreadState::clear_to_frame_pop(int frame_number)  {
-#ifdef ASSERT
-  uint32_t debug_bits = 0;
-#endif
-  assert(get_thread() == Thread::current() || JvmtiEnv::is_thread_fully_suspended(get_thread(), false, &debug_bits),
-         "frame pop data only accessible from same thread or while suspended");
+  assert(get_thread() == Thread::current() || SafepointSynchronize::is_at_safepoint(),
+         "frame pop data only accessible from same thread or at safepoint");
   JvmtiFramePop fpop(frame_number);
   JvmtiEventController::clear_to_frame_pop(this, fpop);
 }
 
 
 bool JvmtiEnvThreadState::is_frame_pop(int cur_frame_number) {
-#ifdef ASSERT
-  uint32_t debug_bits = 0;
-#endif
-  assert(get_thread() == Thread::current() || JvmtiEnv::is_thread_fully_suspended(get_thread(), false, &debug_bits),
-         "frame pop data only accessible from same thread or while suspended");
+  assert(get_thread() == Thread::current() || SafepointSynchronize::is_at_safepoint(),
+         "frame pop data only accessible from same thread or at safepoint");
   if (!get_thread()->is_interp_only_mode() || _frame_pops == NULL) {
     return false;
   }
@@ -272,7 +256,7 @@ class VM_GetCurrentLocation : public VM_Operation {
     // There can be a race condition between a VM_Operation reaching a safepoint
     // and the target thread exiting from Java execution.
     // We must recheck the last Java frame still exists.
-    if (_thread->has_last_Java_frame()) {
+    if (!_thread->is_exiting() && _thread->has_last_Java_frame()) {
       javaVFrame* vf = _thread->last_java_vframe(&rm);
       assert(vf != NULL, "must have last java frame");
       Method* method = vf->method();

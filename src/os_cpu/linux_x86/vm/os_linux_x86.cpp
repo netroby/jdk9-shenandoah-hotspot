@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1999, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1999, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -49,6 +49,7 @@
 #include "runtime/stubRoutines.hpp"
 #include "runtime/thread.inline.hpp"
 #include "runtime/timer.hpp"
+#include "services/memTracker.hpp"
 #include "utilities/events.hpp"
 #include "utilities/vmError.hpp"
 
@@ -87,6 +88,8 @@
 #define SPELL_REG_SP "esp"
 #define SPELL_REG_FP "ebp"
 #endif // AMD64
+
+PRAGMA_FORMAT_MUTE_WARNINGS_FOR_GCC
 
 address os::current_stack_pointer() {
 #ifdef SPARC_WORKS
@@ -335,6 +338,11 @@ JVM_handle_linux_signal(int sig,
           }
         }
       }
+    }
+
+    if ((sig == SIGSEGV) && VM_Version::is_cpuinfo_segv_addr(pc)) {
+      // Verify that OS save/restore AVX registers.
+      stub = VM_Version::cpuinfo_cont_addr();
     }
 
     if (thread->thread_state() == _thread_in_Java) {
@@ -925,6 +933,9 @@ void os::workaround_expand_exec_shield_cs_limit() {
   if ( (codebuf == NULL) || (!os::commit_memory(codebuf, page_size, true)) ) {
     return; // No matter, we tried, best effort.
   }
+
+  MemTracker::record_virtual_memory_type((address)codebuf, mtInternal);
+
   if (PrintMiscellaneous && (Verbose || WizardMode)) {
      tty->print_cr("[CS limit NX emulation work-around, exec code at: %p]", codebuf);
   }
@@ -937,4 +948,9 @@ void os::workaround_expand_exec_shield_cs_limit() {
 
   // keep the page mapped so CS limit isn't reduced.
 #endif
+}
+
+int os::extra_bang_size_in_bytes() {
+  // JDK-8050147 requires the full cache line bang for x86.
+  return VM_Version::L1_line_size();
 }

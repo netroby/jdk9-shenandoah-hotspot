@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -38,54 +38,17 @@
 #include "utilities/accessFlags.hpp"
 #include "utilities/growableArray.hpp"
 
-// A Method* represents a Java method.
+// A Method represents a Java method.
 //
-// Memory layout (each line represents a word). Note that most applications load thousands of methods,
-// so keeping the size of this structure small has a big impact on footprint.
+// Note that most applications load thousands of methods, so keeping the size of this
+// class small has a big impact on footprint.
 //
-// We put all oops and method_size first for better gc cache locality.
+// Note that native_function and signature_handler have to be at fixed offsets
+// (required by the interpreter)
 //
-// The actual bytecodes are inlined after the end of the Method struct.
-//
-// There are bits in the access_flags telling whether inlined tables are present.
-// Note that accessing the line number and local variable tables is not performance critical at all.
-// Accessing the checked exceptions table is used by reflection, so we put that last to make access
-// to it fast.
-//
-// The line number table is compressed and inlined following the byte codes. It is found as the first
-// byte following the byte codes. The checked exceptions table and the local variable table are inlined
-// after the line number table, and indexed from the end of the method. We do not compress the checked
-// exceptions table since the average length is less than 2, and do not bother to compress the local
-// variable table either since it is mostly absent.
-//
-// Note that native_function and signature_handler has to be at fixed offsets (required by the interpreter)
-//
-// |------------------------------------------------------|
-// | header                                               |
-// | klass                                                |
-// |------------------------------------------------------|
-// | ConstMethod*                   (oop)                 |
-// |------------------------------------------------------|
-// | methodData                     (oop)                 |
-// | methodCounters                                       |
-// |------------------------------------------------------|
-// | access_flags                                         |
-// | vtable_index                                         |
-// |------------------------------------------------------|
-// | result_index (C++ interpreter only)                  |
-// |------------------------------------------------------|
-// | method_size             |   intrinsic_id|   flags    |
-// |------------------------------------------------------|
-// | code                           (pointer)             |
-// | i2i                            (pointer)             |
-// | adapter                        (pointer)             |
-// | from_compiled_entry            (pointer)             |
-// | from_interpreted_entry         (pointer)             |
-// |------------------------------------------------------|
-// | native_function       (present only if native)       |
-// | signature_handler     (present only if native)       |
-// |------------------------------------------------------|
-
+//  Method embedded field layout (after declared fields):
+//   [EMBEDDED native_function       (present only if native) ]
+//   [EMBEDDED signature_handler     (present only if native) ]
 
 class CheckedExceptionElement;
 class LocalVariableTableElement;
@@ -110,12 +73,17 @@ class Method : public Metadata {
 #endif
   u2                _method_size;                // size of this object
   u1                _intrinsic_id;               // vmSymbols::intrinsic_id (0 == _none)
-  u1                _jfr_towrite      : 1,       // Flags
-                    _caller_sensitive : 1,
-                    _force_inline     : 1,
-                    _hidden           : 1,
-                    _dont_inline      : 1,
-                                      : 3;
+
+  // Flags
+  enum Flags {
+    _jfr_towrite      = 1 << 0,
+    _caller_sensitive = 1 << 1,
+    _force_inline     = 1 << 2,
+    _dont_inline      = 1 << 3,
+    _hidden           = 1 << 4,
+    _running_emcp     = 1 << 5
+  };
+  u1 _flags;
 
 #ifndef PRODUCT
   int               _compiled_invocation_count;  // Number of nmethod invocations so far (for perf. debugging)
@@ -155,6 +123,8 @@ class Method : public Metadata {
   // by their vtable.
   void restore_vtable() { guarantee(is_method(), "vtable restored by this call"); }
   bool is_method() const volatile { return true; }
+
+  void restore_unshareable_info(TRAPS);
 
   // accessors for instance variables
 
@@ -231,10 +201,11 @@ class Method : public Metadata {
   // Tracking number of breakpoints, for fullspeed debugging.
   // Only mutated by VM thread.
   u2   number_of_breakpoints()             const {
-    if (method_counters() == NULL) {
+    MethodCounters* mcs = method_counters();
+    if (mcs == NULL) {
       return 0;
     } else {
-      return method_counters()->number_of_breakpoints();
+      return mcs->number_of_breakpoints();
     }
   }
   void incr_number_of_breakpoints(TRAPS)         {
@@ -251,8 +222,9 @@ class Method : public Metadata {
   }
   // Initialization only
   void clear_number_of_breakpoints()             {
-    if (method_counters() != NULL) {
-      method_counters()->clear_number_of_breakpoints();
+    MethodCounters* mcs = method_counters();
+    if (mcs != NULL) {
+      mcs->clear_number_of_breakpoints();
     }
   }
 
@@ -299,10 +271,11 @@ class Method : public Metadata {
   }
 
   int  interpreter_throwout_count() const        {
-    if (method_counters() == NULL) {
+    MethodCounters* mcs = method_counters();
+    if (mcs == NULL) {
       return 0;
     } else {
-      return method_counters()->interpreter_throwout_count();
+      return mcs->interpreter_throwout_count();
     }
   }
 
@@ -350,16 +323,21 @@ class Method : public Metadata {
   }
 
   void set_method_data(MethodData* data)       {
-    _method_data = data;
+    // The store into method must be released. On platforms without
+    // total store order (TSO) the reference may become visible before
+    // the initialization of data otherwise.
+    OrderAccess::release_store_ptr((volatile void *)&_method_data, data);
   }
 
   MethodCounters* method_counters() const {
     return _method_counters;
   }
 
-
   void set_method_counters(MethodCounters* counters) {
-    _method_counters = counters;
+    // The store into method must be released. On platforms without
+    // total store order (TSO) the reference may become visible before
+    // the initialization of data otherwise.
+    OrderAccess::release_store_ptr((volatile void *)&_method_counters, counters);
   }
 
 #ifdef TIERED
@@ -372,31 +350,40 @@ class Method : public Metadata {
       return method_counters()->interpreter_invocation_count();
     }
   }
-  void set_prev_event_count(int count, TRAPS)    {
-    MethodCounters* mcs = get_method_counters(CHECK);
+  void set_prev_event_count(int count) {
+    MethodCounters* mcs = method_counters();
     if (mcs != NULL) {
       mcs->set_interpreter_invocation_count(count);
     }
   }
   jlong prev_time() const                        {
-    return method_counters() == NULL ? 0 : method_counters()->prev_time();
+    MethodCounters* mcs = method_counters();
+    return mcs == NULL ? 0 : mcs->prev_time();
   }
-  void set_prev_time(jlong time, TRAPS)          {
-    MethodCounters* mcs = get_method_counters(CHECK);
+  void set_prev_time(jlong time) {
+    MethodCounters* mcs = method_counters();
     if (mcs != NULL) {
       mcs->set_prev_time(time);
     }
   }
   float rate() const                             {
-    return method_counters() == NULL ? 0 : method_counters()->rate();
+    MethodCounters* mcs = method_counters();
+    return mcs == NULL ? 0 : mcs->rate();
   }
-  void set_rate(float rate, TRAPS) {
-    MethodCounters* mcs = get_method_counters(CHECK);
+  void set_rate(float rate) {
+    MethodCounters* mcs = method_counters();
     if (mcs != NULL) {
       mcs->set_rate(rate);
     }
   }
 #endif
+  int nmethod_age() const {
+    if (method_counters() == NULL) {
+      return INT_MAX;
+    } else {
+      return method_counters()->nmethod_age();
+    }
+  }
 
   int invocation_count();
   int backedge_count();
@@ -409,9 +396,12 @@ class Method : public Metadata {
   static MethodCounters* build_method_counters(Method* m, TRAPS);
 
   int interpreter_invocation_count() {
-    if (TieredCompilation) return invocation_count();
-    else return (method_counters() == NULL) ? 0 :
-                 method_counters()->interpreter_invocation_count();
+    if (TieredCompilation) {
+      return invocation_count();
+    } else {
+      MethodCounters* mcs = method_counters();
+      return (mcs == NULL) ? 0 : mcs->interpreter_invocation_count();
+    }
   }
   int increment_interpreter_invocation_count(TRAPS) {
     if (TieredCompilation) ShouldNotReachHere();
@@ -422,6 +412,9 @@ class Method : public Metadata {
 #ifndef PRODUCT
   int  compiled_invocation_count() const         { return _compiled_invocation_count;  }
   void set_compiled_invocation_count(int count)  { _compiled_invocation_count = count; }
+#else
+  // for PrintMethodData in a product build
+  int  compiled_invocation_count() const         { return 0;  }
 #endif // not PRODUCT
 
   // Clear (non-shared space) pointers which could not be relevant
@@ -490,10 +483,8 @@ class Method : public Metadata {
   // Interpreter oopmap support
   void mask_for(int bci, InterpreterOopMap* mask);
 
-#ifndef PRODUCT
   // operations on invocation counter
   void print_invocation_count();
-#endif
 
   // byte codes
   void    set_code(address code)      { return constMethod()->set_code(code); }
@@ -502,8 +493,8 @@ class Method : public Metadata {
 
   // prints byte codes
   void print_codes() const            { print_codes_on(tty); }
-  void print_codes_on(outputStream* st) const                      PRODUCT_RETURN;
-  void print_codes_on(int from, int to, outputStream* st) const    PRODUCT_RETURN;
+  void print_codes_on(outputStream* st) const;
+  void print_codes_on(int from, int to, outputStream* st) const;
 
   // method parameters
   bool has_method_parameters() const
@@ -654,12 +645,14 @@ class Method : public Metadata {
 
   // Static methods that are used to implement member methods where an exposed this pointer
   // is needed due to possible GCs
-  static objArrayHandle resolved_checked_exceptions_impl(Method* this_oop, TRAPS);
+  static objArrayHandle resolved_checked_exceptions_impl(Method* method, TRAPS);
 
   // Returns the byte code index from the byte code pointer
   int     bci_from(address bcp) const;
-  address bcp_from(int     bci) const;
-  int validate_bci_from_bcx(intptr_t bcx) const;
+  address bcp_from(int bci) const;
+  address bcp_from(address bcp) const;
+  int validate_bci_from_bcp(address bcp) const;
+  int validate_bci(int bci) const;
 
   // Returns the line number for a bci if debugging information for the method is prowided,
   // -1 is returned otherwise.
@@ -686,7 +679,7 @@ class Method : public Metadata {
   // this operates only on invoke methods:
   // presize interpreter frames for extra interpreter stack entries, if needed
   // Account for the extra appendix argument for invokehandle/invokedynamic
-  static int extra_stack_entries() { return EnableInvokeDynamic ? extra_stack_entries_for_jsr292 : 0; }
+  static int extra_stack_entries() { return extra_stack_entries_for_jsr292; }
   static int extra_stack_words();  // = extra_stack_entries() * Interpreter::stackElementSize
 
   // RedefineClasses() support:
@@ -694,6 +687,23 @@ class Method : public Metadata {
   void set_is_old()                                 { _access_flags.set_is_old(); }
   bool is_obsolete() const                          { return access_flags().is_obsolete(); }
   void set_is_obsolete()                            { _access_flags.set_is_obsolete(); }
+  bool is_deleted() const                           { return access_flags().is_deleted(); }
+  void set_is_deleted()                             { _access_flags.set_is_deleted(); }
+
+  bool is_running_emcp() const {
+    // EMCP methods are old but not obsolete or deleted. Equivalent
+    // Modulo Constant Pool means the method is equivalent except
+    // the constant pool and instructions that access the constant
+    // pool might be different.
+    // If a breakpoint is set in a redefined method, its EMCP methods that are
+    // still running must have a breakpoint also.
+    return (_flags & _running_emcp) != 0;
+  }
+
+  void set_running_emcp(bool x) {
+    _flags = x ? (_flags | _running_emcp) : (_flags & ~_running_emcp);
+  }
+
   bool on_stack() const                             { return access_flags().on_stack(); }
   void set_on_stack(const bool value);
 
@@ -756,16 +766,41 @@ class Method : public Metadata {
   void init_intrinsic_id();     // updates from _none if a match
   static vmSymbols::SID klass_id_for_intrinsics(Klass* holder);
 
-  bool     jfr_towrite()            { return _jfr_towrite;          }
-  void set_jfr_towrite(bool x)      {        _jfr_towrite = x;      }
-  bool     caller_sensitive()       { return _caller_sensitive;     }
-  void set_caller_sensitive(bool x) {        _caller_sensitive = x; }
-  bool     force_inline()           { return _force_inline;         }
-  void set_force_inline(bool x)     {        _force_inline = x;     }
-  bool     dont_inline()            { return _dont_inline;          }
-  void set_dont_inline(bool x)      {        _dont_inline = x;      }
-  bool  is_hidden()                 { return _hidden;               }
-  void set_hidden(bool x)           {        _hidden = x;           }
+  bool jfr_towrite() {
+    return (_flags & _jfr_towrite) != 0;
+  }
+  void set_jfr_towrite(bool x) {
+    _flags = x ? (_flags | _jfr_towrite) : (_flags & ~_jfr_towrite);
+  }
+
+  bool caller_sensitive() {
+    return (_flags & _caller_sensitive) != 0;
+  }
+  void set_caller_sensitive(bool x) {
+    _flags = x ? (_flags | _caller_sensitive) : (_flags & ~_caller_sensitive);
+  }
+
+  bool force_inline() {
+    return (_flags & _force_inline) != 0;
+  }
+  void set_force_inline(bool x) {
+    _flags = x ? (_flags | _force_inline) : (_flags & ~_force_inline);
+  }
+
+  bool dont_inline() {
+    return (_flags & _dont_inline) != 0;
+  }
+  void set_dont_inline(bool x) {
+    _flags = x ? (_flags | _dont_inline) : (_flags & ~_dont_inline);
+  }
+
+  bool is_hidden() {
+    return (_flags & _hidden) != 0;
+  }
+  void set_hidden(bool x) {
+    _flags = x ? (_flags | _hidden) : (_flags & ~_hidden);
+  }
+
   ConstMethod::MethodType method_type() const {
       return _constMethod->method_type();
   }
@@ -861,6 +896,7 @@ class Method : public Metadata {
   const char* internal_name() const { return "{method}"; }
 
   // Check for valid method pointer
+  static bool has_method_vptr(const void* ptr);
   bool is_valid_method() const;
 
   // Verify

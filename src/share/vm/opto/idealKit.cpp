@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2005, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2005, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -86,7 +86,7 @@ void IdealKit::if_then(Node* left, BoolTest::mask relop,
   }
   // Delay gvn.tranform on if-nodes until construction is finished
   // to prevent a constant bool input from discarding a control output.
-  IfNode* iff = delay_transform(new (C) IfNode(ctrl(), bol, prob, cnt))->as_If();
+  IfNode* iff = delay_transform(new IfNode(ctrl(), bol, prob, cnt))->as_If();
   Node* then  = IfTrue(iff);
   Node* elsen = IfFalse(iff);
   Node* else_cvstate = copy_cvstate();
@@ -205,7 +205,7 @@ Node* IdealKit::make_label(int goto_ct) {
   assert(_cvstate != NULL, "must declare variables before labels");
   Node* lab = new_cvstate();
   int sz = 1 + goto_ct + 1 /* fall thru */;
-  Node* reg = delay_transform(new (C) RegionNode(sz));
+  Node* reg = delay_transform(new RegionNode(sz));
   lab->init_req(TypeFunc::Control, reg);
   return lab;
 }
@@ -312,7 +312,7 @@ Node* IdealKit::delay_transform(Node* n) {
 //-----------------------------new_cvstate-----------------------------------
 Node* IdealKit::new_cvstate() {
   uint sz = _var_ct + first_var;
-  return new (C) Node(sz);
+  return new Node(sz);
 }
 
 //-----------------------------copy_cvstate-----------------------------------
@@ -320,7 +320,7 @@ Node* IdealKit::copy_cvstate() {
   Node* ns = new_cvstate();
   for (uint i = 0; i < ns->req(); i++) ns->init_req(i, _cvstate->in(i));
   // We must clone memory since it will be updated as we do stores.
-  ns->set_req(TypeFunc::Memory, MergeMemNode::make(C, ns->in(TypeFunc::Memory)));
+  ns->set_req(TypeFunc::Memory, MergeMemNode::make(ns->in(TypeFunc::Memory)));
   return ns;
 }
 
@@ -359,25 +359,25 @@ Node* IdealKit::load(Node* ctl,
   Node* mem = memory(adr_idx);
   Node* ld;
   if (require_atomic_access && bt == T_LONG) {
-    ld = LoadLNode::make_atomic(C, ctl, mem, adr, adr_type, t);
+    ld = LoadLNode::make_atomic(ctl, mem, adr, adr_type, t, MemNode::unordered);
   } else {
-    ld = LoadNode::make(_gvn, ctl, mem, adr, adr_type, t, bt);
+    ld = LoadNode::make(_gvn, ctl, mem, adr, adr_type, t, bt, MemNode::unordered);
   }
   return transform(ld);
 }
 
 Node* IdealKit::store(Node* ctl, Node* adr, Node *val, BasicType bt,
-                                int adr_idx,
-                                bool require_atomic_access) {
-  assert(adr_idx != Compile::AliasIdxTop, "use other store_to_memory factory" );
+                      int adr_idx,
+                      MemNode::MemOrd mo, bool require_atomic_access) {
+  assert(adr_idx != Compile::AliasIdxTop, "use other store_to_memory factory");
   const TypePtr* adr_type = NULL;
   debug_only(adr_type = C->get_adr_type(adr_idx));
   Node *mem = memory(adr_idx);
   Node* st;
   if (require_atomic_access && bt == T_LONG) {
-    st = StoreLNode::make_atomic(C, ctl, mem, adr, adr_type, val);
+    st = StoreLNode::make_atomic(ctl, mem, adr, adr_type, val, mo);
   } else {
-    st = StoreNode::make(_gvn, ctl, mem, adr, adr_type, val, bt);
+    st = StoreNode::make(_gvn, ctl, mem, adr, adr_type, val, bt, mo);
   }
   st = transform(st);
   set_memory(st, adr_idx);
@@ -397,7 +397,7 @@ Node* IdealKit::storeCM(Node* ctl, Node* adr, Node *val, Node* oop_store, int oo
 
   // Add required edge to oop_store, optimizer does not support precedence edges.
   // Convert required edge to precedence edge before allocation.
-  Node* st = new (C) StoreCMNode(ctl, mem, adr, adr_type, val, oop_store, oop_adr_idx);
+  Node* st = new StoreCMNode(ctl, mem, adr, adr_type, val, oop_store, oop_adr_idx);
 
   st = transform(st);
   set_memory(st, adr_idx);
@@ -497,7 +497,7 @@ void IdealKit::make_leaf_call(const TypeFunc *slow_call_type,
   uint adr_idx = C->get_alias_index(adr_type);
 
   // Slow-path leaf call
-  CallNode *call =  (CallNode*)new (C) CallLeafNode( slow_call_type, slow_call, leaf_name, adr_type);
+  CallNode *call =  (CallNode*)new CallLeafNode( slow_call_type, slow_call, leaf_name, adr_type);
 
   // Set fixed predefined input arguments
   call->init_req( TypeFunc::Control, ctrl() );
@@ -518,10 +518,10 @@ void IdealKit::make_leaf_call(const TypeFunc *slow_call_type,
 
   // Slow leaf call has no side-effects, sets few values
 
-  set_ctrl(transform( new (C) ProjNode(call,TypeFunc::Control) ));
+  set_ctrl(transform( new ProjNode(call,TypeFunc::Control) ));
 
   // Make memory for the call
-  Node* mem = _gvn.transform( new (C) ProjNode(call, TypeFunc::Memory) );
+  Node* mem = _gvn.transform( new ProjNode(call, TypeFunc::Memory) );
 
   // Set the RawPtr memory state only.
   set_memory(mem, adr_idx);
@@ -544,7 +544,7 @@ void IdealKit::make_leaf_call_no_fp(const TypeFunc *slow_call_type,
   uint adr_idx = C->get_alias_index(adr_type);
 
   // Slow-path leaf call
-  CallNode *call =  (CallNode*)new (C) CallLeafNoFPNode( slow_call_type, slow_call, leaf_name, adr_type);
+  CallNode *call =  (CallNode*)new CallLeafNoFPNode( slow_call_type, slow_call, leaf_name, adr_type);
 
   // Set fixed predefined input arguments
   call->init_req( TypeFunc::Control, ctrl() );
@@ -565,10 +565,10 @@ void IdealKit::make_leaf_call_no_fp(const TypeFunc *slow_call_type,
 
   // Slow leaf call has no side-effects, sets few values
 
-  set_ctrl(transform( new (C) ProjNode(call,TypeFunc::Control) ));
+  set_ctrl(transform( new ProjNode(call,TypeFunc::Control) ));
 
   // Make memory for the call
-  Node* mem = _gvn.transform( new (C) ProjNode(call, TypeFunc::Memory) );
+  Node* mem = _gvn.transform( new ProjNode(call, TypeFunc::Memory) );
 
   // Set the RawPtr memory state only.
   set_memory(mem, adr_idx);

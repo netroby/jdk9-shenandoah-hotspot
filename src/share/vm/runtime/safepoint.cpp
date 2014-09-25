@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -23,7 +23,7 @@
  */
 
 #include "precompiled.hpp"
-#include "classfile/symbolTable.hpp"
+#include "classfile/stringTable.hpp"
 #include "classfile/systemDictionary.hpp"
 #include "code/codeCache.hpp"
 #include "code/icBuffer.hpp"
@@ -32,15 +32,18 @@
 #include "code/scopeDesc.hpp"
 #include "gc_interface/collectedHeap.hpp"
 #include "interpreter/interpreter.hpp"
+#include "memory/gcLocker.inline.hpp"
 #include "memory/resourceArea.hpp"
 #include "memory/universe.inline.hpp"
 #include "oops/oop.inline.hpp"
 #include "oops/symbol.hpp"
+#include "runtime/atomic.inline.hpp"
 #include "runtime/compilationPolicy.hpp"
 #include "runtime/deoptimization.hpp"
 #include "runtime/frame.inline.hpp"
 #include "runtime/interfaceSupport.hpp"
 #include "runtime/mutexLocker.hpp"
+#include "runtime/orderAccess.inline.hpp"
 #include "runtime/osThread.hpp"
 #include "runtime/safepoint.hpp"
 #include "runtime/signature.hpp"
@@ -49,38 +52,19 @@
 #include "runtime/sweeper.hpp"
 #include "runtime/synchronizer.hpp"
 #include "runtime/thread.inline.hpp"
-#include "services/memTracker.hpp"
 #include "services/runtimeService.hpp"
 #include "utilities/events.hpp"
 #include "utilities/macros.hpp"
-#ifdef TARGET_ARCH_x86
-# include "nativeInst_x86.hpp"
-# include "vmreg_x86.inline.hpp"
-#endif
-#ifdef TARGET_ARCH_sparc
-# include "nativeInst_sparc.hpp"
-# include "vmreg_sparc.inline.hpp"
-#endif
-#ifdef TARGET_ARCH_zero
-# include "nativeInst_zero.hpp"
-# include "vmreg_zero.inline.hpp"
-#endif
-#ifdef TARGET_ARCH_arm
-# include "nativeInst_arm.hpp"
-# include "vmreg_arm.inline.hpp"
-#endif
-#ifdef TARGET_ARCH_ppc
-# include "nativeInst_ppc.hpp"
-# include "vmreg_ppc.inline.hpp"
-#endif
 #if INCLUDE_ALL_GCS
 #include "gc_implementation/concurrentMarkSweep/concurrentMarkSweepThread.hpp"
-#include "gc_implementation/shared/concurrentGCThread.hpp"
 #include "gc_implementation/shenandoah/shenandoahConcurrentThread.hpp"
+#include "gc_implementation/shared/suspendibleThreadSet.hpp"
 #endif // INCLUDE_ALL_GCS
 #ifdef COMPILER1
 #include "c1/c1_globals.hpp"
 #endif
+
+PRAGMA_FORMAT_MUTE_WARNINGS_FOR_GCC
 
 // --------------------------------------------------------------------------------------------------
 // Implementation of Safepoint begin/end
@@ -111,7 +95,7 @@ void SafepointSynchronize::begin() {
     // more-general mechanism below.  DLD (01/05).
     ConcurrentMarkSweepThread::synchronize(false);
   } else if (UseG1GC) {
-    ConcurrentGCThread::safepoint_synchronize();
+    SuspendibleThreadSet::synchronize();
   } else if (UseShenandoahGC) {
     ShenandoahConcurrentThread::safepoint_synchronize();
   }
@@ -160,7 +144,7 @@ void SafepointSynchronize::begin() {
   // stopped by different mechanisms:
   //
   //  1. Running interpreted
-  //     The interpeter dispatch table is changed to force it to
+  //     The interpreter dispatch table is changed to force it to
   //     check for a safepoint condition between bytecodes.
   //  2. Running in native code
   //     When returning from the native code, a Java thread must check
@@ -265,8 +249,8 @@ void SafepointSynchronize::begin() {
       //
       // Further complicating matters is that yield() does not work as naively expected
       // on many platforms -- yield() does not guarantee that any other ready threads
-      // will run.   As such we revert yield_all() after some number of iterations.
-      // Yield_all() is implemented as a short unconditional sleep on some platforms.
+      // will run.   As such we revert to naked_short_sleep() after some number of iterations.
+      // nakes_short_sleep() is implemented as a short unconditional sleep.
       // Typical operating systems round a "short" sleep period up to 10 msecs, so sleeping
       // can actually increase the time it takes the VM thread to detect that a system-wide
       // stop-the-world safepoint has been reached.  In a pathological scenario such as that
@@ -286,7 +270,7 @@ void SafepointSynchronize::begin() {
       // See the comments in synchronizer.cpp for additional remarks on spinning.
       //
       // In the future we might:
-      // 1. Modify the safepoint scheme to avoid potentally unbounded spinning.
+      // 1. Modify the safepoint scheme to avoid potentially unbounded spinning.
       //    This is tricky as the path used by a thread exiting the JVM (say on
       //    on JNI call-out) simply stores into its state field.  The burden
       //    is placed on the VM thread, which must poll (spin).
@@ -321,11 +305,9 @@ void SafepointSynchronize::begin() {
         SpinPause() ;     // MP-Polite spin
       } else
       if (steps < DeferThrSuspendLoopCount) {
-        os::NakedYield() ;
+        os::naked_yield() ;
       } else {
-        os::yield_all(steps) ;
-        // Alternately, the VM thread could transiently depress its scheduling priority or
-        // transiently increase the priority of the tardy mutator(s).
+        os::naked_short_sleep(1);
       }
 
       iterations ++ ;
@@ -490,12 +472,12 @@ void SafepointSynchronize::end() {
   if (UseConcMarkSweepGC) {
     ConcurrentMarkSweepThread::desynchronize(false);
   } else if (UseG1GC) {
-    ConcurrentGCThread::safepoint_desynchronize();
+    SuspendibleThreadSet::desynchronize();
   } else if (UseShenandoahGC) {
     ShenandoahConcurrentThread::safepoint_desynchronize();
   }
 #endif // INCLUDE_ALL_GCS
-  // record this time so VMThread can keep track how much time has elasped
+  // record this time so VMThread can keep track how much time has elapsed
   // since last safepoint.
   _end_of_last_safepoint = os::javaTimeMillis();
 }
@@ -541,11 +523,14 @@ void SafepointSynchronize::do_cleanup_tasks() {
 
   // rotate log files?
   if (UseGCLogFileRotation) {
-    gclog_or_tty->rotate_log();
+    gclog_or_tty->rotate_log(false);
   }
 
-  if (MemTracker::is_on()) {
-    MemTracker::sync();
+  {
+    // CMS delays purging the CLDG until the beginning of the next safepoint and to
+    // make sure concurrent sweep is done
+    TraceTime t7("purging class loader data graph", TraceSafepointCleanupTime);
+    ClassLoaderDataGraph::purge_if_needed();
   }
 }
 
@@ -740,79 +725,11 @@ void SafepointSynchronize::block(JavaThread *thread) {
 // ------------------------------------------------------------------------------------------------------
 // Exception handlers
 
-#ifndef PRODUCT
-
-#ifdef SPARC
-
-#ifdef _LP64
-#define PTR_PAD ""
-#else
-#define PTR_PAD "        "
-#endif
-
-static void print_ptrs(intptr_t oldptr, intptr_t newptr, bool wasoop) {
-  bool is_oop = newptr ? (cast_to_oop(newptr))->is_oop() : false;
-  tty->print_cr(PTR_FORMAT PTR_PAD " %s %c " PTR_FORMAT PTR_PAD " %s %s",
-                oldptr, wasoop?"oop":"   ", oldptr == newptr ? ' ' : '!',
-                newptr, is_oop?"oop":"   ", (wasoop && !is_oop) ? "STALE" : ((wasoop==false&&is_oop==false&&oldptr !=newptr)?"STOMP":"     "));
-}
-
-static void print_longs(jlong oldptr, jlong newptr, bool wasoop) {
-  bool is_oop = newptr ? (cast_to_oop(newptr))->is_oop() : false;
-  tty->print_cr(PTR64_FORMAT " %s %c " PTR64_FORMAT " %s %s",
-                oldptr, wasoop?"oop":"   ", oldptr == newptr ? ' ' : '!',
-                newptr, is_oop?"oop":"   ", (wasoop && !is_oop) ? "STALE" : ((wasoop==false&&is_oop==false&&oldptr !=newptr)?"STOMP":"     "));
-}
-
-static void print_me(intptr_t *new_sp, intptr_t *old_sp, bool *was_oops) {
-#ifdef _LP64
-  tty->print_cr("--------+------address-----+------before-----------+-------after----------+");
-  const int incr = 1;           // Increment to skip a long, in units of intptr_t
-#else
-  tty->print_cr("--------+--address-+------before-----------+-------after----------+");
-  const int incr = 2;           // Increment to skip a long, in units of intptr_t
-#endif
-  tty->print_cr("---SP---|");
-  for( int i=0; i<16; i++ ) {
-    tty->print("blob %c%d |"PTR_FORMAT" ","LO"[i>>3],i&7,new_sp); print_ptrs(*old_sp++,*new_sp++,*was_oops++); }
-  tty->print_cr("--------|");
-  for( int i1=0; i1<frame::memory_parameter_word_sp_offset-16; i1++ ) {
-    tty->print("argv pad|"PTR_FORMAT" ",new_sp); print_ptrs(*old_sp++,*new_sp++,*was_oops++); }
-  tty->print("     pad|"PTR_FORMAT" ",new_sp); print_ptrs(*old_sp++,*new_sp++,*was_oops++);
-  tty->print_cr("--------|");
-  tty->print(" G1     |"PTR_FORMAT" ",new_sp); print_longs(*(jlong*)old_sp,*(jlong*)new_sp,was_oops[incr-1]); old_sp += incr; new_sp += incr; was_oops += incr;
-  tty->print(" G3     |"PTR_FORMAT" ",new_sp); print_longs(*(jlong*)old_sp,*(jlong*)new_sp,was_oops[incr-1]); old_sp += incr; new_sp += incr; was_oops += incr;
-  tty->print(" G4     |"PTR_FORMAT" ",new_sp); print_longs(*(jlong*)old_sp,*(jlong*)new_sp,was_oops[incr-1]); old_sp += incr; new_sp += incr; was_oops += incr;
-  tty->print(" G5     |"PTR_FORMAT" ",new_sp); print_longs(*(jlong*)old_sp,*(jlong*)new_sp,was_oops[incr-1]); old_sp += incr; new_sp += incr; was_oops += incr;
-  tty->print_cr(" FSR    |"PTR_FORMAT" "PTR64_FORMAT"       "PTR64_FORMAT,new_sp,*(jlong*)old_sp,*(jlong*)new_sp);
-  old_sp += incr; new_sp += incr; was_oops += incr;
-  // Skip the floats
-  tty->print_cr("--Float-|"PTR_FORMAT,new_sp);
-  tty->print_cr("---FP---|");
-  old_sp += incr*32;  new_sp += incr*32;  was_oops += incr*32;
-  for( int i2=0; i2<16; i2++ ) {
-    tty->print("call %c%d |"PTR_FORMAT" ","LI"[i2>>3],i2&7,new_sp); print_ptrs(*old_sp++,*new_sp++,*was_oops++); }
-  tty->print_cr("");
-}
-#endif  // SPARC
-#endif  // PRODUCT
-
 
 void SafepointSynchronize::handle_polling_page_exception(JavaThread *thread) {
   assert(thread->is_Java_thread(), "polling reference encountered by VM thread");
   assert(thread->thread_state() == _thread_in_Java, "should come from Java code");
   assert(SafepointSynchronize::is_synchronizing(), "polling encountered outside safepoint synchronization");
-
-  // Uncomment this to get some serious before/after printing of the
-  // Sparc safepoint-blob frame structure.
-  /*
-  intptr_t* sp = thread->last_Java_sp();
-  intptr_t stack_copy[150];
-  for( int i=0; i<150; i++ ) stack_copy[i] = sp[i];
-  bool was_oops[150];
-  for( int i=0; i<150; i++ )
-    was_oops[i] = stack_copy[i] ? ((oop)stack_copy[i])->is_oop() : false;
-  */
 
   if (ShowSafepointMsgs) {
     tty->print("handle_polling_page_exception: ");
@@ -825,16 +742,15 @@ void SafepointSynchronize::handle_polling_page_exception(JavaThread *thread) {
   ThreadSafepointState* state = thread->safepoint_state();
 
   state->handle_polling_page_exception();
-  // print_me(sp,stack_copy,was_oops);
 }
 
 
 void SafepointSynchronize::print_safepoint_timeout(SafepointTimeoutReason reason) {
   if (!timeout_error_printed) {
     timeout_error_printed = true;
-    // Print out the thread infor which didn't reach the safepoint for debugging
+    // Print out the thread info which didn't reach the safepoint for debugging
     // purposes (useful when there are lots of threads in the debugger).
-    tty->print_cr("");
+    tty->cr();
     tty->print_cr("# SafepointSynchronize::begin: Timeout detected:");
     if (reason ==  _spinning_timeout) {
       tty->print_cr("# SafepointSynchronize::begin: Timed out while spinning to reach a safepoint.");
@@ -854,7 +770,7 @@ void SafepointSynchronize::print_safepoint_timeout(SafepointTimeoutReason reason
            (reason == _blocking_timeout && !cur_state->has_called_back()))) {
         tty->print("# ");
         cur_thread->print();
-        tty->print_cr("");
+        tty->cr();
       }
     }
     tty->print_cr("# SafepointSynchronize::begin: (End of list)");
@@ -1102,7 +1018,7 @@ void ThreadSafepointState::handle_polling_page_exception() {
       if (caller_fr.is_deoptimized_frame()) {
         // The exception patch will destroy registers that are still
         // live and will be needed during deoptimization. Defer the
-        // Async exception should have defered the exception until the
+        // Async exception should have deferred the exception until the
         // next safepoint which will be detected when we get into
         // the interpreter so if we have an exception now things
         // are messed up.
@@ -1330,7 +1246,7 @@ void SafepointSynchronize::print_stat_on_exit() {
        spstat->_time_to_sync > PrintSafepointStatisticsTimeout * MICROUNITS) {
     print_statistics();
   }
-  tty->print_cr("");
+  tty->cr();
 
   // Print out polling page sampling status.
   if (!need_to_track_page_armed_status) {

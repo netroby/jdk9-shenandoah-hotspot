@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2001, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2001, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -431,10 +431,12 @@ static char* get_user_name(int vmid, TRAPS) {
 
       RESTARTABLE(::read(fd, addr, remaining), result);
       if (result == OS_ERR) {
+        ::close(fd);
         THROW_MSG_0(vmSymbols::java_io_IOException(), "Read error");
+      } else {
+        remaining-=result;
+        addr+=result;
       }
-      remaining-=result;
-      addr+=result;
     }
 
     ::close(fd);
@@ -768,7 +770,8 @@ static char* mmap_create_shared(size_t size) {
   (void)::memset((void*) mapAddress, 0, size);
 
   // it does not go through os api, the operation has to record from here
-  MemTracker::record_virtual_memory_reserve((address)mapAddress, size, mtInternal, CURRENT_PC);
+  MemTracker::record_virtual_memory_reserve_and_commit((address)mapAddress,
+    size, CURRENT_PC, mtInternal);
 
   return mapAddress;
 }
@@ -906,8 +909,16 @@ static void mmap_attach_shared(const char* user, int vmid, PerfMemory::PerfMemor
   FREE_C_HEAP_ARRAY(char, filename, mtInternal);
 
   // open the shared memory file for the give vmid
-  fd = open_sharedmem_file(rfilename, file_flags, CHECK);
-  assert(fd != OS_ERR, "unexpected value");
+  fd = open_sharedmem_file(rfilename, file_flags, THREAD);
+
+  if (fd == OS_ERR) {
+    return;
+  }
+
+  if (HAS_PENDING_EXCEPTION) {
+    ::close(fd);
+    return;
+  }
 
   if (*sizep == 0) {
     size = sharedmem_filesize(fd, CHECK);
@@ -931,7 +942,8 @@ static void mmap_attach_shared(const char* user, int vmid, PerfMemory::PerfMemor
   }
 
   // it does not go through os api, the operation has to record from here
-  MemTracker::record_virtual_memory_reserve((address)mapAddress, size, mtInternal, CURRENT_PC);
+  MemTracker::record_virtual_memory_reserve_and_commit((address)mapAddress,
+    size, CURRENT_PC, mtInternal);
 
   *addr = mapAddress;
   *sizep = size;

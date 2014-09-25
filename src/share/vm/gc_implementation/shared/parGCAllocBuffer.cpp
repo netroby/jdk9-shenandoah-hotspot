@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2001, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2001, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -27,6 +27,9 @@
 #include "memory/sharedHeap.hpp"
 #include "oops/arrayOop.hpp"
 #include "oops/oop.inline.hpp"
+#include "utilities/globalDefinitions.hpp"
+
+PRAGMA_FORMAT_MUTE_WARNINGS_FOR_GCC
 
 ParGCAllocBuffer::ParGCAllocBuffer(size_t desired_plab_sz_) :
   _word_sz(desired_plab_sz_), _bottom(NULL), _top(NULL),
@@ -89,6 +92,10 @@ void ParGCAllocBuffer::flush_stats(PLABStats* stats) {
 // scavenge; it clears the sensor accumulators.
 void PLABStats::adjust_desired_plab_sz(uint no_of_gc_workers) {
   assert(ResizePLAB, "Not set");
+
+  assert(is_object_aligned(max_size()) && min_size() <= max_size(),
+         "PLAB clipping computation may be incorrect");
+
   if (_allocated == 0) {
     assert(_unused == 0,
            err_msg("Inconsistency in PLAB stats: "
@@ -108,7 +115,7 @@ void PLABStats::adjust_desired_plab_sz(uint no_of_gc_workers) {
   }
   _used = _allocated - _wasted - _unused;
   size_t plab_sz = _used/(target_refills*no_of_gc_workers);
-  if (PrintPLAB) gclog_or_tty->print(" (plab_sz = %d ", plab_sz);
+  if (PrintPLAB) gclog_or_tty->print(" (plab_sz = " SIZE_FORMAT " ", plab_sz);
   // Take historical weighted average
   _filter.sample(plab_sz);
   // Clip from above and below, and align to object boundary
@@ -116,7 +123,7 @@ void PLABStats::adjust_desired_plab_sz(uint no_of_gc_workers) {
   plab_sz = MIN2(max_size(), plab_sz);
   plab_sz = align_object_size(plab_sz);
   // Latch the result
-  if (PrintPLAB) gclog_or_tty->print(" desired_plab_sz = %d) ", plab_sz);
+  if (PrintPLAB) gclog_or_tty->print(" desired_plab_sz = " SIZE_FORMAT ") ", plab_sz);
   _desired_plab_sz = plab_sz;
   // Now clear the accumulators for next round:
   // note this needs to be fixed in the case where we
@@ -128,8 +135,9 @@ void PLABStats::adjust_desired_plab_sz(uint no_of_gc_workers) {
 
 #ifndef PRODUCT
 void ParGCAllocBuffer::print() {
-  gclog_or_tty->print("parGCAllocBuffer: _bottom: %p  _top: %p  _end: %p  _hard_end: %p"
-             "_retained: %c _retained_filler: [%p,%p)\n",
+  gclog_or_tty->print("parGCAllocBuffer: _bottom: " PTR_FORMAT "  _top: " PTR_FORMAT
+             "  _end: " PTR_FORMAT "  _hard_end: " PTR_FORMAT " _retained: %c"
+             " _retained_filler: [" PTR_FORMAT "," PTR_FORMAT ")\n",
              _bottom, _top, _end, _hard_end,
              "FT"[_retained], _retained_filler.start(), _retained_filler.end());
 }
@@ -152,7 +160,7 @@ ParGCAllocBufferWithBOT::ParGCAllocBufferWithBOT(size_t word_sz,
 
 // The buffer comes with its own BOT, with a shared (obviously) underlying
 // BlockOffsetSharedArray. We manipulate this BOT in the normal way
-// as we would for any contiguous space. However, on accasion we
+// as we would for any contiguous space. However, on occasion we
 // need to do some buffer surgery at the extremities before we
 // start using the body of the buffer for allocations. Such surgery
 // (as explained elsewhere) is to prevent allocation on a card that

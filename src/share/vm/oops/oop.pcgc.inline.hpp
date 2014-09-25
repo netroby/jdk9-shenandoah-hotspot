@@ -26,6 +26,7 @@
 #define SHARE_VM_OOPS_OOP_PCGC_INLINE_HPP
 
 #include "utilities/macros.hpp"
+#include "runtime/atomic.inline.hpp"
 #if INCLUDE_ALL_GCS
 #include "gc_implementation/parNew/parNewGeneration.hpp"
 #include "gc_implementation/parallelScavenge/parallelScavengeHeap.hpp"
@@ -53,8 +54,6 @@ inline void oopDesc::follow_contents(ParCompactionManager* cm) {
     "should be marked");
   klass()->oop_follow_contents(cm, this);
 }
-
-// Used by parallel old GC.
 
 inline oop oopDesc::forward_to_atomic(oop p) {
   assert(ParNewGeneration::is_legal_forward_ptr(p),

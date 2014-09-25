@@ -24,32 +24,52 @@
 
 #include "precompiled.hpp"
 #include "memory/allocation.inline.hpp"
+#include "opto/ad.hpp"
 #include "opto/block.hpp"
 #include "opto/c2compiler.hpp"
 #include "opto/callnode.hpp"
 #include "opto/cfgnode.hpp"
 #include "opto/machnode.hpp"
 #include "opto/runtime.hpp"
-#ifdef TARGET_ARCH_MODEL_x86_32
-# include "adfiles/ad_x86_32.hpp"
-#endif
-#ifdef TARGET_ARCH_MODEL_x86_64
-# include "adfiles/ad_x86_64.hpp"
-#endif
-#ifdef TARGET_ARCH_MODEL_sparc
-# include "adfiles/ad_sparc.hpp"
-#endif
-#ifdef TARGET_ARCH_MODEL_zero
-# include "adfiles/ad_zero.hpp"
-#endif
-#ifdef TARGET_ARCH_MODEL_arm
-# include "adfiles/ad_arm.hpp"
-#endif
-#ifdef TARGET_ARCH_MODEL_ppc
-# include "adfiles/ad_ppc.hpp"
-#endif
 
 // Optimization - Graph Style
+
+// Check whether val is not-null-decoded compressed oop,
+// i.e. will grab into the base of the heap if it represents NULL.
+static bool accesses_heap_base_zone(Node *val) {
+  if (Universe::narrow_oop_base() > 0) { // Implies UseCompressedOops.
+    if (val && val->is_Mach()) {
+      if (val->as_Mach()->ideal_Opcode() == Op_DecodeN) {
+        // This assumes all Decodes with TypePtr::NotNull are matched to nodes that
+        // decode NULL to point to the heap base (Decode_NN).
+        if (val->bottom_type()->is_oopptr()->ptr() == TypePtr::NotNull) {
+          return true;
+        }
+      }
+      // Must recognize load operation with Decode matched in memory operand.
+      // We should not reach here exept for PPC/AIX, as os::zero_page_read_protected()
+      // returns true everywhere else. On PPC, no such memory operands
+      // exist, therefore we did not yet implement a check for such operands.
+      NOT_AIX(Unimplemented());
+    }
+  }
+  return false;
+}
+
+static bool needs_explicit_null_check_for_read(Node *val) {
+  // On some OSes (AIX) the page at address 0 is only write protected.
+  // If so, only Store operations will trap.
+  if (os::zero_page_read_protected()) {
+    return false;  // Implicit null check will work.
+  }
+  // Also a read accessing the base of a heap-based compressed heap will trap.
+  if (accesses_heap_base_zone(val) &&                    // Hits the base zone page.
+      Universe::narrow_oop_use_implicit_null_checks()) { // Base zone page is protected.
+    return false;
+  }
+
+  return true;
+}
 
 //------------------------------implicit_null_check----------------------------
 // Detect implicit-null-check opportunities.  Basically, find NULL checks
@@ -206,6 +226,14 @@ void PhaseCFG::implicit_null_check(Block* block, Node *proj, Node *val, int allo
       }
       break;
     }
+
+    // On some OSes (AIX) the page at address 0 is only write protected.
+    // If so, only Store operations will trap.
+    // But a read accessing the base of a heap-based compressed heap will trap.
+    if (!was_store && needs_explicit_null_check_for_read(val)) {
+      continue;
+    }
+
     // check if the offset is not too high for implicit exception
     {
       intptr_t offset = 0;
@@ -371,7 +399,7 @@ void PhaseCFG::implicit_null_check(Block* block, Node *proj, Node *val, int allo
     Node *tmp2 = block->get_node(block->end_idx()+2);
     block->map_node(tmp2, block->end_idx()+1);
     block->map_node(tmp1, block->end_idx()+2);
-    Node *tmp = new (C) Node(C->top()); // Use not NULL input
+    Node *tmp = new Node(C->top()); // Use not NULL input
     tmp1->replace_by(tmp);
     tmp2->replace_by(tmp1);
     tmp->replace_by(tmp2);
@@ -382,7 +410,7 @@ void PhaseCFG::implicit_null_check(Block* block, Node *proj, Node *val, int allo
   // Since schedule-local needs precise def-use info, we need to correct
   // it as well.
   Node *old_tst = proj->in(0);
-  MachNode *nul_chk = new (C) MachNullCheckNode(old_tst->in(0),best,bidx);
+  MachNode *nul_chk = new MachNullCheckNode(old_tst->in(0),best,bidx);
   block->map_node(nul_chk, block->end_idx());
   map_node_to_block(nul_chk, block);
   // Redirect users of old_test to nul_chk
@@ -436,7 +464,9 @@ Node* PhaseCFG::select(Block* block, Node_List &worklist, GrowableArray<int> &re
         iop == Op_CreateEx ||   // Create-exception must start block
         iop == Op_CheckCastPP
         ) {
-      worklist.map(i,worklist.pop());
+      // select the node n
+      // remove n from worklist and retain the order of remaining nodes
+      worklist.remove((uint)i);
       return n;
     }
 
@@ -468,13 +498,6 @@ Node* PhaseCFG::select(Block* block, Node_List &worklist, GrowableArray<int> &re
 
         // The use is a conditional branch, make them adjacent
         if (use->is_MachIf() && get_block_for_node(use) == block) {
-          found_machif = true;
-          break;
-        }
-
-        // For nodes that produce a FlagsProj, make the node adjacent to the
-        // use of the FlagsProj
-        if (use->is_FlagsProj() && get_block_for_node(use) == block) {
           found_machif = true;
           break;
         }
@@ -529,7 +552,9 @@ Node* PhaseCFG::select(Block* block, Node_List &worklist, GrowableArray<int> &re
   assert(idx >= 0, "index should be set");
   Node *n = worklist[(uint)idx];      // Get the winner
 
-  worklist.map((uint)idx, worklist.pop());     // Compress worklist
+  // select the node n
+  // remove n from worklist and retain the order of remaining nodes
+  worklist.remove((uint)idx);
   return n;
 }
 
@@ -630,7 +655,7 @@ uint PhaseCFG::sched_call(Block* block, uint node_cnt, Node_List& worklist, Grow
   // Set all registers killed and not already defined by the call.
   uint r_cnt = mcall->tf()->range()->cnt();
   int op = mcall->ideal_Opcode();
-  MachProjNode *proj = new (C) MachProjNode( mcall, r_cnt+1, RegMask::Empty, MachProjNode::fat_proj );
+  MachProjNode *proj = new MachProjNode( mcall, r_cnt+1, RegMask::Empty, MachProjNode::fat_proj );
   map_node_to_block(proj, block);
   block->insert_node(proj, node_cnt++);
 
@@ -859,7 +884,7 @@ bool PhaseCFG::schedule_local(Block* block, GrowableArray<int>& ready_cnt, Vecto
       regs.Insert(_matcher.c_frame_pointer());
       regs.OR(n->out_RegMask());
 
-      MachProjNode *proj = new (C) MachProjNode( n, 1, RegMask::Empty, MachProjNode::fat_proj );
+      MachProjNode *proj = new MachProjNode( n, 1, RegMask::Empty, MachProjNode::fat_proj );
       map_node_to_block(proj, block);
       block->insert_node(proj, phi_cnt++);
 

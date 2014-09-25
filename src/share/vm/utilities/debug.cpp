@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -39,30 +39,21 @@
 #include "oops/oop.inline.hpp"
 #include "prims/privilegedStack.hpp"
 #include "runtime/arguments.hpp"
+#include "runtime/atomic.inline.hpp"
 #include "runtime/frame.hpp"
 #include "runtime/java.hpp"
+#include "runtime/os.hpp"
 #include "runtime/sharedRuntime.hpp"
 #include "runtime/stubCodeGenerator.hpp"
 #include "runtime/stubRoutines.hpp"
 #include "runtime/thread.inline.hpp"
 #include "runtime/vframe.hpp"
+#include "runtime/vm_version.hpp"
 #include "services/heapDumper.hpp"
 #include "utilities/defaultStream.hpp"
 #include "utilities/events.hpp"
 #include "utilities/top.hpp"
 #include "utilities/vmError.hpp"
-#ifdef TARGET_OS_FAMILY_linux
-# include "os_linux.inline.hpp"
-#endif
-#ifdef TARGET_OS_FAMILY_solaris
-# include "os_solaris.inline.hpp"
-#endif
-#ifdef TARGET_OS_FAMILY_windows
-# include "os_windows.inline.hpp"
-#endif
-#ifdef TARGET_OS_FAMILY_bsd
-# include "os_bsd.inline.hpp"
-#endif
 
 #ifndef ASSERT
 #  ifdef _DEBUG
@@ -88,6 +79,8 @@
 #  endif
 #endif // PRODUCT
 
+PRAGMA_FORMAT_MUTE_WARNINGS_FOR_GCC
+
 FormatBufferResource::FormatBufferResource(const char * format, ...)
   : FormatBufferBase((char*)resource_allocate_bytes(RES_BUFSZ)) {
   va_list argp;
@@ -96,6 +89,7 @@ FormatBufferResource::FormatBufferResource(const char * format, ...)
   va_end(argp);
 }
 
+ATTRIBUTE_PRINTF(1, 2)
 void warning(const char* format, ...) {
   if (PrintWarnings) {
     FILE* const err = defaultStream::error_stream();
@@ -260,13 +254,11 @@ void report_untested(const char* file, int line, const char* message) {
 
 void report_out_of_shared_space(SharedSpaceType shared_space) {
   static const char* name[] = {
-    "native memory for metadata",
     "shared read only space",
     "shared read write space",
     "shared miscellaneous data space"
   };
   static const char* flag[] = {
-    "Metaspace",
     "SharedReadOnlySize",
     "SharedReadWriteSize",
     "SharedMiscDataSize"

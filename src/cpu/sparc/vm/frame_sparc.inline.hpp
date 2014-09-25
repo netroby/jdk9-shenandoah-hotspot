@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -26,6 +26,7 @@
 #define CPU_SPARC_VM_FRAME_SPARC_INLINE_HPP
 
 #include "asm/macroAssembler.hpp"
+#include "code/vmreg.inline.hpp"
 
 // Inline functions for SPARC frames:
 
@@ -98,12 +99,12 @@ inline intptr_t** frame::interpreter_frame_locals_addr() const {
   return (intptr_t**) &istate->_locals;
 }
 
-inline intptr_t* frame::interpreter_frame_bcx_addr() const {
+inline intptr_t* frame::interpreter_frame_bcp_addr() const {
   interpreterState istate = get_interpreterState();
   return (intptr_t*) &istate->_bcp;
 }
 
-inline intptr_t* frame::interpreter_frame_mdx_addr() const {
+inline intptr_t* frame::interpreter_frame_mdp_addr() const {
   interpreterState istate = get_interpreterState();
   return (intptr_t*) &istate->_mdx;
 }
@@ -165,12 +166,11 @@ inline intptr_t** frame::interpreter_frame_locals_addr() const {
   return (intptr_t**) sp_addr_at( Llocals->sp_offset_in_saved_window());
 }
 
-inline intptr_t* frame::interpreter_frame_bcx_addr() const {
-  // %%%%% reinterpreting Lbcp as a bcx
+inline intptr_t* frame::interpreter_frame_bcp_addr() const {
   return (intptr_t*) sp_addr_at( Lbcp->sp_offset_in_saved_window());
 }
 
-inline intptr_t* frame::interpreter_frame_mdx_addr() const {
+inline intptr_t* frame::interpreter_frame_mdp_addr() const {
   // %%%%% reinterpreting ImethodDataPtr as a mdx
   return (intptr_t*) sp_addr_at( ImethodDataPtr->sp_offset_in_saved_window());
 }
@@ -226,6 +226,13 @@ inline Method** frame::interpreter_frame_method_addr() const {
   return (Method**)sp_addr_at( Lmethod->sp_offset_in_saved_window());
 }
 
+inline BasicObjectLock* frame::interpreter_frame_monitors() const {
+  return *interpreter_frame_monitors_addr();
+}
+
+inline void frame::interpreter_frame_set_monitors(BasicObjectLock* monitors) {
+  *interpreter_frame_monitors_addr() = monitors;
+}
 
 // Constant pool cache
 
@@ -236,6 +243,10 @@ inline ConstantPoolCache** frame::interpreter_frame_cpoolcache_addr() const {
 
 inline ConstantPoolCache** frame::interpreter_frame_cache_addr() const {
   return (ConstantPoolCache**)sp_addr_at( LcpoolCache->sp_offset_in_saved_window());
+}
+
+inline oop* frame::interpreter_frame_temp_oop_addr() const {
+  return (oop *)(fp() + interpreter_frame_oop_temp_offset);
 }
 #endif // CC_INTERP
 

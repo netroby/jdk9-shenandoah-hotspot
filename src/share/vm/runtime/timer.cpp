@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -26,18 +26,6 @@
 #include "oops/oop.inline.hpp"
 #include "runtime/timer.hpp"
 #include "utilities/ostream.hpp"
-#ifdef TARGET_OS_FAMILY_linux
-# include "os_linux.inline.hpp"
-#endif
-#ifdef TARGET_OS_FAMILY_solaris
-# include "os_solaris.inline.hpp"
-#endif
-#ifdef TARGET_OS_FAMILY_windows
-# include "os_windows.inline.hpp"
-#endif
-#ifdef TARGET_OS_FAMILY_bsd
-# include "os_bsd.inline.hpp"
-#endif
 
 double TimeHelper::counter_to_seconds(jlong counter) {
   double count = (double) counter;
@@ -191,7 +179,7 @@ TraceCPUTime::~TraceCPUTime() {
         system_secs = system_time - _starting_system_time;
         real_secs = real_time - _starting_real_time;
 
-        _logfile->print(" [Times: user=%3.2f sys=%3.2f, real=%3.2f secs] ",
+        _logfile->print(" [Times: user=%3.2f sys=%3.2f real=%3.2f secs] ",
           user_secs, system_secs, real_secs);
 
       } else {
@@ -201,7 +189,7 @@ TraceCPUTime::~TraceCPUTime() {
       _logfile->print("[Error in TraceCPUTime]");
     }
     if (_print_cr) {
-      _logfile->print_cr("");
+      _logfile->cr();
     }
     _logfile->flush();
   }

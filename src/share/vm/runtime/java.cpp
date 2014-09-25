@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -24,7 +24,7 @@
 
 #include "precompiled.hpp"
 #include "classfile/classLoader.hpp"
-#include "classfile/symbolTable.hpp"
+#include "classfile/stringTable.hpp"
 #include "classfile/systemDictionary.hpp"
 #include "code/codeCache.hpp"
 #include "compiler/compileBroker.hpp"
@@ -52,11 +52,11 @@
 #include "runtime/memprofiler.hpp"
 #include "runtime/sharedRuntime.hpp"
 #include "runtime/statSampler.hpp"
+#include "runtime/sweeper.hpp"
 #include "runtime/task.hpp"
 #include "runtime/thread.inline.hpp"
 #include "runtime/timer.hpp"
 #include "runtime/vm_operations.hpp"
-#include "services/memReporter.hpp"
 #include "services/memTracker.hpp"
 #include "trace/tracing.hpp"
 #include "utilities/dtrace.hpp"
@@ -64,21 +64,6 @@
 #include "utilities/histogram.hpp"
 #include "utilities/macros.hpp"
 #include "utilities/vmError.hpp"
-#ifdef TARGET_ARCH_x86
-# include "vm_version_x86.hpp"
-#endif
-#ifdef TARGET_ARCH_sparc
-# include "vm_version_sparc.hpp"
-#endif
-#ifdef TARGET_ARCH_zero
-# include "vm_version_zero.hpp"
-#endif
-#ifdef TARGET_ARCH_arm
-# include "vm_version_arm.hpp"
-#endif
-#ifdef TARGET_ARCH_ppc
-# include "vm_version_ppc.hpp"
-#endif
 #if INCLUDE_ALL_GCS
 #include "gc_implementation/concurrentMarkSweep/concurrentMarkSweepThread.hpp"
 #include "gc_implementation/parallelScavenge/psScavenge.hpp"
@@ -96,9 +81,61 @@
 #include "opto/runtime.hpp"
 #endif
 
-#ifndef USDT2
-HS_DTRACE_PROBE_DECL(hotspot, vm__shutdown);
-#endif /* !USDT2 */
+PRAGMA_FORMAT_MUTE_WARNINGS_FOR_GCC
+
+GrowableArray<Method*>* collected_profiled_methods;
+
+int compare_methods(Method** a, Method** b) {
+  // %%% there can be 32-bit overflow here
+  return ((*b)->invocation_count() + (*b)->compiled_invocation_count())
+       - ((*a)->invocation_count() + (*a)->compiled_invocation_count());
+}
+
+void collect_profiled_methods(Method* m) {
+  Thread* thread = Thread::current();
+  // This HandleMark prevents a huge amount of handles from being added
+  // to the metadata_handles() array on the thread.
+  HandleMark hm(thread);
+  methodHandle mh(thread, m);
+  if ((m->method_data() != NULL) &&
+      (PrintMethodData || CompilerOracle::should_print(mh))) {
+    collected_profiled_methods->push(m);
+  }
+}
+
+void print_method_profiling_data() {
+  if (ProfileInterpreter COMPILER1_PRESENT(|| C1UpdateMethodData) &&
+     (PrintMethodData || CompilerOracle::should_print_methods())) {
+    ResourceMark rm;
+    HandleMark hm;
+    collected_profiled_methods = new GrowableArray<Method*>(1024);
+    ClassLoaderDataGraph::methods_do(collect_profiled_methods);
+    collected_profiled_methods->sort(&compare_methods);
+
+    int count = collected_profiled_methods->length();
+    int total_size = 0;
+    if (count > 0) {
+      for (int index = 0; index < count; index++) {
+        Method* m = collected_profiled_methods->at(index);
+        ttyLocker ttyl;
+        tty->print_cr("------------------------------------------------------------------------");
+        m->print_invocation_count();
+        tty->print_cr("  mdo size: %d bytes", m->method_data()->size_in_bytes());
+        tty->cr();
+        // Dump data on parameters if any
+        if (m->method_data() != NULL && m->method_data()->parameters_type_data() != NULL) {
+          tty->fill_to(2);
+          m->method_data()->parameters_type_data()->print_data_on(tty);
+        }
+        m->print_codes();
+        total_size += m->method_data()->size_in_bytes();
+      }
+      tty->print_cr("------------------------------------------------------------------------");
+      tty->print_cr("Total MDO size: %d bytes", total_size);
+    }
+  }
+}
+
 
 #ifndef PRODUCT
 
@@ -113,26 +150,6 @@ void collect_invoked_methods(Method* m) {
 }
 
 
-GrowableArray<Method*>* collected_profiled_methods;
-
-void collect_profiled_methods(Method* m) {
-  Thread* thread = Thread::current();
-  // This HandleMark prevents a huge amount of handles from being added
-  // to the metadata_handles() array on the thread.
-  HandleMark hm(thread);
-  methodHandle mh(thread, m);
-  if ((m->method_data() != NULL) &&
-      (PrintMethodData || CompilerOracle::should_print(mh))) {
-    collected_profiled_methods->push(m);
-  }
-}
-
-
-int compare_methods(Method** a, Method** b) {
-  // %%% there can be 32-bit overflow here
-  return ((*b)->invocation_count() + (*b)->compiled_invocation_count())
-       - ((*a)->invocation_count() + (*a)->compiled_invocation_count());
-}
 
 
 void print_method_invocation_histogram() {
@@ -175,37 +192,6 @@ void print_method_invocation_histogram() {
   SharedRuntime::print_call_statistics(comp_total);
 }
 
-void print_method_profiling_data() {
-  ResourceMark rm;
-  HandleMark hm;
-  collected_profiled_methods = new GrowableArray<Method*>(1024);
-  SystemDictionary::methods_do(collect_profiled_methods);
-  collected_profiled_methods->sort(&compare_methods);
-
-  int count = collected_profiled_methods->length();
-  int total_size = 0;
-  if (count > 0) {
-    for (int index = 0; index < count; index++) {
-      Method* m = collected_profiled_methods->at(index);
-      ttyLocker ttyl;
-      tty->print_cr("------------------------------------------------------------------------");
-      //m->print_name(tty);
-      m->print_invocation_count();
-      tty->print_cr("  mdo size: %d bytes", m->method_data()->size_in_bytes());
-      tty->cr();
-      // Dump data on parameters if any
-      if (m->method_data() != NULL && m->method_data()->parameters_type_data() != NULL) {
-        tty->fill_to(2);
-        m->method_data()->parameters_type_data()->print_data_on(tty);
-      }
-      m->print_codes();
-      total_size += m->method_data()->size_in_bytes();
-    }
-    tty->print_cr("------------------------------------------------------------------------");
-    tty->print_cr("Total MDO size: %d bytes", total_size);
-  }
-}
-
 void print_bytecode_count() {
   if (CountBytecodes || TraceBytecodes || StopInterpreterAt) {
     tty->print_cr("[BytecodeCounter::counter_value = %d]", BytecodeCounter::counter_value());
@@ -217,9 +203,7 @@ AllocStats alloc_stats;
 
 
 // General statistics printing (profiling ...)
-
 void print_statistics() {
-
 #ifdef ASSERT
 
   if (CountRuntimeCalls) {
@@ -269,7 +253,7 @@ void print_statistics() {
     os::print_statistics();
   }
 
-  if (PrintLockStatistics || PrintPreciseBiasedLockingStatistics) {
+  if (PrintLockStatistics || PrintPreciseBiasedLockingStatistics || PrintPreciseRTMLockingStatistics) {
     OptoRuntime::print_named_counters();
   }
 
@@ -285,9 +269,9 @@ void print_statistics() {
   if (CountCompiledCalls) {
     print_method_invocation_histogram();
   }
-  if (ProfileInterpreter COMPILER1_PRESENT(|| C1UpdateMethodData)) {
-    print_method_profiling_data();
-  }
+
+  print_method_profiling_data();
+
   if (TimeCompiler) {
     COMPILER2_PRESENT(Compile::print_timers();)
   }
@@ -313,6 +297,10 @@ void print_statistics() {
   if (PrintCodeCache) {
     MutexLockerEx mu(CodeCache_lock, Mutex::_no_safepoint_check_flag);
     CodeCache::print();
+  }
+
+  if (PrintMethodFlushingStatistics) {
+    NMethodSweeper::print();
   }
 
   if (PrintCodeCache2) {
@@ -360,18 +348,17 @@ void print_statistics() {
 #endif // ENABLE_ZAP_DEAD_LOCALS
   // Native memory tracking data
   if (PrintNMTStatistics) {
-    if (MemTracker::is_on()) {
-      BaselineTTYOutputer outputer(tty);
-      MemTracker::print_memory_usage(outputer, K, false);
-    } else {
-      tty->print_cr(MemTracker::reason());
-    }
+    MemTracker::final_report(tty);
   }
 }
 
 #else // PRODUCT MODE STATISTICS
 
 void print_statistics() {
+
+  if (PrintMethodData) {
+    print_method_profiling_data();
+  }
 
   if (CITime) {
     CompileBroker::print_times();
@@ -382,8 +369,12 @@ void print_statistics() {
     CodeCache::print();
   }
 
+  if (PrintMethodFlushingStatistics) {
+    NMethodSweeper::print();
+  }
+
 #ifdef COMPILER2
-  if (PrintPreciseBiasedLockingStatistics) {
+  if (PrintPreciseBiasedLockingStatistics || PrintPreciseRTMLockingStatistics) {
     OptoRuntime::print_named_counters();
   }
 #endif
@@ -393,12 +384,7 @@ void print_statistics() {
 
   // Native memory tracking data
   if (PrintNMTStatistics) {
-    if (MemTracker::is_on()) {
-      BaselineTTYOutputer outputer(tty);
-      MemTracker::print_memory_usage(outputer, K, false);
-    } else {
-      tty->print_cr(MemTracker::reason());
-    }
+    MemTracker::final_report(tty);
   }
 }
 
@@ -444,6 +430,8 @@ extern "C" {
   }
 }
 
+jint volatile vm_getting_terminated = 0;
+
 // Note: before_exit() can be executed only once, if more than one threads
 //       are trying to shutdown the VM at the same time, only one thread
 //       can run before_exit() and all other threads must wait.
@@ -474,6 +462,8 @@ void before_exit(JavaThread * thread) {
     }
   }
 
+  OrderAccess::release_store(&vm_getting_terminated, 1);
+
   // The only difference between this and Win32's _onexit procs is that
   // this version is invoked before any threads get killed.
   ExitProc* current = exit_procs;
@@ -503,10 +493,8 @@ void before_exit(JavaThread * thread) {
   StatSampler::disengage();
   StatSampler::destroy();
 
-  // We do not need to explicitly stop concurrent GC threads because the
-  // JVM will be taken down at a safepoint when such threads are inactive --
-  // except for some concurrent G1 threads, see (comment in)
-  // Threads::destroy_vm().
+  // Stop concurrent GC threads
+  Universe::heap()->stop();
 
   // Print GC/heap related information.
   if (PrintGCDetails) {
@@ -548,10 +536,6 @@ void before_exit(JavaThread * thread) {
     _before_exit_status = BEFORE_EXIT_DONE;
     BeforeExit_lock->notify_all();
   }
-
-  // Shutdown NMT before exit. Otherwise,
-  // it will run into trouble when system destroys static variables.
-  MemTracker::shutdown(MemTracker::NMT_normal);
 
   if (VerifyStringTableAtExit) {
     int fail_cnt = 0;
@@ -596,12 +580,8 @@ void vm_exit(int code) {
 
 void notify_vm_shutdown() {
   // For now, just a dtrace probe.
-#ifndef USDT2
-  HS_DTRACE_PROBE(hotspot, vm__shutdown);
-  HS_DTRACE_WORKAROUND_TAIL_CALL_BUG();
-#else /* USDT2 */
   HOTSPOT_VM_SHUTDOWN();
-#endif /* USDT2 */
+  HS_DTRACE_WORKAROUND_TAIL_CALL_BUG();
 }
 
 void vm_direct_exit(int code) {

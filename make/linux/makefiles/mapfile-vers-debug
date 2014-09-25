@@ -1,5 +1,5 @@
 #
-# Copyright (c) 2002, 2013, Oracle and/or its affiliates. All rights reserved.
+# Copyright (c) 2002, 2014, Oracle and/or its affiliates. All rights reserved.
 # DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
 #
 # This code is free software; you can redistribute it and/or modify it
@@ -122,10 +122,9 @@ SUNWprivate_1.1 {
                 JVM_GetClassModifiers;
                 JVM_GetClassName;
                 JVM_GetClassNameUTF;
-		JVM_GetClassSignature;
+                JVM_GetClassSignature;
                 JVM_GetClassSigners;
                 JVM_GetClassTypeAnnotations;
-                JVM_GetComponentType;
                 JVM_GetDeclaredClasses;
                 JVM_GetDeclaringClass;
                 JVM_GetEnclosingMethodInfo;
@@ -163,6 +162,7 @@ SUNWprivate_1.1 {
                 JVM_GetStackTraceElement;
                 JVM_GetSystemPackage;
                 JVM_GetSystemPackages;
+                JVM_GetTemporaryDirectory;
                 JVM_GetThreadStateNames;
                 JVM_GetThreadStateValues;
                 JVM_GetVersionInfo;
@@ -243,11 +243,6 @@ SUNWprivate_1.1 {
                 JVM_Write;
                 JVM_Yield;
                 JVM_handle_linux_signal;
-
-                # debug JVM
-                JVM_AccessVMBooleanFlag;
-                JVM_AccessVMIntFlag;
-                JVM_VMBreakPoint;
 
                 # miscellaneous functions
                 jio_fprintf;

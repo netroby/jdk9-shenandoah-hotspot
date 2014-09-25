@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1998, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1998, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -26,21 +26,7 @@
 #include "memory/universe.hpp"
 #include "oops/oop.inline.hpp"
 #include "runtime/arguments.hpp"
-#ifdef TARGET_ARCH_x86
-# include "vm_version_x86.hpp"
-#endif
-#ifdef TARGET_ARCH_sparc
-# include "vm_version_sparc.hpp"
-#endif
-#ifdef TARGET_ARCH_zero
-# include "vm_version_zero.hpp"
-#endif
-#ifdef TARGET_ARCH_arm
-# include "vm_version_arm.hpp"
-#endif
-#ifdef TARGET_ARCH_ppc
-# include "vm_version_ppc.hpp"
-#endif
+#include "runtime/vm_version.hpp"
 
 const char* Abstract_VM_Version::_s_vm_release = Abstract_VM_Version::vm_release();
 const char* Abstract_VM_Version::_s_internal_vm_info_string = Abstract_VM_Version::internal_vm_info_string();
@@ -50,57 +36,79 @@ bool Abstract_VM_Version::_supports_atomic_getset8 = false;
 bool Abstract_VM_Version::_supports_atomic_getadd4 = false;
 bool Abstract_VM_Version::_supports_atomic_getadd8 = false;
 unsigned int Abstract_VM_Version::_logical_processors_per_package = 1U;
+unsigned int Abstract_VM_Version::_L1_data_cache_line_size = 0;
 int Abstract_VM_Version::_reserve_for_allocation_prefetch = 0;
 
 #ifndef HOTSPOT_RELEASE_VERSION
   #error HOTSPOT_RELEASE_VERSION must be defined
 #endif
+
+#ifndef JDK_MAJOR_VERSION
+  #error JDK_MAJOR_VERSION must be defined
+#endif
+#ifndef JDK_MINOR_VERSION
+  #error JDK_MINOR_VERSION must be defined
+#endif
+#ifndef JDK_MICRO_VERSION
+  #error JDK_MICRO_VERSION must be defined
+#endif
+#ifndef JDK_BUILD_NUMBER
+  #error JDK_BUILD_NUMBER must be defined
+#endif
+
 #ifndef JRE_RELEASE_VERSION
   #error JRE_RELEASE_VERSION must be defined
 #endif
-#ifndef HOTSPOT_BUILD_TARGET
-  #error HOTSPOT_BUILD_TARGET must be defined
-#endif
 
-#ifdef PRODUCT
-  #define VM_RELEASE HOTSPOT_RELEASE_VERSION
-#else
+// NOTE: Builds within Visual Studio do not define the build target in
+//       HOTSPOT_RELEASE_VERSION, so it must be done here
+#if defined(VISUAL_STUDIO_BUILD) && !defined(PRODUCT)
+  #ifndef HOTSPOT_BUILD_TARGET
+    #error HOTSPOT_BUILD_TARGET must be defined
+  #endif
   #define VM_RELEASE HOTSPOT_RELEASE_VERSION "-" HOTSPOT_BUILD_TARGET
+#else
+  #define VM_RELEASE HOTSPOT_RELEASE_VERSION
 #endif
 
-// HOTSPOT_RELEASE_VERSION must follow the release version naming convention
-// <major_ver>.<minor_ver>-b<nn>[-<identifier>][-<debug_target>]
+// HOTSPOT_RELEASE_VERSION follows the JDK release version naming convention
+// <major_ver>.<minor_ver>.<micro_ver>[-<identifier>][-<debug_target>][-b<nn>]
 int Abstract_VM_Version::_vm_major_version = 0;
 int Abstract_VM_Version::_vm_minor_version = 0;
+int Abstract_VM_Version::_vm_micro_version = 0;
 int Abstract_VM_Version::_vm_build_number = 0;
 bool Abstract_VM_Version::_initialized = false;
 int Abstract_VM_Version::_parallel_worker_threads = 0;
 bool Abstract_VM_Version::_parallel_worker_threads_initialized = false;
 
+#ifdef ASSERT
+static void assert_digits(const char * s, const char * message) {
+  for (int i = 0; s[i] != '\0'; i++) {
+    assert(isdigit(s[i]), message);
+  }
+}
+#endif
+
+static void set_version_field(int * version_field, const char * version_str,
+                              const char * const assert_msg) {
+  if (version_str != NULL && *version_str != '\0') {
+    DEBUG_ONLY(assert_digits(version_str, assert_msg));
+    *version_field = atoi(version_str);
+  }
+}
+
 void Abstract_VM_Version::initialize() {
   if (_initialized) {
     return;
   }
-  char* vm_version = os::strdup(HOTSPOT_RELEASE_VERSION);
 
-  // Expecting the next vm_version format:
-  // <major_ver>.<minor_ver>-b<nn>[-<identifier>]
-  char* vm_major_ver = vm_version;
-  assert(isdigit(vm_major_ver[0]),"wrong vm major version number");
-  char* vm_minor_ver = strchr(vm_major_ver, '.');
-  assert(vm_minor_ver != NULL && isdigit(vm_minor_ver[1]),"wrong vm minor version number");
-  vm_minor_ver[0] = '\0'; // terminate vm_major_ver
-  vm_minor_ver += 1;
-  char* vm_build_num = strchr(vm_minor_ver, '-');
-  assert(vm_build_num != NULL && vm_build_num[1] == 'b' && isdigit(vm_build_num[2]),"wrong vm build number");
-  vm_build_num[0] = '\0'; // terminate vm_minor_ver
-  vm_build_num += 2;
+  set_version_field(&_vm_major_version, JDK_MAJOR_VERSION, "bad major version");
+  set_version_field(&_vm_minor_version, JDK_MINOR_VERSION, "bad minor version");
+  set_version_field(&_vm_micro_version, JDK_MICRO_VERSION, "bad micro version");
+  int offset = (JDK_BUILD_NUMBER != NULL && JDK_BUILD_NUMBER[0] == 'b') ? 1 : 0;
+  set_version_field(&_vm_build_number, &JDK_BUILD_NUMBER[offset],
+                    "bad build number");
 
-  _vm_major_version = atoi(vm_major_ver);
-  _vm_minor_version = atoi(vm_minor_ver);
-  _vm_build_number  = atoi(vm_build_num);
-
-  os::free(vm_version);
   _initialized = true;
 }
 
@@ -141,8 +149,7 @@ const char* Abstract_VM_Version::vm_vendor() {
 #ifdef VENDOR
   return XSTR(VENDOR);
 #else
-  return JDK_Version::is_gte_jdk17x_version() ?
-    "Oracle Corporation" : "Sun Microsystems Inc.";
+  return "Oracle Corporation";
 #endif
 }
 
@@ -177,6 +184,7 @@ const char* Abstract_VM_Version::jre_release_version() {
 #define OS       LINUX_ONLY("linux")             \
                  WINDOWS_ONLY("windows")         \
                  SOLARIS_ONLY("solaris")         \
+                 AIX_ONLY("aix")                 \
                  BSD_ONLY("bsd")
 
 #ifdef ZERO
@@ -186,7 +194,8 @@ const char* Abstract_VM_Version::jre_release_version() {
                  IA64_ONLY("ia64")               \
                  AMD64_ONLY("amd64")             \
                  ARM_ONLY("arm")                 \
-                 PPC_ONLY("ppc")                 \
+                 PPC32_ONLY("ppc")               \
+                 PPC64_ONLY("ppc64")             \
                  SPARC_ONLY("sparc")
 #endif // ZERO
 
@@ -201,20 +210,12 @@ const char* Abstract_VM_Version::internal_vm_info_string() {
 
   #ifndef HOTSPOT_BUILD_COMPILER
     #ifdef _MSC_VER
-      #if   _MSC_VER == 1100
-        #define HOTSPOT_BUILD_COMPILER "MS VC++ 5.0"
-      #elif _MSC_VER == 1200
-        #define HOTSPOT_BUILD_COMPILER "MS VC++ 6.0"
-      #elif _MSC_VER == 1310
-        #define HOTSPOT_BUILD_COMPILER "MS VC++ 7.1 (VS2003)"
-      #elif _MSC_VER == 1400
-        #define HOTSPOT_BUILD_COMPILER "MS VC++ 8.0 (VS2005)"
-      #elif _MSC_VER == 1500
-        #define HOTSPOT_BUILD_COMPILER "MS VC++ 9.0 (VS2008)"
-      #elif _MSC_VER == 1600
+      #if _MSC_VER == 1600
         #define HOTSPOT_BUILD_COMPILER "MS VC++ 10.0 (VS2010)"
       #elif _MSC_VER == 1700
         #define HOTSPOT_BUILD_COMPILER "MS VC++ 11.0 (VS2012)"
+      #elif _MSC_VER == 1800
+        #define HOTSPOT_BUILD_COMPILER "MS VC++ 12.0 (VS2013)"
       #else
         #define HOTSPOT_BUILD_COMPILER "unknown MS VC++:" XSTR(_MSC_VER)
       #endif
@@ -238,6 +239,9 @@ const char* Abstract_VM_Version::internal_vm_info_string() {
       #endif
     #elif defined(__GNUC__)
         #define HOTSPOT_BUILD_COMPILER "gcc " __VERSION__
+    #elif defined(__IBMCPP__)
+        #define HOTSPOT_BUILD_COMPILER "xlC " XSTR(__IBMCPP__)
+
     #else
       #define HOTSPOT_BUILD_COMPILER "unknown compiler"
     #endif
@@ -250,7 +254,7 @@ const char* Abstract_VM_Version::internal_vm_info_string() {
       #define FLOAT_ARCH_STR "-e500v2"
     #elif defined(ARM)
       #define FLOAT_ARCH_STR "-vfp"
-    #elif defined(PPC)
+    #elif defined(PPC32)
       #define FLOAT_ARCH_STR "-hflt"
     #else
       #define FLOAT_ARCH_STR ""
@@ -271,6 +275,7 @@ const char *Abstract_VM_Version::vm_build_user() {
 unsigned int Abstract_VM_Version::jvm_version() {
   return ((Abstract_VM_Version::vm_major_version() & 0xFF) << 24) |
          ((Abstract_VM_Version::vm_minor_version() & 0xFF) << 16) |
+         ((Abstract_VM_Version::vm_micro_version() & 0xFF) << 8) |
          (Abstract_VM_Version::vm_build_number() & 0xFF);
 }
 

@@ -38,10 +38,10 @@ class HeapRegion;
 class CollectionSetChooser;
 class G1GCPhaseTimes;
 
-// TraceGen0Time collects data on _both_ young and mixed evacuation pauses
+// TraceYoungGenTime collects data on _both_ young and mixed evacuation pauses
 // (the latter may contain non-young regions - i.e. regions that are
-// technically in Gen1) while TraceGen1Time collects data about full GCs.
-class TraceGen0TimeData : public CHeapObj<mtGC> {
+// technically in old) while TraceOldGenTime collects data about full GCs.
+class TraceYoungGenTimeData : public CHeapObj<mtGC> {
  private:
   unsigned  _young_pause_num;
   unsigned  _mixed_pause_num;
@@ -66,7 +66,7 @@ class TraceGen0TimeData : public CHeapObj<mtGC> {
   void print_summary_sd(const char* str, const NumberSeq* seq) const;
 
 public:
-   TraceGen0TimeData() : _young_pause_num(0), _mixed_pause_num(0) {};
+   TraceYoungGenTimeData() : _young_pause_num(0), _mixed_pause_num(0) {};
   void record_start_collection(double time_to_stop_the_world_ms);
   void record_yield_time(double yield_time_ms);
   void record_end_collection(double pause_time_ms, G1GCPhaseTimes* phase_times);
@@ -75,7 +75,7 @@ public:
   void print() const;
 };
 
-class TraceGen1TimeData : public CHeapObj<mtGC> {
+class TraceOldGenTimeData : public CHeapObj<mtGC> {
  private:
   NumberSeq _all_full_gc_times;
 
@@ -116,7 +116,7 @@ class TraceGen1TimeData : public CHeapObj<mtGC> {
 // If only -XX:NewRatio is set we should use the specified ratio of the heap
 // as both min and max. This will be interpreted as "fixed" just like the
 // NewSize==MaxNewSize case above. But we will update the min and max
-// everytime the heap size changes.
+// every time the heap size changes.
 //
 // NewSize and MaxNewSize override NewRatio. So, NewRatio is ignored if it is
 // combined with either NewSize or MaxNewSize. (A warning message is printed.)
@@ -187,8 +187,8 @@ private:
   TruncatedSeq* _concurrent_mark_remark_times_ms;
   TruncatedSeq* _concurrent_mark_cleanup_times_ms;
 
-  TraceGen0TimeData _trace_gen0_time_data;
-  TraceGen1TimeData _trace_gen1_time_data;
+  TraceYoungGenTimeData _trace_young_gen_time_data;
+  TraceOldGenTimeData   _trace_old_gen_time_data;
 
   double _stop_world_start;
 
@@ -202,20 +202,20 @@ private:
   // locker is active. This should be >= _young_list_target_length;
   uint _young_list_max_length;
 
-  bool                  _last_gc_was_young;
+  bool _last_gc_was_young;
 
-  bool                  _during_marking;
-  bool                  _in_marking_window;
-  bool                  _in_marking_window_im;
+  bool _during_marking;
+  bool _in_marking_window;
+  bool _in_marking_window_im;
 
-  SurvRateGroup*        _short_lived_surv_rate_group;
-  SurvRateGroup*        _survivor_surv_rate_group;
+  SurvRateGroup* _short_lived_surv_rate_group;
+  SurvRateGroup* _survivor_surv_rate_group;
   // add here any more surv rate groups
 
-  double                _gc_overhead_perc;
+  double _gc_overhead_perc;
 
   double _reserve_factor;
-  uint _reserve_regions;
+  uint   _reserve_regions;
 
   bool during_marking() {
     return _during_marking;
@@ -523,9 +523,9 @@ private:
   // synchronize updates to this field.
   size_t _inc_cset_recorded_rs_lengths;
 
-  // A concurrent refinement thread periodcially samples the young
+  // A concurrent refinement thread periodically samples the young
   // region RSets and needs to update _inc_cset_recorded_rs_lengths as
-  // the RSets grow. Instead of having to syncronize updates to that
+  // the RSets grow. Instead of having to synchronize updates to that
   // field we accumulate them in this field and add it to
   // _inc_cset_recorded_rs_lengths_diffs at the start of a GC.
   ssize_t _inc_cset_recorded_rs_lengths_diffs;
@@ -604,7 +604,7 @@ private:
   // Calculate and return the maximum young list target length that
   // can fit into the pause time goal. The parameters are: rs_lengths
   // represent the prediction of how large the young RSet lengths will
-  // be, base_min_length is the alreay existing number of regions in
+  // be, base_min_length is the already existing number of regions in
   // the young list, min_length and max_length are the desired min and
   // max young list length according to the user's inputs.
   uint calculate_young_list_target_length(size_t rs_lengths,
@@ -819,6 +819,8 @@ public:
     }
     // do that for any other surv rate groups
   }
+
+  size_t young_list_target_length() const { return _young_list_target_length; }
 
   bool is_young_list_full() {
     uint young_list_length = _g1->young_list()->length();

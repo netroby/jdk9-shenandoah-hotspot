@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2013, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -25,21 +25,21 @@
  * @test EnqueueMethodForCompilationTest
  * @bug 8006683 8007288 8022832
  * @library /testlibrary /testlibrary/whitebox
+ * @ignore 8046268
  * @build EnqueueMethodForCompilationTest
  * @run main ClassFileInstaller sun.hotspot.WhiteBox
- * @run main/othervm/timeout=600 -Xbootclasspath/a:. -Xmixed -XX:+UnlockDiagnosticVMOptions -XX:+WhiteBoxAPI -XX:CompileCommand=compileonly,TestCase$Helper::* EnqueueMethodForCompilationTest
+ *                              sun.hotspot.WhiteBox$WhiteBoxPermission
+ * @run main/othervm/timeout=600 -Xbootclasspath/a:. -Xmixed -XX:+UnlockDiagnosticVMOptions -XX:+WhiteBoxAPI -XX:CompileCommand=compileonly,SimpleTestCase$Helper::* EnqueueMethodForCompilationTest
  * @summary testing of WB::enqueueMethodForCompilation()
  * @author igor.ignatyev@oracle.com
  */
 public class EnqueueMethodForCompilationTest extends CompilerWhiteBoxTest {
 
     public static void main(String[] args) throws Exception {
-        for (TestCase test : TestCase.values()) {
-            new EnqueueMethodForCompilationTest(test).runTest();
-        }
+        CompilerWhiteBoxTest.main(EnqueueMethodForCompilationTest::new, args);
     }
 
-    public EnqueueMethodForCompilationTest(TestCase testCase) {
+    private EnqueueMethodForCompilationTest(TestCase testCase) {
         super(testCase);
         // to prevent inlining of #method
         WHITE_BOX.testSetDontInlineMethod(method, true);

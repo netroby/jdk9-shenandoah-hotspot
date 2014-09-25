@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -24,7 +24,7 @@
 
 #include "precompiled.hpp"
 #include "classfile/javaClasses.hpp"
-#include "classfile/symbolTable.hpp"
+#include "classfile/stringTable.hpp"
 #include "classfile/systemDictionary.hpp"
 #include "classfile/verifier.hpp"
 #include "classfile/vmSymbols.hpp"
@@ -36,6 +36,7 @@
 #include "oops/objArrayKlass.hpp"
 #include "oops/objArrayOop.hpp"
 #include "prims/jvm.h"
+#include "prims/jvmtiExport.hpp"
 #include "runtime/arguments.hpp"
 #include "runtime/handles.inline.hpp"
 #include "runtime/javaCalls.hpp"
@@ -389,7 +390,7 @@ oop Reflection::array_component_type(oop mirror, TRAPS) {
     return NULL;
   }
 
-  oop result = ArrayKlass::cast(klass)->component_mirror();
+  oop result = java_lang_Class::component_mirror(mirror);
 #ifdef ASSERT
   oop result2 = NULL;
   if (ArrayKlass::cast(klass)->dimension() == 1) {
@@ -409,49 +410,6 @@ oop Reflection::array_component_type(oop mirror, TRAPS) {
 }
 
 
-bool Reflection::reflect_check_access(Klass* field_class, AccessFlags acc, Klass* target_class, bool is_method_invoke, TRAPS) {
-  // field_class  : declaring class
-  // acc          : declared field access
-  // target_class : for protected
-
-  // Check if field or method is accessible to client.  Throw an
-  // IllegalAccessException and return false if not.
-
-  // The "client" is the class associated with the nearest real frame
-  // getCallerClass already skips Method.invoke frames, so pass 0 in
-  // that case (same as classic).
-  ResourceMark rm(THREAD);
-  assert(THREAD->is_Java_thread(), "sanity check");
-  Klass* client_class = ((JavaThread *)THREAD)->security_get_caller_class(is_method_invoke ? 0 : 1);
-
-  if (client_class != field_class) {
-    if (!verify_class_access(client_class, field_class, false)
-        || !verify_field_access(client_class,
-                                field_class,
-                                field_class,
-                                acc,
-                                false)) {
-      THROW_(vmSymbols::java_lang_IllegalAccessException(), false);
-    }
-  }
-
-  // Additional test for protected members: JLS 6.6.2
-
-  if (acc.is_protected()) {
-    if (target_class != client_class) {
-      if (!is_same_class_package(client_class, field_class)) {
-        if (!target_class->is_subclass_of(client_class)) {
-          THROW_(vmSymbols::java_lang_IllegalAccessException(), false);
-        }
-      }
-    }
-  }
-
-  // Passed all tests
-  return true;
-}
-
-
 bool Reflection::verify_class_access(Klass* current_class, Klass* new_class, bool classloader_only) {
   // Verify that current_class can access new_class.  If the classloader_only
   // flag is set, we automatically allow any accesses in which current_class
@@ -462,11 +420,9 @@ bool Reflection::verify_class_access(Klass* current_class, Klass* new_class, boo
       is_same_class_package(current_class, new_class)) {
     return true;
   }
-  // New (1.4) reflection implementation. Allow all accesses from
-  // sun/reflect/MagicAccessorImpl subclasses to succeed trivially.
-  if (   JDK_Version::is_gte_jdk14x_version()
-      && UseNewReflection
-      && current_class->is_subclass_of(SystemDictionary::reflect_MagicAccessorImpl_klass())) {
+  // Allow all accesses from sun/reflect/MagicAccessorImpl subclasses to
+  // succeed trivially.
+  if (current_class->is_subclass_of(SystemDictionary::reflect_MagicAccessorImpl_klass())) {
     return true;
   }
 
@@ -482,7 +438,7 @@ static bool under_host_klass(InstanceKlass* ik, Klass* host_klass) {
     ik = InstanceKlass::cast(hc);
 
     // There's no way to make a host class loop short of patching memory.
-    // Therefore there cannot be a loop here unles there's another bug.
+    // Therefore there cannot be a loop here unless there's another bug.
     // Still, let's check for it.
     assert(--inf_loop_check > 0, "no host_klass loop");
   }
@@ -567,11 +523,9 @@ bool Reflection::verify_field_access(Klass* current_class,
     return true;
   }
 
-  // New (1.4) reflection implementation. Allow all accesses from
-  // sun/reflect/MagicAccessorImpl subclasses to succeed trivially.
-  if (   JDK_Version::is_gte_jdk14x_version()
-      && UseNewReflection
-      && current_class->is_subclass_of(SystemDictionary::reflect_MagicAccessorImpl_klass())) {
+  // Allow all accesses from sun/reflect/MagicAccessorImpl subclasses to
+  // succeed trivially.
+  if (current_class->is_subclass_of(SystemDictionary::reflect_MagicAccessorImpl_klass())) {
     return true;
   }
 
@@ -707,13 +661,11 @@ Handle Reflection::new_type(Symbol* signature, KlassHandle k, TRAPS) {
 }
 
 
-oop Reflection::new_method(methodHandle method, bool intern_name, bool for_constant_pool_access, TRAPS) {
-  // In jdk1.2.x, getMethods on an interface erroneously includes <clinit>, thus the complicated assert.
-  // Also allow sun.reflect.ConstantPool to refer to <clinit> methods as java.lang.reflect.Methods.
+oop Reflection::new_method(methodHandle method, bool for_constant_pool_access, TRAPS) {
+  // Allow sun.reflect.ConstantPool to refer to <clinit> methods as java.lang.reflect.Methods.
   assert(!method()->is_initializer() ||
-         (for_constant_pool_access && method()->is_static()) ||
-         (method()->name() == vmSymbols::class_initializer_name()
-    && method()->method_holder()->is_interface() && JDK_Version::is_jdk12x_version()), "should call new_constructor instead");
+         (for_constant_pool_access && method()->is_static()),
+         "should call new_constructor instead");
   instanceKlassHandle holder (THREAD, method->method_holder());
   int slot = method->method_idnum();
 
@@ -730,14 +682,8 @@ oop Reflection::new_method(methodHandle method, bool intern_name, bool for_const
   if (exception_types.is_null()) return NULL;
 
   Symbol*  method_name = method->name();
-  Handle name;
-  if (intern_name) {
-    // intern_name is only true with UseNewReflection
-    oop name_oop = StringTable::intern(method_name, CHECK_NULL);
-    name = Handle(THREAD, name_oop);
-  } else {
-    name = java_lang_String::create_from_symbol(method_name, CHECK_NULL);
-  }
+  oop name_oop = StringTable::intern(method_name, CHECK_NULL);
+  Handle name = Handle(THREAD, name_oop);
   if (name == NULL) return NULL;
 
   int modifiers = method->access_flags().as_int() & JVM_RECOGNIZED_METHOD_MODIFIERS;
@@ -824,16 +770,10 @@ oop Reflection::new_constructor(methodHandle method, TRAPS) {
 }
 
 
-oop Reflection::new_field(fieldDescriptor* fd, bool intern_name, TRAPS) {
+oop Reflection::new_field(fieldDescriptor* fd, TRAPS) {
   Symbol*  field_name = fd->name();
-  Handle name;
-  if (intern_name) {
-    // intern_name is only true with UseNewReflection
-    oop name_oop = StringTable::intern(field_name, CHECK_NULL);
-    name = Handle(THREAD, name_oop);
-  } else {
-    name = java_lang_String::create_from_symbol(field_name, CHECK_NULL);
-  }
+  oop name_oop = StringTable::intern(field_name, CHECK_NULL);
+  Handle name = Handle(THREAD, name_oop);
   Symbol*  signature  = fd->signature();
   instanceKlassHandle  holder    (THREAD, fd->field_holder());
   Handle type = new_type(signature, holder, CHECK_NULL);
@@ -932,22 +872,23 @@ oop Reflection::invoke(instanceKlassHandle klass, methodHandle reflected_method,
       // resolve based on the receiver
       if (reflected_method->method_holder()->is_interface()) {
         // resolve interface call
-        if (ReflectionWrapResolutionErrors) {
-          // new default: 6531596
-          // Match resolution errors with those thrown due to reflection inlining
-          // Linktime resolution & IllegalAccessCheck already done by Class.getMethod()
-          method = resolve_interface_call(klass, reflected_method, target_klass, receiver, THREAD);
-          if (HAS_PENDING_EXCEPTION) {
-          // Method resolution threw an exception; wrap it in an InvocationTargetException
-            oop resolution_exception = PENDING_EXCEPTION;
-            CLEAR_PENDING_EXCEPTION;
-            JavaCallArguments args(Handle(THREAD, resolution_exception));
-            THROW_ARG_0(vmSymbols::java_lang_reflect_InvocationTargetException(),
-                vmSymbols::throwable_void_signature(),
-                &args);
+        //
+        // Match resolution errors with those thrown due to reflection inlining
+        // Linktime resolution & IllegalAccessCheck already done by Class.getMethod()
+        method = resolve_interface_call(klass, reflected_method, target_klass, receiver, THREAD);
+        if (HAS_PENDING_EXCEPTION) {
+        // Method resolution threw an exception; wrap it in an InvocationTargetException
+          oop resolution_exception = PENDING_EXCEPTION;
+          CLEAR_PENDING_EXCEPTION;
+          // JVMTI has already reported the pending exception
+          // JVMTI internal flag reset is needed in order to report InvocationTargetException
+          if (THREAD->is_Java_thread()) {
+            JvmtiExport::clear_detected_exception((JavaThread*) THREAD);
           }
-        } else {
-          method = resolve_interface_call(klass, reflected_method, target_klass, receiver, CHECK_(NULL));
+          JavaCallArguments args(Handle(THREAD, resolution_exception));
+          THROW_ARG_0(vmSymbols::java_lang_reflect_InvocationTargetException(),
+              vmSymbols::throwable_void_signature(),
+              &args);
         }
       }  else {
         // if the method can be overridden, we resolve using the vtable index.
@@ -964,24 +905,16 @@ oop Reflection::invoke(instanceKlassHandle klass, methodHandle reflected_method,
           // Check for abstract methods as well
           if (method->is_abstract()) {
             // new default: 6531596
-            if (ReflectionWrapResolutionErrors) {
-              ResourceMark rm(THREAD);
-              Handle h_origexception = Exceptions::new_exception(THREAD,
-                     vmSymbols::java_lang_AbstractMethodError(),
-                     Method::name_and_sig_as_C_string(target_klass(),
-                     method->name(),
-                     method->signature()));
-              JavaCallArguments args(h_origexception);
-              THROW_ARG_0(vmSymbols::java_lang_reflect_InvocationTargetException(),
-                vmSymbols::throwable_void_signature(),
-                &args);
-            } else {
-              ResourceMark rm(THREAD);
-              THROW_MSG_0(vmSymbols::java_lang_AbstractMethodError(),
-                        Method::name_and_sig_as_C_string(target_klass(),
-                                                                method->name(),
-                                                                method->signature()));
-            }
+            ResourceMark rm(THREAD);
+            Handle h_origexception = Exceptions::new_exception(THREAD,
+                   vmSymbols::java_lang_AbstractMethodError(),
+                   Method::name_and_sig_as_C_string(target_klass(),
+                   method->name(),
+                   method->signature()));
+            JavaCallArguments args(h_origexception);
+            THROW_ARG_0(vmSymbols::java_lang_reflect_InvocationTargetException(),
+              vmSymbols::throwable_void_signature(),
+              &args);
           }
         }
       }
@@ -997,22 +930,6 @@ oop Reflection::invoke(instanceKlassHandle klass, methodHandle reflected_method,
                                                         reflected_method->name(),
                                                         reflected_method->signature()));
   }
-
-  // In the JDK 1.4 reflection implementation, the security check is
-  // done at the Java level
-  if (!(JDK_Version::is_gte_jdk14x_version() && UseNewReflection)) {
-
-  // Access checking (unless overridden by Method)
-  if (!override) {
-    if (!(klass->is_public() && reflected_method->is_public())) {
-      bool access = Reflection::reflect_check_access(klass(), reflected_method->access_flags(), target_klass(), is_method_invoke, CHECK_NULL);
-      if (!access) {
-        return NULL; // exception
-      }
-    }
-  }
-
-  } // !(Universe::is_gte_jdk14x_version() && UseNewReflection)
 
   assert(ptypes->is_objArray(), "just checking");
   int args_len = args.is_null() ? 0 : args->length();
@@ -1073,6 +990,12 @@ oop Reflection::invoke(instanceKlassHandle klass, methodHandle reflected_method,
     // Method threw an exception; wrap it in an InvocationTargetException
     oop target_exception = PENDING_EXCEPTION;
     CLEAR_PENDING_EXCEPTION;
+    // JVMTI has already reported the pending exception
+    // JVMTI internal flag reset is needed in order to report InvocationTargetException
+    if (THREAD->is_Java_thread()) {
+      JvmtiExport::clear_detected_exception((JavaThread*) THREAD);
+    }
+
     JavaCallArguments args(Handle(THREAD, target_exception));
     THROW_ARG_0(vmSymbols::java_lang_reflect_InvocationTargetException(),
                 vmSymbols::throwable_void_signature(),

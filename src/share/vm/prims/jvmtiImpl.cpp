@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2003, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2003, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -25,6 +25,7 @@
 #include "precompiled.hpp"
 #include "classfile/systemDictionary.hpp"
 #include "interpreter/interpreter.hpp"
+#include "interpreter/oopMapCache.hpp"
 #include "jvmtifiles/jvmtiEnv.hpp"
 #include "memory/resourceArea.hpp"
 #include "oops/instanceKlass.hpp"
@@ -32,7 +33,7 @@
 #include "prims/jvmtiEventController.inline.hpp"
 #include "prims/jvmtiImpl.hpp"
 #include "prims/jvmtiRedefineClasses.hpp"
-#include "runtime/atomic.hpp"
+#include "runtime/atomic.inline.hpp"
 #include "runtime/deoptimization.hpp"
 #include "runtime/handles.hpp"
 #include "runtime/handles.inline.hpp"
@@ -281,39 +282,22 @@ address JvmtiBreakpoint::getBcp() {
 void JvmtiBreakpoint::each_method_version_do(method_action meth_act) {
   ((Method*)_method->*meth_act)(_bci);
 
-  // add/remove breakpoint to/from versions of the method that
-  // are EMCP. Directly or transitively obsolete methods are
-  // not saved in the PreviousVersionNodes.
+  // add/remove breakpoint to/from versions of the method that are EMCP.
   Thread *thread = Thread::current();
   instanceKlassHandle ikh = instanceKlassHandle(thread, _method->method_holder());
   Symbol* m_name = _method->name();
   Symbol* m_signature = _method->signature();
 
   // search previous versions if they exist
-  PreviousVersionWalker pvw(thread, (InstanceKlass *)ikh());
-  for (PreviousVersionNode * pv_node = pvw.next_previous_version();
-       pv_node != NULL; pv_node = pvw.next_previous_version()) {
-    GrowableArray<Method*>* methods = pv_node->prev_EMCP_methods();
-
-    if (methods == NULL) {
-      // We have run into a PreviousVersion generation where
-      // all methods were made obsolete during that generation's
-      // RedefineClasses() operation. At the time of that
-      // operation, all EMCP methods were flushed so we don't
-      // have to go back any further.
-      //
-      // A NULL methods array is different than an empty methods
-      // array. We cannot infer any optimizations about older
-      // generations from an empty methods array for the current
-      // generation.
-      break;
-    }
+  for (InstanceKlass* pv_node = ikh->previous_versions();
+       pv_node != NULL;
+       pv_node = pv_node->previous_versions()) {
+    Array<Method*>* methods = pv_node->methods();
 
     for (int i = methods->length() - 1; i >= 0; i--) {
       Method* method = methods->at(i);
-      // obsolete methods that are running are not deleted from
-      // previous version array, but they are skipped here.
-      if (!method->is_obsolete() &&
+      // Only set breakpoints in running EMCP methods.
+      if (method->is_running_emcp() &&
           method->name() == m_name &&
           method->signature() == m_signature) {
         RC_TRACE(0x00000800, ("%sing breakpoint in %s(%s)",
@@ -413,7 +397,7 @@ void  JvmtiBreakpoints::print() {
     JvmtiBreakpoint& bp = _bps.at(i);
     tty->print("%d: ", i);
     bp.print();
-    tty->print_cr("");
+    tty->cr();
   }
 #endif
 }
@@ -744,6 +728,13 @@ bool VM_GetOrSetLocal::doit_prologue() {
 }
 
 void VM_GetOrSetLocal::doit() {
+  InterpreterOopMap oop_mask;
+  _jvf->method()->mask_for(_jvf->bci(), &oop_mask);
+  if (oop_mask.is_dead(_index)) {
+    // The local can be invalid and uninitialized in the scope of current bci
+    _result = JVMTI_ERROR_INVALID_SLOT;
+    return;
+  }
   if (_set) {
     // Force deoptimization of frame if compiled because it's
     // possible the compiler emitted some locals as constant values,

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -61,10 +61,6 @@ class java_lang_String : AllStatic {
 
   static Handle basic_create(int length, TRAPS);
 
-  static void set_value( oop string, typeArrayOop buffer) {
-    assert(initialized, "Must be initialized");
-    string->obj_field_put(value_offset,  (oop)buffer);
-  }
   static void set_offset(oop string, int offset) {
     assert(initialized, "Must be initialized");
     if (offset_offset > 0) {
@@ -122,11 +118,25 @@ class java_lang_String : AllStatic {
     return hash_offset;
   }
 
+  static void set_value(oop string, typeArrayOop buffer) {
+    assert(initialized && (value_offset > 0), "Must be initialized");
+    string->obj_field_put(value_offset, (oop)buffer);
+  }
+  static void set_hash(oop string, unsigned int hash) {
+    assert(initialized && (hash_offset > 0), "Must be initialized");
+    string->int_field_put(hash_offset, hash);
+  }
+
   // Accessors
   static typeArrayOop value(oop java_string) {
     assert(initialized && (value_offset > 0), "Must be initialized");
     assert(is_instance(java_string), "must be java_string");
     return (typeArrayOop) java_string->obj_field(value_offset);
+  }
+  static unsigned int hash(oop java_string) {
+    assert(initialized && (hash_offset > 0), "Must be initialized");
+    assert(is_instance(java_string), "must be java_string");
+    return java_string->int_field(hash_offset);
   }
   static int offset(oop java_string) {
     assert(initialized, "Must be initialized");
@@ -156,6 +166,7 @@ class java_lang_String : AllStatic {
   static char*  as_utf8_string(oop java_string);
   static char*  as_utf8_string(oop java_string, char* buf, int buflen);
   static char*  as_utf8_string(oop java_string, int start, int len);
+  static char*  as_utf8_string(oop java_string, int start, int len, char* buf, int buflen);
   static char*  as_platform_dependent_str(Handle java_string, TRAPS);
   static jchar* as_unicode_string(oop java_string, int& length, TRAPS);
   // produce an ascii string with all other values quoted using \u####
@@ -202,7 +213,7 @@ class java_lang_String : AllStatic {
   }
 
   // Debugging
-  static void print(Handle java_string, outputStream* st);
+  static void print(oop java_string, outputStream* st);
   friend class JavaClasses;
 };
 
@@ -215,7 +226,6 @@ class java_lang_String : AllStatic {
   macro(java_lang_Class, oop_size,               int_signature,     false) \
   macro(java_lang_Class, static_oop_field_count, int_signature,     false) \
   macro(java_lang_Class, protection_domain,      object_signature,  false) \
-  macro(java_lang_Class, init_lock,              object_signature,  false) \
   macro(java_lang_Class, signers,                object_signature,  false)
 
 class java_lang_Class : AllStatic {
@@ -233,18 +243,25 @@ class java_lang_Class : AllStatic {
   static int _protection_domain_offset;
   static int _init_lock_offset;
   static int _signers_offset;
+  static int _class_loader_offset;
+  static int _component_mirror_offset;
 
   static bool offsets_computed;
   static int classRedefinedCount_offset;
+
   static GrowableArray<Klass*>* _fixup_mirror_list;
 
   static void set_init_lock(oop java_class, oop init_lock);
   static void set_protection_domain(oop java_class, oop protection_domain);
+  static void set_class_loader(oop java_class, oop class_loader);
+  static void set_component_mirror(oop java_class, oop comp_mirror);
+  static void initialize_mirror_fields(KlassHandle k, Handle mirror, Handle protection_domain, TRAPS);
  public:
   static void compute_offsets();
 
   // Instance creation
-  static oop  create_mirror(KlassHandle k, Handle protection_domain, TRAPS);
+  static void create_mirror(KlassHandle k, Handle class_loader,
+                            Handle protection_domain, TRAPS);
   static void fixup_mirror(KlassHandle k, TRAPS);
   static oop  create_basic_type_mirror(const char* basic_type_name, BasicType type, TRAPS);
   // Conversion
@@ -279,8 +296,11 @@ class java_lang_Class : AllStatic {
   // Support for embedded per-class oops
   static oop  protection_domain(oop java_class);
   static oop  init_lock(oop java_class);
+  static oop  component_mirror(oop java_class);
   static objArrayOop  signers(oop java_class);
   static void set_signers(oop java_class, objArrayOop signers);
+
+  static oop class_loader(oop java_class);
 
   static int oop_size(oop java_class);
   static void set_oop_size(oop java_class, int size);
@@ -503,6 +523,7 @@ class java_lang_Throwable: AllStatic {
   static oop message(oop throwable);
   static oop message(Handle throwable);
   static void set_message(oop throwable, oop value);
+  static Symbol* detail_message(oop throwable);
   static void print_stack_element(outputStream *st, Handle mirror, int method,
                                   int version, int bci);
   static void print_stack_element(outputStream *st, methodHandle method, int bci);
@@ -1173,7 +1194,7 @@ public:
   static oop              target(         oop site)             { return site->obj_field(             _target_offset);         }
   static void         set_target(         oop site, oop target) {        site->obj_field_put(         _target_offset, target); }
 
-  static volatile oop     target_volatile(oop site)             { return site->obj_field_volatile(    _target_offset);         }
+  static volatile oop     target_volatile(oop site)             { return oop((oopDesc *)(site->obj_field_volatile(_target_offset))); }
   static void         set_target_volatile(oop site, oop target) {        site->obj_field_put_volatile(_target_offset, target); }
 
   // Testers

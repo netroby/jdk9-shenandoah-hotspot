@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2011, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -23,14 +23,18 @@
  */
 
 #include "precompiled.hpp"
+#include "classfile/classLoaderStats.hpp"
 #include "gc_implementation/shared/vmGCOperations.hpp"
 #include "runtime/javaCalls.hpp"
+#include "runtime/os.hpp"
 #include "services/diagnosticArgument.hpp"
 #include "services/diagnosticCommand.hpp"
 #include "services/diagnosticFramework.hpp"
 #include "services/heapDumper.hpp"
 #include "services/management.hpp"
 #include "utilities/macros.hpp"
+
+PRAGMA_FORMAT_MUTE_WARNINGS_FOR_GCC
 
 void DCmdRegistrant::register_dcmds(){
   // Registration of the diagnostic commands
@@ -44,6 +48,7 @@ void DCmdRegistrant::register_dcmds(){
   DCmdFactory::register_DCmdFactory(new DCmdFactoryImpl<CommandLineDCmd>(full_export, true, false));
   DCmdFactory::register_DCmdFactory(new DCmdFactoryImpl<PrintSystemPropertiesDCmd>(full_export, true, false));
   DCmdFactory::register_DCmdFactory(new DCmdFactoryImpl<PrintVMFlagsDCmd>(full_export, true, false));
+  DCmdFactory::register_DCmdFactory(new DCmdFactoryImpl<VMDynamicLibrariesDCmd>(full_export, true, false));
   DCmdFactory::register_DCmdFactory(new DCmdFactoryImpl<VMUptimeDCmd>(full_export, true, false));
   DCmdFactory::register_DCmdFactory(new DCmdFactoryImpl<SystemGCDCmd>(full_export, true, false));
   DCmdFactory::register_DCmdFactory(new DCmdFactoryImpl<RunFinalizationDCmd>(full_export, true, false));
@@ -53,6 +58,11 @@ void DCmdRegistrant::register_dcmds(){
   DCmdFactory::register_DCmdFactory(new DCmdFactoryImpl<ClassStatsDCmd>(full_export, true, false));
 #endif // INCLUDE_SERVICES
   DCmdFactory::register_DCmdFactory(new DCmdFactoryImpl<ThreadDumpDCmd>(full_export, true, false));
+  DCmdFactory::register_DCmdFactory(new DCmdFactoryImpl<RotateGCLogDCmd>(full_export, true, false));
+  DCmdFactory::register_DCmdFactory(new DCmdFactoryImpl<ClassLoaderStatsDCmd>(full_export, true, false));
+  DCmdFactory::register_DCmdFactory(new DCmdFactoryImpl<CompileQueueDCmd>(full_export, true, false));
+  DCmdFactory::register_DCmdFactory(new DCmdFactoryImpl<CodeListDCmd>(full_export, true, false));
+  DCmdFactory::register_DCmdFactory(new DCmdFactoryImpl<CodeCacheDCmd>(full_export, true, false));
 
   // Enhanced JMX Agent Support
   // These commands won't be exported via the DiagnosticCommandMBean until an
@@ -98,7 +108,7 @@ void HelpDCmd::execute(DCmdSource source, TRAPS) {
     if (factory != NULL) {
       output()->print_cr("%s%s", factory->name(),
                          factory->is_enabled() ? "" : " [disabled]");
-      output()->print_cr(factory->description());
+      output()->print_cr("%s", factory->description());
       output()->print_cr("\nImpact: %s", factory->impact());
       JavaPermission p = factory->permission();
       if(p._class != NULL) {
@@ -610,8 +620,7 @@ void JMXStartRemoteDCmd::execute(DCmdSource source, TRAPS) {
 }
 
 JMXStartLocalDCmd::JMXStartLocalDCmd(outputStream *output, bool heap_allocated) :
-  DCmd(output, heap_allocated)
-{
+  DCmd(output, heap_allocated) {
   // do nothing
 }
 
@@ -632,7 +641,6 @@ void JMXStartLocalDCmd::execute(DCmdSource source, TRAPS) {
     JavaCalls::call_static(&result, ik, vmSymbols::startLocalAgent_name(), vmSymbols::void_method_signature(), CHECK);
 }
 
-
 void JMXStopRemoteDCmd::execute(DCmdSource source, TRAPS) {
     ResourceMark rm(THREAD);
     HandleMark hm(THREAD);
@@ -648,5 +656,39 @@ void JMXStopRemoteDCmd::execute(DCmdSource source, TRAPS) {
 
     JavaValue result(T_VOID);
     JavaCalls::call_static(&result, ik, vmSymbols::stopRemoteAgent_name(), vmSymbols::void_method_signature(), CHECK);
+}
+
+VMDynamicLibrariesDCmd::VMDynamicLibrariesDCmd(outputStream *output, bool heap_allocated) :
+  DCmd(output, heap_allocated) {
+  // do nothing
+}
+
+void VMDynamicLibrariesDCmd::execute(DCmdSource source, TRAPS) {
+  os::print_dll_info(output());
+  output()->cr();
+}
+
+void RotateGCLogDCmd::execute(DCmdSource source, TRAPS) {
+  if (UseGCLogFileRotation) {
+    VM_RotateGCLog rotateop(output());
+    VMThread::execute(&rotateop);
+  } else {
+    output()->print_cr("Target VM does not support GC log file rotation.");
+  }
+}
+
+void CompileQueueDCmd::execute(DCmdSource source, TRAPS) {
+  VM_PrintCompileQueue printCompileQueueOp(output());
+  VMThread::execute(&printCompileQueueOp);
+}
+
+void CodeListDCmd::execute(DCmdSource source, TRAPS) {
+  VM_PrintCodeList printCodeListOp(output());
+  VMThread::execute(&printCodeListOp);
+}
+
+void CodeCacheDCmd::execute(DCmdSource source, TRAPS) {
+  VM_PrintCodeCache printCodeCacheOp(output());
+  VMThread::execute(&printCodeCacheOp);
 }
 

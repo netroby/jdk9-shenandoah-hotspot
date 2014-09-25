@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -31,6 +31,7 @@
 #include "opto/node.hpp"
 #include "opto/regmask.hpp"
 
+class BiasedLockingCounters;
 class BufferBlob;
 class CodeBuffer;
 class JVMState;
@@ -52,13 +53,17 @@ class MachSpillCopyNode;
 class Matcher;
 class PhaseRegAlloc;
 class RegMask;
+class RTMLockingCounters;
 class State;
 
 //---------------------------MachOper------------------------------------------
 class MachOper : public ResourceObj {
 public:
   // Allocate right next to the MachNodes in the same arena
-  void *operator new( size_t x, Compile* C ) throw() { return C->node_arena()->Amalloc_D(x); }
+  void *operator new(size_t x) throw() {
+    Compile* C = Compile::current();
+    return C->node_arena()->Amalloc_D(x);
+  }
 
   // Opcode
   virtual uint opcode() const = 0;
@@ -102,6 +107,15 @@ public:
     return ::as_XMMRegister(reg(ra_, node, idx));
   }
 #endif
+  // CondRegister reg converter
+#if defined(PPC64)
+  ConditionRegister as_ConditionRegister(PhaseRegAlloc *ra_, const Node *node) const {
+    return ::as_ConditionRegister(reg(ra_, node));
+  }
+  ConditionRegister as_ConditionRegister(PhaseRegAlloc *ra_, const Node *node, int idx) const {
+    return ::as_ConditionRegister(reg(ra_, node, idx));
+  }
+#endif
 
   virtual intptr_t  constant() const;
   virtual relocInfo::relocType constant_reloc() const;
@@ -138,7 +152,7 @@ public:
   virtual uint  cmp( const MachOper &oper ) const;
 
   // Virtual clone, since I do not know how big the MachOper is.
-  virtual MachOper *clone(Compile* C) const = 0;
+  virtual MachOper *clone() const = 0;
 
   // Return ideal Type from simple operands.  Fail for complex operands.
   virtual const Type *type() const;
@@ -155,7 +169,15 @@ public:
   virtual void ext_format(PhaseRegAlloc *,const MachNode *node,int idx, outputStream *st) const=0;
 
   virtual void dump_spec(outputStream *st) const; // Print per-operand info
-#endif
+
+  // Check whether o is a valid oper.
+  static bool notAnOper(const MachOper *o) {
+    if (o == NULL)                   return true;
+    if (((intptr_t)o & 1) != 0)      return true;
+    if (*(address*)o == badAddress)  return true;  // kill by Node::destruct
+    return false;
+  }
+#endif // !PRODUCT
 };
 
 //------------------------------MachNode---------------------------------------
@@ -173,14 +195,17 @@ public:
   // Number of inputs which come before the first operand.
   // Generally at least 1, to skip the Control input
   virtual uint oper_input_base() const { return 1; }
+  // Position of constant base node in node's inputs. -1 if
+  // no constant base node input.
+  virtual uint mach_constant_base_node_input() const { return (uint)-1; }
 
   // Copy inputs and operands to new node of instruction.
   // Called from cisc_version() and short_branch_version().
   // !!!! The method's body is defined in ad_<arch>.cpp file.
-  void fill_new_machnode(MachNode *n, Compile* C) const;
+  void fill_new_machnode(MachNode *n) const;
 
   // Return an equivalent instruction using memory for cisc_operand position
-  virtual MachNode *cisc_version(int offset, Compile* C);
+  virtual MachNode *cisc_version(int offset);
   // Modify this instruction's register mask to use stack version for cisc_operand
   virtual void use_cisc_RegMask();
 
@@ -188,13 +213,21 @@ public:
   bool may_be_short_branch() const { return (flags() & Flag_may_be_short_branch) != 0; }
 
   // Avoid back to back some instructions on some CPUs.
-  bool avoid_back_to_back() const { return (flags() & Flag_avoid_back_to_back) != 0; }
+  enum AvoidBackToBackFlag { AVOID_NONE = 0,
+                             AVOID_BEFORE = Flag_avoid_back_to_back_before,
+                             AVOID_AFTER = Flag_avoid_back_to_back_after,
+                             AVOID_BEFORE_AND_AFTER = AVOID_BEFORE | AVOID_AFTER };
+
+  bool avoid_back_to_back(AvoidBackToBackFlag flag_value) const {
+    return (flags() & flag_value) == flag_value;
+  }
 
   // instruction implemented with a call
   bool has_call() const { return (flags() & Flag_has_call) != 0; }
 
   // First index in _in[] corresponding to operand, or -1 if there is none
   int  operand_index(uint operand) const;
+  int  operand_index(const MachOper *oper) const;
 
   // Register class input is expected in
   virtual const RegMask &in_RegMask(uint) const;
@@ -220,6 +253,12 @@ public:
 
   // Emit bytes into cbuf
   virtual void  emit(CodeBuffer &cbuf, PhaseRegAlloc *ra_) const;
+  // Expand node after register allocation.
+  // Node is replaced by several nodes in the postalloc expand phase.
+  // Corresponding methods are generated for nodes if they specify
+  // postalloc_expand. See block.cpp for more documentation.
+  virtual bool requires_postalloc_expand() const { return false; }
+  virtual void postalloc_expand(GrowableArray <Node *> *nodes, PhaseRegAlloc *ra_);
   // Size of instruction in bytes
   virtual uint  size(PhaseRegAlloc *ra_) const;
   // Helper function that computes size by emitting code
@@ -235,6 +274,9 @@ public:
 
   // Return number of relocatable values contained in this instruction
   virtual int   reloc() const { return 0; }
+
+  // Return number of words used for double constants in this instruction
+  virtual int   ins_num_consts() const { return 0; }
 
   // Hash and compare over operands.  Used to do GVN on machine Nodes.
   virtual uint  hash() const;
@@ -275,7 +317,7 @@ public:
   virtual const class TypePtr *adr_type() const;
 
   // Apply peephole rule(s) to this instruction
-  virtual MachNode *peephole( Block *block, int block_index, PhaseRegAlloc *ra_, int &deleted, Compile* C );
+  virtual MachNode *peephole(Block *block, int block_index, PhaseRegAlloc *ra_, int &deleted);
 
   // Top-level ideal Opcode matched
   virtual int ideal_Opcode()     const { return Op_Node; }
@@ -292,6 +334,9 @@ public:
   // Get the pipeline info
   static const Pipeline *pipeline_class();
   virtual const Pipeline *pipeline() const;
+
+  // Returns true if this node is a check that can be implemented with a trap.
+  virtual bool is_TrapBasedCheckNode() const { return false; }
 
 #ifndef PRODUCT
   virtual const char *Name() const = 0; // Machine-specific name
@@ -356,6 +401,9 @@ public:
   virtual uint ideal_reg() const { return Op_RegP; }
   virtual uint oper_input_base() const { return 1; }
 
+  virtual bool requires_postalloc_expand() const;
+  virtual void postalloc_expand(GrowableArray <Node *> *nodes, PhaseRegAlloc *ra_);
+
   virtual void emit(CodeBuffer& cbuf, PhaseRegAlloc* ra_) const;
   virtual uint size(PhaseRegAlloc* ra_) const;
   virtual bool pinned() const { return UseRDPCForConstantTableBase; }
@@ -395,10 +443,12 @@ public:
   }
 
   // Input edge of MachConstantBaseNode.
-  uint mach_constant_base_node_input() const { return req() - 1; }
+  virtual uint mach_constant_base_node_input() const { return req() - 1; }
 
   int  constant_offset();
   int  constant_offset() const { return ((MachConstantNode*) this)->constant_offset(); }
+  // Unchecked version to avoid assertions in debug output.
+  int  constant_offset_unchecked() const;
 };
 
 //------------------------------MachUEPNode-----------------------------------
@@ -481,12 +531,33 @@ public:
 // Machine SpillCopy Node.  Copies 1 or 2 words from any location to any
 // location (stack or register).
 class MachSpillCopyNode : public MachIdealNode {
+public:
+  enum SpillType {
+    TwoAddress,                        // Inserted when coalescing of a two-address-instruction node and its input fails
+    PhiInput,                          // Inserted when coalescing of a phi node and its input fails
+    DebugUse,                          // Inserted as debug info spills to safepoints in non-frequent blocks
+    LoopPhiInput,                      // Pre-split compares of loop-phis
+    Definition,                        // An lrg marked as spilled will be spilled to memory right after its definition,
+                                       // if in high pressure region or the lrg is bound
+    RegToReg,                          // A register to register move
+    RegToMem,                          // A register to memory move
+    MemToReg,                          // A memory to register move
+    PhiLocationDifferToInputLocation,  // When coalescing phi nodes in PhaseChaitin::Split(), a move spill is inserted if
+                                       // the phi and its input resides at different locations (i.e. reg or mem)
+    BasePointerToMem,                  // Spill base pointer to memory at safepoint
+    InputToRematerialization,          // When rematerializing a node we stretch the inputs live ranges, and they might be
+                                       // stretched beyond a new definition point, therefore we split out new copies instead
+    CallUse,                           // Spill use at a call
+    Bound                              // An lrg marked as spill that is bound and needs to be spilled at a use
+  };
+private:
   const RegMask *_in;           // RegMask for input
   const RegMask *_out;          // RegMask for output
   const Type *_type;
+  const SpillType _spill_type;
 public:
-  MachSpillCopyNode( Node *n, const RegMask &in, const RegMask &out ) :
-    MachIdealNode(), _in(&in), _out(&out), _type(n->bottom_type()) {
+  MachSpillCopyNode(SpillType spill_type, Node *n, const RegMask &in, const RegMask &out ) :
+    MachIdealNode(), _spill_type(spill_type), _in(&in), _out(&out), _type(n->bottom_type()) {
     init_class_id(Class_MachSpillCopy);
     init_flags(Flag_is_Copy);
     add_req(NULL);
@@ -505,8 +576,42 @@ public:
   virtual void emit(CodeBuffer &cbuf, PhaseRegAlloc *ra_) const;
   virtual uint size(PhaseRegAlloc *ra_) const;
 
+
 #ifndef PRODUCT
-  virtual const char *Name() const { return "MachSpillCopy"; }
+  virtual const char *Name() const {
+    switch (_spill_type) {
+      case TwoAddress:
+        return "TwoAddressSpillCopy";
+      case PhiInput:
+        return "PhiInputSpillCopy";
+      case DebugUse:
+        return "DebugUseSpillCopy";
+      case LoopPhiInput:
+        return "LoopPhiInputSpillCopy";
+      case Definition:
+        return "DefinitionSpillCopy";
+      case RegToReg:
+        return "RegToRegSpillCopy";
+      case RegToMem:
+        return "RegToMemSpillCopy";
+      case MemToReg:
+        return "MemToRegSpillCopy";
+      case PhiLocationDifferToInputLocation:
+        return "PhiLocationDifferToInputLocationSpillCopy";
+      case BasePointerToMem:
+        return "BasePointerToMemSpillCopy";
+      case InputToRematerialization:
+        return "InputToRematerializationSpillCopy";
+      case CallUse:
+        return "CallUseSpillCopy";
+      case Bound:
+        return "BoundSpillCopy";
+      default:
+        assert(false, "Must have valid spill type");
+        return "MachSpillCopy";
+    }
+  }
+
   virtual void format( PhaseRegAlloc *, outputStream *st ) const;
 #endif
 };
@@ -522,7 +627,7 @@ public:
   virtual void save_label(Label** label, uint* block_num) = 0;
 
   // Support for short branches
-  virtual MachNode *short_branch_version(Compile* C) { return NULL; }
+  virtual MachNode *short_branch_version() { return NULL; }
 
   virtual bool pinned() const { return true; };
 };
@@ -620,8 +725,9 @@ public:
 class MachFastLockNode : public MachNode {
   virtual uint size_of() const { return sizeof(*this); } // Size is bigger
 public:
-  BiasedLockingCounters* _counters;
-
+  BiasedLockingCounters*        _counters;
+  RTMLockingCounters*       _rtm_counters; // RTM lock counters for inflated locks
+  RTMLockingCounters* _stack_rtm_counters; // RTM lock counters for stack locks
   MachFastLockNode() : MachNode() {}
 };
 
@@ -736,6 +842,10 @@ public:
 
   bool returns_long() const { return tf()->return_type() == T_LONG; }
   bool return_value_is_used() const;
+
+  // Similar to cousin class CallNode::returns_pointer
+  bool returns_pointer() const;
+
 #ifndef PRODUCT
   virtual void dump_spec(outputStream *st) const;
 #endif
@@ -875,7 +985,7 @@ public:
 
   labelOper(labelOper* l) : _label(l->_label) , _block_num(l->_block_num) {}
 
-  virtual MachOper *clone(Compile* C) const;
+  virtual MachOper *clone() const;
 
   virtual Label *label() const { assert(_label != NULL, "need Label"); return _label; }
 
@@ -902,7 +1012,7 @@ public:
   methodOper() :   _method(0) {}
   methodOper(intptr_t method) : _method(method)  {}
 
-  virtual MachOper *clone(Compile* C) const;
+  virtual MachOper *clone() const;
 
   virtual intptr_t method() const { return _method; }
 

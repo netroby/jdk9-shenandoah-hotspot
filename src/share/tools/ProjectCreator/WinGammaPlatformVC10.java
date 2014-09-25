@@ -161,7 +161,18 @@ public class WinGammaPlatformVC10 extends WinGammaPlatformVC7 {
         for (BuildConfig cfg : allConfigs) {
             startTag(cfg, "PropertyGroup");
             tagData("LocalDebuggerCommand", cfg.get("JdkTargetRoot") + "\\bin\\java.exe");
-            tagData("LocalDebuggerCommandArguments", "-XXaltjvm=$(TargetDir) -Dsun.java.launcher=gamma");
+            // The JVM loads some libraries using a path relative to
+            // itself because it expects to be in a JRE or a JDK. The java
+            // launcher's '-XXaltjvm=' option allows the JVM to be outside
+            // the JRE or JDK so '-Dsun.java.launcher.is_altjvm=true'
+            // forces a fake JAVA_HOME relative path to be used to
+            // find the other libraries. The '-XX:+PauseAtExit' option
+            // causes the VM to wait for key press before exiting; this
+            // allows any stdout or stderr messages to be seen before
+            // the cmdtool exits.
+            tagData("LocalDebuggerCommandArguments", "-XXaltjvm=$(TargetDir) "
+                    + "-Dsun.java.launcher.is_altjvm=true "
+                    + "-XX:+UnlockDiagnosticVMOptions -XX:+PauseAtExit");
             tagData("LocalDebuggerEnvironment", "JAVA_HOME=" + cfg.get("JdkTargetRoot"));
             endTag();
         }
@@ -346,7 +357,7 @@ class CompilerInterfaceVC10 extends CompilerInterface {
     }
 
     @Override
-    Vector getDebugCompilerFlags(String opt) {
+    Vector getDebugCompilerFlags(String opt, String platformName) {
         Vector rv = new Vector();
 
         // Set /On option
@@ -358,6 +369,10 @@ class CompilerInterfaceVC10 extends CompilerInterface {
         addAttr(rv, "RuntimeLibrary", "MultiThreadedDLL");
         // Set /Oy- option
         addAttr(rv, "OmitFramePointers", "false");
+        // Set /homeparams for x64 debug builds
+        if(platformName.equals("x64")) {
+            addAttr(rv, "AdditionalOptions", "/homeparams");
+        }
 
         return rv;
     }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2000, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -31,24 +31,25 @@
 #include "memory/allocation.inline.hpp"
 #include "prims/jni.h"
 #include "prims/jvm.h"
+#include "runtime/atomic.inline.hpp"
 #include "runtime/globals.hpp"
 #include "runtime/interfaceSupport.hpp"
+#include "runtime/prefetch.inline.hpp"
+#include "runtime/orderAccess.inline.hpp"
 #include "runtime/reflection.hpp"
 #include "runtime/synchronizer.hpp"
+#include "runtime/vm_version.hpp"
 #include "services/threadService.hpp"
 #include "trace/tracing.hpp"
 #include "utilities/copy.hpp"
 #include "utilities/dtrace.hpp"
 
+PRAGMA_FORMAT_MUTE_WARNINGS_FOR_GCC
+
 /*
  *      Implementation of class sun.misc.Unsafe
  */
 
-#ifndef USDT2
-HS_DTRACE_PROBE_DECL3(hotspot, thread__park__begin, uintptr_t, int, long long);
-HS_DTRACE_PROBE_DECL1(hotspot, thread__park__end, uintptr_t);
-HS_DTRACE_PROBE_DECL1(hotspot, thread__unpark, uintptr_t);
-#endif /* !USDT2 */
 
 #define MAX_OBJECT_SIZE \
   ( arrayOopDesc::header_size(T_DOUBLE) * HeapWordSize \
@@ -167,6 +168,9 @@ jint Unsafe_invocation_key_to_method_slot(jint key) {
 
 #define GET_FIELD_VOLATILE(obj, offset, type_name, v) \
   oop p = JNIHandles::resolve(obj); \
+  if (support_IRIW_for_not_multiple_copy_atomic_cpu) { \
+    OrderAccess::fence(); \
+  } \
   volatile type_name v = OrderAccess::load_acquire((volatile type_name*)index_oop_from_field_offset_long(p, offset));
 
 #define SET_FIELD_VOLATILE(obj, offset, type_name, x) \
@@ -189,65 +193,7 @@ jint Unsafe_invocation_key_to_method_slot(jint key) {
 
 // Get/SetObject must be special-cased, since it works with handles.
 
-// The xxx140 variants for backward compatibility do not allow a full-width offset.
-UNSAFE_ENTRY(jobject, Unsafe_GetObject140(JNIEnv *env, jobject unsafe, jobject obj, jint offset))
-  UnsafeWrapper("Unsafe_GetObject");
-  if (obj == NULL)  THROW_0(vmSymbols::java_lang_NullPointerException());
-  GET_OOP_FIELD(obj, offset, v)
-  jobject ret = JNIHandles::make_local(env, v);
-#if INCLUDE_ALL_GCS
-  // We could be accessing the referent field in a reference
-  // object. If G1 is enabled then we need to register a non-null
-  // referent with the SATB barrier.
-  if (UseG1GC || UseShenandoahGC) {
-    bool needs_barrier = false;
-
-    if (ret != NULL) {
-      if (offset == java_lang_ref_Reference::referent_offset) {
-        oop o = JNIHandles::resolve_non_null(obj);
-        Klass* k = o->klass();
-        if (InstanceKlass::cast(k)->reference_type() != REF_NONE) {
-          assert(InstanceKlass::cast(k)->is_subclass_of(SystemDictionary::Reference_klass()), "sanity");
-          needs_barrier = true;
-        }
-      }
-    }
-
-    if (needs_barrier) {
-      oop referent = JNIHandles::resolve(ret);
-      G1SATBCardTableModRefBS::enqueue(referent);
-    }
-  }
-#endif // INCLUDE_ALL_GCS
-  return ret;
-UNSAFE_END
-
-UNSAFE_ENTRY(void, Unsafe_SetObject140(JNIEnv *env, jobject unsafe, jobject obj, jint offset, jobject x_h))
-  UnsafeWrapper("Unsafe_SetObject");
-  if (obj == NULL)  THROW(vmSymbols::java_lang_NullPointerException());
-  oop x = JNIHandles::resolve(x_h);
-  //SET_FIELD(obj, offset, oop, x);
-  oop p = JNIHandles::resolve(obj);
-  p = oopDesc::bs()->resolve_and_maybe_copy_oop(p);
-  if (UseCompressedOops) {
-    if (x != NULL) {
-      // If there is a heap base pointer, we are obliged to emit a store barrier.
-      oop_store((narrowOop*)index_oop_from_field_offset_long(p, offset), x);
-    } else {
-      narrowOop n = oopDesc::encode_heap_oop_not_null(x);
-      *(narrowOop*)index_oop_from_field_offset_long(p, offset) = n;
-    }
-  } else {
-    if (x != NULL) {
-      // If there is a heap base pointer, we are obliged to emit a store barrier.
-      oop_store((oop*)index_oop_from_field_offset_long(p, offset), x);
-    } else {
-      *(oop*)index_oop_from_field_offset_long(p, offset) = x;
-    }
-  }
-UNSAFE_END
-
-// The normal variants allow a null base pointer with an arbitrary address.
+// These functions allow a null base pointer with an arbitrary address.
 // But if the base pointer is non-null, the offset should make some sense.
 // That is, it should be in the range [0, MAX_OBJECT_SIZE].
 UNSAFE_ENTRY(jobject, Unsafe_GetObject(JNIEnv *env, jobject unsafe, jobject obj, jlong offset))
@@ -869,6 +815,11 @@ static inline void throw_new(JNIEnv *env, const char *ename) {
   strcpy(buf, "java/lang/");
   strcat(buf, ename);
   jclass cls = env->FindClass(buf);
+  if (env->ExceptionCheck()) {
+    env->ExceptionClear();
+    tty->print_cr("Unsafe: cannot throw %s because FindClass has failed", buf);
+    return;
+  }
   char* msg = NULL;
   env->ThrowNew(cls, msg);
 }
@@ -952,6 +903,14 @@ UNSAFE_ENTRY(jclass, Unsafe_DefineClass(JNIEnv *env, jobject unsafe, jstring nam
   }
 UNSAFE_END
 
+static jobject get_class_loader(JNIEnv* env, jclass cls) {
+  if (java_lang_Class::is_primitive(JNIHandles::resolve_non_null(cls))) {
+    return NULL;
+  }
+  Klass* k = java_lang_Class::as_Klass(JNIHandles::resolve_non_null(cls));
+  oop loader = k->class_loader();
+  return JNIHandles::make_local(env, loader);
+}
 
 UNSAFE_ENTRY(jclass, Unsafe_DefineClass0(JNIEnv *env, jobject unsafe, jstring name, jbyteArray data, int offset, int length))
   UnsafeWrapper("Unsafe_DefineClass");
@@ -960,7 +919,7 @@ UNSAFE_ENTRY(jclass, Unsafe_DefineClass0(JNIEnv *env, jobject unsafe, jstring na
 
     int depthFromDefineClass0 = 1;
     jclass  caller = JVM_GetCallerClass(env, depthFromDefineClass0);
-    jobject loader = (caller == NULL) ? NULL : JVM_GetClassLoader(env, caller);
+    jobject loader = (caller == NULL) ? NULL : get_class_loader(env, caller);
     jobject pd     = (caller == NULL) ? NULL : JVM_GetProtectionDomain(env, caller);
 
     return Unsafe_DefineClass_impl(env, name, data, offset, length, loader, pd);
@@ -1231,20 +1190,12 @@ UNSAFE_END
 UNSAFE_ENTRY(void, Unsafe_Park(JNIEnv *env, jobject unsafe, jboolean isAbsolute, jlong time))
   UnsafeWrapper("Unsafe_Park");
   EventThreadPark event;
-#ifndef USDT2
-  HS_DTRACE_PROBE3(hotspot, thread__park__begin, thread->parker(), (int) isAbsolute, time);
-#else /* USDT2 */
-   HOTSPOT_THREAD_PARK_BEGIN(
-                             (uintptr_t) thread->parker(), (int) isAbsolute, time);
-#endif /* USDT2 */
+  HOTSPOT_THREAD_PARK_BEGIN((uintptr_t) thread->parker(), (int) isAbsolute, time);
+
   JavaThreadParkedState jtps(thread, time != 0);
   thread->parker()->park(isAbsolute != 0, time);
-#ifndef USDT2
-  HS_DTRACE_PROBE1(hotspot, thread__park__end, thread->parker());
-#else /* USDT2 */
-  HOTSPOT_THREAD_PARK_END(
-                          (uintptr_t) thread->parker());
-#endif /* USDT2 */
+
+  HOTSPOT_THREAD_PARK_END((uintptr_t) thread->parker());
   if (event.should_commit()) {
     oop obj = thread->current_park_blocker();
     event.set_klass((obj != NULL) ? obj->klass() : NULL);
@@ -1283,12 +1234,7 @@ UNSAFE_ENTRY(void, Unsafe_Unpark(JNIEnv *env, jobject unsafe, jobject jthread))
     }
   }
   if (p != NULL) {
-#ifndef USDT2
-    HS_DTRACE_PROBE1(hotspot, thread__unpark, p);
-#else /* USDT2 */
-    HOTSPOT_THREAD_UNPARK(
-                          (uintptr_t) p);
-#endif /* USDT2 */
+    HOTSPOT_THREAD_UNPARK((uintptr_t) p);
     p->unpark();
   }
 UNSAFE_END
@@ -1381,9 +1327,6 @@ UNSAFE_END
 
 // These are the methods for 1.4.0
 static JNINativeMethod methods_140[] = {
-    {CC"getObject",        CC"("OBJ"I)"OBJ"",   FN_PTR(Unsafe_GetObject140)},
-    {CC"putObject",        CC"("OBJ"I"OBJ")V",  FN_PTR(Unsafe_SetObject140)},
-
     DECLARE_GETSETOOP_140(Boolean, Z),
     DECLARE_GETSETOOP_140(Byte, B),
     DECLARE_GETSETOOP_140(Short, S),
@@ -1762,14 +1705,10 @@ JVM_ENTRY(void, JVM_RegisterUnsafeMethods(JNIEnv *env, jclass unsafecls))
     }
 
     // Unsafe.defineAnonymousClass
-    if (EnableInvokeDynamic) {
-      register_natives("1.7 define anonymous class method", env, unsafecls, anonk_methods, sizeof(anonk_methods)/sizeof(JNINativeMethod));
-    }
+    register_natives("1.7 define anonymous class method", env, unsafecls, anonk_methods, sizeof(anonk_methods)/sizeof(JNINativeMethod));
 
     // Unsafe.shouldBeInitialized
-    if (EnableInvokeDynamic) {
-      register_natives("1.7 LambdaForm support", env, unsafecls, lform_methods, sizeof(lform_methods)/sizeof(JNINativeMethod));
-    }
+    register_natives("1.7 LambdaForm support", env, unsafecls, lform_methods, sizeof(lform_methods)/sizeof(JNINativeMethod));
 
     // Fence methods
     register_natives("1.8 fence methods", env, unsafecls, fence_methods, sizeof(fence_methods)/sizeof(JNINativeMethod));

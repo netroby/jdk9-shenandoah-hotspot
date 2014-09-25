@@ -1,6 +1,6 @@
 #!/bin/sh
 # 
-# Copyright (c) 2013, Oracle and/or its affiliates. All rights reserved.
+# Copyright (c) 2013, 2014, Oracle and/or its affiliates. All rights reserved.
 # DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
 # 
 # This code is free software; you can redistribute it and/or modify it
@@ -22,6 +22,7 @@
 # questions.
 # 
 # 
+set -x
 
 # $1 - error code
 # $2 - test name
@@ -56,7 +57,7 @@ positive_test() {
     shift
     name=$1
     shift
-    VMOPTS="${TESTVMOPTS} $@"
+    VMOPTS="${TESTOPTS} $@"
     echo "POSITIVE TEST [$name]"
     start_test ${VMOPTS}
     exit_code=$?
@@ -75,7 +76,7 @@ negative_test() {
     shift
     name=$1
     shift
-    VMOPTS="${TESTVMOPTS} $@"
+    VMOPTS="${TESTOPTS} $@"
     echo "NEGATIVE TEST [$name]"
     start_test ${VMOPTS}
     exit_code=$?
@@ -99,13 +100,12 @@ common_tests() {
 # $2 - non-tiered comp_level 
 nontiered_tests() {
     level=`grep "^compile " $replay_data | awk '{print $6}'`
-    # is level available in non-tiere
+    # is level available in non-tiered
     if [ "$level" -eq $2 ]
     then
         positive_test $1 "NON-TIERED :: AVAILABLE COMP_LEVEL" \
                 -XX:-TieredCompilation
     else
-        negative_test `expr $1 + 1` "NON-TIERED :: UNAVAILABLE COMP_LEVEL" \
         negative_test `expr $1 + 1` "NON-TIERED :: UNAVAILABLE COMP_LEVEL" \
                 -XX:-TieredCompilation
     fi
@@ -150,7 +150,7 @@ JAVA=${TESTJAVA}${FS}bin${FS}java
 
 replay_data=test_replay.txt
 
-${JAVA} ${TESTVMOPTS} -Xinternalversion 2>&1 | grep debug
+${JAVA} ${TESTOPTS} -Xinternalversion 2>&1 | grep debug
 
 # Only test fastdebug 
 if [ $? -ne 0 ]
@@ -159,7 +159,7 @@ then
     exit 0
 fi
 
-is_int=`${JAVA} ${TESTVMOPTS} -version 2>&1 | grep -c "interpreted mode"`
+is_int=`${JAVA} ${TESTOPTS} -version 2>&1 | grep -c "interpreted mode"`
 # Not applicable for Xint
 if [ $is_int -ne 0 ]
 then
@@ -169,14 +169,14 @@ fi
 
 cleanup
 
-client_available=`${JAVA} ${TESTVMOPTS} -client -Xinternalversion 2>&1 | \
+client_available=`${JAVA} ${TESTOPTS} -client -Xinternalversion 2>&1 | \
         grep -c Client`
-server_available=`${JAVA} ${TESTVMOPTS} -server -Xinternalversion 2>&1 | \
+server_available=`${JAVA} ${TESTOPTS} -server -Xinternalversion 2>&1 | \
         grep -c Server`
-tiered_available=`${JAVA} ${TESTVMOPTS} -XX:+TieredCompilation -XX:+PrintFlagsFinal -version | \
+tiered_available=`${JAVA} ${TESTOPTS} -XX:+TieredCompilation -XX:+PrintFlagsFinal -version | \
         grep TieredCompilation | \
         grep -c true`
-is_tiered=`${JAVA} ${TESTVMOPTS} -XX:+PrintFlagsFinal -version | \
+is_tiered=`${JAVA} ${TESTOPTS} -XX:+PrintFlagsFinal -version | \
         grep TieredCompilation | \
         grep -c true`
 # CompLevel_simple -- C1
@@ -196,6 +196,11 @@ generate_replay() {
     then
         # enable core dump
         ulimit -c unlimited
+        new_ulimit=`ulimit -c`
+        if [ $new_ulimit != "unlimited" -a $new_ulimit != "-1" ]
+        then
+            test_fail 2 "CHECK :: ULIMIT" "Could not set 'ulimit -c unlimited'. 'ulimit -c' returns : $new_ulimit"
+        fi
 
         if [ $VM_OS = "solaris" ]
         then
@@ -203,7 +208,7 @@ generate_replay() {
         fi
     fi
 
-    cmd="${JAVA} ${TESTVMOPTS} $@ \
+    cmd="${JAVA} ${TESTOPTS} $@ \
             -Xms8m \
             -Xmx32m \
             -XX:MetaspaceSize=4m \
@@ -214,34 +219,54 @@ generate_replay() {
             -XX:VMThreadStackSize=512 \
             -XX:CompilerThreadStackSize=512 \
             -XX:ParallelGCThreads=1 \
-            -XX:CICompilerCount=1 \
+            -XX:CICompilerCount=2 \
             -Xcomp \
             -XX:CICrashAt=1 \
             -XX:+CreateMinidumpOnCrash \
             -XX:+DumpReplayDataOnError \
+            -XX:-TransmitErrorReport \
+            -XX:+PreferInterpreterNativeStubs \
+            -XX:+PrintCompilation \
             -XX:ReplayDataFile=${replay_data} \
             -version"
     echo GENERATION OF REPLAY.TXT:
     echo $cmd
 
     ${cmd} > crash.out 2>&1
-    
+
+    exit_code=$?
+    if [ ${exit_code} -eq 0 ]
+    then
+        cat crash.out
+        test_fail 3 "CHECK :: CRASH" "JVM exits gracefully"
+    fi
+
     core_locations=`grep -i core crash.out | grep "location:" | \
             sed -e 's/.*location: //'`
+   
+    if [ -z "${core_locations}" ]
+    then
+        test_fail 4 "CHECK :: CORE_LOCATION" "output doesn't contain the location of core file, see crash.out"
+    fi
+
     rm crash.out 
+    
     # processing core locations for *nix
     if [ $VM_OS != "windows" ]
     then
-        # remove 'or' between '/core.<pid>' and 'core'
+        # remove 'or' between '<core_path>/core.<pid>' and 'core'
+        # and the rest of line -- ' (max size ...) . To ensure a full core ...'
         core_locations=`echo $core_locations | \
-                sed -e 's/\([^ ]*\) or \([^ ]*\)/\1 \2/'`
-        # add <core_path>/core.<pid> core.<pid>
+                sed -e 's/\([^ ]*\) or \([^ ]*\).*/\1 \2/'`
         core_with_dir=`echo $core_locations | awk '{print $1}'`
-        dir=`dirname $core_with_dir`
         core_with_pid=`echo $core_locations | awk '{print $2}'`
-        if [ -n ${core_with_pid} ]
+        dir=`dirname $core_with_dir`
+        file=`basename $core_with_dir`
+        # add <core_path>/core.<pid> core
+        core_locations="'$core_with_dir' '$file'"
+        if [ -n "${core_with_pid}" ]
         then
-            core_locations="$core_locations $dir${FS}$core_with_pid $core_with_pid"
+            core_locations="$core_locations '$core_with_pid' '$dir${FS}$core_with_pid'"
         fi
     fi
 

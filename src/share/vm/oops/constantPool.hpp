@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -31,24 +31,10 @@
 #include "oops/symbol.hpp"
 #include "oops/typeArrayOop.hpp"
 #include "runtime/handles.hpp"
+#include "utilities/bytes.hpp"
 #include "utilities/constantTag.hpp"
-#ifdef TARGET_ARCH_x86
-# include "bytes_x86.hpp"
-#endif
-#ifdef TARGET_ARCH_sparc
-# include "bytes_sparc.hpp"
-#endif
-#ifdef TARGET_ARCH_zero
-# include "bytes_zero.hpp"
-#endif
-#ifdef TARGET_ARCH_arm
-# include "bytes_arm.hpp"
-#endif
-#ifdef TARGET_ARCH_ppc
-# include "bytes_ppc.hpp"
-#endif
 
-// A constantPool is an array containing class constants as described in the
+// A ConstantPool is an array containing class constants as described in the
 // class file.
 //
 // Most of the constant pool entries are written during class parsing, which
@@ -81,9 +67,10 @@ class CPSlot VALUE_OBJ_CLASS_SPEC {
 };
 
 class KlassSizeStats;
+
 class ConstantPool : public Metadata {
   friend class VMStructs;
-  friend class BytecodeInterpreter;  // Directly extracts an oop in the pool for fast instanceof/checkcast
+  friend class BytecodeInterpreter;  // Directly extracts a klass in the pool for fast instanceof/checkcast
   friend class Universe;             // For null constructor
  private:
   Array<u1>*           _tags;        // the tag array describing the constant pool's contents
@@ -111,11 +98,11 @@ class ConstantPool : public Metadata {
     int                _version;
   } _saved;
 
-  Monitor*             _lock;
-
   void set_tags(Array<u1>* tags)               { _tags = tags; }
   void tag_at_put(int which, jbyte t)          { tags()->at_put(which, t); }
   void release_tag_at_put(int which, jbyte t)  { tags()->release_at_put(which, t); }
+
+  u1* tag_addr_at(int which) const             { return tags()->adr_at(which); }
 
   void set_operands(Array<u2>* operands)       { _operands = operands; }
 
@@ -361,14 +348,6 @@ class ConstantPool : public Metadata {
     return CPSlot((Klass*)OrderAccess::load_ptr_acquire(obj_at_addr_raw(which))).get_klass();
   }
 
-  // This method should only be used with a cpool lock or during parsing or gc
-  Symbol* unresolved_klass_at(int which) {     // Temporary until actual use
-    Symbol* s = CPSlot((Symbol*)OrderAccess::load_ptr_acquire(obj_at_addr_raw(which))).get_symbol();
-    // check that the klass is still unresolved.
-    assert(tag_at(which).is_unresolved_klass(), "Corrupted constant pool");
-    return s;
-  }
-
   // RedefineClasses() API support:
   Symbol* klass_at_noresolve(int which) { return klass_name_at(which); }
 
@@ -412,9 +391,9 @@ class ConstantPool : public Metadata {
   // Version that can be used before string oop array is created.
   oop uncached_string_at(int which, TRAPS);
 
-  // A "pseudo-string" is an non-string oop that has found is way into
+  // A "pseudo-string" is an non-string oop that has found its way into
   // a String entry.
-  // Under EnableInvokeDynamic this can happen if the user patches a live
+  // This can happen if the user patches a live
   // object into a CONSTANT_String entry of an anonymous class.
   // Method oops internally created for method handles may also
   // use pseudo-strings to link themselves to related metaobjects.
@@ -440,7 +419,6 @@ class ConstantPool : public Metadata {
   }
 
   void pseudo_string_at_put(int which, int obj_index, oop x) {
-    assert(EnableInvokeDynamic, "");
     assert(tag_at(which).is_string(), "Corrupted constant pool");
     unresolved_string_at_put(which, NULL); // indicates patched string
     string_at_put(which, obj_index, x);    // this works just fine
@@ -747,13 +725,13 @@ class ConstantPool : public Metadata {
   friend class SystemDictionary;
 
   // Used by compiler to prevent classloading.
-  static Method*          method_at_if_loaded      (constantPoolHandle this_oop, int which);
-  static bool       has_appendix_at_if_loaded      (constantPoolHandle this_oop, int which);
-  static oop            appendix_at_if_loaded      (constantPoolHandle this_oop, int which);
-  static bool    has_method_type_at_if_loaded      (constantPoolHandle this_oop, int which);
-  static oop         method_type_at_if_loaded      (constantPoolHandle this_oop, int which);
-  static Klass*            klass_at_if_loaded      (constantPoolHandle this_oop, int which);
-  static Klass*        klass_ref_at_if_loaded      (constantPoolHandle this_oop, int which);
+  static Method*          method_at_if_loaded      (constantPoolHandle this_cp, int which);
+  static bool       has_appendix_at_if_loaded      (constantPoolHandle this_cp, int which);
+  static oop            appendix_at_if_loaded      (constantPoolHandle this_cp, int which);
+  static bool    has_method_type_at_if_loaded      (constantPoolHandle this_cp, int which);
+  static oop         method_type_at_if_loaded      (constantPoolHandle this_cp, int which);
+  static Klass*            klass_at_if_loaded      (constantPoolHandle this_cp, int which);
+  static Klass*        klass_ref_at_if_loaded      (constantPoolHandle this_cp, int which);
 
   // Routines currently used for annotations (only called by jvm.cpp) but which might be used in the
   // future by other Java code. These take constant pool indices rather than
@@ -811,19 +789,25 @@ class ConstantPool : public Metadata {
   }
 
   // Performs the LinkResolver checks
-  static void verify_constant_pool_resolve(constantPoolHandle this_oop, KlassHandle klass, TRAPS);
+  static void verify_constant_pool_resolve(constantPoolHandle this_cp, KlassHandle klass, TRAPS);
 
   // Implementation of methods that needs an exposed 'this' pointer, in order to
   // handle GC while executing the method
-  static Klass* klass_at_impl(constantPoolHandle this_oop, int which, TRAPS);
-  static oop string_at_impl(constantPoolHandle this_oop, int which, int obj_index, TRAPS);
+  static Klass* klass_at_impl(constantPoolHandle this_cp, int which, TRAPS);
+  static oop string_at_impl(constantPoolHandle this_cp, int which, int obj_index, TRAPS);
+
+  static void trace_class_resolution(constantPoolHandle this_cp, KlassHandle k);
 
   // Resolve string constants (to prevent allocation during compilation)
-  static void resolve_string_constants_impl(constantPoolHandle this_oop, TRAPS);
+  static void resolve_string_constants_impl(constantPoolHandle this_cp, TRAPS);
 
-  static oop resolve_constant_at_impl(constantPoolHandle this_oop, int index, int cache_index, TRAPS);
-  static void save_and_throw_exception(constantPoolHandle this_oop, int which, int tag_value, TRAPS);
-  static oop resolve_bootstrap_specifier_at_impl(constantPoolHandle this_oop, int index, TRAPS);
+  static oop resolve_constant_at_impl(constantPoolHandle this_cp, int index, int cache_index, TRAPS);
+  static oop resolve_bootstrap_specifier_at_impl(constantPoolHandle this_cp, int index, TRAPS);
+
+  // Exception handling
+  static void throw_resolution_error(constantPoolHandle this_cp, int which, TRAPS);
+  static Symbol* exception_message(constantPoolHandle this_cp, int which, constantTag tag, oop pending_exception);
+  static void save_and_throw_exception(constantPoolHandle this_cp, int which, constantTag tag, TRAPS);
 
  public:
   // Merging ConstantPool* support:
@@ -844,8 +828,6 @@ class ConstantPool : public Metadata {
 
   void set_resolved_reference_length(int length) { _saved._resolved_reference_length = length; }
   int  resolved_reference_length() const  { return _saved._resolved_reference_length; }
-  void set_lock(Monitor* lock)            { _lock = lock; }
-  Monitor* lock()                         { return _lock; }
 
   // Decrease ref counts of symbols that are in the constant pool
   // when the holder class is unloaded

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -25,26 +25,12 @@
 #ifndef SHARE_VM_INTERPRETER_ABSTRACTINTERPRETER_HPP
 #define SHARE_VM_INTERPRETER_ABSTRACTINTERPRETER_HPP
 
+#include "asm/macroAssembler.hpp"
 #include "code/stubs.hpp"
 #include "interpreter/bytecodes.hpp"
 #include "runtime/thread.inline.hpp"
 #include "runtime/vmThread.hpp"
 #include "utilities/top.hpp"
-#ifdef TARGET_ARCH_x86
-# include "interp_masm_x86.hpp"
-#endif
-#ifdef TARGET_ARCH_MODEL_sparc
-# include "interp_masm_sparc.hpp"
-#endif
-#ifdef TARGET_ARCH_MODEL_zero
-# include "interp_masm_zero.hpp"
-#endif
-#ifdef TARGET_ARCH_MODEL_arm
-# include "interp_masm_arm.hpp"
-#endif
-#ifdef TARGET_ARCH_MODEL_ppc
-# include "interp_masm_ppc.hpp"
-#endif
 
 // This file contains the platform-independent parts
 // of the abstract interpreter and the abstract interpreter generator.
@@ -71,6 +57,8 @@
 
 //------------------------------------------------------------------------------------------------------------------------
 // The C++ interface to the bytecode interpreter(s).
+
+class InterpreterMacroAssembler;
 
 class AbstractInterpreter: AllStatic {
   friend class VMStructs;
@@ -178,30 +166,16 @@ class AbstractInterpreter: AllStatic {
   // Deoptimization should reexecute this bytecode
   static bool    bytecode_should_reexecute(Bytecodes::Code code);
 
-  // share implementation of size_activation and layout_activation:
-  static int        size_activation(Method* method,
+  // deoptimization support
+  static int        size_activation(int max_stack,
                                     int temps,
-                                    int popframe_args,
+                                    int extra_args,
                                     int monitors,
-                                    int caller_actual_parameters,
                                     int callee_params,
                                     int callee_locals,
-                                    bool is_top_frame,
-                                    bool is_bottom_frame) {
-    return layout_activation(method,
-                             temps,
-                             popframe_args,
-                             monitors,
-                             caller_actual_parameters,
-                             callee_params,
-                             callee_locals,
-                             (frame*)NULL,
-                             (frame*)NULL,
-                             is_top_frame,
-                             is_bottom_frame);
-  }
+                                    bool is_top_frame);
 
-  static int       layout_activation(Method* method,
+  static void      layout_activation(Method* method,
                                      int temps,
                                      int popframe_args,
                                      int monitors,
@@ -305,9 +279,6 @@ class AbstractInterpreterGenerator: public StackObj {
   // Converter for native abi result to tosca result
   address generate_result_handler_for(BasicType type);
   address generate_slow_signature_handler();
-
-  // entry point generator
-  address generate_method_entry(AbstractInterpreter::MethodKind kind);
 
   void bang_stack_shadow_pages(bool native_call);
 

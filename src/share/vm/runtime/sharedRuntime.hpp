@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -141,7 +141,7 @@ class SharedRuntime: AllStatic {
   static double dabs(double f);
 #endif
 
-#if defined(__SOFTFP__) || defined(PPC)
+#if defined(__SOFTFP__) || defined(PPC32)
   static double dsqrt(double f);
 #endif
 
@@ -218,7 +218,7 @@ class SharedRuntime: AllStatic {
   static UncommonTrapBlob* uncommon_trap_blob()                  { return _uncommon_trap_blob; }
 #endif // COMPILER2
 
-  static address get_resolve_opt_virtual_call_stub(){
+  static address get_resolve_opt_virtual_call_stub() {
     assert(_resolve_opt_virtual_call_blob != NULL, "oops");
     return _resolve_opt_virtual_call_blob->entry_point();
   }
@@ -254,16 +254,13 @@ class SharedRuntime: AllStatic {
   // bytecode tracing is only used by the TraceBytecodes
   static intptr_t trace_bytecode(JavaThread* thread, intptr_t preserve_this_value, intptr_t tos, intptr_t tos2) PRODUCT_RETURN0;
 
-  // Used to back off a spin lock that is under heavy contention
-  static void yield_all(JavaThread* thread, int attempts = 0);
-
-  static oop retrieve_receiver( Symbol* sig, frame caller );
+  static oop retrieve_receiver(Symbol* sig, frame caller);
 
   static void register_finalizer(JavaThread* thread, oopDesc* obj);
 
   // dtrace notifications
-  static int dtrace_object_alloc(oopDesc* o);
-  static int dtrace_object_alloc_base(Thread* thread, oopDesc* o);
+  static int dtrace_object_alloc(oopDesc* o, int size);
+  static int dtrace_object_alloc_base(Thread* thread, oopDesc* o, int size);
   static int dtrace_method_entry(JavaThread* thread, Method* m);
   static int dtrace_method_exit(JavaThread* thread, Method* m);
 
@@ -363,7 +360,25 @@ class SharedRuntime: AllStatic {
                                                           const VMRegPair* regs) NOT_DEBUG_RETURN;
 
   // Ditto except for calling C
-  static int c_calling_convention(const BasicType *sig_bt, VMRegPair *regs, int total_args_passed);
+  //
+  // C argument in register AND stack slot.
+  // Some architectures require that an argument must be passed in a register
+  // AND in a stack slot. These architectures provide a second VMRegPair array
+  // to be filled by the c_calling_convention method. On other architectures,
+  // NULL is being passed as the second VMRegPair array, so arguments are either
+  // passed in a register OR in a stack slot.
+  static int c_calling_convention(const BasicType *sig_bt, VMRegPair *regs, VMRegPair *regs2,
+                                  int total_args_passed);
+
+  // Compute the new number of arguments in the signature if 32 bit ints
+  // must be converted to longs. Needed if CCallingConventionRequiresIntsAsLongs
+  // is true.
+  static int  convert_ints_to_longints_argcnt(int in_args_count, BasicType* in_sig_bt);
+  // Adapt a method's signature if it contains 32 bit integers that must
+  // be converted to longs. Needed if CCallingConventionRequiresIntsAsLongs
+  // is true.
+  static void convert_ints_to_longints(int i2l_argcnt, int& in_args_count,
+                                       BasicType*& in_sig_bt, VMRegPair*& in_regs);
 
   // Generate I2C and C2I adapters. These adapters are simple argument marshalling
   // blobs. Unlike adapters in the tiger and earlier releases the code in these
@@ -377,13 +392,13 @@ class SharedRuntime: AllStatic {
   // location for the interpreter to record. This is used by the frame code
   // to correct the sender code to match up with the stack pointer when the
   // thread left the compiled code. In addition it allows the interpreter
-  // to remove the space the c2i adapter allocated to do it argument conversion.
+  // to remove the space the c2i adapter allocated to do its argument conversion.
 
   // Although a c2i blob will always run interpreted even if compiled code is
   // present if we see that compiled code is present the compiled call site
   // will be patched/re-resolved so that later calls will run compiled.
 
-  // Aditionally a c2i blob need to have a unverified entry because it can be reached
+  // Additionally a c2i blob need to have a unverified entry because it can be reached
   // in situations where the call site is an inlined cache site and may go megamorphic.
 
   // A i2c adapter is simpler than the c2i adapter. This is because it is assumed
@@ -432,8 +447,8 @@ class SharedRuntime: AllStatic {
   static bool is_wide_vector(int size);
 
   // Save and restore a native result
-  static void    save_native_result(MacroAssembler *_masm, BasicType ret_type, int frame_slots );
-  static void restore_native_result(MacroAssembler *_masm, BasicType ret_type, int frame_slots );
+  static void    save_native_result(MacroAssembler *_masm, BasicType ret_type, int frame_slots);
+  static void restore_native_result(MacroAssembler *_masm, BasicType ret_type, int frame_slots);
 
   // Generate a native wrapper for a given method.  The method takes arguments
   // in the Java compiled code convention, marshals them to the native
@@ -449,7 +464,7 @@ class SharedRuntime: AllStatic {
                                           int compile_id,
                                           BasicType* sig_bt,
                                           VMRegPair* regs,
-                                          BasicType ret_type );
+                                          BasicType ret_type);
 
   // Block before entering a JNI critical method
   static void block_for_jni_critical(JavaThread* thread);
@@ -502,8 +517,6 @@ class SharedRuntime: AllStatic {
   static void trace_ic_miss(address at);
 
  public:
-  static int _monitor_enter_ctr;                 // monitor enter slow
-  static int _monitor_exit_ctr;                  // monitor exit slow
   static int _throw_null_ctr;                    // throwing a null-pointer exception
   static int _ic_miss_ctr;                       // total # of IC misses
   static int _wrong_method_ctr;
@@ -577,7 +590,7 @@ class SharedRuntime: AllStatic {
 // arguments for a Java-compiled call, and jumps to Rmethod-> code()->
 // code_begin().  It is broken to call it without an nmethod assigned.
 // The usual behavior is to lift any register arguments up out of the
-// stack and possibly re-pack the extra arguments to be contigious.
+// stack and possibly re-pack the extra arguments to be contiguous.
 // I2C adapters will save what the interpreter's stack pointer will be
 // after arguments are popped, then adjust the interpreter's frame
 // size to force alignment and possibly to repack the arguments.
@@ -594,7 +607,7 @@ class SharedRuntime: AllStatic {
 // outgoing stack args will be dead after the copy.
 //
 // Native wrappers, like adapters, marshal arguments.  Unlike adapters they
-// also perform an offical frame push & pop.  They have a call to the native
+// also perform an official frame push & pop.  They have a call to the native
 // routine in their middles and end in a return (instead of ending in a jump).
 // The native wrappers are stored in real nmethods instead of the BufferBlobs
 // used by the adapters.  The code generation happens here because it's very
@@ -611,11 +624,9 @@ class AdapterHandlerEntry : public BasicHashtableEntry<mtCode> {
 
 #ifdef ASSERT
   // Captures code and signature used to generate this adapter when
-  // verifing adapter equivalence.
+  // verifying adapter equivalence.
   unsigned char* _saved_code;
-  int            _code_length;
-  BasicType*     _saved_sig;
-  int            _total_args_passed;
+  int            _saved_code_length;
 #endif
 
   void init(AdapterFingerPrint* fingerprint, address i2c_entry, address c2i_entry, address c2i_unverified_entry) {
@@ -625,9 +636,7 @@ class AdapterHandlerEntry : public BasicHashtableEntry<mtCode> {
     _c2i_unverified_entry = c2i_unverified_entry;
 #ifdef ASSERT
     _saved_code = NULL;
-    _code_length = 0;
-    _saved_sig = NULL;
-    _total_args_passed = 0;
+    _saved_code_length = 0;
 #endif
   }
 
@@ -640,7 +649,6 @@ class AdapterHandlerEntry : public BasicHashtableEntry<mtCode> {
   address get_i2c_entry()            const { return _i2c_entry; }
   address get_c2i_entry()            const { return _c2i_entry; }
   address get_c2i_unverified_entry() const { return _c2i_unverified_entry; }
-
   address base_address();
   void relocate(address new_base);
 
@@ -652,8 +660,8 @@ class AdapterHandlerEntry : public BasicHashtableEntry<mtCode> {
 
 #ifdef ASSERT
   // Used to verify that code generated for shared adapters is equivalent
-  void save_code(unsigned char* code, int length, int total_args_passed, BasicType* sig_bt);
-  bool compare_code(unsigned char* code, int length, int total_args_passed, BasicType* sig_bt);
+  void save_code   (unsigned char* code, int length);
+  bool compare_code(unsigned char* code, int length);
 #endif
 
   //virtual void print_on(outputStream* st) const;  DO NOT USE
@@ -672,7 +680,7 @@ class AdapterHandlerLibrary: public AllStatic {
 
   static AdapterHandlerEntry* new_entry(AdapterFingerPrint* fingerprint,
                                         address i2c_entry, address c2i_entry, address c2i_unverified_entry);
-  static nmethod* create_native_wrapper(methodHandle method, int compile_id);
+  static void create_native_wrapper(methodHandle method);
   static AdapterHandlerEntry* get_adapter(methodHandle method);
 
 #ifdef HAVE_DTRACE_H

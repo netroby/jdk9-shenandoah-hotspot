@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -28,18 +28,6 @@
 #include "runtime/task.hpp"
 #include "runtime/thread.inline.hpp"
 #include "runtime/timer.hpp"
-#ifdef TARGET_OS_FAMILY_linux
-# include "os_linux.inline.hpp"
-#endif
-#ifdef TARGET_OS_FAMILY_solaris
-# include "os_solaris.inline.hpp"
-#endif
-#ifdef TARGET_OS_FAMILY_windows
-# include "os_windows.inline.hpp"
-#endif
-#ifdef TARGET_OS_FAMILY_bsd
-# include "os_bsd.inline.hpp"
-#endif
 
 int PeriodicTask::_num_tasks = 0;
 PeriodicTask* PeriodicTask::_tasks[PeriodicTask::max_tasks];
@@ -105,7 +93,6 @@ PeriodicTask::PeriodicTask(size_t interval_time) :
   _counter(0), _interval((int) interval_time) {
   // Sanity check the interval time
   assert(_interval >= PeriodicTask::min_interval &&
-         _interval <= PeriodicTask::max_interval &&
          _interval %  PeriodicTask::interval_gran == 0,
               "improper PeriodicTask interval time");
 }

@@ -26,6 +26,7 @@
 #define SHARE_VM_GC_IMPLEMENTATION_CONCURRENTMARKSWEEP_CMSOOPCLOSURES_HPP
 
 #include "memory/genOopClosures.hpp"
+#include "memory/iterator.hpp"
 
 /////////////////////////////////////////////////////////////////
 // Closures used by ConcurrentMarkSweepGeneration's collector
@@ -48,33 +49,13 @@ class Par_MarkFromRootsClosure;
     }                                                     \
   }
 
-// Applies the given oop closure to all oops in all klasses visited.
-class CMKlassClosure : public KlassClosure {
-  friend class CMSOopClosure;
-  friend class CMSOopsInGenClosure;
-
-  OopClosure* _oop_closure;
-
-  // Used when _oop_closure couldn't be set in an initialization list.
-  void initialize(OopClosure* oop_closure) {
-    assert(_oop_closure == NULL, "Should only be called once");
-    _oop_closure = oop_closure;
-  }
+// TODO: This duplication of the MetadataAwareOopClosure class is only needed
+//       because some CMS OopClosures derive from OopsInGenClosure. It would be
+//       good to get rid of them completely.
+class MetadataAwareOopsInGenClosure: public OopsInGenClosure {
+  KlassToOopClosure _klass_closure;
  public:
-  CMKlassClosure(OopClosure* oop_closure = NULL) : _oop_closure(oop_closure) { }
-
-  void do_klass(Klass* k);
-};
-
-// The base class for all CMS marking closures.
-// It's used to proxy through the metadata to the oops defined in them.
-class CMSOopClosure: public ExtendedOopClosure {
-  CMKlassClosure      _klass_closure;
- public:
-  CMSOopClosure() : ExtendedOopClosure() {
-    _klass_closure.initialize(this);
-  }
-  CMSOopClosure(ReferenceProcessor* rp) : ExtendedOopClosure(rp) {
+  MetadataAwareOopsInGenClosure() {
     _klass_closure.initialize(this);
   }
 
@@ -87,26 +68,7 @@ class CMSOopClosure: public ExtendedOopClosure {
   virtual void do_class_loader_data(ClassLoaderData* cld);
 };
 
-// TODO: This duplication of the CMSOopClosure class is only needed because
-//       some CMS OopClosures derive from OopsInGenClosure. It would be good
-//       to get rid of them completely.
-class CMSOopsInGenClosure: public OopsInGenClosure {
-  CMKlassClosure _klass_closure;
- public:
-  CMSOopsInGenClosure() {
-    _klass_closure.initialize(this);
-  }
-
-  virtual bool do_metadata()    { return do_metadata_nv(); }
-  inline  bool do_metadata_nv() { return true; }
-
-  virtual void do_klass(Klass* k);
-  void do_klass_nv(Klass* k);
-
-  virtual void do_class_loader_data(ClassLoaderData* cld);
-};
-
-class MarkRefsIntoClosure: public CMSOopsInGenClosure {
+class MarkRefsIntoClosure: public MetadataAwareOopsInGenClosure {
  private:
   const MemRegion _span;
   CMSBitMap*      _bitMap;
@@ -116,13 +78,9 @@ class MarkRefsIntoClosure: public CMSOopsInGenClosure {
   MarkRefsIntoClosure(MemRegion span, CMSBitMap* bitMap);
   virtual void do_oop(oop* p);
   virtual void do_oop(narrowOop* p);
-
-  Prefetch::style prefetch_style() {
-    return Prefetch::do_read;
-  }
 };
 
-class Par_MarkRefsIntoClosure: public CMSOopsInGenClosure {
+class Par_MarkRefsIntoClosure: public MetadataAwareOopsInGenClosure {
  private:
   const MemRegion _span;
   CMSBitMap*      _bitMap;
@@ -132,15 +90,11 @@ class Par_MarkRefsIntoClosure: public CMSOopsInGenClosure {
   Par_MarkRefsIntoClosure(MemRegion span, CMSBitMap* bitMap);
   virtual void do_oop(oop* p);
   virtual void do_oop(narrowOop* p);
-
-  Prefetch::style prefetch_style() {
-    return Prefetch::do_read;
-  }
 };
 
 // A variant of the above used in certain kinds of CMS
 // marking verification.
-class MarkRefsIntoVerifyClosure: public CMSOopsInGenClosure {
+class MarkRefsIntoVerifyClosure: public MetadataAwareOopsInGenClosure {
  private:
   const MemRegion _span;
   CMSBitMap*      _verification_bm;
@@ -152,14 +106,10 @@ class MarkRefsIntoVerifyClosure: public CMSOopsInGenClosure {
                             CMSBitMap* cms_bm);
   virtual void do_oop(oop* p);
   virtual void do_oop(narrowOop* p);
-
-  Prefetch::style prefetch_style() {
-    return Prefetch::do_read;
-  }
 };
 
 // The non-parallel version (the parallel version appears further below).
-class PushAndMarkClosure: public CMSOopClosure {
+class PushAndMarkClosure: public MetadataAwareOopClosure {
  private:
   CMSCollector* _collector;
   MemRegion     _span;
@@ -181,10 +131,6 @@ class PushAndMarkClosure: public CMSOopClosure {
   virtual void do_oop(narrowOop* p);
   inline void do_oop_nv(oop* p)       { PushAndMarkClosure::do_oop_work(p); }
   inline void do_oop_nv(narrowOop* p) { PushAndMarkClosure::do_oop_work(p); }
-
-  Prefetch::style prefetch_style() {
-    return Prefetch::do_read;
-  }
 };
 
 // In the parallel case, the bit map and the
@@ -193,7 +139,7 @@ class PushAndMarkClosure: public CMSOopClosure {
 // synchronization (for instance, via CAS). The marking stack
 // used in the non-parallel case above is here replaced with
 // an OopTaskQueue structure to allow efficient work stealing.
-class Par_PushAndMarkClosure: public CMSOopClosure {
+class Par_PushAndMarkClosure: public MetadataAwareOopClosure {
  private:
   CMSCollector* _collector;
   MemRegion     _span;
@@ -211,14 +157,10 @@ class Par_PushAndMarkClosure: public CMSOopClosure {
   virtual void do_oop(narrowOop* p);
   inline void do_oop_nv(oop* p)       { Par_PushAndMarkClosure::do_oop_work(p); }
   inline void do_oop_nv(narrowOop* p) { Par_PushAndMarkClosure::do_oop_work(p); }
-
-  Prefetch::style prefetch_style() {
-    return Prefetch::do_read;
-  }
 };
 
 // The non-parallel version (the parallel version appears further below).
-class MarkRefsIntoAndScanClosure: public CMSOopsInGenClosure {
+class MarkRefsIntoAndScanClosure: public MetadataAwareOopsInGenClosure {
  private:
   MemRegion          _span;
   CMSBitMap*         _bit_map;
@@ -245,9 +187,6 @@ class MarkRefsIntoAndScanClosure: public CMSOopsInGenClosure {
   inline void do_oop_nv(oop* p)       { MarkRefsIntoAndScanClosure::do_oop_work(p); }
   inline void do_oop_nv(narrowOop* p) { MarkRefsIntoAndScanClosure::do_oop_work(p); }
 
-  Prefetch::style prefetch_style() {
-    return Prefetch::do_read;
-  }
   void set_freelistLock(Mutex* m) {
     _freelistLock = m;
   }
@@ -258,11 +197,11 @@ class MarkRefsIntoAndScanClosure: public CMSOopsInGenClosure {
   bool take_from_overflow_list();
 };
 
-// Tn this, the parallel avatar of MarkRefsIntoAndScanClosure, the revisit
+// In this, the parallel avatar of MarkRefsIntoAndScanClosure, the revisit
 // stack and the bitMap are shared, so access needs to be suitably
-// sycnhronized. An OopTaskQueue structure, supporting efficient
-// workstealing, replaces a CMSMarkStack for storing grey objects.
-class Par_MarkRefsIntoAndScanClosure: public CMSOopsInGenClosure {
+// synchronized. An OopTaskQueue structure, supporting efficient
+// work stealing, replaces a CMSMarkStack for storing grey objects.
+class Par_MarkRefsIntoAndScanClosure: public MetadataAwareOopsInGenClosure {
  private:
   MemRegion              _span;
   CMSBitMap*             _bit_map;
@@ -282,16 +221,13 @@ class Par_MarkRefsIntoAndScanClosure: public CMSOopsInGenClosure {
   inline void do_oop_nv(oop* p)       { Par_MarkRefsIntoAndScanClosure::do_oop_work(p); }
   inline void do_oop_nv(narrowOop* p) { Par_MarkRefsIntoAndScanClosure::do_oop_work(p); }
 
-  Prefetch::style prefetch_style() {
-    return Prefetch::do_read;
-  }
   void trim_queue(uint size);
 };
 
 // This closure is used during the concurrent marking phase
 // following the first checkpoint. Its use is buried in
 // the closure MarkFromRootsClosure.
-class PushOrMarkClosure: public CMSOopClosure {
+class PushOrMarkClosure: public MetadataAwareOopClosure {
  private:
   CMSCollector*   _collector;
   MemRegion       _span;
@@ -324,7 +260,7 @@ class PushOrMarkClosure: public CMSOopClosure {
 // This closure is used during the concurrent marking phase
 // following the first checkpoint. Its use is buried in
 // the closure Par_MarkFromRootsClosure.
-class Par_PushOrMarkClosure: public CMSOopClosure {
+class Par_PushOrMarkClosure: public MetadataAwareOopClosure {
  private:
   CMSCollector*    _collector;
   MemRegion        _whole_span;
@@ -364,7 +300,7 @@ class Par_PushOrMarkClosure: public CMSOopClosure {
 // processing phase of the CMS final checkpoint step, as
 // well as during the concurrent precleaning of the discovered
 // reference lists.
-class CMSKeepAliveClosure: public CMSOopClosure {
+class CMSKeepAliveClosure: public MetadataAwareOopClosure {
  private:
   CMSCollector* _collector;
   const MemRegion _span;
@@ -384,7 +320,7 @@ class CMSKeepAliveClosure: public CMSOopClosure {
   inline void do_oop_nv(narrowOop* p) { CMSKeepAliveClosure::do_oop_work(p); }
 };
 
-class CMSInnerParMarkAndPushClosure: public CMSOopClosure {
+class CMSInnerParMarkAndPushClosure: public MetadataAwareOopClosure {
  private:
   CMSCollector* _collector;
   MemRegion     _span;
@@ -405,7 +341,7 @@ class CMSInnerParMarkAndPushClosure: public CMSOopClosure {
 // A parallel (MT) version of the above, used when
 // reference processing is parallel; the only difference
 // is in the do_oop method.
-class CMSParKeepAliveClosure: public CMSOopClosure {
+class CMSParKeepAliveClosure: public MetadataAwareOopClosure {
  private:
   MemRegion     _span;
   OopTaskQueue* _work_queue;

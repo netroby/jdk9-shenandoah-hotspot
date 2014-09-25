@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1998, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1998, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -64,6 +64,11 @@ class CompilerOracle : AllStatic {
   // Check to see if this method has option set for it
   static bool has_option_string(methodHandle method, const char * option);
 
+  // Check if method has option and value set. If yes, overwrite value and return true,
+  // otherwise leave value unchanged and return false.
+  template<typename T>
+  static bool has_option_value(methodHandle method, const char* option, T& value);
+
   // Reads from string instead of file
   static void parse_from_string(const char* command_string, void (*parser)(char*));
 
@@ -73,6 +78,9 @@ class CompilerOracle : AllStatic {
   // For updating the oracle file
   static void append_comment_to_file(const char* message);
   static void append_exclude_to_file(methodHandle method);
+
+  // Tells whether there are any methods to print for print_method_statistics()
+  static bool should_print_methods();
 };
 
 #endif // SHARE_VM_COMPILER_COMPILERORACLE_HPP

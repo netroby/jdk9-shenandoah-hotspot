@@ -25,7 +25,6 @@
 #ifndef SHARE_VM_OPTO_NODE_HPP
 #define SHARE_VM_OPTO_NODE_HPP
 
-#include "libadt/port.hpp"
 #include "libadt/vectset.hpp"
 #include "opto/compile.hpp"
 #include "opto/type.hpp"
@@ -41,6 +40,7 @@ class AddPNode;
 class AliasInfo;
 class AllocateArrayNode;
 class AllocateNode;
+class ArrayCopyNode;
 class Block;
 class BoolNode;
 class BoxLockNode;
@@ -69,7 +69,6 @@ class EncodePNode;
 class EncodePKlassNode;
 class FastLockNode;
 class FastUnlockNode;
-class FlagsProjNode;
 class IfNode;
 class IfFalseNode;
 class IfTrueNode;
@@ -100,7 +99,6 @@ class MachSafePointNode;
 class MachSpillCopyNode;
 class MachTempNode;
 class Matcher;
-class MathExactNode;
 class MemBarNode;
 class MemBarStoreStoreNode;
 class MemNode;
@@ -211,14 +209,12 @@ public:
   // field is a local cache of a value defined in some "program fragment" for
   // which these Nodes are just a part of.
 
-  // New Operator that takes a Compile pointer, this will eventually
-  // be the "new" New operator.
-  inline void* operator new( size_t x, Compile* C) throw() {
+  inline void* operator new(size_t x) throw() {
+    Compile* C = Compile::current();
     Node* n = (Node*)C->node_arena()->Amalloc_D(x);
 #ifdef ASSERT
     n->_in = (Node**)n; // magic cookie for assertion check
 #endif
-    n->_out = (Node**)C;
     return (void*)n;
   }
 
@@ -262,7 +258,7 @@ private:
   // Puts initial values in all Node fields except _idx.
   // Returns the initial value for _idx, which cannot
   // be initialized by assignment.
-  inline int Init(int req, Compile* C);
+  inline int Init(int req);
 
 //----------------- input edge handling
 protected:
@@ -357,6 +353,8 @@ protected:
 
   // Reference to the i'th input Node.  Error if out of bounds.
   Node* in(uint i) const { assert(i < _max, err_msg_res("oob: i=%d, _max=%d", i, _max)); return _in[i]; }
+  // Reference to the i'th input Node.  NULL if out of bounds.
+  Node* lookup(uint i) const { return ((i < _max) ? _in[i] : NULL); }
   // Reference to the i'th output Node.  Error if out of bounds.
   // Use this accessor sparingly.  We are going trying to use iterators instead.
   Node* raw_out(uint i) const { assert(i < _outcnt,"oob"); return _out[i]; }
@@ -384,6 +382,10 @@ protected:
 
   // Set a required input edge, also updates corresponding output edge
   void add_req( Node *n ); // Append a NEW required input
+  void add_req( Node *n0, Node *n1 ) {
+    add_req(n0); add_req(n1); }
+  void add_req( Node *n0, Node *n1, Node *n2 ) {
+    add_req(n0); add_req(n1); add_req(n2); }
   void add_req_batch( Node* n, uint m ); // Append m NEW required inputs (all n).
   void del_req( uint idx ); // Delete required edge & compact
   void del_req_ordered( uint idx ); // Delete required edge & compact with preserved order
@@ -397,6 +399,7 @@ protected:
     if (*p != NULL)  (*p)->del_out((Node *)this);
     (*p) = n;
     if (n != NULL)      n->add_out((Node *)this);
+    Compile::current()->record_modified_node(this);
   }
   // Light version of set_req() to init inputs after node creation.
   void init_req( uint i, Node *n ) {
@@ -408,6 +411,7 @@ protected:
     assert( _in[i] == NULL, "sanity");
     _in[i] = n;
     if (n != NULL)      n->add_out((Node *)this);
+    Compile::current()->record_modified_node(this);
   }
   // Find first occurrence of n among my edges:
   int find_edge(Node* n);
@@ -558,6 +562,7 @@ public:
           DEFINE_CLASS_ID(AbstractLock,     Call, 3)
             DEFINE_CLASS_ID(Lock,             AbstractLock, 0)
             DEFINE_CLASS_ID(Unlock,           AbstractLock, 1)
+          DEFINE_CLASS_ID(ArrayCopy,        Call, 4)
       DEFINE_CLASS_ID(MultiBranch, Multi, 1)
         DEFINE_CLASS_ID(PCTable,     MultiBranch, 0)
           DEFINE_CLASS_ID(Catch,       PCTable, 0)
@@ -569,7 +574,6 @@ public:
       DEFINE_CLASS_ID(MemBar,      Multi, 3)
         DEFINE_CLASS_ID(Initialize,       MemBar, 0)
         DEFINE_CLASS_ID(MemBarStoreStore, MemBar, 1)
-      DEFINE_CLASS_ID(MathExact,   Multi, 4)
 
     DEFINE_CLASS_ID(Mach,  Node, 1)
       DEFINE_CLASS_ID(MachReturn, Mach, 0)
@@ -626,7 +630,6 @@ public:
       DEFINE_CLASS_ID(Cmp,   Sub, 0)
         DEFINE_CLASS_ID(FastLock,   Cmp, 0)
         DEFINE_CLASS_ID(FastUnlock, Cmp, 1)
-        DEFINE_CLASS_ID(FlagsProj, Cmp, 2)
 
     DEFINE_CLASS_ID(MergeMem, Node, 7)
     DEFINE_CLASS_ID(Bool,     Node, 8)
@@ -643,17 +646,18 @@ public:
 
   // Flags are sorted by usage frequency.
   enum NodeFlags {
-    Flag_is_Copy             = 0x01, // should be first bit to avoid shift
-    Flag_rematerialize       = Flag_is_Copy << 1,
+    Flag_is_Copy                     = 0x01, // should be first bit to avoid shift
+    Flag_rematerialize               = Flag_is_Copy << 1,
     Flag_needs_anti_dependence_check = Flag_rematerialize << 1,
-    Flag_is_macro            = Flag_needs_anti_dependence_check << 1,
-    Flag_is_Con              = Flag_is_macro << 1,
-    Flag_is_cisc_alternate   = Flag_is_Con << 1,
-    Flag_is_dead_loop_safe   = Flag_is_cisc_alternate << 1,
-    Flag_may_be_short_branch = Flag_is_dead_loop_safe << 1,
-    Flag_avoid_back_to_back  = Flag_may_be_short_branch << 1,
-    Flag_has_call            = Flag_avoid_back_to_back << 1,
-    Flag_is_expensive        = Flag_has_call << 1,
+    Flag_is_macro                    = Flag_needs_anti_dependence_check << 1,
+    Flag_is_Con                      = Flag_is_macro << 1,
+    Flag_is_cisc_alternate           = Flag_is_Con << 1,
+    Flag_is_dead_loop_safe           = Flag_is_cisc_alternate << 1,
+    Flag_may_be_short_branch         = Flag_is_dead_loop_safe << 1,
+    Flag_avoid_back_to_back_before   = Flag_may_be_short_branch << 1,
+    Flag_avoid_back_to_back_after    = Flag_avoid_back_to_back_before << 1,
+    Flag_has_call                    = Flag_avoid_back_to_back_after << 1,
+    Flag_is_expensive                = Flag_has_call << 1,
     _max_flags = (Flag_is_expensive << 1) - 1 // allow flags combination
   };
 
@@ -705,6 +709,7 @@ public:
   DEFINE_CLASS_QUERY(AddP)
   DEFINE_CLASS_QUERY(Allocate)
   DEFINE_CLASS_QUERY(AllocateArray)
+  DEFINE_CLASS_QUERY(ArrayCopy)
   DEFINE_CLASS_QUERY(Bool)
   DEFINE_CLASS_QUERY(BoxLock)
   DEFINE_CLASS_QUERY(Call)
@@ -730,7 +735,6 @@ public:
   DEFINE_CLASS_QUERY(EncodePKlass)
   DEFINE_CLASS_QUERY(FastLock)
   DEFINE_CLASS_QUERY(FastUnlock)
-  DEFINE_CLASS_QUERY(FlagsProj)
   DEFINE_CLASS_QUERY(If)
   DEFINE_CLASS_QUERY(IfFalse)
   DEFINE_CLASS_QUERY(IfTrue)
@@ -759,7 +763,6 @@ public:
   DEFINE_CLASS_QUERY(MachSafePoint)
   DEFINE_CLASS_QUERY(MachSpillCopy)
   DEFINE_CLASS_QUERY(MachTemp)
-  DEFINE_CLASS_QUERY(MathExact)
   DEFINE_CLASS_QUERY(Mem)
   DEFINE_CLASS_QUERY(MemBar)
   DEFINE_CLASS_QUERY(MemBarStoreStore)
@@ -1027,8 +1030,7 @@ public:
   // RegMask Print Functions
   void dump_in_regmask(int idx) { in_RegMask(idx).dump(); }
   void dump_out_regmask() { out_RegMask().dump(); }
-  static int _in_dump_cnt;
-  static bool in_dump() { return _in_dump_cnt > 0; }
+  static bool in_dump() { return Compile::current()->_in_dump_cnt > 0; }
   void fast_dump() const {
     tty->print("%4d: %-17s", _idx, Name());
     for (uint i = 0; i < len(); i++)
@@ -1350,7 +1352,7 @@ class Node_List : public Node_Array {
 public:
   Node_List() : Node_Array(Thread::current()->resource_area()), _cnt(0) {}
   Node_List(Arena *a) : Node_Array(a), _cnt(0) {}
-  bool contains(Node* n) {
+  bool contains(const Node* n) const {
     for (uint e = 0; e < size(); e++) {
       if (at(e) == n) return true;
     }

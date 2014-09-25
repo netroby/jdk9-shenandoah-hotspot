@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2007, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2007, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -29,6 +29,7 @@
 #include "interpreter/interpreter.hpp"
 #include "interpreter/interpreterGenerator.hpp"
 #include "interpreter/interpreterRuntime.hpp"
+#include "interpreter/interp_masm.hpp"
 #include "oops/arrayOop.hpp"
 #include "oops/methodData.hpp"
 #include "oops/method.hpp"
@@ -68,9 +69,7 @@ bool CppInterpreter::contains(address pc) {
 #define STATE(field_name) Lstate, in_bytes(byte_offset_of(BytecodeInterpreter, field_name))
 #define __ _masm->
 
-Label frame_manager_entry;
-Label fast_accessor_slow_entry_path;  // fast accessor methods need to be able to jmp to unsynchronized
-                                      // c++ interpreter entry point this holds that entry point label.
+Label frame_manager_entry; // c++ interpreter entry point this holds that entry point label.
 
 static address unctrap_frame_manager_entry  = NULL;
 
@@ -413,16 +412,15 @@ void InterpreterGenerator::generate_counter_incr(Label* overflow, Label* profile
   // Update standard invocation counters
   __ increment_invocation_counter(Rcounters, O0, G4_scratch);
   if (ProfileInterpreter) {
-    Address interpreter_invocation_counter(Rcounters, 0,
+    Address interpreter_invocation_counter(Rcounters,
             in_bytes(MethodCounters::interpreter_invocation_counter_offset()));
     __ ld(interpreter_invocation_counter, G4_scratch);
     __ inc(G4_scratch);
     __ st(G4_scratch, interpreter_invocation_counter);
   }
 
-  Address invocation_limit(G3_scratch, (address)&InvocationCounter::InterpreterInvocationLimit);
-  __ sethi(invocation_limit);
-  __ ld(invocation_limit, G3_scratch);
+  AddressLiteral invocation_limit((address)&InvocationCounter::InterpreterInvocationLimit);
+  __ load_contents(invocation_limit, G3_scratch);
   __ cmp(O0, G3_scratch);
   __ br(Assembler::greaterEqualUnsigned, false, Assembler::pn, *overflow);
   __ delayed()->nop();
@@ -439,7 +437,7 @@ address InterpreterGenerator::generate_empty_entry(void) {
   // do nothing for empty methods (do not even increment invocation counter)
   if ( UseFastEmptyMethods) {
     // If we need a safepoint check, generate full interpreter entry.
-    Address sync_state(G3_scratch, SafepointSynchronize::address_of_state());
+    AddressLiteral sync_state(SafepointSynchronize::address_of_state());
     __ load_contents(sync_state, G3_scratch);
     __ cmp(G3_scratch, SafepointSynchronize::_not_synchronized);
     __ br(Assembler::notEqual, false, Assembler::pn, frame_manager_entry);
@@ -448,110 +446,6 @@ address InterpreterGenerator::generate_empty_entry(void) {
     // Code: _return
     __ retl();
     __ delayed()->mov(O5_savedSP, SP);
-    return entry;
-  }
-  return NULL;
-}
-
-// Call an accessor method (assuming it is resolved, otherwise drop into
-// vanilla (slow path) entry
-
-// Generates code to elide accessor methods
-// Uses G3_scratch and G1_scratch as scratch
-address InterpreterGenerator::generate_accessor_entry(void) {
-
-  // Code: _aload_0, _(i|a)getfield, _(i|a)return or any rewrites thereof;
-  // parameter size = 1
-  // Note: We can only use this code if the getfield has been resolved
-  //       and if we don't have a null-pointer exception => check for
-  //       these conditions first and use slow path if necessary.
-  address entry = __ pc();
-  Label slow_path;
-
-  if ( UseFastAccessorMethods) {
-    // Check if we need to reach a safepoint and generate full interpreter
-    // frame if so.
-    Address sync_state(G3_scratch, SafepointSynchronize::address_of_state());
-    __ load_contents(sync_state, G3_scratch);
-    __ cmp(G3_scratch, SafepointSynchronize::_not_synchronized);
-    __ br(Assembler::notEqual, false, Assembler::pn, slow_path);
-    __ delayed()->nop();
-
-    // Check if local 0 != NULL
-    __ ld_ptr(Gargs, G0, Otos_i ); // get local 0
-    __ tst(Otos_i);  // check if local 0 == NULL and go the slow path
-    __ brx(Assembler::zero, false, Assembler::pn, slow_path);
-    __ delayed()->nop();
-
-
-    // read first instruction word and extract bytecode @ 1 and index @ 2
-    // get first 4 bytes of the bytecodes (big endian!)
-    __ ld_ptr(Address(G5_method, 0, in_bytes(Method::const_offset())), G1_scratch);
-    __ ld(Address(G1_scratch, 0, in_bytes(ConstMethod::codes_offset())), G1_scratch);
-
-    // move index @ 2 far left then to the right most two bytes.
-    __ sll(G1_scratch, 2*BitsPerByte, G1_scratch);
-    __ srl(G1_scratch, 2*BitsPerByte - exact_log2(in_words(
-                      ConstantPoolCacheEntry::size()) * BytesPerWord), G1_scratch);
-
-    // get constant pool cache
-    __ ld_ptr(G5_method, in_bytes(Method::const_offset()), G3_scratch);
-    __ ld_ptr(G3_scratch, in_bytes(ConstMethod::constants_offset()), G3_scratch);
-    __ ld_ptr(G3_scratch, ConstantPool::cache_offset_in_bytes(), G3_scratch);
-
-    // get specific constant pool cache entry
-    __ add(G3_scratch, G1_scratch, G3_scratch);
-
-    // Check the constant Pool cache entry to see if it has been resolved.
-    // If not, need the slow path.
-    ByteSize cp_base_offset = ConstantPoolCache::base_offset();
-    __ ld_ptr(G3_scratch, in_bytes(cp_base_offset + ConstantPoolCacheEntry::indices_offset()), G1_scratch);
-    __ srl(G1_scratch, 2*BitsPerByte, G1_scratch);
-    __ and3(G1_scratch, 0xFF, G1_scratch);
-    __ cmp(G1_scratch, Bytecodes::_getfield);
-    __ br(Assembler::notEqual, false, Assembler::pn, slow_path);
-    __ delayed()->nop();
-
-    // Get the type and return field offset from the constant pool cache
-    __ ld_ptr(G3_scratch, in_bytes(cp_base_offset + ConstantPoolCacheEntry::flags_offset()), G1_scratch);
-    __ ld_ptr(G3_scratch, in_bytes(cp_base_offset + ConstantPoolCacheEntry::f2_offset()), G3_scratch);
-
-    Label xreturn_path;
-    // Need to differentiate between igetfield, agetfield, bgetfield etc.
-    // because they are different sizes.
-    // Get the type from the constant pool cache
-    __ srl(G1_scratch, ConstantPoolCacheEntry::tos_state_shift, G1_scratch);
-    // Make sure we don't need to mask G1_scratch after the above shift
-    ConstantPoolCacheEntry::verify_tos_state_shift();
-    __ cmp(G1_scratch, atos );
-    __ br(Assembler::equal, true, Assembler::pt, xreturn_path);
-    __ delayed()->ld_ptr(Otos_i, G3_scratch, Otos_i);
-    __ cmp(G1_scratch, itos);
-    __ br(Assembler::equal, true, Assembler::pt, xreturn_path);
-    __ delayed()->ld(Otos_i, G3_scratch, Otos_i);
-    __ cmp(G1_scratch, stos);
-    __ br(Assembler::equal, true, Assembler::pt, xreturn_path);
-    __ delayed()->ldsh(Otos_i, G3_scratch, Otos_i);
-    __ cmp(G1_scratch, ctos);
-    __ br(Assembler::equal, true, Assembler::pt, xreturn_path);
-    __ delayed()->lduh(Otos_i, G3_scratch, Otos_i);
-#ifdef ASSERT
-    __ cmp(G1_scratch, btos);
-    __ br(Assembler::equal, true, Assembler::pt, xreturn_path);
-    __ delayed()->ldsb(Otos_i, G3_scratch, Otos_i);
-    __ should_not_reach_here();
-#endif
-    __ ldsb(Otos_i, G3_scratch, Otos_i);
-    __ bind(xreturn_path);
-
-    // _ireturn/_areturn
-    __ retl();                      // return from leaf routine
-    __ delayed()->mov(O5_savedSP, SP);
-
-    // Generate regular method entry
-    __ bind(slow_path);
-    __ ba(fast_accessor_slow_entry_path);
-    __ delayed()->nop();
     return entry;
   }
   return NULL;
@@ -574,7 +468,7 @@ address InterpreterGenerator::generate_Reference_get_entry(void) {
 
   // If G1 is not enabled then attempt to go through the accessor entry point
   // Reference.get is an accessor
-  return generate_accessor_entry();
+  return generate_jump_to_normal_entry();
 }
 
 //
@@ -590,15 +484,15 @@ address InterpreterGenerator::generate_native_entry(bool synchronized) {
   const Register Gtmp1 = G3_scratch ;
   const Register Gtmp2 = G1_scratch;
   const Register RconstMethod = Gtmp1;
-  const Address constMethod(G5_method, 0, in_bytes(Method::const_offset()));
-  const Address size_of_parameters(RconstMethod, 0, in_bytes(ConstMethod::size_of_parameters_offset()));
+  const Address constMethod(G5_method, in_bytes(Method::const_offset()));
+  const Address size_of_parameters(RconstMethod, in_bytes(ConstMethod::size_of_parameters_offset()));
 
   bool inc_counter  = UseCompiler || CountCompiledCalls;
 
   // make sure registers are different!
   assert_different_registers(G2_thread, G5_method, Gargs, Gtmp1, Gtmp2);
 
-  const Address access_flags      (G5_method, 0, in_bytes(Method::access_flags_offset()));
+  const Address access_flags      (G5_method, in_bytes(Method::access_flags_offset()));
 
   Label Lentry;
   __ bind(Lentry);
@@ -643,7 +537,7 @@ address InterpreterGenerator::generate_native_entry(bool synchronized) {
   // At this point Lstate points to new interpreter state
   //
 
-  const Address do_not_unlock_if_synchronized(G2_thread, 0,
+  const Address do_not_unlock_if_synchronized(G2_thread,
       in_bytes(JavaThread::do_not_unlock_if_synchronized_offset()));
   // Since at this point in the method invocation the exception handler
   // would try to exit the monitor of synchronized methods which hasn't
@@ -717,17 +611,17 @@ address InterpreterGenerator::generate_native_entry(bool synchronized) {
 
   { Label L;
     __ ld_ptr(STATE(_method), G5_method);
-    __ ld_ptr(Address(G5_method, 0, in_bytes(Method::signature_handler_offset())), G3_scratch);
+    __ ld_ptr(Address(G5_method, in_bytes(Method::signature_handler_offset())), G3_scratch);
     __ tst(G3_scratch);
     __ brx(Assembler::notZero, false, Assembler::pt, L);
     __ delayed()->nop();
     __ call_VM(noreg, CAST_FROM_FN_PTR(address, InterpreterRuntime::prepare_native_call), G5_method, false);
     __ ld_ptr(STATE(_method), G5_method);
 
-    Address exception_addr(G2_thread, 0, in_bytes(Thread::pending_exception_offset()));
+    Address exception_addr(G2_thread, in_bytes(Thread::pending_exception_offset()));
     __ ld_ptr(exception_addr, G3_scratch);
     __ br_notnull_short(G3_scratch, Assembler::pn, pending_exception_present);
-    __ ld_ptr(Address(G5_method, 0, in_bytes(Method::signature_handler_offset())), G3_scratch);
+    __ ld_ptr(Address(G5_method, in_bytes(Method::signature_handler_offset())), G3_scratch);
     __ bind(L);
   }
 
@@ -771,13 +665,13 @@ address InterpreterGenerator::generate_native_entry(bool synchronized) {
     __ br( Assembler::zero, false, Assembler::pt, not_static);
     __ delayed()->
       // get native function entry point(O0 is a good temp until the very end)
-       ld_ptr(Address(G5_method, 0, in_bytes(Method::native_function_offset())), O0);
+       ld_ptr(Address(G5_method, in_bytes(Method::native_function_offset())), O0);
     // for static methods insert the mirror argument
     const int mirror_offset = in_bytes(Klass::java_mirror_offset());
 
-    __ ld_ptr(Address(G5_method, 0, in_bytes(Method:: const_offset())), O1);
-    __ ld_ptr(Address(O1, 0, in_bytes(ConstMethod::constants_offset())), O1);
-    __ ld_ptr(Address(O1, 0, ConstantPool::pool_holder_offset_in_bytes()), O1);
+    __ ld_ptr(Address(G5_method, in_bytes(Method:: const_offset())), O1);
+    __ ld_ptr(Address(O1, in_bytes(ConstMethod::constants_offset())), O1);
+    __ ld_ptr(Address(O1, ConstantPool::pool_holder_offset_in_bytes()), O1);
     __ ld_ptr(O1, mirror_offset, O1);
     // where the mirror handle body is allocated:
 #ifdef ASSERT
@@ -831,18 +725,17 @@ address InterpreterGenerator::generate_native_entry(bool synchronized) {
   // flush the windows now. We don't care about the current (protection) frame
   // only the outer frames
 
-  __ flush_windows();
+  __ flushw();
 
   // mark windows as flushed
   Address flags(G2_thread,
-                0,
                 in_bytes(JavaThread::frame_anchor_offset()) + in_bytes(JavaFrameAnchor::flags_offset()));
   __ set(JavaFrameAnchor::flushed, G3_scratch);
   __ st(G3_scratch, flags);
 
   // Transition from _thread_in_Java to _thread_in_native. We are already safepoint ready.
 
-  Address thread_state(G2_thread, 0, in_bytes(JavaThread::thread_state_offset()));
+  Address thread_state(G2_thread, in_bytes(JavaThread::thread_state_offset()));
 #ifdef ASSERT
   { Label L;
     __ ld(thread_state, G3_scratch);
@@ -867,7 +760,7 @@ address InterpreterGenerator::generate_native_entry(bool synchronized) {
   // Block, if necessary, before resuming in _thread_in_Java state.
   // In order for GC to work, don't clear the last_Java_sp until after blocking.
   { Label no_block;
-    Address sync_state(G3_scratch, SafepointSynchronize::address_of_state());
+    AddressLiteral sync_state(SafepointSynchronize::address_of_state());
 
     // Switch thread to "native transition" state before reading the synchronization state.
     // This additional state is necessary because reading and testing the synchronization
@@ -890,7 +783,7 @@ address InterpreterGenerator::generate_native_entry(bool synchronized) {
 
 
     Label L;
-    Address suspend_state(G2_thread, 0, in_bytes(JavaThread::suspend_flags_offset()));
+    Address suspend_state(G2_thread, in_bytes(JavaThread::suspend_flags_offset()));
     __ br(Assembler::notEqual, false, Assembler::pn, L);
     __ delayed()->
       ld(suspend_state, G3_scratch);
@@ -960,12 +853,12 @@ address InterpreterGenerator::generate_native_entry(bool synchronized) {
 
   // reset handle block
   __ ld_ptr(G2_thread, in_bytes(JavaThread::active_handles_offset()), G3_scratch);
-  __ st_ptr(G0, G3_scratch, JNIHandleBlock::top_offset_in_bytes());
+  __ st(G0, G3_scratch, JNIHandleBlock::top_offset_in_bytes());
 
 
   // handle exceptions (exception handling will handle unlocking!)
   { Label L;
-    Address exception_addr (G2_thread, 0, in_bytes(Thread::pending_exception_offset()));
+    Address exception_addr (G2_thread, in_bytes(Thread::pending_exception_offset()));
 
     __ ld_ptr(exception_addr, Gtemp);
     __ tst(Gtemp);
@@ -1055,8 +948,8 @@ void CppInterpreterGenerator::generate_compute_interpreter_state(const Register 
   assert_different_registers(state, prev_state);
   assert_different_registers(prev_state, G3_scratch);
   const Register Gtmp = G3_scratch;
-  const Address constMethod       (G5_method, 0, in_bytes(Method::const_offset()));
-  const Address access_flags      (G5_method, 0, in_bytes(Method::access_flags_offset()));
+  const Address constMethod       (G5_method, in_bytes(Method::const_offset()));
+  const Address access_flags      (G5_method, in_bytes(Method::access_flags_offset()));
 
   // slop factor is two extra slots on the expression stack so that
   // we always have room to store a result when returning from a call without parameters
@@ -1075,7 +968,7 @@ void CppInterpreterGenerator::generate_compute_interpreter_state(const Register 
 
   if (native) {
     const Register RconstMethod = Gtmp;
-    const Address size_of_parameters(RconstMethod, 0, in_bytes(ConstMethod::size_of_parameters_offset()));
+    const Address size_of_parameters(RconstMethod, in_bytes(ConstMethod::size_of_parameters_offset()));
     __ ld_ptr(constMethod, RconstMethod);
     __ lduh( size_of_parameters, Gtmp );
     __ calc_mem_param_words(Gtmp, Gtmp);     // space for native call parameters passed on the stack in words
@@ -1246,8 +1139,8 @@ void CppInterpreterGenerator::generate_compute_interpreter_state(const Register 
     if (init_value != noreg) {
       Label clear_loop;
       const Register RconstMethod = O1;
-      const Address size_of_parameters(RconstMethod, 0, in_bytes(ConstMethod::size_of_parameters_offset()));
-      const Address size_of_locals    (RconstMethod, 0, in_bytes(ConstMethod::size_of_locals_offset()));
+      const Address size_of_parameters(RconstMethod, in_bytes(ConstMethod::size_of_parameters_offset()));
+      const Address size_of_locals    (RconstMethod, in_bytes(ConstMethod::size_of_locals_offset()));
 
       // NOTE: If you change the frame layout, this code will need to
       // be updated!
@@ -1496,11 +1389,11 @@ void CppInterpreterGenerator::adjust_callers_stack(Register args) {
 //
 //  assert_different_registers(state, prev_state);
   const Register Gtmp = G3_scratch;
-  const RconstMethod = G3_scratch;
+  const Register RconstMethod = G3_scratch;
   const Register tmp = O2;
-  const Address constMethod(G5_method, 0, in_bytes(Method::const_offset()));
-  const Address size_of_parameters(RconstMethod, 0, in_bytes(ConstMethod::size_of_parameters_offset()));
-  const Address size_of_locals    (RconstMethod, 0, in_bytes(ConstMethod::size_of_locals_offset()));
+  const Address constMethod(G5_method, in_bytes(Method::const_offset()));
+  const Address size_of_parameters(RconstMethod, in_bytes(ConstMethod::size_of_parameters_offset()));
+  const Address size_of_locals    (RconstMethod, in_bytes(ConstMethod::size_of_locals_offset()));
 
   __ ld_ptr(constMethod, RconstMethod);
   __ lduh(size_of_parameters, tmp);
@@ -1555,8 +1448,8 @@ address InterpreterGenerator::generate_normal_entry(bool synchronized) {
   const Register Gtmp1 = G3_scratch;
   // const Register Lmirror = L1;     // native mirror (native calls only)
 
-  const Address constMethod       (G5_method, 0, in_bytes(Method::const_offset()));
-  const Address access_flags      (G5_method, 0, in_bytes(Method::access_flags_offset()));
+  const Address constMethod       (G5_method, in_bytes(Method::const_offset()));
+  const Address access_flags      (G5_method, in_bytes(Method::access_flags_offset()));
 
   address entry_point = __ pc();
   __ mov(G0, prevState);                                                 // no current activation
@@ -1709,7 +1602,7 @@ address InterpreterGenerator::generate_normal_entry(bool synchronized) {
 
   // We want exception in the thread no matter what we ultimately decide about frame type.
 
-  Address exception_addr (G2_thread, 0, in_bytes(Thread::pending_exception_offset()));
+  Address exception_addr (G2_thread, in_bytes(Thread::pending_exception_offset()));
   __ verify_thread();
   __ st_ptr(O0, exception_addr);
 
@@ -1871,23 +1764,6 @@ address InterpreterGenerator::generate_normal_entry(bool synchronized) {
   __ st(L1_scratch, STATE(_msg));
   __ ba(call_interpreter_2);
   __ delayed()->st_ptr(O1, STATE(_stack));
-
-
-  // Fast accessor methods share this entry point.
-  // This works because frame manager is in the same codelet
-  // This can either be an entry via call_stub/c1/c2 or a recursive interpreter call
-  // we need to do a little register fixup here once we distinguish the two of them
-  if (UseFastAccessorMethods && !synchronized) {
-  // Call stub_return address still in O7
-    __ bind(fast_accessor_slow_entry_path);
-    __ set((intptr_t)return_from_native_method - 8, Gtmp1);
-    __ cmp(Gtmp1, O7);                                                // returning to interpreter?
-    __ brx(Assembler::equal, true, Assembler::pt, re_dispatch);       // yep
-    __ delayed()->nop();
-    __ ba(re_dispatch);
-    __ delayed()->mov(G0, prevState);                                 // initial entry
-
-  }
 
   // interpreter returning to native code (call_stub/c1/c2)
   // convert result and unwind initial activation
@@ -2101,7 +1977,7 @@ int AbstractInterpreter::size_top_interpreter_activation(Method* method) {
   int monitor_size    = method->is_synchronized() ?
                                 1*frame::interpreter_frame_monitor_size() : 0;
   return size_activation_helper(method->max_locals(), method->max_stack(),
-                                 monitor_size) + call_stub_size;
+                                monitor_size) + call_stub_size;
 }
 
 void BytecodeInterpreter::layout_interpreterState(interpreterState to_fill,
@@ -2185,31 +2061,31 @@ void BytecodeInterpreter::pd_layout_interpreterState(interpreterState istate, ad
   istate->_last_Java_pc = (intptr_t*) last_Java_pc;
 }
 
+static int frame_size_helper(int max_stack,
+                             int moncount,
+                             int callee_param_size,
+                             int callee_locals_size,
+                             bool is_top_frame,
+                             int& monitor_size,
+                             int& full_frame_words) {
+  int extra_locals_size = callee_locals_size - callee_param_size;
+  monitor_size = (sizeof(BasicObjectLock) * moncount) / wordSize;
+  full_frame_words = size_activation_helper(extra_locals_size, max_stack, monitor_size);
+  int short_frame_words = size_activation_helper(extra_locals_size, max_stack, monitor_size);
+  int frame_words = is_top_frame ? full_frame_words : short_frame_words;
 
-int AbstractInterpreter::layout_activation(Method* method,
-                                           int tempcount, // Number of slots on java expression stack in use
-                                           int popframe_extra_args,
-                                           int moncount,  // Number of active monitors
-                                           int caller_actual_parameters,
-                                           int callee_param_size,
-                                           int callee_locals_size,
-                                           frame* caller,
-                                           frame* interpreter_frame,
-                                           bool is_top_frame,
-                                           bool is_bottom_frame) {
+  return frame_words;
+}
 
-  assert(popframe_extra_args == 0, "NEED TO FIX");
-  // NOTE this code must exactly mimic what InterpreterGenerator::generate_compute_interpreter_state()
-  // does as far as allocating an interpreter frame.
-  // If interpreter_frame!=NULL, set up the method, locals, and monitors.
-  // The frame interpreter_frame, if not NULL, is guaranteed to be the right size,
-  // as determined by a previous call to this method.
-  // It is also guaranteed to be walkable even though it is in a skeletal state
+int AbstractInterpreter::size_activation(int max_stack,
+                                         int tempcount,
+                                         int extra_args,
+                                         int moncount,
+                                         int callee_param_size,
+                                         int callee_locals_size,
+                                         bool is_top_frame) {
+  assert(extra_args == 0, "NEED TO FIX");
   // NOTE: return size is in words not bytes
-  // NOTE: tempcount is the current size of the java expression stack. For top most
-  //       frames we will allocate a full sized expression stack and not the curback
-  //       version that non-top frames have.
-
   // Calculate the amount our frame will be adjust by the callee. For top frame
   // this is zero.
 
@@ -2218,87 +2094,108 @@ int AbstractInterpreter::layout_activation(Method* method,
   // to it. So it ignores last_frame_adjust value. Seems suspicious as far
   // as getting sender_sp correct.
 
-  int extra_locals_size = callee_locals_size - callee_param_size;
-  int monitor_size = (sizeof(BasicObjectLock) * moncount) / wordSize;
-  int full_frame_words = size_activation_helper(extra_locals_size, method->max_stack(), monitor_size);
-  int short_frame_words = size_activation_helper(extra_locals_size, method->max_stack(), monitor_size);
-  int frame_words = is_top_frame ? full_frame_words : short_frame_words;
+  int unused_monitor_size = 0;
+  int unused_full_frame_words = 0;
+  return frame_size_helper(max_stack, moncount, callee_param_size, callee_locals_size, is_top_frame,
+                           unused_monitor_size, unused_full_frame_words);
+}
+void AbstractInterpreter::layout_activation(Method* method,
+                                            int tempcount, // Number of slots on java expression stack in use
+                                            int popframe_extra_args,
+                                            int moncount,  // Number of active monitors
+                                            int caller_actual_parameters,
+                                            int callee_param_size,
+                                            int callee_locals_size,
+                                            frame* caller,
+                                            frame* interpreter_frame,
+                                            bool is_top_frame,
+                                            bool is_bottom_frame) {
+  assert(popframe_extra_args == 0, "NEED TO FIX");
+  // NOTE this code must exactly mimic what InterpreterGenerator::generate_compute_interpreter_state()
+  // does as far as allocating an interpreter frame.
+  // Set up the method, locals, and monitors.
+  // The frame interpreter_frame is guaranteed to be the right size,
+  // as determined by a previous call to the size_activation() method.
+  // It is also guaranteed to be walkable even though it is in a skeletal state
+  // NOTE: tempcount is the current size of the java expression stack. For top most
+  //       frames we will allocate a full sized expression stack and not the curback
+  //       version that non-top frames have.
 
+  int monitor_size = 0;
+  int full_frame_words = 0;
+  int frame_words = frame_size_helper(method->max_stack(), moncount, callee_param_size, callee_locals_size,
+                                      is_top_frame, monitor_size, full_frame_words);
 
   /*
-    if we actually have a frame to layout we must now fill in all the pieces. This means both
+    We must now fill in all the pieces of the frame. This means both
     the interpreterState and the registers.
   */
-  if (interpreter_frame != NULL) {
 
-    // MUCHO HACK
+  // MUCHO HACK
 
-    intptr_t* frame_bottom = interpreter_frame->sp() - (full_frame_words - frame_words);
-    // 'interpreter_frame->sp()' is unbiased while 'frame_bottom' must be a biased value in 64bit mode.
-    assert(((intptr_t)frame_bottom & 0xf) == 0, "SP biased in layout_activation");
-    frame_bottom = (intptr_t*)((intptr_t)frame_bottom - STACK_BIAS);
+  intptr_t* frame_bottom = interpreter_frame->sp() - (full_frame_words - frame_words);
+  // 'interpreter_frame->sp()' is unbiased while 'frame_bottom' must be a biased value in 64bit mode.
+  assert(((intptr_t)frame_bottom & 0xf) == 0, "SP biased in layout_activation");
+  frame_bottom = (intptr_t*)((intptr_t)frame_bottom - STACK_BIAS);
 
-    /* Now fillin the interpreterState object */
+  /* Now fillin the interpreterState object */
 
-    interpreterState cur_state = (interpreterState) ((intptr_t)interpreter_frame->fp() -  sizeof(BytecodeInterpreter));
+  interpreterState cur_state = (interpreterState) ((intptr_t)interpreter_frame->fp() -  sizeof(BytecodeInterpreter));
 
 
-    intptr_t* locals;
+  intptr_t* locals;
 
-    // Calculate the postion of locals[0]. This is painful because of
-    // stack alignment (same as ia64). The problem is that we can
-    // not compute the location of locals from fp(). fp() will account
-    // for the extra locals but it also accounts for aligning the stack
-    // and we can't determine if the locals[0] was misaligned but max_locals
-    // was enough to have the
-    // calculate postion of locals. fp already accounts for extra locals.
-    // +2 for the static long no_params() issue.
+  // Calculate the postion of locals[0]. This is painful because of
+  // stack alignment (same as ia64). The problem is that we can
+  // not compute the location of locals from fp(). fp() will account
+  // for the extra locals but it also accounts for aligning the stack
+  // and we can't determine if the locals[0] was misaligned but max_locals
+  // was enough to have the
+  // calculate postion of locals. fp already accounts for extra locals.
+  // +2 for the static long no_params() issue.
 
-    if (caller->is_interpreted_frame()) {
-      // locals must agree with the caller because it will be used to set the
-      // caller's tos when we return.
-      interpreterState prev  = caller->get_interpreterState();
-      // stack() is prepushed.
-      locals = prev->stack() + method->size_of_parameters();
+  if (caller->is_interpreted_frame()) {
+    // locals must agree with the caller because it will be used to set the
+    // caller's tos when we return.
+    interpreterState prev  = caller->get_interpreterState();
+    // stack() is prepushed.
+    locals = prev->stack() + method->size_of_parameters();
+  } else {
+    // Lay out locals block in the caller adjacent to the register window save area.
+    //
+    // Compiled frames do not allocate a varargs area which is why this if
+    // statement is needed.
+    //
+    intptr_t* fp = interpreter_frame->fp();
+    int local_words = method->max_locals() * Interpreter::stackElementWords;
+
+    if (caller->is_compiled_frame()) {
+      locals = fp + frame::register_save_words + local_words - 1;
     } else {
-      // Lay out locals block in the caller adjacent to the register window save area.
-      //
-      // Compiled frames do not allocate a varargs area which is why this if
-      // statement is needed.
-      //
-      intptr_t* fp = interpreter_frame->fp();
-      int local_words = method->max_locals() * Interpreter::stackElementWords;
-
-      if (caller->is_compiled_frame()) {
-        locals = fp + frame::register_save_words + local_words - 1;
-      } else {
-        locals = fp + frame::memory_parameter_word_sp_offset + local_words - 1;
-      }
-
+      locals = fp + frame::memory_parameter_word_sp_offset + local_words - 1;
     }
-    // END MUCHO HACK
-
-    intptr_t* monitor_base = (intptr_t*) cur_state;
-    intptr_t* stack_base =  monitor_base - monitor_size;
-    /* +1 because stack is always prepushed */
-    intptr_t* stack = stack_base - (tempcount + 1);
-
-
-    BytecodeInterpreter::layout_interpreterState(cur_state,
-                                          caller,
-                                          interpreter_frame,
-                                          method,
-                                          locals,
-                                          stack,
-                                          stack_base,
-                                          monitor_base,
-                                          frame_bottom,
-                                          is_top_frame);
-
-    BytecodeInterpreter::pd_layout_interpreterState(cur_state, interpreter_return_address, interpreter_frame->fp());
 
   }
-  return frame_words;
+  // END MUCHO HACK
+
+  intptr_t* monitor_base = (intptr_t*) cur_state;
+  intptr_t* stack_base =  monitor_base - monitor_size;
+  /* +1 because stack is always prepushed */
+  intptr_t* stack = stack_base - (tempcount + 1);
+
+
+  BytecodeInterpreter::layout_interpreterState(cur_state,
+                                               caller,
+                                               interpreter_frame,
+                                               method,
+                                               locals,
+                                               stack,
+                                               stack_base,
+                                               monitor_base,
+                                               frame_bottom,
+                                               is_top_frame);
+
+  BytecodeInterpreter::pd_layout_interpreterState(cur_state, interpreter_return_address, interpreter_frame->fp());
 }
 
 #endif // CC_INTERP

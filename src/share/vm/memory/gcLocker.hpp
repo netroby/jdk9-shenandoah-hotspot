@@ -29,19 +29,6 @@
 #include "memory/genCollectedHeap.hpp"
 #include "memory/universe.hpp"
 #include "oops/oop.hpp"
-#include "runtime/thread.inline.hpp"
-#ifdef TARGET_OS_FAMILY_linux
-# include "os_linux.inline.hpp"
-#endif
-#ifdef TARGET_OS_FAMILY_solaris
-# include "os_solaris.inline.hpp"
-#endif
-#ifdef TARGET_OS_FAMILY_windows
-# include "os_windows.inline.hpp"
-#endif
-#ifdef TARGET_OS_FAMILY_bsd
-# include "os_bsd.inline.hpp"
-#endif
 
 // The direct lock/unlock calls do not force a collection if an unlock
 // decrements the count to zero. Avoid calling these if at all possible.
@@ -54,8 +41,6 @@ class GC_locker: public AllStatic {
   // safepointing and decremented during the slow path of GC_locker
   // unlocking.
   static volatile jint _jni_lock_count;  // number of jni active instances.
-
-  static volatile jint _lock_count;      // number of other active instances
   static volatile bool _needs_gc;        // heap is filling, we need a GC
                                          // note: bool is typedef'd as jint
   static volatile bool _doing_gc;        // unlock_critical() is doing a GC
@@ -65,12 +50,6 @@ class GC_locker: public AllStatic {
   // validate the jni_lock_count that is computed during safepoints.
   static volatile jint _debug_jni_lock_count;
 #endif
-
-  // Accessors
-  static bool is_jni_active() {
-    assert(_needs_gc, "only valid when _needs_gc is set");
-    return _jni_lock_count > 0;
-  }
 
   // At a safepoint, visit all threads and count the number of active
   // critical sections.  This is used to ensure that all active
@@ -82,7 +61,7 @@ class GC_locker: public AllStatic {
 
   static bool is_active_internal() {
     verify_critical_count();
-    return _lock_count > 0 || _jni_lock_count > 0;
+    return _jni_lock_count > 0;
   }
 
  public:
@@ -102,18 +81,8 @@ class GC_locker: public AllStatic {
   }
 
   // In debug mode track the locking state at all times
-  static void increment_debug_jni_lock_count() {
-#ifdef ASSERT
-    assert(_debug_jni_lock_count >= 0, "bad value");
-    Atomic::inc(&_debug_jni_lock_count);
-#endif
-  }
-  static void decrement_debug_jni_lock_count() {
-#ifdef ASSERT
-    assert(_debug_jni_lock_count > 0, "bad value");
-    Atomic::dec(&_debug_jni_lock_count);
-#endif
-  }
+  static void increment_debug_jni_lock_count() NOT_DEBUG_RETURN;
+  static void decrement_debug_jni_lock_count() NOT_DEBUG_RETURN;
 
   // Set the current lock count
   static void set_jni_lock_count(int count) {
@@ -131,10 +100,6 @@ class GC_locker: public AllStatic {
   // return from this method that "!needs_gc()" since that is
   // not a stable predicate.
   static void stall_until_clear();
-
-  // Non-structured GC locking: currently needed for JNI. Use with care!
-  static void lock();
-  static void unlock();
 
   // The following two methods are used for JNI critical regions.
   // If we find that we failed to perform a GC because the GC_locker

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -34,6 +34,9 @@
 #endif
 #ifdef TARGET_OS_FAMILY_windows
 # include "jvm_windows.h"
+#endif
+#ifdef TARGET_OS_FAMILY_aix
+# include "jvm_aix.h"
 #endif
 #ifdef TARGET_OS_FAMILY_bsd
 # include "jvm_bsd.h"
@@ -479,9 +482,6 @@ JVM_IsArrayClass(JNIEnv *env, jclass cls);
 
 JNIEXPORT jboolean JNICALL
 JVM_IsPrimitiveClass(JNIEnv *env, jclass cls);
-
-JNIEXPORT jclass JNICALL
-JVM_GetComponentType(JNIEnv *env, jclass cls);
 
 JNIEXPORT jint JNICALL
 JVM_GetClassModifiers(JNIEnv *env, jclass cls);
@@ -1482,6 +1482,9 @@ JVM_GetManagement(jint version);
 JNIEXPORT jobject JNICALL
 JVM_InitAgentProperties(JNIEnv *env, jobject agent_props);
 
+JNIEXPORT jstring JNICALL
+JVM_GetTemporaryDirectory(JNIEnv *env);
+
 /* Generics reflection support.
  *
  * Returns information about the given class's EnclosingMethod
@@ -1550,12 +1553,10 @@ JVM_GetThreadStateNames(JNIEnv* env, jint javaThreadState, jintArray values);
  * ==========================================================================
  */
 typedef struct {
-    /* HotSpot Express VM version string:
-     * <major>.<minor>-bxx[-<identifier>][-<debug_flavor>]
-     */
-    unsigned int jvm_version; /* Consists of major.minor.0.build */
-    unsigned int update_version : 8;         /* 0 in HotSpot Express VM */
-    unsigned int special_update_version : 8; /* 0 in HotSpot Express VM */
+    /* VM version string: follows the JDK release version naming convention    */
+    unsigned int jvm_version; /* <major_ver>.<minor_ver>.<micro_ver>[-<identifier>][-<debug_target>][-b<nn>]  */
+    unsigned int update_version : 8;
+    unsigned int special_update_version : 8;
     unsigned int reserved1 : 16;
     unsigned int reserved2;
 
@@ -1574,11 +1575,7 @@ typedef struct {
 
 #define JVM_VERSION_MAJOR(version) ((version & 0xFF000000) >> 24)
 #define JVM_VERSION_MINOR(version) ((version & 0x00FF0000) >> 16)
-// Micro version is 0 in HotSpot Express VM (set in jvm.cpp).
 #define JVM_VERSION_MICRO(version) ((version & 0x0000FF00) >> 8)
-/* Build number is available in all HotSpot Express VM builds.
- * It is defined in make/hotspot_version file.
- */
 #define JVM_VERSION_BUILD(version) ((version & 0x000000FF))
 
 JNIEXPORT void JNICALL

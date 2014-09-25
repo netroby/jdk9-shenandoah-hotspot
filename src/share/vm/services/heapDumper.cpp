@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2005, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2005, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -33,6 +33,7 @@
 #include "oops/objArrayKlass.hpp"
 #include "runtime/javaCalls.hpp"
 #include "runtime/jniHandles.hpp"
+#include "runtime/os.hpp"
 #include "runtime/reflectionUtils.hpp"
 #include "runtime/vframe.hpp"
 #include "runtime/vmThread.hpp"
@@ -1604,6 +1605,18 @@ int VM_HeapDumper::do_thread(JavaThread* java_thread, u4 thread_serial_num) {
               }
             }
           }
+          StackValueCollection *exprs = jvf->expressions();
+          for(int index = 0; index < exprs->size(); index++) {
+            if (exprs->at(index)->type() == T_OBJECT) {
+               oop o = exprs->obj_at(index)();
+               if (o != NULL) {
+                 writer()->write_u1(HPROF_GC_ROOT_JAVA_FRAME);
+                 writer()->write_objectID(o);
+                 writer()->write_u4(thread_serial_num);
+                 writer()->write_u4((u4) (stack_depth + extra_frames));
+               }
+             }
+          }
         } else {
           // native frame
           if (stack_depth == 0) {
@@ -1830,6 +1843,7 @@ void VM_HeapDumper::dump_stack_traces() {
 }
 
 // dump the heap to given path.
+PRAGMA_FORMAT_NONLITERAL_IGNORED_EXTERNAL
 int HeapDumper::dump(const char* path) {
   assert(path != NULL && strlen(path) > 0, "path missing");
 
@@ -1870,7 +1884,10 @@ int HeapDumper::dump(const char* path) {
       char msg[256];
       sprintf(msg, "Heap dump file created [%s bytes in %3.3f secs]",
         JLONG_FORMAT, timer()->seconds());
+PRAGMA_DIAG_PUSH
+PRAGMA_FORMAT_NONLITERAL_IGNORED_INTERNAL
       tty->print_cr(msg, writer.bytes_written());
+PRAGMA_DIAG_POP
     } else {
       tty->print_cr("Dump file is incomplete: %s", writer.error());
     }

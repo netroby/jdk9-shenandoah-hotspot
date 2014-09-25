@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2010, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -27,6 +27,8 @@
 #include "gc_implementation/concurrentMarkSweep/promotionInfo.hpp"
 #include "oops/markOop.inline.hpp"
 #include "oops/oop.inline.hpp"
+
+PRAGMA_FORMAT_MUTE_WARNINGS_FOR_GCC
 
 /////////////////////////////////////////////////////////////////////////
 //// PromotionInfo
@@ -265,7 +267,7 @@ void PromotionInfo::print_statistics(uint worker_id) const {
     slots += _spoolHead->bufferSize - 1;
     blocks++;
   }
-  gclog_or_tty->print_cr(" [worker %d] promo_blocks = %d, promo_slots = %d ",
+  gclog_or_tty->print_cr(" [worker %d] promo_blocks = " SIZE_FORMAT ", promo_slots = " SIZE_FORMAT,
                          worker_id, blocks, slots);
 }
 
@@ -279,7 +281,7 @@ void PromotionInfo::print_statistics(uint worker_id) const {
 // When _spoolTail is NULL, then the set of slots with displaced headers
 // is all those starting at the slot <_spoolHead, _firstIndex> and
 // going up to the last slot of last block in the linked list.
-// In this lartter case, _splice_point points to the tail block of
+// In this latter case, _splice_point points to the tail block of
 // this linked list of blocks holding displaced headers.
 void PromotionInfo::verify() const {
   // Verify the following:

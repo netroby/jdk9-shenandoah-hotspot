@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2001, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2001, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -23,6 +23,7 @@
  */
 
 #include "precompiled.hpp"
+#include "runtime/atomic.inline.hpp"
 #include "utilities/macros.hpp"
 #if INCLUDE_ALL_GCS
 #include "gc_implementation/shared/mutableSpace.hpp"
@@ -31,6 +32,8 @@
 #include "runtime/safepoint.hpp"
 #include "runtime/thread.hpp"
 #endif // INCLUDE_ALL_GCS
+
+PRAGMA_FORMAT_MUTE_WARNINGS_FOR_GCC
 
 MutableSpace::MutableSpace(size_t alignment): ImmutableSpace(), _top(NULL), _alignment(alignment) {
   assert(MutableSpace::alignment() >= 0 &&

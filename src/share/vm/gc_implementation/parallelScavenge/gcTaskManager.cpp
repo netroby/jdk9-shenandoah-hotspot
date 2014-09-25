@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2002, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2002, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -30,6 +30,9 @@
 #include "memory/allocation.inline.hpp"
 #include "runtime/mutex.hpp"
 #include "runtime/mutexLocker.hpp"
+#include "runtime/orderAccess.inline.hpp"
+
+PRAGMA_FORMAT_MUTE_WARNINGS_FOR_GCC
 
 //
 // GCTask
@@ -202,12 +205,12 @@ void GCTaskQueue::enqueue(GCTaskQueue* list) {
     list->print("list:");
   }
   if (list->is_empty()) {
-    // Enqueuing the empty list: nothing to do.
+    // Enqueueing the empty list: nothing to do.
     return;
   }
   uint list_length = list->length();
   if (is_empty()) {
-    // Enqueuing to empty list: just acquire elements.
+    // Enqueueing to empty list: just acquire elements.
     set_insert_end(list->insert_end());
     set_remove_end(list->remove_end());
     set_length(list_length);
@@ -487,7 +490,7 @@ void GCTaskManager::set_active_gang() {
   if (TraceDynamicGCThreads) {
     gclog_or_tty->print_cr("GCTaskManager::set_active_gang(): "
                            "all_workers_active()  %d  workers %d  "
-                           "active  %d  ParallelGCThreads %d ",
+                           "active  %d  ParallelGCThreads " UINTX_FORMAT,
                            all_workers_active(), workers(),  active_workers(),
                            ParallelGCThreads);
   }

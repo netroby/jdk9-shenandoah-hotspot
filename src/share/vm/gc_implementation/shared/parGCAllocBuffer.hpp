@@ -24,7 +24,7 @@
 
 #ifndef SHARE_VM_GC_IMPLEMENTATION_PARNEW_PARGCALLOCBUFFER_HPP
 #define SHARE_VM_GC_IMPLEMENTATION_PARNEW_PARGCALLOCBUFFER_HPP
-
+#include "gc_interface/collectedHeap.hpp"
 #include "memory/allocation.hpp"
 #include "memory/blockOffsetTable.hpp"
 #include "memory/threadLocalAllocBuffer.hpp"
@@ -60,6 +60,7 @@ public:
   // Initializes the buffer to be empty, but with the given "word_sz".
   // Must get initialized with "set_buf" for an allocation to succeed.
   ParGCAllocBuffer(size_t word_sz);
+  virtual ~ParGCAllocBuffer() {}
 
   static const size_t min_size() {
     return ThreadLocalAllocBuffer::min_size();
@@ -83,6 +84,9 @@ public:
     }
   }
 
+  // Allocate the object aligned to "alignment_in_bytes".
+  HeapWord* allocate_aligned(size_t word_sz, unsigned short alignment_in_bytes);
+
   // Undo the last allocation in the buffer, which is required to be of the
   // "obj" of the given "word_sz".
   void undo_allocation(HeapWord* obj, size_t word_sz) {
@@ -92,7 +96,7 @@ public:
   }
 
   // The total (word) size of the buffer, including both allocated and
-  // unallocted space.
+  // unallocated space.
   size_t word_sz() { return _word_sz; }
 
   // Should only be done if we are about to reset with a new buffer of the
@@ -113,7 +117,7 @@ public:
   }
 
   // Sets the space of the buffer to be [buf, space+word_sz()).
-  void set_buf(HeapWord* buf) {
+  virtual void set_buf(HeapWord* buf) {
     _bottom   = buf;
     _top      = _bottom;
     _hard_end = _bottom + word_sz();
@@ -181,16 +185,7 @@ class PLABStats VALUE_OBJ_CLASS_SPEC {
     _used(0),
     _desired_plab_sz(desired_plab_sz_),
     _filter(wt)
-  {
-    size_t min_sz = min_size();
-    size_t max_sz = max_size();
-    size_t aligned_min_sz = align_object_size(min_sz);
-    size_t aligned_max_sz = align_object_size(max_sz);
-    assert(min_sz <= aligned_min_sz && max_sz >= aligned_max_sz &&
-           min_sz <= max_sz,
-           "PLAB clipping computation in adjust_desired_plab_sz()"
-           " may be incorrect");
-  }
+  { }
 
   static const size_t min_size() {
     return ParGCAllocBuffer::min_size();
@@ -247,14 +242,14 @@ public:
 
   void undo_allocation(HeapWord* obj, size_t word_sz);
 
-  void set_buf(HeapWord* buf_start) {
+  virtual void set_buf(HeapWord* buf_start) {
     ParGCAllocBuffer::set_buf(buf_start);
     _true_end = _hard_end;
     _bt.set_region(MemRegion(buf_start, word_sz()));
     _bt.initialize_threshold();
   }
 
-  void retire(bool end_of_gc, bool retain);
+  virtual void retire(bool end_of_gc, bool retain);
 
   MemRegion range() {
     return MemRegion(_top, _true_end);

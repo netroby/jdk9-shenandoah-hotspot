@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2003, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2003, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -39,6 +39,7 @@
 #include "runtime/jniHandles.hpp"
 #include "runtime/os.hpp"
 #include "runtime/serviceThread.hpp"
+#include "runtime/thread.inline.hpp"
 #include "services/classLoadingService.hpp"
 #include "services/diagnosticCommand.hpp"
 #include "services/diagnosticFramework.hpp"
@@ -54,6 +55,8 @@
 #include "services/runtimeService.hpp"
 #include "services/threadService.hpp"
 #include "utilities/macros.hpp"
+
+PRAGMA_FORMAT_MUTE_WARNINGS_FOR_GCC
 
 PerfVariable* Management::_begin_vm_creation_time = NULL;
 PerfVariable* Management::_end_vm_creation_time = NULL;
@@ -152,11 +155,14 @@ void Management::initialize(TRAPS) {
     // Load and initialize the sun.management.Agent class
     // invoke startAgent method to start the management server
     Handle loader = Handle(THREAD, SystemDictionary::java_system_loader());
-    Klass* k = SystemDictionary::resolve_or_fail(vmSymbols::sun_management_Agent(),
+    Klass* k = SystemDictionary::resolve_or_null(vmSymbols::sun_management_Agent(),
                                                    loader,
                                                    Handle(),
-                                                   true,
-                                                   CHECK);
+                                                   THREAD);
+    if (k == NULL) {
+      vm_exit_during_initialization("Management agent initialization failure: "
+          "class sun.management.Agent not found.");
+    }
     instanceKlassHandle ik (THREAD, k);
 
     JavaValue result(T_VOID);
@@ -1223,10 +1229,8 @@ JVM_ENTRY(jint, jmm_GetThreadInfo(JNIEnv *env, jlongArray ids, jint maxDepth, jo
                "The length of the given ThreadInfo array does not match the length of the given array of thread IDs", -1);
   }
 
-  if (JDK_Version::is_gte_jdk16x_version()) {
-    // make sure the AbstractOwnableSynchronizer klass is loaded before taking thread snapshots
-    java_util_concurrent_locks_AbstractOwnableSynchronizer::initialize(CHECK_0);
-  }
+  // make sure the AbstractOwnableSynchronizer klass is loaded before taking thread snapshots
+  java_util_concurrent_locks_AbstractOwnableSynchronizer::initialize(CHECK_0);
 
   // Must use ThreadDumpResult to store the ThreadSnapshot.
   // GC may occur after the thread snapshots are taken but before
@@ -1297,10 +1301,8 @@ JVM_END
 JVM_ENTRY(jobjectArray, jmm_DumpThreads(JNIEnv *env, jlongArray thread_ids, jboolean locked_monitors, jboolean locked_synchronizers))
   ResourceMark rm(THREAD);
 
-  if (JDK_Version::is_gte_jdk16x_version()) {
-    // make sure the AbstractOwnableSynchronizer klass is loaded before taking thread snapshots
-    java_util_concurrent_locks_AbstractOwnableSynchronizer::initialize(CHECK_NULL);
-  }
+  // make sure the AbstractOwnableSynchronizer klass is loaded before taking thread snapshots
+  java_util_concurrent_locks_AbstractOwnableSynchronizer::initialize(CHECK_NULL);
 
   typeArrayOop ta = typeArrayOop(JNIHandles::resolve(thread_ids));
   int num_threads = (ta != NULL ? ta->length() : 0);
@@ -1694,6 +1696,9 @@ bool add_global_entry(JNIEnv* env, Handle name, jmmVMGlobal *global, Flag *flag,
   } else if (flag->is_uint64_t()) {
     global->value.j = (jlong)flag->get_uint64_t();
     global->type = JMM_VMGLOBAL_TYPE_JLONG;
+  } else if (flag->is_size_t()) {
+    global->value.j = (jlong)flag->get_size_t();
+    global->type = JMM_VMGLOBAL_TYPE_JLONG;
   } else if (flag->is_ccstr()) {
     Handle str = java_lang_String::create_from_str(flag->get_ccstr(), CHECK_false);
     global->value.l = (jobject)JNIHandles::make_local(env, str());
@@ -1723,6 +1728,9 @@ bool add_global_entry(JNIEnv* env, Handle name, jmmVMGlobal *global, Flag *flag,
       break;
     case Flag::ERGONOMIC:
       global->origin = JMM_VMGLOBAL_ORIGIN_ERGONOMIC;
+      break;
+    case Flag::ATTACH_ON_DEMAND:
+      global->origin = JMM_VMGLOBAL_ORIGIN_ATTACH_ON_DEMAND;
       break;
     default:
       global->origin = JMM_VMGLOBAL_ORIGIN_OTHER;
@@ -1821,7 +1829,7 @@ JVM_ENTRY(void, jmm_SetVMGlobal(JNIEnv *env, jstring flag_name, jvalue new_value
               "This flag is not writeable.");
   }
 
-  bool succeed;
+  bool succeed = false;
   if (flag->is_bool()) {
     bool bvalue = (new_value.z == JNI_TRUE ? true : false);
     succeed = CommandLineFlags::boolAtPut(name, &bvalue, Flag::MANAGEMENT);
@@ -1830,10 +1838,25 @@ JVM_ENTRY(void, jmm_SetVMGlobal(JNIEnv *env, jstring flag_name, jvalue new_value
     succeed = CommandLineFlags::intxAtPut(name, &ivalue, Flag::MANAGEMENT);
   } else if (flag->is_uintx()) {
     uintx uvalue = (uintx)new_value.j;
+
+    if (strncmp(name, "MaxHeapFreeRatio", 17) == 0) {
+      FormatBuffer<80> err_msg("%s", "");
+      if (!Arguments::verify_MaxHeapFreeRatio(err_msg, uvalue)) {
+        THROW_MSG(vmSymbols::java_lang_IllegalArgumentException(), err_msg.buffer());
+      }
+    } else if (strncmp(name, "MinHeapFreeRatio", 17) == 0) {
+      FormatBuffer<80> err_msg("%s", "");
+      if (!Arguments::verify_MinHeapFreeRatio(err_msg, uvalue)) {
+        THROW_MSG(vmSymbols::java_lang_IllegalArgumentException(), err_msg.buffer());
+      }
+    }
     succeed = CommandLineFlags::uintxAtPut(name, &uvalue, Flag::MANAGEMENT);
   } else if (flag->is_uint64_t()) {
     uint64_t uvalue = (uint64_t)new_value.j;
     succeed = CommandLineFlags::uint64_tAtPut(name, &uvalue, Flag::MANAGEMENT);
+  } else if (flag->is_size_t()) {
+    size_t svalue = (size_t)new_value.j;
+    succeed = CommandLineFlags::size_tAtPut(name, &svalue, Flag::MANAGEMENT);
   } else if (flag->is_ccstr()) {
     oop str = JNIHandles::resolve_external_guard(new_value.l);
     if (str == NULL) {
@@ -1841,6 +1864,9 @@ JVM_ENTRY(void, jmm_SetVMGlobal(JNIEnv *env, jstring flag_name, jvalue new_value
     }
     ccstr svalue = java_lang_String::as_utf8_string(str);
     succeed = CommandLineFlags::ccstrAtPut(name, &svalue, Flag::MANAGEMENT);
+    if (succeed) {
+      FREE_C_HEAP_ARRAY(char, svalue, mtInternal);
+    }
   }
   assert(succeed, "Setting flag should succeed");
 JVM_END
@@ -1894,7 +1920,7 @@ void ThreadTimesClosure::do_thread(Thread* thread) {
   ResourceMark rm(THREAD); // thread->name() uses ResourceArea
 
   assert(thread->name() != NULL, "All threads should have a name");
-  _names_chars[_count] = strdup(thread->name());
+  _names_chars[_count] = os::strdup(thread->name());
   _times->long_at_put(_count, os::is_thread_cpu_time_supported() ?
                         os::thread_cpu_time(thread) : -1);
   _count++;
@@ -1912,7 +1938,7 @@ void ThreadTimesClosure::do_unlocked() {
 
 ThreadTimesClosure::~ThreadTimesClosure() {
   for (int i = 0; i < _count; i++) {
-    free(_names_chars[i]);
+    os::free(_names_chars[i]);
   }
   FREE_C_HEAP_ARRAY(char *, _names_chars, mtInternal);
 }

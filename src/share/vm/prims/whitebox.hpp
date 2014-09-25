@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2012, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -36,6 +36,22 @@
 #define WB_END JNI_END
 #define WB_METHOD_DECLARE(result_type) extern "C" result_type JNICALL
 
+#define CHECK_JNI_EXCEPTION_(env, value)                               \
+  do {                                                                 \
+    JavaThread* THREAD = JavaThread::thread_from_jni_environment(env); \
+    if (HAS_PENDING_EXCEPTION) {                                       \
+      return(value);                                                   \
+    }                                                                  \
+  } while (0)
+
+#define CHECK_JNI_EXCEPTION(env)                                       \
+  do {                                                                 \
+    JavaThread* THREAD = JavaThread::thread_from_jni_environment(env); \
+    if (HAS_PENDING_EXCEPTION) {                                       \
+      return;                                                          \
+    }                                                                  \
+  } while (0)
+
 class WhiteBox : public AllStatic {
  private:
   static bool _used;
@@ -46,6 +62,8 @@ class WhiteBox : public AllStatic {
     Symbol* signature_symbol);
   static const char* lookup_jstring(const char* field_name, oop object);
   static bool lookup_bool(const char* field_name, oop object);
+
+  static int array_bytes_to_length(size_t bytes);
 };
 
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2013, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -22,7 +22,6 @@
  */
 
 /*
- * @ignore 8026154
  * @test
  * @bug 8005933
  * @summary Test that -Xshare:auto uses CDS when explicitly specified with -server.
@@ -45,26 +44,28 @@ public class XShareAuto {
             "-server", "-XX:+UnlockDiagnosticVMOptions",
             "-XX:SharedArchiveFile=./sample.jsa", "-version");
         output = new OutputAnalyzer(pb.start());
-        output.shouldNotContain("sharing");
-        output.shouldHaveExitValue(0);
+        // We asked for server but it could be aliased to something else
+        if (output.getOutput().contains("Server VM")) {
+            // In server case we don't expect to see sharing flag
+            output.shouldNotContain("sharing");
+            output.shouldHaveExitValue(0);
+        }
+        else {
+            System.out.println("Skipping test - no Server VM available");
+            return;
+        }
 
         pb = ProcessTools.createJavaProcessBuilder(
             "-server", "-Xshare:auto", "-XX:+UnlockDiagnosticVMOptions",
-            "-XX:SharedArchiveFile=./sample.jsa", "-version");
+            "-XX:SharedArchiveFile=./sample.jsa", "-XX:+PrintSharedSpaces", "-version");
         output = new OutputAnalyzer(pb.start());
         try {
             output.shouldContain("sharing");
-            output.shouldHaveExitValue(0);
         } catch (RuntimeException e) {
-            // If this failed then check that it would also be unable
-            // to share even if -Xshare:on is specified.  If so, then
-            // return a success status.
-            pb = ProcessTools.createJavaProcessBuilder(
-                "-server", "-Xshare:on", "-XX:+UnlockDiagnosticVMOptions",
-                "-XX:SharedArchiveFile=./sample.jsa", "-version");
-            output = new OutputAnalyzer(pb.start());
-            output.shouldContain("Unable to use shared archive");
-            output.shouldHaveExitValue(1);
+            // if sharing failed due to ASLR or similar reasons,
+            // check whether sharing was attempted at all (UseSharedSpaces)
+            output.shouldContain("UseSharedSpaces:");
         }
+        output.shouldHaveExitValue(0);
     }
 }

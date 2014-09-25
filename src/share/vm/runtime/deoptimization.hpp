@@ -59,6 +59,14 @@ class Deoptimization : AllStatic {
     Reason_age,                   // nmethod too old; tier threshold reached
     Reason_predicate,             // compiler generated predicate failed
     Reason_loop_limit_check,      // compiler generated loop limits check failed
+    Reason_speculate_class_check, // saw unexpected object class from type speculation
+    Reason_speculate_null_check,  // saw unexpected null from type speculation
+    Reason_rtm_state_change,      // rtm state change detected
+    Reason_unstable_if,           // a branch predicted always false was taken
+
+    // Reason_tenured is counted separately, add normal counted Reasons above.
+    // Related to MethodData::_trap_hist_limit where Reason_tenured isn't included
+    Reason_tenured,               // age of the code has reached the limit
     Reason_LIMIT,
     // Note:  Keep this enum in sync. with _trap_reason_name.
     Reason_RECORDED_LIMIT = Reason_bimorphic  // some are not recorded per bc
@@ -206,7 +214,7 @@ class Deoptimization : AllStatic {
   // Called by assembly stub after execution has returned to
   // deoptimized frame and after the stack unrolling.
   // @argument thread.     Thread where stub_frame resides.
-  // @argument exec_mode.  Determines how execution should be continuted in top frame.
+  // @argument exec_mode.  Determines how execution should be continued in top frame.
   //                       0 means continue after current byte code
   //                       1 means exception has happened, handle exception
   //                       2 means reexecute current bytecode (for uncommon traps).
@@ -311,8 +319,33 @@ class Deoptimization : AllStatic {
       return reason;
     else if (reason == Reason_div0_check) // null check due to divide-by-zero?
       return Reason_null_check;           // recorded per BCI as a null check
+    else if (reason == Reason_speculate_class_check)
+      return Reason_class_check;
+    else if (reason == Reason_speculate_null_check)
+      return Reason_null_check;
+    else if (reason == Reason_unstable_if)
+      return Reason_intrinsic;
     else
       return Reason_none;
+  }
+
+  static bool reason_is_speculate(int reason) {
+    if (reason == Reason_speculate_class_check || reason == Reason_speculate_null_check) {
+      return true;
+    }
+    return false;
+  }
+
+  static DeoptReason reason_null_check(bool speculative) {
+    return speculative ? Deoptimization::Reason_speculate_null_check : Deoptimization::Reason_null_check;
+  }
+
+  static DeoptReason reason_class_check(bool speculative) {
+    return speculative ? Deoptimization::Reason_speculate_class_check : Deoptimization::Reason_class_check;
+  }
+
+  static uint per_method_trap_limit(int reason) {
+    return reason_is_speculate(reason) ? (uint)PerMethodSpecTrapLimit : (uint)PerMethodTrapLimit;
   }
 
   static const char* trap_reason_name(int reason);
@@ -331,12 +364,13 @@ class Deoptimization : AllStatic {
   // returning to a deoptimized caller
   static void popframe_preserve_args(JavaThread* thread, int bytes_to_save, void* start_address);
 
- private:
   static MethodData* get_method_data(JavaThread* thread, methodHandle m, bool create_if_missing);
+ private:
   // Update the mdo's count and per-BCI reason bits, returning previous state:
   static ProfileData* query_update_method_data(MethodData* trap_mdo,
                                                int trap_bci,
                                                DeoptReason reason,
+                                               Method* compiled_method,
                                                //outputs:
                                                uint& ret_this_trap_count,
                                                bool& ret_maybe_prior_trap,
@@ -348,8 +382,8 @@ class Deoptimization : AllStatic {
   static UnrollBlock* fetch_unroll_info_helper(JavaThread* thread);
 
   static DeoptAction _unloaded_action; // == Action_reinterpret;
-  static const char* _trap_reason_name[Reason_LIMIT];
-  static const char* _trap_action_name[Action_LIMIT];
+  static const char* _trap_reason_name[];
+  static const char* _trap_action_name[];
 
   static juint _deoptimization_hist[Reason_LIMIT][1+Action_LIMIT][BC_CASE_LIMIT];
   // Note:  Histogram array size is 1-2 Kb.

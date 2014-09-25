@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -49,12 +49,14 @@
 #include "runtime/compilationPolicy.hpp"
 #include "runtime/frame.inline.hpp"
 #include "runtime/handles.inline.hpp"
+#include "runtime/orderAccess.inline.hpp"
 #include "runtime/relocator.hpp"
 #include "runtime/sharedRuntime.hpp"
 #include "runtime/signature.hpp"
 #include "utilities/quickSort.hpp"
 #include "utilities/xmlstream.hpp"
 
+PRAGMA_FORMAT_MUTE_WARNINGS_FOR_GCC
 
 // Implementation of Method
 
@@ -238,6 +240,9 @@ void Method::mask_for(int bci, InterpreterOopMap* mask) {
 
 
 int Method::bci_from(address bcp) const {
+  if (is_native() && bcp == 0) {
+    return 0;
+  }
 #ifdef ASSERT
   { ResourceMark rm;
   assert(is_native() && bcp == code_base() || contains(bcp) || is_error_reported(),
@@ -248,24 +253,23 @@ int Method::bci_from(address bcp) const {
 }
 
 
-// Return (int)bcx if it appears to be a valid BCI.
-// Return bci_from((address)bcx) if it appears to be a valid BCP.
+int Method::validate_bci(int bci) const {
+  return (bci == 0 || bci < code_size()) ? bci : -1;
+}
+
+// Return bci if it appears to be a valid bcp
 // Return -1 otherwise.
 // Used by profiling code, when invalid data is a possibility.
 // The caller is responsible for validating the Method* itself.
-int Method::validate_bci_from_bcx(intptr_t bcx) const {
+int Method::validate_bci_from_bcp(address bcp) const {
   // keep bci as -1 if not a valid bci
   int bci = -1;
-  if (bcx == 0 || (address)bcx == code_base()) {
+  if (bcp == 0 || bcp == code_base()) {
     // code_size() may return 0 and we allow 0 here
     // the method may be native
     bci = 0;
-  } else if (frame::is_bci(bcx)) {
-    if (bcx < code_size()) {
-      bci = (int)bcx;
-    }
-  } else if (contains((address)bcx)) {
-    bci = (address)bcx - code_base();
+  } else if (contains(bcp)) {
+    bci = bcp - code_base();
   }
   // Assert that if we have dodged any asserts, bci is negative.
   assert(bci == -1 || bci == bci_from(bcp_from(bci)), "sane bci if >=0");
@@ -273,12 +277,19 @@ int Method::validate_bci_from_bcx(intptr_t bcx) const {
 }
 
 address Method::bcp_from(int bci) const {
-  assert((is_native() && bci == 0)  || (!is_native() && 0 <= bci && bci < code_size()), "illegal bci");
+  assert((is_native() && bci == 0)  || (!is_native() && 0 <= bci && bci < code_size()), err_msg("illegal bci: %d", bci));
   address bcp = code_base() + bci;
   assert(is_native() && bcp == code_base() || contains(bcp), "bcp doesn't belong to this method");
   return bcp;
 }
 
+address Method::bcp_from(address bcp) const {
+  if (is_native() && bcp == NULL) {
+    return code_base();
+  } else {
+    return bcp;
+  }
+}
 
 int Method::size(bool is_native) {
   // If native, then include pointers for native_function and signature_handler
@@ -329,14 +340,12 @@ bool Method::was_executed_more_than(int n) {
   }
 }
 
-#ifndef PRODUCT
 void Method::print_invocation_count() {
   if (is_static()) tty->print("static ");
   if (is_final()) tty->print("final ");
   if (is_synchronized()) tty->print("synchronized ");
   if (is_native()) tty->print("native ");
-  method_holder()->name()->print_symbol_on(tty);
-  tty->print(".");
+  tty->print("%s::", method_holder()->external_name());
   name()->print_symbol_on(tty);
   signature()->print_symbol_on(tty);
 
@@ -349,12 +358,12 @@ void Method::print_invocation_count() {
   tty->print_cr ("  interpreter_invocation_count: %8d ", interpreter_invocation_count());
   tty->print_cr ("  invocation_counter:           %8d ", invocation_count());
   tty->print_cr ("  backedge_counter:             %8d ", backedge_count());
+#ifndef PRODUCT
   if (CountCompiledCalls) {
     tty->print_cr ("  compiled_invocation_count: %8d ", compiled_invocation_count());
   }
-
-}
 #endif
+}
 
 // Build a MethodData* object to hold information about this method
 // collected in the interpreter.
@@ -577,12 +586,12 @@ bool Method::is_static_initializer() const {
 }
 
 
-objArrayHandle Method::resolved_checked_exceptions_impl(Method* this_oop, TRAPS) {
-  int length = this_oop->checked_exceptions_length();
+objArrayHandle Method::resolved_checked_exceptions_impl(Method* method, TRAPS) {
+  int length = method->checked_exceptions_length();
   if (length == 0) {  // common case
     return objArrayHandle(THREAD, Universe::the_empty_class_klass_array());
   } else {
-    methodHandle h_this(THREAD, this_oop);
+    methodHandle h_this(THREAD, method);
     objArrayOop m_oop = oopFactory::new_objArray(SystemDictionary::Class_klass(), length, CHECK_(objArrayHandle()));
     objArrayHandle mirrors (THREAD, m_oop);
     for (int i = 0; i < length; i++) {
@@ -729,8 +738,8 @@ void Method::print_made_not_compilable(int comp_level, bool is_osr, bool report,
   }
   if ((TraceDeoptimization || LogCompilation) && (xtty != NULL)) {
     ttyLocker ttyl;
-    xtty->begin_elem("make_not_%scompilable thread='" UINTX_FORMAT "'",
-                     is_osr ? "osr_" : "", os::current_thread_id());
+    xtty->begin_elem("make_not_compilable thread='" UINTX_FORMAT "' osr='%d' level='%d'",
+                     os::current_thread_id(), is_osr, comp_level);
     if (reason != NULL) {
       xtty->print(" reason=\'%s\'", reason);
     }
@@ -905,6 +914,19 @@ address Method::make_adapters(methodHandle mh, TRAPS) {
   return adapter->get_c2i_entry();
 }
 
+void Method::restore_unshareable_info(TRAPS) {
+  // Since restore_unshareable_info can be called more than once for a method, don't
+  // redo any work.   If this field is restored, there is nothing to do.
+  if (_from_compiled_entry == NULL) {
+    // restore method's vtable by calling a virtual function
+    restore_vtable();
+
+    methodHandle mh(THREAD, this);
+    link_method(mh, CHECK);
+  }
+}
+
+
 // The verified_code_entry() must be called when a invoke is resolved
 // on this method.
 
@@ -1006,14 +1028,11 @@ bool Method::should_not_be_cached() const {
  *  security related stack walks (like Reflection.getCallerClass).
  */
 bool Method::is_ignored_by_security_stack_walk() const {
-  const bool use_new_reflection = JDK_Version::is_gte_jdk14x_version() && UseNewReflection;
-
   if (intrinsic_id() == vmIntrinsics::_invoke) {
     // This is Method.invoke() -- ignore it
     return true;
   }
-  if (use_new_reflection &&
-      method_holder()->is_subclass_of(SystemDictionary::reflect_MethodAccessorImpl_klass())) {
+  if (method_holder()->is_subclass_of(SystemDictionary::reflect_MethodAccessorImpl_klass())) {
     // This is an auxilary frame -- ignore it
     return true;
   }
@@ -1413,7 +1432,7 @@ class SignatureTypePrinter : public SignatureTypeNames {
 
   void type_name(const char* name) {
     if (_use_separator) _st->print(", ");
-    _st->print(name);
+    _st->print("%s", name);
     _use_separator = true;
   }
 
@@ -1443,10 +1462,6 @@ void Method::print_name(outputStream* st) {
 #endif // !PRODUCT || INCLUDE_JVMTI
 
 
-//-----------------------------------------------------------------------------------
-// Non-product code
-
-#ifndef PRODUCT
 void Method::print_codes_on(outputStream* st) const {
   print_codes_on(0, code_size(), st);
 }
@@ -1460,7 +1475,6 @@ void Method::print_codes_on(int from, int to, outputStream* st) const {
   BytecodeTracer::set_closure(BytecodeTracer::std_closure());
   while (s.next() >= 0) BytecodeTracer::trace(mh, s.bcp(), st);
 }
-#endif // not PRODUCT
 
 
 // Simple compression of line number tables. We use a regular compressed stream, except that we compress deltas
@@ -1621,34 +1635,34 @@ int Method::backedge_count() {
 }
 
 int Method::highest_comp_level() const {
-  const MethodData* mdo = method_data();
-  if (mdo != NULL) {
-    return mdo->highest_comp_level();
+  const MethodCounters* mcs = method_counters();
+  if (mcs != NULL) {
+    return mcs->highest_comp_level();
   } else {
     return CompLevel_none;
   }
 }
 
 int Method::highest_osr_comp_level() const {
-  const MethodData* mdo = method_data();
-  if (mdo != NULL) {
-    return mdo->highest_osr_comp_level();
+  const MethodCounters* mcs = method_counters();
+  if (mcs != NULL) {
+    return mcs->highest_osr_comp_level();
   } else {
     return CompLevel_none;
   }
 }
 
 void Method::set_highest_comp_level(int level) {
-  MethodData* mdo = method_data();
-  if (mdo != NULL) {
-    mdo->set_highest_comp_level(level);
+  MethodCounters* mcs = method_counters();
+  if (mcs != NULL) {
+    mcs->set_highest_comp_level(level);
   }
 }
 
 void Method::set_highest_osr_comp_level(int level) {
-  MethodData* mdo = method_data();
-  if (mdo != NULL) {
-    mdo->set_highest_osr_comp_level(level);
+  MethodCounters* mcs = method_counters();
+  if (mcs != NULL) {
+    mcs->set_highest_osr_comp_level(level);
   }
 }
 
@@ -1860,6 +1874,14 @@ void Method::clear_jmethod_ids(ClassLoaderData* loader_data) {
   loader_data->jmethod_ids()->clear_all_methods();
 }
 
+bool Method::has_method_vptr(const void* ptr) {
+  Method m;
+  // This assumes that the vtbl pointer is the first word of a C++ object.
+  // This assumption is also in universe.cpp patch_klass_vtble
+  void* vtbl2 = dereference_vptr((const void*)&m);
+  void* this_vtbl = dereference_vptr(ptr);
+  return vtbl2 == this_vtbl;
+}
 
 // Check that this pointer is valid by checking that the vtbl pointer matches
 bool Method::is_valid_method() const {
@@ -1868,12 +1890,7 @@ bool Method::is_valid_method() const {
   } else if (!is_metaspace_object()) {
     return false;
   } else {
-    Method m;
-    // This assumes that the vtbl pointer is the first word of a C++ object.
-    // This assumption is also in universe.cpp patch_klass_vtble
-    void* vtbl2 = dereference_vptr((void*)&m);
-    void* this_vtbl = dereference_vptr((void*)this);
-    return vtbl2 == this_vtbl;
+    return has_method_vptr((const void*)this);
   }
 }
 
@@ -1891,7 +1908,7 @@ void Method::print_jmethod_ids(ClassLoaderData* loader_data, outputStream* out) 
 void Method::print_on(outputStream* st) const {
   ResourceMark rm;
   assert(is_method(), "must be method");
-  st->print_cr(internal_name());
+  st->print_cr("%s", internal_name());
   // get the effect of PrintOopAddress, always, for methods:
   st->print_cr(" - this oop:          "INTPTR_FORMAT, (intptr_t)this);
   st->print   (" - method holder:     "); method_holder()->print_value_on(st); st->cr();
@@ -1974,7 +1991,7 @@ void Method::print_on(outputStream* st) const {
 
 void Method::print_value_on(outputStream* st) const {
   assert(is_method(), "must be method");
-  st->print(internal_name());
+  st->print("%s", internal_name());
   print_address_on(st);
   st->print(" ");
   name()->print_value_on(st);

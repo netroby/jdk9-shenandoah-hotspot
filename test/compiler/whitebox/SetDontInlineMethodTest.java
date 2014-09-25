@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2013, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -27,19 +27,18 @@
  * @library /testlibrary /testlibrary/whitebox
  * @build SetDontInlineMethodTest
  * @run main ClassFileInstaller sun.hotspot.WhiteBox
- * @run main/othervm -Xbootclasspath/a:. -XX:+UnlockDiagnosticVMOptions -XX:+WhiteBoxAPI -XX:CompileCommand=compileonly,TestCase$Helper::* SetDontInlineMethodTest
+ *                              sun.hotspot.WhiteBox$WhiteBoxPermission
+ * @run main/othervm -Xbootclasspath/a:. -XX:+UnlockDiagnosticVMOptions -XX:+WhiteBoxAPI -XX:CompileCommand=compileonly,SimpleTestCase$Helper::* SetDontInlineMethodTest
  * @summary testing of WB::testSetDontInlineMethod()
  * @author igor.ignatyev@oracle.com
  */
 public class SetDontInlineMethodTest extends CompilerWhiteBoxTest {
 
     public static void main(String[] args) throws Exception {
-        for (TestCase test : TestCase.values()) {
-            new SetDontInlineMethodTest(test).runTest();
-        }
+        CompilerWhiteBoxTest.main(SetDontInlineMethodTest::new, args);
     }
 
-    public SetDontInlineMethodTest(TestCase testCase) {
+    private SetDontInlineMethodTest(TestCase testCase) {
         super(testCase);
     }
 

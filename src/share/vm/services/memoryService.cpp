@@ -133,12 +133,12 @@ void MemoryService::set_universe_heap(CollectedHeap* heap) {
 void MemoryService::add_gen_collected_heap_info(GenCollectedHeap* heap) {
   CollectorPolicy* policy = heap->collector_policy();
 
-  assert(policy->is_two_generation_policy(), "Only support two generations");
+  assert(policy->is_generation_policy(), "Only support two generations");
   guarantee(heap->n_gens() == 2, "Only support two-generation heap");
 
-  TwoGenerationCollectorPolicy* two_gen_policy = policy->as_two_generation_policy();
-  if (two_gen_policy != NULL) {
-    GenerationSpec** specs = two_gen_policy->generations();
+  GenCollectorPolicy* gen_policy = policy->as_generation_policy();
+  if (gen_policy != NULL) {
+    GenerationSpec** specs = gen_policy->generations();
     Generation::Name kind = specs[0]->name();
     switch (kind) {
       case Generation::DefNew:
@@ -146,7 +146,6 @@ void MemoryService::add_gen_collected_heap_info(GenCollectedHeap* heap) {
         break;
 #if INCLUDE_ALL_GCS
       case Generation::ParNew:
-      case Generation::ASParNew:
         _minor_gc_manager = MemoryManager::get_parnew_memory_manager();
         break;
 #endif // INCLUDE_ALL_GCS
@@ -287,7 +286,6 @@ void MemoryService::add_generation_memory_pool(Generation* gen,
 
 #if INCLUDE_ALL_GCS
     case Generation::ParNew:
-    case Generation::ASParNew:
     {
       assert(major_mgr != NULL && minor_mgr != NULL, "Should have two managers");
       // Add a memory pool for each space and young gen doesn't
@@ -319,7 +317,6 @@ void MemoryService::add_generation_memory_pool(Generation* gen,
 
 #if INCLUDE_ALL_GCS
     case Generation::ConcurrentMarkSweep:
-    case Generation::ASConcurrentMarkSweep:
     {
       assert(major_mgr != NULL && minor_mgr == NULL, "Should have only one manager");
       ConcurrentMarkSweepGeneration* cms = (ConcurrentMarkSweepGeneration*) gen;
@@ -580,23 +577,20 @@ Handle MemoryService::create_MemoryUsage_obj(MemoryUsage usage, TRAPS) {
 // GC manager type depends on the type of Generation. Depending on the space
 // availablity and vm options the gc uses major gc manager or minor gc
 // manager or both. The type of gc manager depends on the generation kind.
-// For DefNew, ParNew and ASParNew generation doing scavenge gc uses minor
-// gc manager (so _fullGC is set to false ) and for other generation kinds
-// doing mark-sweep-compact uses major gc manager (so _fullGC is set
-// to true).
+// For DefNew and ParNew generation doing scavenge gc uses minor gc manager (so
+// _fullGC is set to false ) and for other generation kinds doing
+// mark-sweep-compact uses major gc manager (so _fullGC is set to true).
 TraceMemoryManagerStats::TraceMemoryManagerStats(Generation::Name kind, GCCause::Cause cause) {
   switch (kind) {
     case Generation::DefNew:
 #if INCLUDE_ALL_GCS
     case Generation::ParNew:
-    case Generation::ASParNew:
 #endif // INCLUDE_ALL_GCS
       _fullGC=false;
       break;
     case Generation::MarkSweepCompact:
 #if INCLUDE_ALL_GCS
     case Generation::ConcurrentMarkSweep:
-    case Generation::ASConcurrentMarkSweep:
 #endif // INCLUDE_ALL_GCS
       _fullGC=true;
       break;

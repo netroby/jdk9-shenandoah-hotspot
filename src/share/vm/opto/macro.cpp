@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2005, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2005, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -27,14 +27,17 @@
 #include "libadt/vectset.hpp"
 #include "opto/addnode.hpp"
 #include "opto/callnode.hpp"
+#include "opto/castnode.hpp"
 #include "opto/cfgnode.hpp"
 #include "opto/compile.hpp"
-#include "opto/connode.hpp"
+#include "opto/convertnode.hpp"
 #include "opto/locknode.hpp"
 #include "opto/loopnode.hpp"
 #include "opto/macro.hpp"
 #include "opto/memnode.hpp"
+#include "opto/narrowptrnode.hpp"
 #include "opto/node.hpp"
+#include "opto/opaquenode.hpp"
 #include "opto/phaseX.hpp"
 #include "opto/rootnode.hpp"
 #include "opto/runtime.hpp"
@@ -91,7 +94,8 @@ void PhaseMacroExpand::copy_call_debug_info(CallNode *oldcall, CallNode * newcal
     newcall->add_req(old_in);
   }
 
-  newcall->set_jvms(oldcall->jvms());
+  // JVMS may be shared so clone it before we modify it
+  newcall->set_jvms(oldcall->jvms() != NULL ? oldcall->jvms()->clone_deep(C) : NULL);
   for (JVMState *jvms = newcall->jvms(); jvms != NULL; jvms = jvms->caller()) {
     jvms->set_map(newcall);
     jvms->set_locoff(jvms->locoff()+jvms_adj);
@@ -105,20 +109,20 @@ void PhaseMacroExpand::copy_call_debug_info(CallNode *oldcall, CallNode * newcal
 Node* PhaseMacroExpand::opt_bits_test(Node* ctrl, Node* region, int edge, Node* word, int mask, int bits, bool return_fast_path) {
   Node* cmp;
   if (mask != 0) {
-    Node* and_node = transform_later(new (C) AndXNode(word, MakeConX(mask)));
-    cmp = transform_later(new (C) CmpXNode(and_node, MakeConX(bits)));
+    Node* and_node = transform_later(new AndXNode(word, MakeConX(mask)));
+    cmp = transform_later(new CmpXNode(and_node, MakeConX(bits)));
   } else {
     cmp = word;
   }
-  Node* bol = transform_later(new (C) BoolNode(cmp, BoolTest::ne));
-  IfNode* iff = new (C) IfNode( ctrl, bol, PROB_MIN, COUNT_UNKNOWN );
+  Node* bol = transform_later(new BoolNode(cmp, BoolTest::ne));
+  IfNode* iff = new IfNode( ctrl, bol, PROB_MIN, COUNT_UNKNOWN );
   transform_later(iff);
 
   // Fast path taken.
-  Node *fast_taken = transform_later( new (C) IfFalseNode(iff) );
+  Node *fast_taken = transform_later(new IfFalseNode(iff));
 
   // Fast path not-taken, i.e. slow path
-  Node *slow_taken = transform_later( new (C) IfTrueNode(iff) );
+  Node *slow_taken = transform_later(new IfTrueNode(iff));
 
   if (return_fast_path) {
     region->init_req(edge, slow_taken); // Capture slow-control
@@ -144,8 +148,8 @@ CallNode* PhaseMacroExpand::make_slow_call(CallNode *oldcall, const TypeFunc* sl
 
   // Slow-path call
  CallNode *call = leaf_name
-   ? (CallNode*)new (C) CallLeafNode      ( slow_call_type, slow_call, leaf_name, TypeRawPtr::BOTTOM )
-   : (CallNode*)new (C) CallStaticJavaNode( slow_call_type, slow_call, OptoRuntime::stub_name(slow_call), oldcall->jvms()->bci(), TypeRawPtr::BOTTOM );
+   ? (CallNode*)new CallLeafNode      ( slow_call_type, slow_call, leaf_name, TypeRawPtr::BOTTOM )
+   : (CallNode*)new CallStaticJavaNode( slow_call_type, slow_call, OptoRuntime::stub_name(slow_call), oldcall->jvms()->bci(), TypeRawPtr::BOTTOM );
 
   // Slow path call has no side-effects, uses few values
   copy_predefined_input_for_runtime_call(slow_path, oldcall, call );
@@ -420,7 +424,7 @@ Node *PhaseMacroExpand::value_from_mem_phi(Node *mem, BasicType ft, const Type *
   GrowableArray <Node *> values(length, length, NULL, false);
 
   // create a new Phi for the value
-  PhiNode *phi = new (C) PhiNode(mem->in(0), phi_type, NULL, instance_id, alias_idx, offset);
+  PhiNode *phi = new PhiNode(mem->in(0), phi_type, NULL, instance_id, alias_idx, offset);
   transform_later(phi);
   value_phis->push(phi, mem->_idx);
 
@@ -699,6 +703,7 @@ bool PhaseMacroExpand::scalar_replacement(AllocateNode *alloc, GrowableArray <Sa
   ciType* elem_type;
 
   Node* res = alloc->result_cast();
+  assert(res == NULL || res->is_CheckCastPP(), "unexpected AllocateNode result");
   const TypeOopPtr* res_type = NULL;
   if (res != NULL) { // Could be NULL when there are no users
     res_type = _igvn.type(res)->isa_oopptr();
@@ -732,7 +737,7 @@ bool PhaseMacroExpand::scalar_replacement(AllocateNode *alloc, GrowableArray <Sa
     // of regular debuginfo at the last (youngest) JVMS.
     // Record relative start index.
     uint first_ind = (sfpt->req() - sfpt->jvms()->scloff());
-    SafePointScalarObjectNode* sobj = new (C) SafePointScalarObjectNode(res_type,
+    SafePointScalarObjectNode* sobj = new SafePointScalarObjectNode(res_type,
 #ifdef ASSERT
                                                  alloc,
 #endif
@@ -788,6 +793,7 @@ bool PhaseMacroExpand::scalar_replacement(AllocateNode *alloc, GrowableArray <Sa
         for (int k = 0;  k < j; k++) {
           sfpt->del_req(last--);
         }
+        _igvn._worklist.push(sfpt);
         // rollback processed safepoints
         while (safepoints_done.length() > 0) {
           SafePointNode* sfpt_done = safepoints_done.pop();
@@ -812,6 +818,7 @@ bool PhaseMacroExpand::scalar_replacement(AllocateNode *alloc, GrowableArray <Sa
               }
             }
           }
+          _igvn._worklist.push(sfpt_done);
         }
 #ifndef PRODUCT
         if (PrintEliminateAllocations) {
@@ -840,7 +847,7 @@ bool PhaseMacroExpand::scalar_replacement(AllocateNode *alloc, GrowableArray <Sa
         if (field_val->is_EncodeP()) {
           field_val = field_val->in(1);
         } else {
-          field_val = transform_later(new (C) DecodeNNode(field_val, field_val->get_ptr_type()));
+          field_val = transform_later(new DecodeNNode(field_val, field_val->get_ptr_type()));
         }
       }
       sfpt->add_req(field_val);
@@ -852,6 +859,7 @@ bool PhaseMacroExpand::scalar_replacement(AllocateNode *alloc, GrowableArray <Sa
     int start = jvms->debug_start();
     int end   = jvms->debug_end();
     sfpt->replace_edges_in_range(res, sobj, start, end);
+    _igvn._worklist.push(sfpt);
     safepoints_done.append_if_missing(sfpt); // keep it for rollback
   }
   return true;
@@ -1031,6 +1039,8 @@ bool PhaseMacroExpand::eliminate_boxing_node(CallStaticJavaNode *boxing) {
     return false;
   }
 
+  assert(boxing->result_cast() == NULL, "unexpected boxing node result");
+
   extract_call_projections(boxing);
 
   const TypeTuple* r = boxing->tf()->range();
@@ -1066,7 +1076,7 @@ bool PhaseMacroExpand::eliminate_boxing_node(CallStaticJavaNode *boxing) {
 //---------------------------set_eden_pointers-------------------------
 void PhaseMacroExpand::set_eden_pointers(Node* &eden_top_adr, Node* &eden_end_adr) {
   if (UseTLAB) {                // Private allocation: load from TLS
-    Node* thread = transform_later(new (C) ThreadLocalNode());
+    Node* thread = transform_later(new ThreadLocalNode());
     int tlab_top_offset = in_bytes(JavaThread::tlab_top_offset());
     int tlab_end_offset = in_bytes(JavaThread::tlab_end_offset());
     eden_top_adr = basic_plus_adr(top()/*not oop*/, thread, tlab_top_offset);
@@ -1084,7 +1094,7 @@ void PhaseMacroExpand::set_eden_pointers(Node* &eden_top_adr, Node* &eden_end_ad
 Node* PhaseMacroExpand::make_load(Node* ctl, Node* mem, Node* base, int offset, const Type* value_type, BasicType bt) {
   Node* adr = basic_plus_adr(base, offset);
   const TypePtr* adr_type = adr->bottom_type()->is_ptr();
-  Node* value = LoadNode::make(_igvn, ctl, mem, adr, adr_type, value_type, bt);
+  Node* value = LoadNode::make(_igvn, ctl, mem, adr, adr_type, value_type, bt, MemNode::unordered);
   transform_later(value);
   return value;
 }
@@ -1092,7 +1102,7 @@ Node* PhaseMacroExpand::make_load(Node* ctl, Node* mem, Node* base, int offset, 
 
 Node* PhaseMacroExpand::make_store(Node* ctl, Node* mem, Node* base, int offset, Node* value, BasicType bt) {
   Node* adr = basic_plus_adr(base, offset);
-  mem = StoreNode::make(_igvn, ctl, mem, adr, NULL, value, bt);
+  mem = StoreNode::make(_igvn, ctl, mem, adr, NULL, value, bt, MemNode::unordered);
   transform_later(mem);
   return mem;
 }
@@ -1202,18 +1212,18 @@ void PhaseMacroExpand::expand_allocate_common(
   assert (initial_slow_test == NULL || !always_slow, "arguments must be consistent");
   // generate the initial test if necessary
   if (initial_slow_test != NULL ) {
-    slow_region = new (C) RegionNode(3);
+    slow_region = new RegionNode(3);
 
     // Now make the initial failure test.  Usually a too-big test but
     // might be a TRUE for finalizers or a fancy class check for
     // newInstance0.
-    IfNode *toobig_iff = new (C) IfNode(ctrl, initial_slow_test, PROB_MIN, COUNT_UNKNOWN);
+    IfNode *toobig_iff = new IfNode(ctrl, initial_slow_test, PROB_MIN, COUNT_UNKNOWN);
     transform_later(toobig_iff);
     // Plug the failing-too-big test into the slow-path region
-    Node *toobig_true = new (C) IfTrueNode( toobig_iff );
+    Node *toobig_true = new IfTrueNode( toobig_iff );
     transform_later(toobig_true);
     slow_region    ->init_req( too_big_or_final_path, toobig_true );
-    toobig_false = new (C) IfFalseNode( toobig_iff );
+    toobig_false = new IfFalseNode( toobig_iff );
     transform_later(toobig_false);
   } else {         // No initial test, just fall into next case
     toobig_false = ctrl;
@@ -1246,10 +1256,10 @@ void PhaseMacroExpand::expand_allocate_common(
     Node *eden_end = make_load(ctrl, mem, eden_end_adr, 0, TypeRawPtr::BOTTOM, T_ADDRESS);
 
     // allocate the Region and Phi nodes for the result
-    result_region = new (C) RegionNode(3);
-    result_phi_rawmem = new (C) PhiNode(result_region, Type::MEMORY, TypeRawPtr::BOTTOM);
-    result_phi_rawoop = new (C) PhiNode(result_region, TypeRawPtr::BOTTOM);
-    result_phi_i_o    = new (C) PhiNode(result_region, Type::ABIO); // I/O is used for Prefetch
+    result_region = new RegionNode(3);
+    result_phi_rawmem = new PhiNode(result_region, Type::MEMORY, TypeRawPtr::BOTTOM);
+    result_phi_rawoop = new PhiNode(result_region, TypeRawPtr::BOTTOM);
+    result_phi_i_o    = new PhiNode(result_region, Type::ABIO); // I/O is used for Prefetch
 
     // We need a Region for the loop-back contended case.
     enum { fall_in_path = 1, contended_loopback_path = 2 };
@@ -1259,8 +1269,8 @@ void PhaseMacroExpand::expand_allocate_common(
       contended_region = toobig_false;
       contended_phi_rawmem = mem;
     } else {
-      contended_region = new (C) RegionNode(3);
-      contended_phi_rawmem = new (C) PhiNode(contended_region, Type::MEMORY, TypeRawPtr::BOTTOM);
+      contended_region = new RegionNode(3);
+      contended_phi_rawmem = new PhiNode(contended_region, Type::MEMORY, TypeRawPtr::BOTTOM);
       // Now handle the passing-too-big test.  We fall into the contended
       // loop-back merge point.
       contended_region    ->init_req(fall_in_path, toobig_false);
@@ -1272,30 +1282,30 @@ void PhaseMacroExpand::expand_allocate_common(
     // Load(-locked) the heap top.
     // See note above concerning the control input when using a TLAB
     Node *old_eden_top = UseTLAB
-      ? new (C) LoadPNode      (ctrl, contended_phi_rawmem, eden_top_adr, TypeRawPtr::BOTTOM, TypeRawPtr::BOTTOM)
-      : new (C) LoadPLockedNode(contended_region, contended_phi_rawmem, eden_top_adr);
+      ? new LoadPNode      (ctrl, contended_phi_rawmem, eden_top_adr, TypeRawPtr::BOTTOM, TypeRawPtr::BOTTOM, MemNode::unordered)
+      : new LoadPLockedNode(contended_region, contended_phi_rawmem, eden_top_adr, MemNode::acquire);
 
     transform_later(old_eden_top);
     // Add to heap top to get a new heap top
 
     if (UseShenandoahGC) {
       // Allocate one word more for the Shenandoah brooks pointer.
-      size_in_bytes = new (C) AddLNode(size_in_bytes, _igvn.MakeConX(8));
+      size_in_bytes = new AddLNode(size_in_bytes, _igvn.MakeConX(8));
       transform_later(size_in_bytes);
     }
 
-    Node *new_eden_top = new (C) AddPNode(top(), old_eden_top, size_in_bytes);
+    Node *new_eden_top = new AddPNode(top(), old_eden_top, size_in_bytes);
     transform_later(new_eden_top);
     // Check for needing a GC; compare against heap end
-    Node *needgc_cmp = new (C) CmpPNode(new_eden_top, eden_end);
+    Node *needgc_cmp = new CmpPNode(new_eden_top, eden_end);
     transform_later(needgc_cmp);
-    Node *needgc_bol = new (C) BoolNode(needgc_cmp, BoolTest::ge);
+    Node *needgc_bol = new BoolNode(needgc_cmp, BoolTest::ge);
     transform_later(needgc_bol);
-    IfNode *needgc_iff = new (C) IfNode(contended_region, needgc_bol, PROB_UNLIKELY_MAG(4), COUNT_UNKNOWN);
+    IfNode *needgc_iff = new IfNode(contended_region, needgc_bol, PROB_UNLIKELY_MAG(4), COUNT_UNKNOWN);
     transform_later(needgc_iff);
 
     // Plug the failing-heap-space-need-gc test into the slow-path region
-    Node *needgc_true = new (C) IfTrueNode(needgc_iff);
+    Node *needgc_true = new IfTrueNode(needgc_iff);
     transform_later(needgc_true);
     if (initial_slow_test) {
       slow_region->init_req(need_gc_path, needgc_true);
@@ -1306,7 +1316,7 @@ void PhaseMacroExpand::expand_allocate_common(
       slow_region = needgc_true;
     }
     // No need for a GC.  Setup for the Store-Conditional
-    Node *needgc_false = new (C) IfFalseNode(needgc_iff);
+    Node *needgc_false = new IfFalseNode(needgc_iff);
     transform_later(needgc_false);
 
     // Grab regular I/O before optional prefetch may change it.
@@ -1326,37 +1336,37 @@ void PhaseMacroExpand::expand_allocate_common(
     // memory state.
     if (UseTLAB) {
       Node* store_eden_top =
-        new (C) StorePNode(needgc_false, contended_phi_rawmem, eden_top_adr,
-                              TypeRawPtr::BOTTOM, new_eden_top);
+        new StorePNode(needgc_false, contended_phi_rawmem, eden_top_adr,
+                              TypeRawPtr::BOTTOM, new_eden_top, MemNode::unordered);
       transform_later(store_eden_top);
       fast_oop_ctrl = needgc_false; // No contention, so this is the fast path
       fast_oop_rawmem = store_eden_top;
     } else {
       Node* store_eden_top =
-        new (C) StorePConditionalNode(needgc_false, contended_phi_rawmem, eden_top_adr,
+        new StorePConditionalNode(needgc_false, contended_phi_rawmem, eden_top_adr,
                                          new_eden_top, fast_oop/*old_eden_top*/);
       transform_later(store_eden_top);
-      Node *contention_check = new (C) BoolNode(store_eden_top, BoolTest::ne);
+      Node *contention_check = new BoolNode(store_eden_top, BoolTest::ne);
       transform_later(contention_check);
-      store_eden_top = new (C) SCMemProjNode(store_eden_top);
+      store_eden_top = new SCMemProjNode(store_eden_top);
       transform_later(store_eden_top);
 
       // If not using TLABs, check to see if there was contention.
-      IfNode *contention_iff = new (C) IfNode (needgc_false, contention_check, PROB_MIN, COUNT_UNKNOWN);
+      IfNode *contention_iff = new IfNode (needgc_false, contention_check, PROB_MIN, COUNT_UNKNOWN);
       transform_later(contention_iff);
-      Node *contention_true = new (C) IfTrueNode(contention_iff);
+      Node *contention_true = new IfTrueNode(contention_iff);
       transform_later(contention_true);
       // If contention, loopback and try again.
       contended_region->init_req(contended_loopback_path, contention_true);
       contended_phi_rawmem->init_req(contended_loopback_path, store_eden_top);
 
       // Fast-path succeeded with no contention!
-      Node *contention_false = new (C) IfFalseNode(contention_iff);
+      Node *contention_false = new IfFalseNode(contention_iff);
       transform_later(contention_false);
       fast_oop_ctrl = contention_false;
 
       // Bump total allocated bytes for this thread
-      Node* thread = new (C) ThreadLocalNode();
+      Node* thread = new ThreadLocalNode();
       transform_later(thread);
       Node* alloc_bytes_adr = basic_plus_adr(top()/*not oop*/, thread,
                                              in_bytes(JavaThread::allocated_bytes_offset()));
@@ -1365,10 +1375,10 @@ void PhaseMacroExpand::expand_allocate_common(
 #ifdef _LP64
       Node* alloc_size = size_in_bytes;
 #else
-      Node* alloc_size = new (C) ConvI2LNode(size_in_bytes);
+      Node* alloc_size = new ConvI2LNode(size_in_bytes);
       transform_later(alloc_size);
 #endif
-      Node* new_alloc_bytes = new (C) AddLNode(alloc_bytes, alloc_size);
+      Node* new_alloc_bytes = new AddLNode(alloc_bytes, alloc_size);
       transform_later(new_alloc_bytes);
       fast_oop_rawmem = make_store(fast_oop_ctrl, store_eden_top, alloc_bytes_adr,
                                    0, new_alloc_bytes, T_LONG);
@@ -1402,9 +1412,9 @@ void PhaseMacroExpand::expand_allocate_common(
 
         mb->init_req(TypeFunc::Memory, fast_oop_rawmem);
         mb->init_req(TypeFunc::Control, fast_oop_ctrl);
-        fast_oop_ctrl = new (C) ProjNode(mb,TypeFunc::Control);
+        fast_oop_ctrl = new ProjNode(mb,TypeFunc::Control);
         transform_later(fast_oop_ctrl);
-        fast_oop_rawmem = new (C) ProjNode(mb,TypeFunc::Memory);
+        fast_oop_rawmem = new ProjNode(mb,TypeFunc::Memory);
         transform_later(fast_oop_rawmem);
       } else {
         // Add the MemBarStoreStore after the InitializeNode so that
@@ -1418,9 +1428,9 @@ void PhaseMacroExpand::expand_allocate_common(
         MemBarNode* mb = MemBarNode::make(C, Op_MemBarStoreStore, Compile::AliasIdxBot);
         transform_later(mb);
 
-        Node* ctrl = new (C) ProjNode(init,TypeFunc::Control);
+        Node* ctrl = new ProjNode(init,TypeFunc::Control);
         transform_later(ctrl);
-        Node* mem = new (C) ProjNode(init,TypeFunc::Memory);
+        Node* mem = new ProjNode(init,TypeFunc::Memory);
         transform_later(mem);
 
         // The MemBarStoreStore depends on control and memory coming
@@ -1428,9 +1438,9 @@ void PhaseMacroExpand::expand_allocate_common(
         mb->init_req(TypeFunc::Memory, mem);
         mb->init_req(TypeFunc::Control, ctrl);
 
-        ctrl = new (C) ProjNode(mb,TypeFunc::Control);
+        ctrl = new ProjNode(mb,TypeFunc::Control);
         transform_later(ctrl);
-        mem = new (C) ProjNode(mb,TypeFunc::Memory);
+        mem = new ProjNode(mb,TypeFunc::Memory);
         transform_later(mem);
 
         // All nodes that depended on the InitializeNode for control
@@ -1444,13 +1454,13 @@ void PhaseMacroExpand::expand_allocate_common(
     if (C->env()->dtrace_extended_probes()) {
       // Slow-path call
       int size = TypeFunc::Parms + 2;
-      CallLeafNode *call = new (C) CallLeafNode(OptoRuntime::dtrace_object_alloc_Type(),
-                                                CAST_FROM_FN_PTR(address, SharedRuntime::dtrace_object_alloc_base),
-                                                "dtrace_object_alloc",
-                                                TypeRawPtr::BOTTOM);
+      CallLeafNode *call = new CallLeafNode(OptoRuntime::dtrace_object_alloc_Type(),
+                                            CAST_FROM_FN_PTR(address, SharedRuntime::dtrace_object_alloc_base),
+                                            "dtrace_object_alloc",
+                                            TypeRawPtr::BOTTOM);
 
       // Get base of thread-local storage area
-      Node* thread = new (C) ThreadLocalNode();
+      Node* thread = new ThreadLocalNode();
       transform_later(thread);
 
       call->init_req(TypeFunc::Parms+0, thread);
@@ -1461,9 +1471,9 @@ void PhaseMacroExpand::expand_allocate_common(
       call->init_req(TypeFunc::ReturnAdr, alloc->in(TypeFunc::ReturnAdr));
       call->init_req(TypeFunc::FramePtr, alloc->in(TypeFunc::FramePtr));
       transform_later(call);
-      fast_oop_ctrl = new (C) ProjNode(call,TypeFunc::Control);
+      fast_oop_ctrl = new ProjNode(call,TypeFunc::Control);
       transform_later(fast_oop_ctrl);
-      fast_oop_rawmem = new (C) ProjNode(call,TypeFunc::Memory);
+      fast_oop_rawmem = new ProjNode(call,TypeFunc::Memory);
       transform_later(fast_oop_rawmem);
     }
 
@@ -1478,7 +1488,7 @@ void PhaseMacroExpand::expand_allocate_common(
   }
 
   // Generate slow-path call
-  CallNode *call = new (C) CallStaticJavaNode(slow_call_type, slow_call_address,
+  CallNode *call = new CallStaticJavaNode(slow_call_type, slow_call_address,
                                OptoRuntime::stub_name(slow_call_address),
                                alloc->jvms()->bci(),
                                TypePtr::BOTTOM);
@@ -1535,7 +1545,7 @@ void PhaseMacroExpand::expand_allocate_common(
   // _memproj_catchall so we end up with a call that has only 1 memory projection.
   if (_memproj_catchall != NULL ) {
     if (_memproj_fallthrough == NULL) {
-      _memproj_fallthrough = new (C) ProjNode(call, TypeFunc::Memory);
+      _memproj_fallthrough = new ProjNode(call, TypeFunc::Memory);
       transform_later(_memproj_fallthrough);
     }
     for (DUIterator_Fast imax, i = _memproj_catchall->fast_outs(imax); i < imax; i++) {
@@ -1567,7 +1577,7 @@ void PhaseMacroExpand::expand_allocate_common(
   // _ioproj_catchall so we end up with a call that has only 1 i_o projection.
   if (_ioproj_catchall != NULL ) {
     if (_ioproj_fallthrough == NULL) {
-      _ioproj_fallthrough = new (C) ProjNode(call, TypeFunc::I_O);
+      _ioproj_fallthrough = new ProjNode(call, TypeFunc::I_O);
       transform_later(_ioproj_fallthrough);
     }
     for (DUIterator_Fast imax, i = _ioproj_catchall->fast_outs(imax); i < imax; i++) {
@@ -1706,48 +1716,50 @@ Node* PhaseMacroExpand::prefetch_allocation(Node* i_o, Node*& needgc_false,
       // As an allocation hits the watermark, we will prefetch starting
       // at a "distance" away from watermark.
 
-      Node *pf_region = new (C) RegionNode(3);
-      Node *pf_phi_rawmem = new (C) PhiNode( pf_region, Type::MEMORY,
+      Node *pf_region = new RegionNode(3);
+      Node *pf_phi_rawmem = new PhiNode( pf_region, Type::MEMORY,
                                                 TypeRawPtr::BOTTOM );
       // I/O is used for Prefetch
-      Node *pf_phi_abio = new (C) PhiNode( pf_region, Type::ABIO );
+      Node *pf_phi_abio = new PhiNode( pf_region, Type::ABIO );
 
-      Node *thread = new (C) ThreadLocalNode();
+      Node *thread = new ThreadLocalNode();
       transform_later(thread);
 
-      Node *eden_pf_adr = new (C) AddPNode( top()/*not oop*/, thread,
+      Node *eden_pf_adr = new AddPNode( top()/*not oop*/, thread,
                    _igvn.MakeConX(in_bytes(JavaThread::tlab_pf_top_offset())) );
       transform_later(eden_pf_adr);
 
-      Node *old_pf_wm = new (C) LoadPNode( needgc_false,
+      Node *old_pf_wm = new LoadPNode(needgc_false,
                                    contended_phi_rawmem, eden_pf_adr,
-                                   TypeRawPtr::BOTTOM, TypeRawPtr::BOTTOM );
+                                   TypeRawPtr::BOTTOM, TypeRawPtr::BOTTOM,
+                                   MemNode::unordered);
       transform_later(old_pf_wm);
 
       // check against new_eden_top
-      Node *need_pf_cmp = new (C) CmpPNode( new_eden_top, old_pf_wm );
+      Node *need_pf_cmp = new CmpPNode( new_eden_top, old_pf_wm );
       transform_later(need_pf_cmp);
-      Node *need_pf_bol = new (C) BoolNode( need_pf_cmp, BoolTest::ge );
+      Node *need_pf_bol = new BoolNode( need_pf_cmp, BoolTest::ge );
       transform_later(need_pf_bol);
-      IfNode *need_pf_iff = new (C) IfNode( needgc_false, need_pf_bol,
+      IfNode *need_pf_iff = new IfNode( needgc_false, need_pf_bol,
                                        PROB_UNLIKELY_MAG(4), COUNT_UNKNOWN );
       transform_later(need_pf_iff);
 
       // true node, add prefetchdistance
-      Node *need_pf_true = new (C) IfTrueNode( need_pf_iff );
+      Node *need_pf_true = new IfTrueNode( need_pf_iff );
       transform_later(need_pf_true);
 
-      Node *need_pf_false = new (C) IfFalseNode( need_pf_iff );
+      Node *need_pf_false = new IfFalseNode( need_pf_iff );
       transform_later(need_pf_false);
 
-      Node *new_pf_wmt = new (C) AddPNode( top(), old_pf_wm,
+      Node *new_pf_wmt = new AddPNode( top(), old_pf_wm,
                                     _igvn.MakeConX(AllocatePrefetchDistance) );
       transform_later(new_pf_wmt );
       new_pf_wmt->set_req(0, need_pf_true);
 
-      Node *store_new_wmt = new (C) StorePNode( need_pf_true,
+      Node *store_new_wmt = new StorePNode(need_pf_true,
                                        contended_phi_rawmem, eden_pf_adr,
-                                       TypeRawPtr::BOTTOM, new_pf_wmt );
+                                       TypeRawPtr::BOTTOM, new_pf_wmt,
+                                       MemNode::unordered);
       transform_later(store_new_wmt);
 
       // adding prefetches
@@ -1760,10 +1772,10 @@ Node* PhaseMacroExpand::prefetch_allocation(Node* i_o, Node*& needgc_false,
       uint distance = 0;
 
       for ( uint i = 0; i < lines; i++ ) {
-        prefetch_adr = new (C) AddPNode( old_pf_wm, new_pf_wmt,
+        prefetch_adr = new AddPNode( old_pf_wm, new_pf_wmt,
                                             _igvn.MakeConX(distance) );
         transform_later(prefetch_adr);
-        prefetch = new (C) PrefetchAllocationNode( i_o, prefetch_adr );
+        prefetch = new PrefetchAllocationNode( i_o, prefetch_adr );
         transform_later(prefetch);
         distance += step_size;
         i_o = prefetch;
@@ -1786,9 +1798,10 @@ Node* PhaseMacroExpand::prefetch_allocation(Node* i_o, Node*& needgc_false,
    } else if( UseTLAB && AllocatePrefetchStyle == 3 ) {
       // Insert a prefetch for each allocation.
       // This code is used for Sparc with BIS.
-      Node *pf_region = new (C) RegionNode(3);
-      Node *pf_phi_rawmem = new (C) PhiNode( pf_region, Type::MEMORY,
+      Node *pf_region = new RegionNode(3);
+      Node *pf_phi_rawmem = new PhiNode( pf_region, Type::MEMORY,
                                              TypeRawPtr::BOTTOM );
+      transform_later(pf_region);
 
       // Generate several prefetch instructions.
       uint lines = (length != NULL) ? AllocatePrefetchLines : AllocateInstancePrefetchLines;
@@ -1796,29 +1809,29 @@ Node* PhaseMacroExpand::prefetch_allocation(Node* i_o, Node*& needgc_false,
       uint distance = AllocatePrefetchDistance;
 
       // Next cache address.
-      Node *cache_adr = new (C) AddPNode(old_eden_top, old_eden_top,
+      Node *cache_adr = new AddPNode(old_eden_top, old_eden_top,
                                             _igvn.MakeConX(distance));
       transform_later(cache_adr);
-      cache_adr = new (C) CastP2XNode(needgc_false, cache_adr);
+      cache_adr = new CastP2XNode(needgc_false, cache_adr);
       transform_later(cache_adr);
       Node* mask = _igvn.MakeConX(~(intptr_t)(step_size-1));
-      cache_adr = new (C) AndXNode(cache_adr, mask);
+      cache_adr = new AndXNode(cache_adr, mask);
       transform_later(cache_adr);
-      cache_adr = new (C) CastX2PNode(cache_adr);
+      cache_adr = new CastX2PNode(cache_adr);
       transform_later(cache_adr);
 
       // Prefetch
-      Node *prefetch = new (C) PrefetchAllocationNode( contended_phi_rawmem, cache_adr );
+      Node *prefetch = new PrefetchAllocationNode( contended_phi_rawmem, cache_adr );
       prefetch->set_req(0, needgc_false);
       transform_later(prefetch);
       contended_phi_rawmem = prefetch;
       Node *prefetch_adr;
       distance = step_size;
       for ( uint i = 1; i < lines; i++ ) {
-        prefetch_adr = new (C) AddPNode( cache_adr, cache_adr,
+        prefetch_adr = new AddPNode( cache_adr, cache_adr,
                                             _igvn.MakeConX(distance) );
         transform_later(prefetch_adr);
-        prefetch = new (C) PrefetchAllocationNode( contended_phi_rawmem, prefetch_adr );
+        prefetch = new PrefetchAllocationNode( contended_phi_rawmem, prefetch_adr );
         transform_later(prefetch);
         distance += step_size;
         contended_phi_rawmem = prefetch;
@@ -1832,10 +1845,10 @@ Node* PhaseMacroExpand::prefetch_allocation(Node* i_o, Node*& needgc_false,
       uint step_size = AllocatePrefetchStepSize;
       uint distance = AllocatePrefetchDistance;
       for ( uint i = 0; i < lines; i++ ) {
-        prefetch_adr = new (C) AddPNode( old_eden_top, new_eden_top,
+        prefetch_adr = new AddPNode( old_eden_top, new_eden_top,
                                             _igvn.MakeConX(distance) );
         transform_later(prefetch_adr);
-        prefetch = new (C) PrefetchAllocationNode( i_o, prefetch_adr );
+        prefetch = new PrefetchAllocationNode( i_o, prefetch_adr );
         // Do not let it float too high, since if eden_top == eden_end,
         // both might be null.
         if( i == 0 ) { // Set control for first prefetch, next follows it
@@ -2184,12 +2197,12 @@ void PhaseMacroExpand::expand_lock_node(LockNode *lock) {
      *  }
      */
 
-    region  = new (C) RegionNode(5);
+    region  = new RegionNode(5);
     // create a Phi for the memory state
-    mem_phi = new (C) PhiNode( region, Type::MEMORY, TypeRawPtr::BOTTOM);
+    mem_phi = new PhiNode( region, Type::MEMORY, TypeRawPtr::BOTTOM);
 
-    Node* fast_lock_region  = new (C) RegionNode(3);
-    Node* fast_lock_mem_phi = new (C) PhiNode( fast_lock_region, Type::MEMORY, TypeRawPtr::BOTTOM);
+    Node* fast_lock_region  = new RegionNode(3);
+    Node* fast_lock_mem_phi = new PhiNode( fast_lock_region, Type::MEMORY, TypeRawPtr::BOTTOM);
 
     // First, check mark word for the biased lock pattern.
     Node* mark_node = make_load(ctrl, mem, obj, oopDesc::mark_offset_in_bytes(), TypeX_X, TypeX_X->basic_type());
@@ -2219,10 +2232,10 @@ void PhaseMacroExpand::expand_lock_node(LockNode *lock) {
     }
     Node *proto_node = make_load(ctrl, mem, klass_node, in_bytes(Klass::prototype_header_offset()), TypeX_X, TypeX_X->basic_type());
 
-    Node* thread = transform_later(new (C) ThreadLocalNode());
-    Node* cast_thread = transform_later(new (C) CastP2XNode(ctrl, thread));
-    Node* o_node = transform_later(new (C) OrXNode(cast_thread, proto_node));
-    Node* x_node = transform_later(new (C) XorXNode(o_node, mark_node));
+    Node* thread = transform_later(new ThreadLocalNode());
+    Node* cast_thread = transform_later(new CastP2XNode(ctrl, thread));
+    Node* o_node = transform_later(new OrXNode(cast_thread, proto_node));
+    Node* x_node = transform_later(new XorXNode(o_node, mark_node));
 
     // Get slow path - mark word does NOT match the value.
     Node* not_biased_ctrl =  opt_bits_test(ctrl, region, 3, x_node,
@@ -2245,17 +2258,17 @@ void PhaseMacroExpand::expand_lock_node(LockNode *lock) {
     // We are going to try to reset the mark of this object to the prototype
     // value and fall through to the CAS-based locking scheme.
     Node* adr = basic_plus_adr(obj, oopDesc::mark_offset_in_bytes());
-    Node* cas = new (C) StoreXConditionalNode(not_biased_ctrl, mem, adr,
-                                              proto_node, mark_node);
+    Node* cas = new StoreXConditionalNode(not_biased_ctrl, mem, adr,
+                                          proto_node, mark_node);
     transform_later(cas);
-    Node* proj = transform_later( new (C) SCMemProjNode(cas));
+    Node* proj = transform_later(new SCMemProjNode(cas));
     fast_lock_mem_phi->init_req(2, proj);
 
 
     // Second, check epoch bits.
-    Node* rebiased_region  = new (C) RegionNode(3);
-    Node* old_phi = new (C) PhiNode( rebiased_region, TypeX_X);
-    Node* new_phi = new (C) PhiNode( rebiased_region, TypeX_X);
+    Node* rebiased_region  = new RegionNode(3);
+    Node* old_phi = new PhiNode( rebiased_region, TypeX_X);
+    Node* new_phi = new PhiNode( rebiased_region, TypeX_X);
 
     // Get slow path - mark word does NOT match epoch bits.
     Node* epoch_ctrl =  opt_bits_test(ctrl, rebiased_region, 1, x_node,
@@ -2272,9 +2285,9 @@ void PhaseMacroExpand::expand_lock_node(LockNode *lock) {
     Node* cmask   = MakeConX(markOopDesc::biased_lock_mask_in_place |
                              markOopDesc::age_mask_in_place |
                              markOopDesc::epoch_mask_in_place);
-    Node* old = transform_later(new (C) AndXNode(mark_node, cmask));
-    cast_thread = transform_later(new (C) CastP2XNode(ctrl, thread));
-    Node* new_mark = transform_later(new (C) OrXNode(cast_thread, old));
+    Node* old = transform_later(new AndXNode(mark_node, cmask));
+    cast_thread = transform_later(new CastP2XNode(ctrl, thread));
+    Node* new_mark = transform_later(new OrXNode(cast_thread, old));
     old_phi->init_req(1, old);
     new_phi->init_req(1, new_mark);
 
@@ -2284,10 +2297,9 @@ void PhaseMacroExpand::expand_lock_node(LockNode *lock) {
 
     // Try to acquire the bias of the object using an atomic operation.
     // If this fails we will go in to the runtime to revoke the object's bias.
-    cas = new (C) StoreXConditionalNode(rebiased_region, mem, adr,
-                                           new_phi, old_phi);
+    cas = new StoreXConditionalNode(rebiased_region, mem, adr, new_phi, old_phi);
     transform_later(cas);
-    proj = transform_later( new (C) SCMemProjNode(cas));
+    proj = transform_later(new SCMemProjNode(cas));
 
     // Get slow path - Failed to CAS.
     not_biased_ctrl = opt_bits_test(rebiased_region, region, 4, cas, 0, 0);
@@ -2295,8 +2307,8 @@ void PhaseMacroExpand::expand_lock_node(LockNode *lock) {
     // region->in(4) is set to fast path - the object is rebiased to the current thread.
 
     // Failed to CAS.
-    slow_path  = new (C) RegionNode(3);
-    Node *slow_mem = new (C) PhiNode( slow_path, Type::MEMORY, TypeRawPtr::BOTTOM);
+    slow_path  = new RegionNode(3);
+    Node *slow_mem = new PhiNode( slow_path, Type::MEMORY, TypeRawPtr::BOTTOM);
 
     slow_path->init_req(1, not_biased_ctrl); // Capture slow-control
     slow_mem->init_req(1, proj);
@@ -2320,9 +2332,9 @@ void PhaseMacroExpand::expand_lock_node(LockNode *lock) {
     lock->set_req(TypeFunc::Memory, slow_mem);
 
   } else {
-    region  = new (C) RegionNode(3);
+    region  = new RegionNode(3);
     // create a Phi for the memory state
-    mem_phi = new (C) PhiNode( region, Type::MEMORY, TypeRawPtr::BOTTOM);
+    mem_phi = new PhiNode( region, Type::MEMORY, TypeRawPtr::BOTTOM);
 
     // Optimize test; set region slot 2
     slow_path = opt_bits_test(ctrl, region, 2, flock, 0, 0);
@@ -2353,7 +2365,7 @@ void PhaseMacroExpand::expand_lock_node(LockNode *lock) {
   transform_later(region);
   _igvn.replace_node(_fallthroughproj, region);
 
-  Node *memproj = transform_later( new(C) ProjNode(call, TypeFunc::Memory) );
+  Node *memproj = transform_later(new ProjNode(call, TypeFunc::Memory));
   mem_phi->init_req(1, memproj );
   transform_later(mem_phi);
   _igvn.replace_node(_memproj_fallthrough, mem_phi);
@@ -2378,9 +2390,9 @@ void PhaseMacroExpand::expand_unlock_node(UnlockNode *unlock) {
   if (UseOptoBiasInlining) {
     // Check for biased locking unlock case, which is a no-op.
     // See the full description in MacroAssembler::biased_locking_exit().
-    region  = new (C) RegionNode(4);
+    region  = new RegionNode(4);
     // create a Phi for the memory state
-    mem_phi = new (C) PhiNode( region, Type::MEMORY, TypeRawPtr::BOTTOM);
+    mem_phi = new PhiNode( region, Type::MEMORY, TypeRawPtr::BOTTOM);
     mem_phi->init_req(3, mem);
 
     Node* mark_node = make_load(ctrl, mem, obj, oopDesc::mark_offset_in_bytes(), TypeX_X, TypeX_X->basic_type());
@@ -2388,12 +2400,12 @@ void PhaseMacroExpand::expand_unlock_node(UnlockNode *unlock) {
                          markOopDesc::biased_lock_mask_in_place,
                          markOopDesc::biased_lock_pattern);
   } else {
-    region  = new (C) RegionNode(3);
+    region  = new RegionNode(3);
     // create a Phi for the memory state
-    mem_phi = new (C) PhiNode( region, Type::MEMORY, TypeRawPtr::BOTTOM);
+    mem_phi = new PhiNode( region, Type::MEMORY, TypeRawPtr::BOTTOM);
   }
 
-  FastUnlockNode *funlock = new (C) FastUnlockNode( ctrl, obj, box );
+  FastUnlockNode *funlock = new FastUnlockNode( ctrl, obj, box );
   funlock = transform_later( funlock )->as_FastUnlock();
   // Optimize test; set region slot 2
   Node *slow_path = opt_bits_test(ctrl, region, 2, funlock, 0, 0);
@@ -2418,7 +2430,7 @@ void PhaseMacroExpand::expand_unlock_node(UnlockNode *unlock) {
   transform_later(region);
   _igvn.replace_node(_fallthroughproj, region);
 
-  Node *memproj = transform_later( new(C) ProjNode(call, TypeFunc::Memory) );
+  Node *memproj = transform_later(new ProjNode(call, TypeFunc::Memory) );
   mem_phi->init_req(1, memproj );
   mem_phi->init_req(2, mem);
   transform_later(mem_phi);
@@ -2456,6 +2468,7 @@ void PhaseMacroExpand::eliminate_macro_nodes() {
     }
   }
   // Next, attempt to eliminate allocations
+  _has_locks = false;
   progress = true;
   while (progress) {
     progress = false;
@@ -2474,11 +2487,15 @@ void PhaseMacroExpand::eliminate_macro_nodes() {
       case Node::Class_Lock:
       case Node::Class_Unlock:
         assert(!n->as_AbstractLock()->is_eliminated(), "sanity");
+        _has_locks = true;
+        break;
+      case Node::Class_ArrayCopy:
         break;
       default:
         assert(n->Opcode() == Op_LoopLimit ||
                n->Opcode() == Op_Opaque1   ||
-               n->Opcode() == Op_Opaque2, "unknown node type in macro list");
+               n->Opcode() == Op_Opaque2   ||
+               n->Opcode() == Op_Opaque3, "unknown node type in macro list");
       }
       assert(success == (C->macro_count() < old_macro_count), "elimination reduces macro count");
       progress = progress || success;
@@ -2519,10 +2536,53 @@ bool PhaseMacroExpand::expand_macro_nodes() {
       } else if (n->Opcode() == Op_Opaque1 || n->Opcode() == Op_Opaque2) {
         _igvn.replace_node(n, n->in(1));
         success = true;
+#if INCLUDE_RTM_OPT
+      } else if ((n->Opcode() == Op_Opaque3) && ((Opaque3Node*)n)->rtm_opt()) {
+        assert(C->profile_rtm(), "should be used only in rtm deoptimization code");
+        assert((n->outcnt() == 1) && n->unique_out()->is_Cmp(), "");
+        Node* cmp = n->unique_out();
+#ifdef ASSERT
+        // Validate graph.
+        assert((cmp->outcnt() == 1) && cmp->unique_out()->is_Bool(), "");
+        BoolNode* bol = cmp->unique_out()->as_Bool();
+        assert((bol->outcnt() == 1) && bol->unique_out()->is_If() &&
+               (bol->_test._test == BoolTest::ne), "");
+        IfNode* ifn = bol->unique_out()->as_If();
+        assert((ifn->outcnt() == 2) &&
+               ifn->proj_out(1)->is_uncommon_trap_proj(Deoptimization::Reason_rtm_state_change), "");
+#endif
+        Node* repl = n->in(1);
+        if (!_has_locks) {
+          // Remove RTM state check if there are no locks in the code.
+          // Replace input to compare the same value.
+          repl = (cmp->in(1) == n) ? cmp->in(2) : cmp->in(1);
+        }
+        _igvn.replace_node(n, repl);
+        success = true;
+#endif
       }
       assert(success == (C->macro_count() < old_macro_count), "elimination reduces macro count");
       progress = progress || success;
     }
+  }
+
+  // expand arraycopy "macro" nodes first
+  // For ReduceBulkZeroing, we must first process all arraycopy nodes
+  // before the allocate nodes are expanded.
+  int macro_idx = C->macro_count() - 1;
+  while (macro_idx >= 0) {
+    Node * n = C->macro_node(macro_idx);
+    assert(n->is_macro(), "only macro nodes expected here");
+    if (_igvn.type(n) == Type::TOP || n->in(0)->is_top() ) {
+      // node is unreachable, so don't try to expand it
+      C->remove_macro_node(n);
+    } else if (n->is_ArrayCopy()){
+      int macro_count = C->macro_count();
+      expand_arraycopy_node(n->as_ArrayCopy());
+      assert(C->macro_count() < macro_count, "must have deleted a node from macro list");
+    }
+    if (C->failing())  return true;
+    macro_idx --;
   }
 
   // expand "macro" nodes

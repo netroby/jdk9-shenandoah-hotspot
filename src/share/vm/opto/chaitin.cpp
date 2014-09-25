@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2000, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -37,6 +37,7 @@
 #include "opto/indexSet.hpp"
 #include "opto/machnode.hpp"
 #include "opto/memnode.hpp"
+#include "opto/movenode.hpp"
 #include "opto/opcodes.hpp"
 #include "opto/rootnode.hpp"
 
@@ -210,7 +211,7 @@ PhaseChaitin::PhaseChaitin(uint unique, PhaseCFG &cfg, Matcher &matcher)
 {
   NOT_PRODUCT( Compile::TracePhase t3("ctorChaitin", &_t_ctorChaitin, TimeCompiler); )
 
-  _high_frequency_lrg = MIN2(float(OPTO_LRG_HIGH_FREQ), _cfg.get_outer_loop_frequency());
+  _high_frequency_lrg = MIN2(double(OPTO_LRG_HIGH_FREQ), _cfg.get_outer_loop_frequency());
 
   // Build a list of basic blocks, sorted by frequency
   _blks = NEW_RESOURCE_ARRAY(Block *, _cfg.number_of_blocks());
@@ -779,7 +780,7 @@ void PhaseChaitin::gather_lrg_masks( bool after_aggressive ) {
         // processes as vector in RA.
         if (RegMask::is_vector(ireg))
           lrg._is_vector = 1;
-        assert(n_type->isa_vect() == NULL || lrg._is_vector || ireg == Op_RegD,
+        assert(n_type->isa_vect() == NULL || lrg._is_vector || ireg == Op_RegD || ireg == Op_RegL,
                "vector must be in vector registers");
 
         // Check for bound register masks
@@ -979,7 +980,7 @@ void PhaseChaitin::gather_lrg_masks( bool after_aggressive ) {
         int kreg = n->in(k)->ideal_reg();
         bool is_vect = RegMask::is_vector(kreg);
         assert(n->in(k)->bottom_type()->isa_vect() == NULL ||
-               is_vect || kreg == Op_RegD,
+               is_vect || kreg == Op_RegD || kreg == Op_RegL,
                "vector must be in vector registers");
         if (lrgmask.is_bound(kreg))
           lrg._is_bound = 1;
@@ -1637,7 +1638,7 @@ void PhaseChaitin::fixup_spills() {
           C->check_node_count(0, "out of nodes fixing spills");
           if (C->failing())  return;
           // Transform node
-          MachNode *cisc = mach->cisc_version(stk_offset, C)->as_Mach();
+          MachNode *cisc = mach->cisc_version(stk_offset)->as_Mach();
           cisc->set_req(inp,fp);          // Base register is frame pointer
           if( cisc->oper_input_base() > 1 && mach->oper_input_base() <= 1 ) {
             assert( cisc->oper_input_base() == 2, "Only adding one edge");
@@ -1700,9 +1701,21 @@ Node *PhaseChaitin::find_base_for_derived( Node **derived_base_map, Node *derive
       // (where top() node is placed).
       base->init_req(0, _cfg.get_root_node());
       Block *startb = _cfg.get_block_for_node(C->top());
-      startb->insert_node(base, startb->find_node(C->top()));
+      uint node_pos = startb->find_node(C->top());
+      startb->insert_node(base, node_pos);
       _cfg.map_node_to_block(base, startb);
       assert(_lrg_map.live_range_id(base) == 0, "should not have LRG yet");
+
+      // The loadConP0 might have projection nodes depending on architecture
+      // Add the projection nodes to the CFG
+      for (DUIterator_Fast imax, i = base->fast_outs(imax); i < imax; i++) {
+        Node* use = base->fast_out(i);
+        if (use->is_MachProj()) {
+          startb->insert_node(use, ++node_pos);
+          _cfg.map_node_to_block(use, startb);
+          new_lrg(use, maxlrg++);
+        }
+      }
     }
     if (_lrg_map.live_range_id(base) == 0) {
       new_lrg(base, maxlrg++);
@@ -1735,7 +1748,7 @@ Node *PhaseChaitin::find_base_for_derived( Node **derived_base_map, Node *derive
 
   // Now we see we need a base-Phi here to merge the bases
   const Type *t = base->bottom_type();
-  base = new (C) PhiNode( derived->in(0), t );
+  base = new PhiNode( derived->in(0), t );
   for( i = 1; i < derived->req(); i++ ) {
     base->init_req(i, find_base_for_derived(derived_base_map, derived->in(i), maxlrg));
     t = t->meet(base->in(i)->bottom_type());
@@ -1805,7 +1818,7 @@ bool PhaseChaitin::stretch_base_pointer_live_ranges(ResourceArea *a) {
           Block *phi_block = _cfg.get_block_for_node(phi);
           if (_cfg.get_block_for_node(phi_block->pred(2)) == block) {
             const RegMask *mask = C->matcher()->idealreg2spillmask[Op_RegI];
-            Node *spill = new (C) MachSpillCopyNode( phi, *mask, *mask );
+            Node *spill = new MachSpillCopyNode(MachSpillCopyNode::LoopPhiInput, phi, *mask, *mask);
             insert_proj( phi_block, 1, spill, maxlrg++ );
             n->set_req(1,spill);
             must_recompute_live = true;
@@ -2025,25 +2038,25 @@ void PhaseChaitin::dump() const {
       tty->print_cr("new LRG");
     }
   }
-  tty->print_cr("");
+  tty->cr();
 
   // Dump lo-degree list
   tty->print("Lo degree: ");
   for(uint i3 = _lo_degree; i3; i3 = lrgs(i3)._next )
     tty->print("L%d ",i3);
-  tty->print_cr("");
+  tty->cr();
 
   // Dump lo-stk-degree list
   tty->print("Lo stk degree: ");
   for(uint i4 = _lo_stk_degree; i4; i4 = lrgs(i4)._next )
     tty->print("L%d ",i4);
-  tty->print_cr("");
+  tty->cr();
 
   // Dump lo-degree list
   tty->print("Hi degree: ");
   for(uint i5 = _hi_degree; i5; i5 = lrgs(i5)._next )
     tty->print("L%d ",i5);
-  tty->print_cr("");
+  tty->cr();
 }
 
 void PhaseChaitin::dump_degree_lists() const {
@@ -2051,26 +2064,26 @@ void PhaseChaitin::dump_degree_lists() const {
   tty->print("Lo degree: ");
   for( uint i = _lo_degree; i; i = lrgs(i)._next )
     tty->print("L%d ",i);
-  tty->print_cr("");
+  tty->cr();
 
   // Dump lo-stk-degree list
   tty->print("Lo stk degree: ");
   for(uint i2 = _lo_stk_degree; i2; i2 = lrgs(i2)._next )
     tty->print("L%d ",i2);
-  tty->print_cr("");
+  tty->cr();
 
   // Dump lo-degree list
   tty->print("Hi degree: ");
   for(uint i3 = _hi_degree; i3; i3 = lrgs(i3)._next )
     tty->print("L%d ",i3);
-  tty->print_cr("");
+  tty->cr();
 }
 
 void PhaseChaitin::dump_simplified() const {
   tty->print("Simplified: ");
   for( uint i = _simplified; i; i = lrgs(i)._next )
     tty->print("L%d ",i);
-  tty->print_cr("");
+  tty->cr();
 }
 
 static char *print_reg( OptoReg::Name reg, const PhaseChaitin *pc, char *buf ) {
@@ -2149,7 +2162,7 @@ void PhaseChaitin::dump_frame() const {
       }
       tty->print("   : parm %d: ", k);
       domain->field_at(k + TypeFunc::Parms)->dump();
-      tty->print_cr("");
+      tty->cr();
     }
   }
 
@@ -2171,7 +2184,7 @@ void PhaseChaitin::dump_frame() const {
           _matcher._parm_regs[j].second() == reg ) {
         tty->print("parm %d: ",j);
         domain->field_at(j + TypeFunc::Parms)->dump();
-        tty->print_cr("");
+        tty->cr();
         break;
       }
     }

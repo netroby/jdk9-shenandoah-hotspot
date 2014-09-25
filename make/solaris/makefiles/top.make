@@ -1,5 +1,5 @@
 #
-# Copyright (c) 1998, 2013, Oracle and/or its affiliates. All rights reserved.
+# Copyright (c) 1998, 2014, Oracle and/or its affiliates. All rights reserved.
 # DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
 #
 # This code is free software; you can redistribute it and/or modify it
@@ -19,7 +19,7 @@
 # Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
 # or visit www.oracle.com if you need additional information or have any
 # questions.
-#  
+#
 #
 
 # top.make is included in the Makefile in the build directories.
@@ -44,7 +44,7 @@ include $(GAMMADIR)/make/altsrc.make
 GENERATED   = ../generated
 VM          = $(GAMMADIR)/src/share/vm
 Plat_File   = $(Platform_file)
-CDG         = cd $(GENERATED); 
+CDG         = cd $(GENERATED);
 
 Cached_plat = $(GENERATED)/platform.current
 
@@ -62,7 +62,13 @@ AD_Files_If_Required = $(AD_Files_If_Required/$(TYPE))
 
 # Wierd argument adjustment for "gnumake -j..."
 adjust-mflags   = $(GENERATED)/adjust-mflags
-MFLAGS-adjusted = -r `$(adjust-mflags) "$(MFLAGS)" "$(HOTSPOT_BUILD_JOBS)"`
+# If SPEC is set, it's from configure and it's already controlling concurrency
+# for us. Skip setting -j with HOTSPOT_BUILD_JOBS.
+ifeq ($(SPEC), )
+  MFLAGS-adjusted = -r `$(adjust-mflags) "$(MFLAGS)" "$(HOTSPOT_BUILD_JOBS)"`
+else
+  MFLAGS-adjusted = -r $(MFLAGS)
+endif
 
 
 # default target: update lists, make vm
@@ -73,11 +79,11 @@ default: vm_build_preliminaries the_vm
 	@echo All done.
 
 # This is an explicit dependency for the sake of parallel makes.
-vm_build_preliminaries:  checks $(Cached_plat) $(AD_Files_If_Required) jvmti_stuff trace_stuff sa_stuff
+vm_build_preliminaries:  checks $(Cached_plat) $(AD_Files_If_Required) jvmti_stuff trace_stuff sa_stuff dtrace_stuff
 	@# We need a null action here, so implicit rules don't get consulted.
 
 $(Cached_plat): $(Plat_File)
-	$(CDG) cp $(Plat_File) $(Cached_plat)
+	$(CDG) $(CP) $(Plat_File) $(Cached_plat)
 
 # make AD files as necessary
 ad_stuff: $(Cached_plat) $(adjust-mflags)
@@ -87,13 +93,16 @@ ad_stuff: $(Cached_plat) $(adjust-mflags)
 jvmti_stuff: $(Cached_plat) $(adjust-mflags)
 	@$(MAKE) -f jvmti.make $(MFLAGS-adjusted)
 
-# generate trace files 
+# generate trace files
 trace_stuff: jvmti_stuff $(Cached_plat) $(adjust-mflags)
 	@$(MAKE) -f trace.make $(MFLAGS-adjusted)
 
 # generate SA jar files and native header
 sa_stuff:
 	@$(MAKE) -f sa.make $(MFLAGS-adjusted)
+
+dtrace_stuff: $(Cached_plat) $(adjust-mflags)
+	@$(MAKE) -f dtrace.make dtrace_gen_headers $(MFLAGS-adjusted) GENERATED=$(GENERATED)
 
 # and the VM: must use other makefile with dependencies included
 
@@ -111,7 +120,7 @@ $(adjust-mflags): $(GAMMADIR)/make/$(Platform_os_family)/makefiles/adjust-mflags
 the_vm: vm_build_preliminaries $(adjust-mflags)
 	@$(MAKE) -f vm.make $(MFLAGS-adjusted)
 
-install gamma: the_vm
+install: the_vm
 	@$(MAKE) -f vm.make $@
 
 # next rules support "make foo.[oi]"
@@ -121,7 +130,7 @@ install gamma: the_vm
 	#$(MAKE) -f vm.make $@
 
 # this should force everything to be rebuilt
-clean: 
+clean:
 	rm -f $(GENERATED)/*.class
 	$(MAKE) -f vm.make $(MFLAGS) clean
 
@@ -133,3 +142,5 @@ realclean:
 .PHONY: default vm_build_preliminaries
 .PHONY: lists ad_stuff jvmti_stuff trace_stuff sa_stuff the_vm clean realclean
 .PHONY: checks check_os_version install
+
+.NOTPARALLEL:

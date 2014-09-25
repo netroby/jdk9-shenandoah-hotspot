@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2002, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2002, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -24,6 +24,7 @@
 
 #include "precompiled.hpp"
 #include "ci/ciMethod.hpp"
+#include "code/codeCache.hpp"
 #include "compiler/compileLog.hpp"
 #include "memory/allocation.inline.hpp"
 #include "oops/method.hpp"
@@ -106,7 +107,7 @@ int CompileLog::identify(ciBaseObject* obj) {
     if (mobj->is_klass()) {
       ciKlass* klass = mobj->as_klass();
       begin_elem("klass id='%d'", id);
-      name(klass->name());
+      name(klass);
       if (!klass->is_loaded()) {
         print(" unloaded='1'");
       } else {
@@ -171,6 +172,15 @@ void CompileLog::name(ciSymbol* name) {
   print("'");
 }
 
+void CompileLog::name(ciKlass* k) {
+  print(" name='");
+  if (!k->is_loaded()) {
+    text()->print("%s", k->name()->as_klass_external_name());
+  } else {
+    text()->print("%s", k->external_name());
+  }
+  print("'");
+}
 
 // ------------------------------------------------------------------
 // CompileLog::clear_identities
@@ -294,7 +304,7 @@ void CompileLog::finish_log(outputStream* file) {
 // Print about successful method inlining.
 void CompileLog::inline_success(const char* reason) {
   begin_elem("inline_success reason='");
-  text(reason);
+  text("%s", reason);
   end_elem("'");
 }
 
@@ -304,7 +314,7 @@ void CompileLog::inline_success(const char* reason) {
 // Print about failed method inlining.
 void CompileLog::inline_fail(const char* reason) {
   begin_elem("inline_fail reason='");
-  text(reason);
+  text("%s", reason);
   end_elem("'");
 }
 
@@ -330,5 +340,5 @@ void CompileLog::set_context(const char* format, ...) {
 void CompileLog::code_cache_state() {
   begin_elem("code_cache");
   CodeCache::log_state(this);
-  end_elem("");
+  end_elem("%s", "");
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -28,6 +28,7 @@
 #include "memory/collectorPolicy.hpp"
 #include "memory/resourceArea.hpp"
 #include "memory/sharedHeap.hpp"
+#include "runtime/atomic.inline.hpp"
 #include "utilities/copy.hpp"
 
 /* Copyright (c) 1992-2009 Oracle and/or its affiliates, and Stanford University.
@@ -80,34 +81,43 @@ void ageTable::merge_par(ageTable* subTable) {
 
 uint ageTable::compute_tenuring_threshold(size_t survivor_capacity) {
   size_t desired_survivor_size = (size_t)((((double) survivor_capacity)*TargetSurvivorRatio)/100);
-  size_t total = 0;
-  uint age = 1;
-  assert(sizes[0] == 0, "no objects with age zero should be recorded");
-  while (age < table_size) {
-    total += sizes[age];
-    // check if including objects of age 'age' made us pass the desired
-    // size, if so 'age' is the new threshold
-    if (total > desired_survivor_size) break;
-    age++;
+  uint result;
+
+  if (AlwaysTenure || NeverTenure) {
+    assert(MaxTenuringThreshold == 0 || MaxTenuringThreshold == markOopDesc::max_age + 1,
+        err_msg("MaxTenuringThreshold should be 0 or markOopDesc::max_age + 1, but is " UINTX_FORMAT, MaxTenuringThreshold));
+    result = MaxTenuringThreshold;
+  } else {
+    size_t total = 0;
+    uint age = 1;
+    assert(sizes[0] == 0, "no objects with age zero should be recorded");
+    while (age < table_size) {
+      total += sizes[age];
+      // check if including objects of age 'age' made us pass the desired
+      // size, if so 'age' is the new threshold
+      if (total > desired_survivor_size) break;
+      age++;
+    }
+    result = age < MaxTenuringThreshold ? age : MaxTenuringThreshold;
   }
-  uint result = age < MaxTenuringThreshold ? age : MaxTenuringThreshold;
 
   if (PrintTenuringDistribution || UsePerfData) {
 
     if (PrintTenuringDistribution) {
       gclog_or_tty->cr();
-      gclog_or_tty->print_cr("Desired survivor size " SIZE_FORMAT " bytes, new threshold %u (max %u)",
-        desired_survivor_size*oopSize, result, MaxTenuringThreshold);
+      gclog_or_tty->print_cr("Desired survivor size " SIZE_FORMAT " bytes, new threshold "
+        UINTX_FORMAT " (max threshold " UINTX_FORMAT ")",
+        desired_survivor_size*oopSize, (uintx) result, MaxTenuringThreshold);
     }
 
-    total = 0;
-    age = 1;
+    size_t total = 0;
+    uint age = 1;
     while (age < table_size) {
       total += sizes[age];
       if (sizes[age] > 0) {
         if (PrintTenuringDistribution) {
-          gclog_or_tty->print_cr("- age %3u: %10ld bytes, %10ld total",
-            age, sizes[age]*oopSize, total*oopSize);
+          gclog_or_tty->print_cr("- age %3u: " SIZE_FORMAT_W(10) " bytes, " SIZE_FORMAT_W(10) " total",
+                                        age,    sizes[age]*oopSize,          total*oopSize);
         }
       }
       if (UsePerfData) {

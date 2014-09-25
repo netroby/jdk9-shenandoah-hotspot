@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -26,8 +26,12 @@
 #include "classfile/classLoader.hpp"
 #include "classfile/javaAssertions.hpp"
 #include "classfile/javaClasses.hpp"
-#include "classfile/symbolTable.hpp"
+#include "classfile/stringTable.hpp"
 #include "classfile/systemDictionary.hpp"
+#if INCLUDE_CDS
+#include "classfile/sharedClassUtil.hpp"
+#include "classfile/systemDictionaryShared.hpp"
+#endif
 #include "classfile/vmSymbols.hpp"
 #include "gc_interface/collectedHeap.inline.hpp"
 #include "interpreter/bytecode.hpp"
@@ -44,6 +48,7 @@
 #include "prims/nativeLookup.hpp"
 #include "prims/privilegedStack.hpp"
 #include "runtime/arguments.hpp"
+#include "runtime/atomic.inline.hpp"
 #include "runtime/dtraceJSDT.hpp"
 #include "runtime/handles.inline.hpp"
 #include "runtime/init.hpp"
@@ -51,11 +56,14 @@
 #include "runtime/java.hpp"
 #include "runtime/javaCalls.hpp"
 #include "runtime/jfieldIDWorkaround.hpp"
-#include "runtime/os.hpp"
+#include "runtime/orderAccess.inline.hpp"
+#include "runtime/os.inline.hpp"
 #include "runtime/perfData.hpp"
 #include "runtime/reflection.hpp"
+#include "runtime/thread.inline.hpp"
 #include "runtime/vframe.hpp"
 #include "runtime/vm_operations.hpp"
+#include "runtime/vm_version.hpp"
 #include "services/attachListener.hpp"
 #include "services/management.hpp"
 #include "services/threadService.hpp"
@@ -76,17 +84,14 @@
 #ifdef TARGET_OS_FAMILY_windows
 # include "jvm_windows.h"
 #endif
+#ifdef TARGET_OS_FAMILY_aix
+# include "jvm_aix.h"
+#endif
 #ifdef TARGET_OS_FAMILY_bsd
 # include "jvm_bsd.h"
 #endif
 
 #include <errno.h>
-
-#ifndef USDT2
-HS_DTRACE_PROBE_DECL1(hotspot, thread__sleep__begin, long long);
-HS_DTRACE_PROBE_DECL1(hotspot, thread__sleep__end, int);
-HS_DTRACE_PROBE_DECL0(hotspot, thread__yield);
-#endif /* !USDT2 */
 
 /*
   NOTE about use of any ctor or function call that can trigger a safepoint/GC:
@@ -217,7 +222,7 @@ void trace_class_resolution(Klass* to_class) {
 #ifdef ASSERT
   class JVMTraceWrapper : public StackObj {
    public:
-    JVMTraceWrapper(const char* format, ...) {
+    JVMTraceWrapper(const char* format, ...) ATTRIBUTE_PRINTF(2, 3) {
       if (TraceJVMCalls) {
         va_list ap;
         va_start(ap, format);
@@ -392,6 +397,23 @@ JVM_ENTRY(jobject, JVM_InitProperties(JNIEnv *env, jobject properties))
 JVM_END
 
 
+/*
+ * Return the temporary directory that the VM uses for the attach
+ * and perf data files.
+ *
+ * It is important that this directory is well-known and the
+ * same for all VM instances. It cannot be affected by configuration
+ * variables such as java.io.tmpdir.
+ */
+JVM_ENTRY(jstring, JVM_GetTemporaryDirectory(JNIEnv *env))
+  JVMWrapper("JVM_GetTemporaryDirectory");
+  HandleMark hm(THREAD);
+  const char* temp_dir = os::get_temp_directory();
+  Handle h = java_lang_String::create_from_platform_dependent_str(temp_dir, CHECK_NULL);
+  return (jstring) JNIHandles::make_local(env, h());
+JVM_END
+
+
 // java.lang.Runtime /////////////////////////////////////////////////////////////////////////
 
 extern volatile jint vm_created;
@@ -521,6 +543,12 @@ JVM_ENTRY(void, JVM_MonitorWait(JNIEnv* env, jobject handle, jlong ms))
   JavaThreadInObjectWaitState jtiows(thread, ms != 0);
   if (JvmtiExport::should_post_monitor_wait()) {
     JvmtiExport::post_monitor_wait((JavaThread *)THREAD, (oop)obj(), ms);
+
+    // The current thread already owns the monitor and it has not yet
+    // been added to the wait queue so the current thread cannot be
+    // made the successor. This means that the JVMTI_EVENT_MONITOR_WAIT
+    // event handler cannot accidentally consume an unpark() meant for
+    // the ParkEvent associated with this ObjectMonitor.
   }
   ObjectSynchronizer::wait(obj, ms, CHECK);
 JVM_END
@@ -975,7 +1003,15 @@ JVM_ENTRY(jclass, JVM_FindLoadedClass(JNIEnv *env, jobject loader, jstring name)
                                                               h_loader,
                                                               Handle(),
                                                               CHECK_NULL);
-
+#if INCLUDE_CDS
+  if (k == NULL) {
+    // If the class is not already loaded, try to see if it's in the shared
+    // archive for the current classloader (h_loader).
+    instanceKlassHandle ik = SystemDictionaryShared::find_or_load_shared_class(
+        klass_name, h_loader, CHECK_NULL);
+    k = ik();
+  }
+#endif
   return (k == NULL) ? NULL :
             (jclass) JNIHandles::make_local(env, k->java_mirror());
 JVM_END
@@ -1163,18 +1199,22 @@ static bool is_authorized(Handle context, instanceKlassHandle klass, TRAPS) {
 // and null permissions - which gives no permissions.
 oop create_dummy_access_control_context(TRAPS) {
   InstanceKlass* pd_klass = InstanceKlass::cast(SystemDictionary::ProtectionDomain_klass());
-  // new ProtectionDomain(null,null);
-  oop null_protection_domain = pd_klass->allocate_instance(CHECK_NULL);
-  Handle null_pd(THREAD, null_protection_domain);
+  Handle obj = pd_klass->allocate_instance_handle(CHECK_NULL);
+  // Call constructor ProtectionDomain(null, null);
+  JavaValue result(T_VOID);
+  JavaCalls::call_special(&result, obj, KlassHandle(THREAD, pd_klass),
+                          vmSymbols::object_initializer_name(),
+                          vmSymbols::codesource_permissioncollection_signature(),
+                          Handle(), Handle(), CHECK_NULL);
 
   // new ProtectionDomain[] {pd};
   objArrayOop context = oopFactory::new_objArray(pd_klass, 1, CHECK_NULL);
-  context->obj_at_put(0, null_pd());
+  context->obj_at_put(0, obj());
 
   // new AccessControlContext(new ProtectionDomain[] {pd})
   objArrayHandle h_context(THREAD, context);
-  oop result = java_security_AccessControlContext::create(h_context, false, Handle(), CHECK_NULL);
-  return result;
+  oop acc = java_security_AccessControlContext::create(h_context, false, Handle(), CHECK_NULL);
+  return acc;
 }
 
 JVM_ENTRY(jobject, JVM_DoPrivileged(JNIEnv *env, jclass cls, jobject action, jobject context, jboolean wrapException))
@@ -1214,7 +1254,8 @@ JVM_ENTRY(jobject, JVM_DoPrivileged(JNIEnv *env, jclass cls, jobject action, job
   // get run() method
   Method* m_oop = object->klass()->uncached_lookup_method(
                                            vmSymbols::run_method_name(),
-                                           vmSymbols::void_object_signature());
+                                           vmSymbols::void_object_signature(),
+                                           Klass::normal);
   methodHandle m (THREAD, m_oop);
   if (m.is_null() || !m->is_method() || !m()->is_public() || m()->is_static()) {
     THROW_MSG_0(vmSymbols::java_lang_InternalError(), "No run method");
@@ -1244,7 +1285,11 @@ JVM_ENTRY(jobject, JVM_DoPrivileged(JNIEnv *env, jclass cls, jobject action, job
   if (HAS_PENDING_EXCEPTION) {
     pending_exception = Handle(THREAD, PENDING_EXCEPTION);
     CLEAR_PENDING_EXCEPTION;
-
+    // JVMTI has already reported the pending exception
+    // JVMTI internal flag reset is needed in order to report PrivilegedActionException
+    if (THREAD->is_Java_thread()) {
+      JvmtiExport::clear_detected_exception((JavaThread*) THREAD);
+    }
     if ( pending_exception->is_a(SystemDictionary::Exception_klass()) &&
         !pending_exception->is_a(SystemDictionary::RuntimeException_klass())) {
       // Throw a java.security.PrivilegedActionException(Exception e) exception
@@ -1361,14 +1406,6 @@ JVM_QUICK_ENTRY(jboolean, JVM_IsPrimitiveClass(JNIEnv *env, jclass cls))
   JVMWrapper("JVM_IsPrimitiveClass");
   oop mirror = JNIHandles::resolve_non_null(cls);
   return (jboolean) java_lang_Class::is_primitive(mirror);
-JVM_END
-
-
-JVM_ENTRY(jclass, JVM_GetComponentType(JNIEnv *env, jclass cls))
-  JVMWrapper("JVM_GetComponentType");
-  oop mirror = JNIHandles::resolve_non_null(cls);
-  oop result = Reflection::array_component_type(mirror, CHECK_NULL);
-  return (jclass) JNIHandles::make_local(env, result);
 JVM_END
 
 
@@ -1830,7 +1867,7 @@ JVM_ENTRY(jobjectArray, JVM_GetClassDeclaredFields(JNIEnv *env, jclass ofClass, 
 
     if (!publicOnly || fs.access_flags().is_public()) {
       fd.reinitialize(k(), fs.index());
-      oop field = Reflection::new_field(&fd, UseNewReflection, CHECK_NULL);
+      oop field = Reflection::new_field(&fd, CHECK_NULL);
       result->obj_at_put(out_idx, field);
       ++out_idx;
     }
@@ -1908,7 +1945,7 @@ static jobjectArray get_class_declared_methods_helper(
       if (want_constructor) {
         m = Reflection::new_constructor(method, CHECK_NULL);
       } else {
-        m = Reflection::new_method(method, UseNewReflection, false, CHECK_NULL);
+        m = Reflection::new_method(method, false, CHECK_NULL);
       }
       result->obj_at_put(i, m);
     }
@@ -2031,7 +2068,7 @@ static jobject get_method_at_helper(constantPoolHandle cp, jint index, bool forc
   }
   oop method;
   if (!m->is_initializer() || m->is_static()) {
-    method = Reflection::new_method(m, true, true, CHECK_NULL);
+    method = Reflection::new_method(m, true, CHECK_NULL);
   } else {
     method = Reflection::new_constructor(m, CHECK_NULL);
   }
@@ -2081,7 +2118,7 @@ static jobject get_field_at_helper(constantPoolHandle cp, jint index, bool force
   if (target_klass == NULL) {
     THROW_MSG_0(vmSymbols::java_lang_RuntimeException(), "Unable to look up field in target class");
   }
-  oop field = Reflection::new_field(&fd, true, CHECK_NULL);
+  oop field = Reflection::new_field(&fd, CHECK_NULL);
   return JNIHandles::make_local(field);
 }
 
@@ -2712,14 +2749,14 @@ JVM_END
 
 
 JVM_LEAF(jlong, JVM_Lseek(jint fd, jlong offset, jint whence))
-  JVMWrapper4("JVM_Lseek (0x%x, %Ld, %d)", fd, offset, whence);
+  JVMWrapper4("JVM_Lseek (0x%x, " INT64_FORMAT ", %d)", fd, (int64_t) offset, whence);
   //%note jvm_r6
   return os::lseek(fd, offset, whence);
 JVM_END
 
 
 JVM_LEAF(jint, JVM_SetLength(jint fd, jlong length))
-  JVMWrapper3("JVM_SetLength (0x%x, %Ld)", fd, length);
+  JVMWrapper3("JVM_SetLength (0x%x, " INT64_FORMAT ")", fd, (int64_t) length);
   return os::ftruncate(fd, length);
 JVM_END
 
@@ -2734,13 +2771,14 @@ JVM_END
 // Printing support //////////////////////////////////////////////////
 extern "C" {
 
+ATTRIBUTE_PRINTF(3, 0)
 int jio_vsnprintf(char *str, size_t count, const char *fmt, va_list args) {
   // see bug 4399518, 4417214
   if ((intptr_t)count <= 0) return -1;
   return vsnprintf(str, count, fmt, args);
 }
 
-
+ATTRIBUTE_PRINTF(3, 0)
 int jio_snprintf(char *str, size_t count, const char *fmt, ...) {
   va_list args;
   int len;
@@ -2750,7 +2788,7 @@ int jio_snprintf(char *str, size_t count, const char *fmt, ...) {
   return len;
 }
 
-
+ATTRIBUTE_PRINTF(2,3)
 int jio_fprintf(FILE* f, const char *fmt, ...) {
   int len;
   va_list args;
@@ -2760,7 +2798,7 @@ int jio_fprintf(FILE* f, const char *fmt, ...) {
   return len;
 }
 
-
+ATTRIBUTE_PRINTF(2, 0)
 int jio_vfprintf(FILE* f, const char *fmt, va_list args) {
   if (Arguments::vfprintf_hook() != NULL) {
      return Arguments::vfprintf_hook()(f, fmt, args);
@@ -2769,7 +2807,7 @@ int jio_vfprintf(FILE* f, const char *fmt, va_list args) {
   }
 }
 
-
+ATTRIBUTE_PRINTF(1, 2)
 JNIEXPORT int jio_printf(const char *fmt, ...) {
   int len;
   va_list args;
@@ -2881,10 +2919,10 @@ JVM_ENTRY(void, JVM_StartThread(JNIEnv* env, jobject jthread))
     if (JvmtiExport::should_post_resource_exhausted()) {
       JvmtiExport::post_resource_exhausted(
         JVMTI_RESOURCE_EXHAUSTED_OOM_ERROR | JVMTI_RESOURCE_EXHAUSTED_THREADS,
-        "unable to create new native thread");
+        os::native_thread_creation_failed_msg());
     }
     THROW_MSG(vmSymbols::java_lang_OutOfMemoryError(),
-              "unable to create new native thread");
+              os::native_thread_creation_failed_msg());
   }
 
   Thread::start(native_thread);
@@ -2906,7 +2944,7 @@ JVM_ENTRY(void, JVM_StopThread(JNIEnv* env, jobject jthread, jobject throwable))
   JavaThread* receiver = java_lang_Thread::thread(java_thread);
   Events::log_exception(JavaThread::current(),
                         "JVM_StopThread thread JavaThread " INTPTR_FORMAT " as oop " INTPTR_FORMAT " [exception " INTPTR_FORMAT "]",
-                        receiver, (address)java_thread, throwable);
+                        p2i(receiver), p2i((address)java_thread), p2i(throwable));
   // First check if thread is alive
   if (receiver != NULL) {
     // Check if exception is getting thrown at self (use oop equality, since the
@@ -3008,17 +3046,14 @@ JVM_END
 JVM_ENTRY(void, JVM_Yield(JNIEnv *env, jclass threadClass))
   JVMWrapper("JVM_Yield");
   if (os::dont_yield()) return;
-#ifndef USDT2
-  HS_DTRACE_PROBE0(hotspot, thread__yield);
-#else /* USDT2 */
   HOTSPOT_THREAD_YIELD();
-#endif /* USDT2 */
+
   // When ConvertYieldToSleep is off (default), this matches the classic VM use of yield.
   // Critical for similar threading behaviour
   if (ConvertYieldToSleep) {
     os::sleep(thread, MinSleepInterval, false);
   } else {
-    os::yield();
+    os::naked_yield();
   }
 JVM_END
 
@@ -3038,12 +3073,7 @@ JVM_ENTRY(void, JVM_Sleep(JNIEnv* env, jclass threadClass, jlong millis))
   // And set new thread state to SLEEPING.
   JavaThreadSleepState jtss(thread);
 
-#ifndef USDT2
-  HS_DTRACE_PROBE1(hotspot, thread__sleep__begin, millis);
-#else /* USDT2 */
-  HOTSPOT_THREAD_SLEEP_BEGIN(
-                             millis);
-#endif /* USDT2 */
+  HOTSPOT_THREAD_SLEEP_BEGIN(millis);
 
   EventThreadSleep event;
 
@@ -3053,7 +3083,7 @@ JVM_ENTRY(void, JVM_Sleep(JNIEnv* env, jclass threadClass, jlong millis))
     // It appears that in certain GUI contexts, it may be beneficial to do a short sleep
     // for SOLARIS
     if (ConvertSleepToYield) {
-      os::yield();
+      os::naked_yield();
     } else {
       ThreadState old_state = thread->osthread()->get_state();
       thread->osthread()->set_state(SLEEPING);
@@ -3071,12 +3101,8 @@ JVM_ENTRY(void, JVM_Sleep(JNIEnv* env, jclass threadClass, jlong millis))
           event.set_time(millis);
           event.commit();
         }
-#ifndef USDT2
-        HS_DTRACE_PROBE1(hotspot, thread__sleep__end,1);
-#else /* USDT2 */
-        HOTSPOT_THREAD_SLEEP_END(
-                                 1);
-#endif /* USDT2 */
+        HOTSPOT_THREAD_SLEEP_END(1);
+
         // TODO-FIXME: THROW_MSG returns which means we will not call set_state()
         // to properly restore the thread state.  That's likely wrong.
         THROW_MSG(vmSymbols::java_lang_InterruptedException(), "sleep interrupted");
@@ -3088,12 +3114,7 @@ JVM_ENTRY(void, JVM_Sleep(JNIEnv* env, jclass threadClass, jlong millis))
     event.set_time(millis);
     event.commit();
   }
-#ifndef USDT2
-  HS_DTRACE_PROBE1(hotspot, thread__sleep__end,0);
-#else /* USDT2 */
-  HOTSPOT_THREAD_SLEEP_END(
-                           0);
-#endif /* USDT2 */
+  HOTSPOT_THREAD_SLEEP_END(0);
 JVM_END
 
 JVM_ENTRY(jobject, JVM_CurrentThread(JNIEnv* env, jclass threadClass))
@@ -3513,7 +3534,6 @@ JVM_END
 
 JVM_ENTRY(jobject, JVM_LatestUserDefinedLoader(JNIEnv *env))
   for (vframeStream vfst(thread); !vfst.at_end(); vfst.next()) {
-    // UseNewReflection
     vfst.skip_reflection_related_frames(); // Only needed for 1.4 reflection
     oop loader = vfst.method()->method_holder()->class_loader();
     if (loader != NULL) {
@@ -3918,50 +3938,6 @@ JNIEXPORT void JNICALL JVM_RawMonitorExit(void *mon) {
 }
 
 
-// Support for Serialization
-
-typedef jfloat  (JNICALL *IntBitsToFloatFn  )(JNIEnv* env, jclass cb, jint    value);
-typedef jdouble (JNICALL *LongBitsToDoubleFn)(JNIEnv* env, jclass cb, jlong   value);
-typedef jint    (JNICALL *FloatToIntBitsFn  )(JNIEnv* env, jclass cb, jfloat  value);
-typedef jlong   (JNICALL *DoubleToLongBitsFn)(JNIEnv* env, jclass cb, jdouble value);
-
-static IntBitsToFloatFn   int_bits_to_float_fn   = NULL;
-static LongBitsToDoubleFn long_bits_to_double_fn = NULL;
-static FloatToIntBitsFn   float_to_int_bits_fn   = NULL;
-static DoubleToLongBitsFn double_to_long_bits_fn = NULL;
-
-
-void initialize_converter_functions() {
-  if (JDK_Version::is_gte_jdk14x_version()) {
-    // These functions only exist for compatibility with 1.3.1 and earlier
-    return;
-  }
-
-  // called from universe_post_init()
-  assert(
-    int_bits_to_float_fn   == NULL &&
-    long_bits_to_double_fn == NULL &&
-    float_to_int_bits_fn   == NULL &&
-    double_to_long_bits_fn == NULL ,
-    "initialization done twice"
-  );
-  // initialize
-  int_bits_to_float_fn   = CAST_TO_FN_PTR(IntBitsToFloatFn  , NativeLookup::base_library_lookup("java/lang/Float" , "intBitsToFloat"  , "(I)F"));
-  long_bits_to_double_fn = CAST_TO_FN_PTR(LongBitsToDoubleFn, NativeLookup::base_library_lookup("java/lang/Double", "longBitsToDouble", "(J)D"));
-  float_to_int_bits_fn   = CAST_TO_FN_PTR(FloatToIntBitsFn  , NativeLookup::base_library_lookup("java/lang/Float" , "floatToIntBits"  , "(F)I"));
-  double_to_long_bits_fn = CAST_TO_FN_PTR(DoubleToLongBitsFn, NativeLookup::base_library_lookup("java/lang/Double", "doubleToLongBits", "(D)J"));
-  // verify
-  assert(
-    int_bits_to_float_fn   != NULL &&
-    long_bits_to_double_fn != NULL &&
-    float_to_int_bits_fn   != NULL &&
-    double_to_long_bits_fn != NULL ,
-    "initialization failed"
-  );
-}
-
-
-
 // Shared JNI/JVM entry points //////////////////////////////////////////////////////////////
 
 jclass find_class_from_class_loader(JNIEnv* env, Symbol* name, jboolean init, Handle loader, Handle protection_domain, jboolean throwError, TRAPS) {
@@ -3977,40 +3953,6 @@ jclass find_class_from_class_loader(JNIEnv* env, Symbol* name, jboolean init, Ha
   }
   return (jclass) JNIHandles::make_local(env, klass_handle->java_mirror());
 }
-
-
-// Internal SQE debugging support ///////////////////////////////////////////////////////////
-
-#ifndef PRODUCT
-
-extern "C" {
-  JNIEXPORT jboolean JNICALL JVM_AccessVMBooleanFlag(const char* name, jboolean* value, jboolean is_get);
-  JNIEXPORT jboolean JNICALL JVM_AccessVMIntFlag(const char* name, jint* value, jboolean is_get);
-  JNIEXPORT void JNICALL JVM_VMBreakPoint(JNIEnv *env, jobject obj);
-}
-
-JVM_LEAF(jboolean, JVM_AccessVMBooleanFlag(const char* name, jboolean* value, jboolean is_get))
-  JVMWrapper("JVM_AccessBoolVMFlag");
-  return is_get ? CommandLineFlags::boolAt((char*) name, (bool*) value) : CommandLineFlags::boolAtPut((char*) name, (bool*) value, Flag::INTERNAL);
-JVM_END
-
-JVM_LEAF(jboolean, JVM_AccessVMIntFlag(const char* name, jint* value, jboolean is_get))
-  JVMWrapper("JVM_AccessVMIntFlag");
-  intx v;
-  jboolean result = is_get ? CommandLineFlags::intxAt((char*) name, &v) : CommandLineFlags::intxAtPut((char*) name, &v, Flag::INTERNAL);
-  *value = (jint)v;
-  return result;
-JVM_END
-
-
-JVM_ENTRY(void, JVM_VMBreakPoint(JNIEnv *env, jobject obj))
-  JVMWrapper("JVM_VMBreakPoint");
-  oop the_obj = JNIHandles::resolve(obj);
-  BREAKPOINT;
-JVM_END
-
-
-#endif
 
 
 // Method ///////////////////////////////////////////////////////////////////////////////////////////
@@ -4412,7 +4354,7 @@ JVM_END
 
 JVM_ENTRY(void, JVM_GetVersionInfo(JNIEnv* env, jvm_version_info* info, size_t info_size))
 {
-  memset(info, 0, sizeof(info_size));
+  memset(info, 0, info_size);
 
   info->jvm_version = Abstract_VM_Version::jvm_version();
   info->update_version = 0;          /* 0 in HotSpot Express VM */

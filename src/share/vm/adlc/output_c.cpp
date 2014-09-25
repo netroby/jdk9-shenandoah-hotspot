@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1998, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1998, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -31,23 +31,6 @@ static bool is_def(int usedef) {
   switch(usedef) {
   case Component::DEF:
   case Component::USE_DEF: return true; break;
-  }
-  return false;
-}
-
-static bool is_use(int usedef) {
-  switch(usedef) {
-  case Component::USE:
-  case Component::USE_DEF:
-  case Component::USE_KILL: return true; break;
-  }
-  return false;
-}
-
-static bool is_kill(int usedef) {
-  switch(usedef) {
-  case Component::KILL:
-  case Component::USE_KILL: return true; break;
   }
   return false;
 }
@@ -1014,10 +997,10 @@ void ArchDesc::build_pipe_classes(FILE *fp_cpp) {
   int nopcnt = 0;
   for ( _pipeline->_noplist.reset(); (nop = _pipeline->_noplist.iter()) != NULL; nopcnt++ );
 
-  fprintf(fp_cpp, "void Bundle::initialize_nops(MachNode * nop_list[%d], Compile *C) {\n", nopcnt);
+  fprintf(fp_cpp, "void Bundle::initialize_nops(MachNode * nop_list[%d]) {\n", nopcnt);
   int i = 0;
   for ( _pipeline->_noplist.reset(); (nop = _pipeline->_noplist.iter()) != NULL; i++ ) {
-    fprintf(fp_cpp, "  nop_list[%d] = (MachNode *) new (C) %sNode();\n", i, nop);
+    fprintf(fp_cpp, "  nop_list[%d] = (MachNode *) new %sNode();\n", i, nop);
   }
   fprintf(fp_cpp, "};\n\n");
   fprintf(fp_cpp, "#ifndef PRODUCT\n");
@@ -1345,7 +1328,7 @@ static void generate_peepreplace( FILE *fp, FormDict &globals, PeepMatch *pmatch
     preplace->next_instruction(root_inst);
     InstructForm *root_form = globals[root_inst]->is_instruction();
     assert( root_form != NULL, "Replacement instruction was not previously defined");
-    fprintf(fp, "        %sNode *root = new (C) %sNode();\n", root_inst, root_inst);
+    fprintf(fp, "        %sNode *root = new %sNode();\n", root_inst, root_inst);
 
     int         inst_num;
     const char *op_name;
@@ -1386,7 +1369,7 @@ static void generate_peepreplace( FILE *fp, FormDict &globals, PeepMatch *pmatch
         fprintf(fp, "        ra_->add_reference(root, inst%d);\n", inst_num);
         fprintf(fp, "        ra_->set_oop (root, ra_->is_oop(inst%d));\n", inst_num);
         fprintf(fp, "        ra_->set_pair(root->_idx, ra_->get_reg_second(inst%d), ra_->get_reg_first(inst%d));\n", inst_num, inst_num);
-        fprintf(fp, "        root->_opnds[0] = inst%d->_opnds[0]->clone(C); // result\n", inst_num);
+        fprintf(fp, "        root->_opnds[0] = inst%d->_opnds[0]->clone(); // result\n", inst_num);
         fprintf(fp, "        // ----- Done with initial setup -----\n");
       } else {
         if( (op_form == NULL) || (op_form->is_base_constant(globals) == Form::none) ) {
@@ -1399,7 +1382,7 @@ static void generate_peepreplace( FILE *fp, FormDict &globals, PeepMatch *pmatch
         } else {
           fprintf(fp, "        // no ideal edge for constants after matching\n");
         }
-        fprintf(fp, "        root->_opnds[%d] = inst%d->_opnds[%d]->clone(C);\n",
+        fprintf(fp, "        root->_opnds[%d] = inst%d->_opnds[%d]->clone();\n",
                 opnds_index, inst_num, inst_op_num );
       }
       ++opnds_index;
@@ -1419,7 +1402,7 @@ static void generate_peepreplace( FILE *fp, FormDict &globals, PeepMatch *pmatch
 // Define the Peephole method for an instruction node
 void ArchDesc::definePeephole(FILE *fp, InstructForm *node) {
   // Generate Peephole function header
-  fprintf(fp, "MachNode *%sNode::peephole( Block *block, int block_index, PhaseRegAlloc *ra_, int &deleted, Compile* C ) {\n", node->_ident);
+  fprintf(fp, "MachNode *%sNode::peephole(Block *block, int block_index, PhaseRegAlloc *ra_, int &deleted) {\n", node->_ident);
   fprintf(fp, "  bool  matches = true;\n");
 
   // Identify the maximum instruction position,
@@ -1514,11 +1497,11 @@ void ArchDesc::defineExpand(FILE *fp, InstructForm *node) {
         new_oper = frm->is_operand();
         char *tmp = (char *)node->_exprule->_newopconst[new_id];
         if (tmp == NULL) {
-          fprintf(fp,"  MachOper *op%d = new (C) %sOper();\n",
+          fprintf(fp,"  MachOper *op%d = new %sOper();\n",
                   cnt, new_oper->_ident);
         }
         else {
-          fprintf(fp,"  MachOper *op%d = new (C) %sOper(%s);\n",
+          fprintf(fp,"  MachOper *op%d = new %sOper(%s);\n",
                   cnt, new_oper->_ident, tmp);
         }
       }
@@ -1570,13 +1553,20 @@ void ArchDesc::defineExpand(FILE *fp, InstructForm *node) {
       new_id = expand_instr->name();
 
       InstructForm* expand_instruction = (InstructForm*)globalAD->globalNames()[new_id];
+
+      if (!expand_instruction) {
+        globalAD->syntax_err(node->_linenum, "In %s: instruction %s used in expand not declared\n",
+                             node->_ident, new_id);
+        continue;
+      }
+
       if (expand_instruction->has_temps()) {
         globalAD->syntax_err(node->_linenum, "In %s: expand rules using instructs with TEMPs aren't supported: %s",
                              node->_ident, new_id);
       }
 
       // Build the node for the instruction
-      fprintf(fp,"\n  %sNode *n%d = new (C) %sNode();\n", new_id, cnt, new_id);
+      fprintf(fp,"\n  %sNode *n%d = new %sNode();\n", new_id, cnt, new_id);
       // Add control edge for this node
       fprintf(fp,"  n%d->add_req(_in[0]);\n", cnt);
       // Build the operand for the value this node defines.
@@ -1592,6 +1582,8 @@ void ArchDesc::defineExpand(FILE *fp, InstructForm *node) {
 
       if( node->is_ideal_fastlock() && new_inst->is_ideal_fastlock() ) {
         fprintf(fp, "  ((MachFastLockNode*)n%d)->_counters = _counters;\n",cnt);
+        fprintf(fp, "  ((MachFastLockNode*)n%d)->_rtm_counters = _rtm_counters;\n",cnt);
+        fprintf(fp, "  ((MachFastLockNode*)n%d)->_stack_rtm_counters = _stack_rtm_counters;\n",cnt);
       }
 
       // Fill in the bottom_type where requested
@@ -1601,7 +1593,7 @@ void ArchDesc::defineExpand(FILE *fp, InstructForm *node) {
       }
 
       const char *resultOper = new_inst->reduce_result();
-      fprintf(fp,"  n%d->set_opnd_array(0, state->MachOperGenerator( %s, C ));\n",
+      fprintf(fp,"  n%d->set_opnd_array(0, state->MachOperGenerator(%s));\n",
               cnt, machOperEnum(resultOper));
 
       // get the formal operand NameList
@@ -1628,6 +1620,13 @@ void ArchDesc::defineExpand(FILE *fp, InstructForm *node) {
         // Use 'parameter' at current position in list of new instruction's formals
         // instead of 'opid' when looking up info internal to new_inst
         const char *parameter = formal_lst->iter();
+        if (!parameter) {
+          globalAD->syntax_err(node->_linenum, "Operand %s of expand instruction %s has"
+                               " no equivalent in new instruction %s.",
+                               opid, node->_ident, new_inst->_ident);
+          assert(0, "Wrong expand");
+        }
+
         // Check for an operand which is created in the expand rule
         if ((exp_pos = node->_exprule->_newopers.index(opid)) != -1) {
           new_pos = new_inst->operand_position(parameter,Component::USE);
@@ -1635,7 +1634,7 @@ void ArchDesc::defineExpand(FILE *fp, InstructForm *node) {
           // If there is no use of the created operand, just skip it
           if (new_pos != NameList::Not_in_list) {
             //Copy the operand from the original made above
-            fprintf(fp,"  n%d->set_opnd_array(%d, op%d->clone(C)); // %s\n",
+            fprintf(fp,"  n%d->set_opnd_array(%d, op%d->clone()); // %s\n",
                     cnt, new_pos, exp_pos-node->num_opnds(), opid);
             // Check for who defines this operand & add edge if needed
             fprintf(fp,"  if(tmp%d != NULL)\n", exp_pos);
@@ -1663,7 +1662,7 @@ void ArchDesc::defineExpand(FILE *fp, InstructForm *node) {
           new_pos = new_inst->operand_position(parameter,Component::USE);
           if (new_pos != -1) {
             // Copy the operand from the ExpandNode to the new node
-            fprintf(fp,"  n%d->set_opnd_array(%d, opnd_array(%d)->clone(C)); // %s\n",
+            fprintf(fp,"  n%d->set_opnd_array(%d, opnd_array(%d)->clone()); // %s\n",
                     cnt, new_pos, exp_pos, opid);
             // For each operand add appropriate input edges by looking at tmp's
             fprintf(fp,"  if(tmp%d == this) {\n", exp_pos);
@@ -1730,14 +1729,14 @@ void ArchDesc::defineExpand(FILE *fp, InstructForm *node) {
           declared_def = true;
         }
         if (op && op->_interface && op->_interface->is_RegInterface()) {
-          fprintf(fp,"  def = new (C) MachTempNode(state->MachOperGenerator( %s, C ));\n",
+          fprintf(fp,"  def = new MachTempNode(state->MachOperGenerator(%s));\n",
                   machOperEnum(op->_ident));
           fprintf(fp,"  add_req(def);\n");
           // The operand for TEMP is already constructed during
           // this mach node construction, see buildMachNode().
           //
           // int idx  = node->operand_position_format(comp->_name);
-          // fprintf(fp,"  set_opnd_array(%d, state->MachOperGenerator( %s, C ));\n",
+          // fprintf(fp,"  set_opnd_array(%d, state->MachOperGenerator(%s));\n",
           //         idx, machOperEnum(op->_ident));
         } else {
           assert(false, "can't have temps which aren't registers");
@@ -1761,7 +1760,7 @@ void ArchDesc::defineExpand(FILE *fp, InstructForm *node) {
         }
 
         fprintf(fp,"  kill = ");
-        fprintf(fp,"new (C) MachProjNode( %s, %d, (%s), Op_%s );\n",
+        fprintf(fp,"new MachProjNode( %s, %d, (%s), Op_%s );\n",
                 machNode, proj_no++, regmask, ideal_type);
         fprintf(fp,"  proj_list.push(kill);\n");
       }
@@ -1803,7 +1802,7 @@ void ArchDesc::defineExpand(FILE *fp, InstructForm *node) {
         uint j = node->unique_opnds_idx(i);
         // unique_opnds_idx(i) is unique if unique_opnds_idx(j) is not unique.
         if( j != node->unique_opnds_idx(j) ) {
-          fprintf(fp,"  set_opnd_array(%d, opnd_array(%d)->clone(C)); // %s\n",
+          fprintf(fp,"  set_opnd_array(%d, opnd_array(%d)->clone()); // %s\n",
                   new_num_opnds, i, comp->_name);
           // delete not unique edges here
           fprintf(fp,"  for(unsigned i = 0; i < num%d; i++) {\n", i);
@@ -1825,18 +1824,26 @@ void ArchDesc::defineExpand(FILE *fp, InstructForm *node) {
 
   // If the node is a MachConstantNode, insert the MachConstantBaseNode edge.
   // NOTE: this edge must be the last input (see MachConstantNode::mach_constant_base_node_input).
-  if (node->is_mach_constant()) {
-    fprintf(fp,"  add_req(C->mach_constant_base_node());\n");
+  // There are nodes that don't use $constantablebase, but still require that it
+  // is an input to the node. Example: divF_reg_immN, Repl32B_imm on x86_64.
+  if (node->is_mach_constant() || node->needs_constant_base()) {
+    if (node->is_ideal_call() != Form::invalid_type &&
+        node->is_ideal_call() != Form::JAVA_LEAF) {
+      fprintf(fp, "  // MachConstantBaseNode added in matcher.\n");
+      _needs_clone_jvms = true;
+    } else {
+      fprintf(fp, "  add_req(C->mach_constant_base_node());\n");
+    }
   }
 
-  fprintf(fp,"\n");
-  if( node->expands() ) {
-    fprintf(fp,"  return result;\n");
+  fprintf(fp, "\n");
+  if (node->expands()) {
+    fprintf(fp, "  return result;\n");
   } else {
-    fprintf(fp,"  return this;\n");
+    fprintf(fp, "  return this;\n");
   }
-  fprintf(fp,"}\n");
-  fprintf(fp,"\n");
+  fprintf(fp, "}\n");
+  fprintf(fp, "\n");
 }
 
 
@@ -1938,9 +1945,9 @@ public:
       else if ((strcmp(rep_var, "constanttablebase") == 0) ||
                (strcmp(rep_var, "constantoffset")    == 0) ||
                (strcmp(rep_var, "constantaddress")   == 0)) {
-        if (!_inst.is_mach_constant()) {
+        if (!(_inst.is_mach_constant() || _inst.needs_constant_base())) {
           _AD.syntax_err(_encoding._linenum,
-                         "Replacement variable %s not allowed in instruct %s (only in MachConstantNode).\n",
+                         "Replacement variable %s not allowed in instruct %s (only in MachConstantNode or MachCall).\n",
                          rep_var, _encoding._name);
         }
       }
@@ -2103,16 +2110,21 @@ public:
         if (strcmp(rep_var,"$reg") == 0 || reg_conversion(rep_var) != NULL) {
           _reg_status  = LITERAL_ACCESSED;
         } else {
+          _AD.syntax_err(_encoding._linenum,
+                         "Invalid access to literal register parameter '%s' in %s.\n",
+                         rep_var, _encoding._name);
           assert( false, "invalid access to literal register parameter");
         }
       }
       // literal constant parameters must be accessed as a 'constant' field
-      if ( _constant_status != LITERAL_NOT_SEEN ) {
-        assert( _constant_status == LITERAL_SEEN, "Must have seen constant literal before now");
-        if( strcmp(rep_var,"$constant") == 0 ) {
-          _constant_status  = LITERAL_ACCESSED;
+      if (_constant_status != LITERAL_NOT_SEEN) {
+        assert(_constant_status == LITERAL_SEEN, "Must have seen constant literal before now");
+        if (strcmp(rep_var,"$constant") == 0) {
+          _constant_status = LITERAL_ACCESSED;
         } else {
-          assert( false, "invalid access to literal constant parameter");
+          _AD.syntax_err(_encoding._linenum,
+                         "Invalid access to literal constant parameter '%s' in %s.\n",
+                         rep_var, _encoding._name);
         }
       }
     } // end replacement and/or subfield
@@ -2294,6 +2306,7 @@ private:
 #if defined(IA32) || defined(AMD64)
     if (strcmp(rep_var,"$XMMRegister") == 0)   return "as_XMMRegister";
 #endif
+    if (strcmp(rep_var,"$CondRegister") == 0)  return "as_ConditionRegister";
     return NULL;
   }
 
@@ -2488,7 +2501,113 @@ void ArchDesc::defineSize(FILE *fp, InstructForm &inst) {
   fprintf(fp, "  return (VerifyOops ? MachNode::size(ra_) : %s);\n", inst._size);
 
   // (3) and (4)
-  fprintf(fp,"}\n");
+  fprintf(fp,"}\n\n");
+}
+
+// Emit postalloc expand function.
+void ArchDesc::define_postalloc_expand(FILE *fp, InstructForm &inst) {
+  InsEncode *ins_encode = inst._insencode;
+
+  // Output instruction's postalloc_expand prototype.
+  fprintf(fp, "void  %sNode::postalloc_expand(GrowableArray <Node *> *nodes, PhaseRegAlloc *ra_) {\n",
+          inst._ident);
+
+  assert((_encode != NULL) && (ins_encode != NULL), "You must define an encode section.");
+
+  // Output each operand's offset into the array of registers.
+  inst.index_temps(fp, _globalNames);
+
+  // Output variables "unsigned idx_<par_name>", Node *n_<par_name> and "MachOpnd *op_<par_name>"
+  // for each parameter <par_name> specified in the encoding.
+  ins_encode->reset();
+  const char *ec_name = ins_encode->encode_class_iter();
+  assert(ec_name != NULL, "Postalloc expand must specify an encoding.");
+
+  EncClass *encoding = _encode->encClass(ec_name);
+  if (encoding == NULL) {
+    fprintf(stderr, "User did not define contents of this encode_class: %s\n", ec_name);
+    abort();
+  }
+  if (ins_encode->current_encoding_num_args() != encoding->num_args()) {
+    globalAD->syntax_err(ins_encode->_linenum, "In %s: passing %d arguments to %s but expecting %d",
+                         inst._ident, ins_encode->current_encoding_num_args(),
+                         ec_name, encoding->num_args());
+  }
+
+  fprintf(fp, "  // Access to ins and operands for postalloc expand.\n");
+  const int buflen = 2000;
+  char idxbuf[buflen]; char *ib = idxbuf; idxbuf[0] = '\0';
+  char nbuf  [buflen]; char *nb = nbuf;   nbuf[0]   = '\0';
+  char opbuf [buflen]; char *ob = opbuf;  opbuf[0]  = '\0';
+
+  encoding->_parameter_type.reset();
+  encoding->_parameter_name.reset();
+  const char *type = encoding->_parameter_type.iter();
+  const char *name = encoding->_parameter_name.iter();
+  int param_no = 0;
+  for (; (type != NULL) && (name != NULL);
+       (type = encoding->_parameter_type.iter()), (name = encoding->_parameter_name.iter())) {
+    const char* arg_name = ins_encode->rep_var_name(inst, param_no);
+    int idx = inst.operand_position_format(arg_name);
+    if (strcmp(arg_name, "constanttablebase") == 0) {
+      ib += sprintf(ib, "  unsigned idx_%-5s = mach_constant_base_node_input(); \t// %s, \t%s\n",
+                    name, type, arg_name);
+      nb += sprintf(nb, "  Node    *n_%-7s = lookup(idx_%s);\n", name, name);
+      // There is no operand for the constanttablebase.
+    } else if (inst.is_noninput_operand(idx)) {
+      globalAD->syntax_err(inst._linenum,
+                           "In %s: you can not pass the non-input %s to a postalloc expand encoding.\n",
+                           inst._ident, arg_name);
+    } else {
+      ib += sprintf(ib, "  unsigned idx_%-5s = idx%d; \t// %s, \t%s\n",
+                    name, idx, type, arg_name);
+      nb += sprintf(nb, "  Node    *n_%-7s = lookup(idx_%s);\n", name, name);
+      ob += sprintf(ob, "  %sOper *op_%s = (%sOper *)opnd_array(%d);\n", type, name, type, idx);
+    }
+    param_no++;
+  }
+  assert(ib < &idxbuf[buflen-1] && nb < &nbuf[buflen-1] && ob < &opbuf[buflen-1], "buffer overflow");
+
+  fprintf(fp, "%s", idxbuf);
+  fprintf(fp, "  Node    *n_region  = lookup(0);\n");
+  fprintf(fp, "%s%s", nbuf, opbuf);
+  fprintf(fp, "  Compile *C = ra_->C;\n");
+
+  // Output this instruction's encodings.
+  fprintf(fp, "  {");
+  const char *ec_code    = NULL;
+  const char *ec_rep_var = NULL;
+  assert(encoding == _encode->encClass(ec_name), "");
+
+  DefineEmitState pending(fp, *this, *encoding, *ins_encode, inst);
+  encoding->_code.reset();
+  encoding->_rep_vars.reset();
+  // Process list of user-defined strings,
+  // and occurrences of replacement variables.
+  // Replacement Vars are pushed into a list and then output.
+  while ((ec_code = encoding->_code.iter()) != NULL) {
+    if (! encoding->_code.is_signal(ec_code)) {
+      // Emit pending code.
+      pending.emit();
+      pending.clear();
+      // Emit this code section.
+      fprintf(fp, "%s", ec_code);
+    } else {
+      // A replacement variable or one of its subfields.
+      // Obtain replacement variable from list.
+      ec_rep_var = encoding->_rep_vars.iter();
+      pending.add_rep_var(ec_rep_var);
+    }
+  }
+  // Emit pending code.
+  pending.emit();
+  pending.clear();
+  fprintf(fp, "  }\n");
+
+  fprintf(fp, "}\n\n");
+
+  ec_name = ins_encode->encode_class_iter();
+  assert(ec_name == NULL, "Postalloc expand may only have one encoding.");
 }
 
 // defineEmit -----------------------------------------------------------------
@@ -2720,17 +2839,17 @@ static void defineIn_RegMask(FILE *fp, FormDict &globals, OperandForm &oper) {
 
 // generate code to create a clone for a class derived from MachOper
 //
-// (0)  MachOper  *MachOperXOper::clone(Compile* C) const {
-// (1)    return new (C) MachXOper( _ccode, _c0, _c1, ..., _cn);
+// (0)  MachOper  *MachOperXOper::clone() const {
+// (1)    return new MachXOper( _ccode, _c0, _c1, ..., _cn);
 // (2)  }
 //
 static void defineClone(FILE *fp, FormDict &globalNames, OperandForm &oper) {
-  fprintf(fp,"MachOper *%sOper::clone(Compile* C) const {\n", oper._ident);
+  fprintf(fp,"MachOper *%sOper::clone() const {\n", oper._ident);
   // Check for constants that need to be copied over
   const int  num_consts    = oper.num_consts(globalNames);
   const bool is_ideal_bool = oper.is_ideal_bool();
   if( (num_consts > 0) ) {
-    fprintf(fp,"  return new (C) %sOper(", oper._ident);
+    fprintf(fp,"  return new %sOper(", oper._ident);
     // generate parameters for constants
     int i = 0;
     fprintf(fp,"_c%d", i);
@@ -2742,7 +2861,7 @@ static void defineClone(FILE *fp, FormDict &globalNames, OperandForm &oper) {
   }
   else {
     assert( num_consts == 0, "Currently support zero or one constant per operand clone function");
-    fprintf(fp,"  return new (C) %sOper();\n", oper._ident);
+    fprintf(fp,"  return new %sOper();\n", oper._ident);
   }
   // finish method
   fprintf(fp,"}\n");
@@ -2841,7 +2960,7 @@ void ArchDesc::define_oper_interface(FILE *fp, OperandForm &oper, FormDict &glob
   } else if ( (strcmp(name,"disp") == 0) ) {
     fprintf(fp,"(PhaseRegAlloc *ra_, const Node *node, int idx) const { \n");
   } else {
-    fprintf(fp,"() const { \n");
+    fprintf(fp, "() const {\n");
   }
 
   // Check for hexadecimal value OR replacement variable
@@ -2891,6 +3010,8 @@ void ArchDesc::define_oper_interface(FILE *fp, OperandForm &oper, FormDict &glob
     // Hex value
     fprintf(fp,"    return %s;\n", encoding);
   } else {
+    globalAD->syntax_err(oper._linenum, "In operand %s: Do not support this encode constant: '%s' for %s.",
+                         oper._ident, encoding, name);
     assert( false, "Do not support octal or decimal encode constants");
   }
   fprintf(fp,"  }\n");
@@ -2922,7 +3043,7 @@ void ArchDesc::define_oper_interface(FILE *fp, OperandForm &oper, FormDict &glob
 static void define_fill_new_machnode(bool used, FILE *fp_cpp) {
   fprintf(fp_cpp, "\n");
   fprintf(fp_cpp, "// Copy _idx, inputs and operands to new node\n");
-  fprintf(fp_cpp, "void MachNode::fill_new_machnode( MachNode* node, Compile* C) const {\n");
+  fprintf(fp_cpp, "void MachNode::fill_new_machnode(MachNode* node) const {\n");
   if( !used ) {
     fprintf(fp_cpp, "  // This architecture does not have cisc or short branch instructions\n");
     fprintf(fp_cpp, "  ShouldNotCallThis();\n");
@@ -2943,7 +3064,7 @@ static void define_fill_new_machnode(bool used, FILE *fp_cpp) {
     fprintf(fp_cpp, "  MachOper **to = node->_opnds;\n");
     fprintf(fp_cpp, "  for( int i = 0; i < nopnds; i++ ) {\n");
     fprintf(fp_cpp, "    if( i != cisc_operand() ) \n");
-    fprintf(fp_cpp, "      to[i] = _opnds[i]->clone(C);\n");
+    fprintf(fp_cpp, "      to[i] = _opnds[i]->clone();\n");
     fprintf(fp_cpp, "  }\n");
     fprintf(fp_cpp, "}\n");
   }
@@ -2984,8 +3105,8 @@ void ArchDesc::defineClasses(FILE *fp) {
     if ( strcmp(oper->_ident,"label") == 0 ) {
       defineIn_RegMask(_CPP_MISC_file._fp, _globalNames, *oper);
 
-      fprintf(fp,"MachOper  *%sOper::clone(Compile* C) const {\n", oper->_ident);
-      fprintf(fp,"  return  new (C) %sOper(_label, _block_num);\n", oper->_ident);
+      fprintf(fp,"MachOper  *%sOper::clone() const {\n", oper->_ident);
+      fprintf(fp,"  return  new %sOper(_label, _block_num);\n", oper->_ident);
       fprintf(fp,"}\n");
 
       fprintf(fp,"uint %sOper::opcode() const { return %s; }\n",
@@ -3003,8 +3124,8 @@ void ArchDesc::defineClasses(FILE *fp) {
     if ( strcmp(oper->_ident,"method") == 0 ) {
       defineIn_RegMask(_CPP_MISC_file._fp, _globalNames, *oper);
 
-      fprintf(fp,"MachOper  *%sOper::clone(Compile* C) const {\n", oper->_ident);
-      fprintf(fp,"  return  new (C) %sOper(_method);\n", oper->_ident);
+      fprintf(fp,"MachOper  *%sOper::clone() const {\n", oper->_ident);
+      fprintf(fp,"  return  new %sOper(_method);\n", oper->_ident);
       fprintf(fp,"}\n");
 
       fprintf(fp,"uint %sOper::opcode() const { return %s; }\n",
@@ -3055,6 +3176,7 @@ void ArchDesc::defineClasses(FILE *fp) {
     if( instr->expands() || instr->needs_projections() ||
         instr->has_temps() ||
         instr->is_mach_constant() ||
+        instr->needs_constant_base() ||
         instr->_matrule != NULL &&
         instr->num_opnds() != instr->num_unique_opnds() )
       defineExpand(_CPP_EXPAND_file._fp, instr);
@@ -3142,7 +3264,15 @@ void ArchDesc::defineClasses(FILE *fp) {
     // Ensure this is a machine-world instruction
     if ( instr->ideal_only() ) continue;
 
-    if (instr->_insencode)         defineEmit        (fp, *instr);
+    if (instr->_insencode) {
+      if (instr->postalloc_expands()) {
+        // Don't write this to _CPP_EXPAND_file, as the code generated calls C-code
+        // from code sections in ad file that is dumped to fp.
+        define_postalloc_expand(fp, *instr);
+      } else {
+        defineEmit(fp, *instr);
+      }
+    }
     if (instr->is_mach_constant()) defineEvalConstant(fp, *instr);
     if (instr->_size)              defineSize        (fp, *instr);
 
@@ -3503,6 +3633,11 @@ char reg_save_policy(const char *calling_convention) {
   return callconv;
 }
 
+void ArchDesc::generate_needs_clone_jvms(FILE *fp_cpp) {
+  fprintf(fp_cpp, "bool Compile::needs_clone_jvms() { return %s; }\n\n",
+          _needs_clone_jvms ? "true" : "false");
+}
+
 //---------------------------generate_assertion_checks-------------------
 void ArchDesc::generate_adlc_verification(FILE *fp_cpp) {
   fprintf(fp_cpp, "\n");
@@ -3680,7 +3815,7 @@ static void genMachOperCase(FILE *fp, FormDict &globalNames, ArchDesc &AD,
 
   // Generate the case statement for this opcode
   fprintf(fp, "  case %s:", opEnumName);
-  fprintf(fp, "\n    return new (C) %sOper(", opName);
+  fprintf(fp, "\n    return new %sOper(", opName);
   // Access parameters for constructor from the stat object
   //
   // Build access to condition code value
@@ -3710,7 +3845,7 @@ void ArchDesc::buildMachOperGenerator(FILE *fp_cpp) {
           "// that invokes 'new' on the corresponding class constructor.\n");
   fprintf(fp_cpp, "\n");
   fprintf(fp_cpp, "MachOper *State::MachOperGenerator");
-  fprintf(fp_cpp, "(int opcode, Compile* C)");
+  fprintf(fp_cpp, "(int opcode)");
   fprintf(fp_cpp, "{\n");
   fprintf(fp_cpp, "\n");
   fprintf(fp_cpp, "  switch(opcode) {\n");
@@ -3759,7 +3894,7 @@ void ArchDesc::buildMachNode(FILE *fp_cpp, InstructForm *inst, const char *inden
   const char *opClass = inst->_ident;
 
   // Create the MachNode object
-  fprintf(fp_cpp, "%s %sNode *node = new (C) %sNode();\n",indent, opClass,opClass);
+  fprintf(fp_cpp, "%s %sNode *node = new %sNode();\n",indent, opClass,opClass);
 
   if ( (inst->num_post_match_opnds() != 0) ) {
     // Instruction that contains operands which are not in match rule.
@@ -3786,7 +3921,7 @@ void ArchDesc::buildMachNode(FILE *fp_cpp, InstructForm *inst, const char *inden
       int         index  = clist.operand_position(comp->_name, comp->_usedef, inst);
       const char *opcode = machOperEnum(comp->_type);
       fprintf(fp_cpp, "%s node->set_opnd_array(%d, ", indent, index);
-      fprintf(fp_cpp, "MachOperGenerator(%s, C));\n", opcode);
+      fprintf(fp_cpp, "MachOperGenerator(%s));\n", opcode);
       }
   }
   else if ( inst->is_chain_of_constant(_globalNames, opType) ) {
@@ -3801,7 +3936,7 @@ void ArchDesc::buildMachNode(FILE *fp_cpp, InstructForm *inst, const char *inden
     // Check for multiple constants and then fill them in.
     // Just like MachOperGenerator
     const char *opName = inst->_matrule->_rChild->_opType;
-    fprintf(fp_cpp, "new (C) %sOper(", opName);
+    fprintf(fp_cpp, "new %sOper(", opName);
     // Grab operand form
     OperandForm *op = (_globalNames[opName])->is_operand();
     // Look up the number of constants
@@ -3819,8 +3954,10 @@ void ArchDesc::buildMachNode(FILE *fp_cpp, InstructForm *inst, const char *inden
   }
 
   // Fill in the bottom_type where requested
-  if ( inst->captures_bottom_type(_globalNames) ) {
-    fprintf(fp_cpp, "%s node->_bottom_type = _leaf->bottom_type();\n", indent);
+  if (inst->captures_bottom_type(_globalNames)) {
+    if (strncmp("MachCall", inst->mach_base_class(_globalNames), strlen("MachCall"))) {
+      fprintf(fp_cpp, "%s node->_bottom_type = _leaf->bottom_type();\n", indent);
+    }
   }
   if( inst->is_ideal_if() ) {
     fprintf(fp_cpp, "%s node->_prob = _leaf->as_If()->_prob;\n", indent);
@@ -3828,6 +3965,8 @@ void ArchDesc::buildMachNode(FILE *fp_cpp, InstructForm *inst, const char *inden
   }
   if( inst->is_ideal_fastlock() ) {
     fprintf(fp_cpp, "%s node->_counters = _leaf->as_FastLock()->counters();\n", indent);
+    fprintf(fp_cpp, "%s node->_rtm_counters = _leaf->as_FastLock()->rtm_counters();\n", indent);
+    fprintf(fp_cpp, "%s node->_stack_rtm_counters = _leaf->as_FastLock()->stack_rtm_counters();\n", indent);
   }
 
 }
@@ -3839,7 +3978,7 @@ void InstructForm::declare_cisc_version(ArchDesc &AD, FILE *fp_hpp) {
     InstructForm *inst_cisc = cisc_spill_alternate();
     if (inst_cisc != NULL) {
       fprintf(fp_hpp, "  virtual int            cisc_operand() const { return %d; }\n", cisc_spill_operand());
-      fprintf(fp_hpp, "  virtual MachNode      *cisc_version(int offset, Compile* C);\n");
+      fprintf(fp_hpp, "  virtual MachNode      *cisc_version(int offset);\n");
       fprintf(fp_hpp, "  virtual void           use_cisc_RegMask();\n");
       fprintf(fp_hpp, "  virtual const RegMask *cisc_RegMask() const { return _cisc_RegMask; }\n");
     }
@@ -3869,9 +4008,9 @@ bool InstructForm::define_cisc_version(ArchDesc &AD, FILE *fp_cpp) {
     // Construct CISC version of this instruction
     fprintf(fp_cpp, "\n");
     fprintf(fp_cpp, "// Build CISC version of this instruction\n");
-    fprintf(fp_cpp, "MachNode *%sNode::cisc_version( int offset, Compile* C ) {\n", this->_ident);
+    fprintf(fp_cpp, "MachNode *%sNode::cisc_version(int offset) {\n", this->_ident);
     // Create the MachNode object
-    fprintf(fp_cpp, "  %sNode *node = new (C) %sNode();\n", name, name);
+    fprintf(fp_cpp, "  %sNode *node = new %sNode();\n", name, name);
     // Fill in the bottom_type where requested
     if ( this->captures_bottom_type(AD.globalNames()) ) {
       fprintf(fp_cpp, "  node->_bottom_type = bottom_type();\n");
@@ -3884,10 +4023,10 @@ bool InstructForm::define_cisc_version(ArchDesc &AD, FILE *fp_cpp) {
 
     fprintf(fp_cpp, "\n");
     fprintf(fp_cpp, "  // Copy _idx, inputs and operands to new node\n");
-    fprintf(fp_cpp, "  fill_new_machnode(node, C);\n");
+    fprintf(fp_cpp, "  fill_new_machnode(node);\n");
     // Construct operand to access [stack_pointer + offset]
     fprintf(fp_cpp, "  // Construct operand to access [stack_pointer + offset]\n");
-    fprintf(fp_cpp, "  node->set_opnd_array(cisc_operand(), new (C) %sOper(offset));\n", cisc_oper_name);
+    fprintf(fp_cpp, "  node->set_opnd_array(cisc_operand(), new %sOper(offset));\n", cisc_oper_name);
     fprintf(fp_cpp, "\n");
 
     // Return result and exit scope
@@ -3903,7 +4042,7 @@ bool InstructForm::define_cisc_version(ArchDesc &AD, FILE *fp_cpp) {
 // Build prototypes for short branch methods
 void InstructForm::declare_short_branch_methods(FILE *fp_hpp) {
   if (has_short_branch_form()) {
-    fprintf(fp_hpp, "  virtual MachNode      *short_branch_version(Compile* C);\n");
+    fprintf(fp_hpp, "  virtual MachNode      *short_branch_version();\n");
   }
 }
 
@@ -3916,9 +4055,9 @@ bool InstructForm::define_short_branch_methods(ArchDesc &AD, FILE *fp_cpp) {
 
     // Construct short_branch_version() method.
     fprintf(fp_cpp, "// Build short branch version of this instruction\n");
-    fprintf(fp_cpp, "MachNode *%sNode::short_branch_version(Compile* C) {\n", this->_ident);
+    fprintf(fp_cpp, "MachNode *%sNode::short_branch_version() {\n", this->_ident);
     // Create the MachNode object
-    fprintf(fp_cpp, "  %sNode *node = new (C) %sNode();\n", name, name);
+    fprintf(fp_cpp, "  %sNode *node = new %sNode();\n", name, name);
     if( is_ideal_if() ) {
       fprintf(fp_cpp, "  node->_prob = _prob;\n");
       fprintf(fp_cpp, "  node->_fcnt = _fcnt;\n");
@@ -3932,7 +4071,7 @@ bool InstructForm::define_short_branch_methods(ArchDesc &AD, FILE *fp_cpp) {
     // Short branch version must use same node index for access
     // through allocator's tables
     fprintf(fp_cpp, "  // Copy _idx, inputs and operands to new node\n");
-    fprintf(fp_cpp, "  fill_new_machnode(node, C);\n");
+    fprintf(fp_cpp, "  fill_new_machnode(node);\n");
 
     // Return result and exit scope
     fprintf(fp_cpp, "  return node;\n");
@@ -3958,7 +4097,7 @@ void ArchDesc::buildMachNodeGenerator(FILE *fp_cpp) {
           "// that invokes 'new' on the corresponding class constructor.\n");
   fprintf(fp_cpp, "\n");
   fprintf(fp_cpp, "MachNode *State::MachNodeGenerator");
-  fprintf(fp_cpp, "(int opcode, Compile* C)");
+  fprintf(fp_cpp, "(int opcode)");
   fprintf(fp_cpp, "{\n");
   fprintf(fp_cpp, "  switch(opcode) {\n");
 
