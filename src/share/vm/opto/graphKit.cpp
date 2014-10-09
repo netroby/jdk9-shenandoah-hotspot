@@ -4251,11 +4251,20 @@ Node* GraphKit::shenandoah_read_barrier(Node* obj) {
 
 Node* GraphKit::make_shenandoah_write_barrier(Node* ctrl, Node* obj, const Type* obj_type) {
 
-  obj = make_shenandoah_read_barrier(ctrl, obj, obj_type);
-
   // Construct check for evacuation-in-progress.
   Node* evac_in_progr_addr = makecon(TypeRawPtr::make(ShenandoahHeap::evacuation_in_progress_addr()));
-  Node* evac_in_progr = make_load(control(), evac_in_progr_addr, TypeInt::BOOL, T_INT, Compile::AliasIdxRaw, false);
+  Node* evac_in_progr = make_load(NULL, evac_in_progr_addr, TypeInt::BOOL, T_INT, Compile::AliasIdxRaw, false);
+
+  // This membar is needed, so that the following read barrier doesn't float above
+  // the evacuation_in_progress check above. If that were possible, we'd have a race.
+  // It could be possible that the read barrier reads a pointer to from-space
+  // then another thread evacuates the object, and turns of concurrent evacuation,
+  // which would make the evac_in_progr check fail, and thus don't take a write barrier.
+  // The result would be a write to a from-space object, which would get lost.
+  insert_mem_bar(Op_MemBarAcquire, evac_in_progr);
+
+  obj = make_shenandoah_read_barrier(control(), obj, obj_type);
+
   Node* chk = _gvn.transform(new (C) CmpINode(evac_in_progr, intcon(0)));
   Node* test = _gvn.transform(new (C) BoolNode(chk, BoolTest::eq));
 
