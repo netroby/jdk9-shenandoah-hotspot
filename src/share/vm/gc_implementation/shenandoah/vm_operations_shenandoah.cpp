@@ -47,6 +47,9 @@ void VM_ShenandoahFullGC::doit() {
     ShenandoahMarkCompact mark_compact;
     mark_compact.do_mark_compact();
   } else {
+    if (ShenandoahTraceJNICritical) {
+      gclog_or_tty->print_cr("Deferring full GC because of active JNI critical regions");
+    }
     // This makes the GC background thread wait, and kick off evacuation as
     // soon as JNI notifies us that critical regions have all been left.
     ShenandoahHeap::heap()->concurrent_thread()->set_waiting_for_jni_before_gc(true);
@@ -81,20 +84,39 @@ void VM_ShenandoahFinishMark::doit() {
   sh->shenandoahPolicy()->record_final_mark_end();    
 
   if (! GC_locker::check_active_before_gc()) {
-    sh->set_evacuation_in_progress(true);
-
-    if (! ShenandoahConcurrentEvacuation) {
-      VM_ShenandoahEvacuation evacuation;
-      evacuation.doit();
-    } else {
-      sh->evacuate_and_update_roots();
-    }
+    VM_ShenandoahStartEvacuation start_evacuation;
+    start_evacuation.doit();
   } else {
+
+    if (ShenandoahTraceJNICritical) {
+      gclog_or_tty->print_cr("Deferring concurrent evacuation because of active JNI critical regions");
+    }
+
     // This makes the GC background thread wait, and kick off evacuation as
     // soon as JNI notifies us that critical regions have all been left.
     sh->concurrent_thread()->set_waiting_for_jni_before_gc(true);
   }
 
+}
+
+void VM_ShenandoahStartEvacuation::doit() {
+  ShenandoahHeap *sh = ShenandoahHeap::heap();
+  sh->set_evacuation_in_progress(true);
+
+  if (! ShenandoahConcurrentEvacuation) {
+    VM_ShenandoahEvacuation evacuation;
+    evacuation.doit();
+  } else {
+    sh->evacuate_and_update_roots();
+  }
+}
+
+VM_Operation::VMOp_Type VM_ShenandoahStartEvacuation::type() const {
+  return VMOp_ShenandoahStartEvacuation;
+}
+
+const char* VM_ShenandoahStartEvacuation::name() const {
+  return "Start shenandoah evacuation";
 }
 
 VM_Operation::VMOp_Type VM_ShenandoahVerifyHeapAfterEvacuation::type() const {

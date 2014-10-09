@@ -36,6 +36,15 @@ class VM_ShenandoahFinishMark: public VM_ShenandoahReferenceOperation {
 
 };
 
+class VM_ShenandoahStartEvacuation: public VM_Operation {
+
+ public:
+  VMOp_Type type() const;
+  void doit();
+  const char* name() const;
+
+};
+
 class VM_ShenandoahFullGC : public VM_Operation {
  public:
   VMOp_Type type() const;

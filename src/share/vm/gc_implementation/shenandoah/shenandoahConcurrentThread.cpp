@@ -38,15 +38,8 @@ void ShenandoahConcurrentThread::notify_jni_critical() {
     VM_ShenandoahFullGC full_gc;
     VMThread::execute(&full_gc);
   } else {
-    heap->set_evacuation_in_progress(true);
-
-    // We need to do non-concurrent marking right now, before we release the flag below.
-    // The GC background thread is waiting on it and would start another marking
-    // cycle otherwise.
-    if (! ShenandoahConcurrentEvacuation) {
-      VM_ShenandoahEvacuation evacuation;
-      VMThread::execute(&evacuation);
-    }
+    VM_ShenandoahStartEvacuation start_evacuation;
+    VMThread::execute(&start_evacuation);
 
   }
   MonitorLockerEx ml(ShenandoahJNICritical_lock);
