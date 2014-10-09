@@ -4253,7 +4253,7 @@ Node* GraphKit::make_shenandoah_write_barrier(Node* ctrl, Node* obj, const Type*
 
   // Construct check for evacuation-in-progress.
   Node* evac_in_progr_addr = makecon(TypeRawPtr::make(ShenandoahHeap::evacuation_in_progress_addr()));
-  Node* evac_in_progr = make_load(NULL, evac_in_progr_addr, TypeInt::BOOL, T_INT, Compile::AliasIdxRaw, false);
+  Node* evac_in_progr = make_load(control(), evac_in_progr_addr, TypeInt::BOOL, T_INT, Compile::AliasIdxRaw, false);
 
   // This membar is needed, so that the following read barrier doesn't float above
   // the evacuation_in_progress check above. If that were possible, we'd have a race.
