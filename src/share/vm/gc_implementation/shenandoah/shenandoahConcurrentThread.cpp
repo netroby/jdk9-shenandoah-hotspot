@@ -58,6 +58,11 @@ void ShenandoahConcurrentThread::run() {
   initialize_in_thread();
 
   wait_for_universe_init();
+
+  while(_slt == NULL) {
+    // Wait for initialization to finish.
+  }
+
   ShenandoahHeap* heap = ShenandoahHeap::heap();
 
   while (!_should_terminate) {
