@@ -71,7 +71,7 @@ void ShenandoahHeuristics::record_init_mark_end()   {
   double elapsed = (os::elapsedTime() - _init_mark_start); 
   _init_mark_ms.add(elapsed * 1000);
   if (ShenandoahGCVerbose && PrintGCDetails)
-    tty->print_cr("PolicyPrint: InitialMark %d took %lf ms", _init_mark_count++, elapsed * 1000);
+    tty->print_cr("PolicyPrint: InitialMark "INT32_FORMAT" took %lf ms", _init_mark_count++, elapsed * 1000);
 }
 
 void ShenandoahHeuristics::record_final_mark_start() { 
@@ -82,7 +82,7 @@ void ShenandoahHeuristics::record_final_mark_end()   {
   double elapsed = os::elapsedTime() - _final_mark_start;
   _final_mark_ms.add(elapsed * 1000);
   if (ShenandoahGCVerbose && PrintGCDetails)
-    tty->print_cr("PolicyPrint: FinalMark %d took %lf ms", _final_mark_count++, elapsed * 1000);
+    tty->print_cr("PolicyPrint: FinalMark "INT32_FORMAT" took %lf ms", _final_mark_count++, elapsed * 1000);
 }
 
 void ShenandoahHeuristics::record_concurrent_evacuation_start() { 
@@ -93,7 +93,7 @@ void ShenandoahHeuristics::record_concurrent_evacuation_end()   {
   double elapsed = os::elapsedTime() - _concurrent_evacuation_start;
   _concurrent_evacuation_times_ms.add(elapsed * 1000);
   if (ShenandoahGCVerbose && PrintGCDetails)
-    tty->print_cr("PolicyPrint: Concurrent Evacuation %d took %lf ms", 
+    tty->print_cr("PolicyPrint: Concurrent Evacuation "INT32_FORMAT" took %lf ms", 
 		  _concurrent_evacuation_count++, elapsed * 1000);
 }
 
@@ -363,8 +363,8 @@ public:
     region_set->set_garbage_threshold(ShenandoahHeapRegion::RegionSizeBytes * _garbage_threshold_factor);
     region_set->choose_collection_and_free_sets_min_garbage(collection_set, free_set, min_garbage);
     /*
-    tty->print_cr("garbage to be collected: %u", collection_set->garbage());
-    tty->print_cr("objects to be evacuated: %u", collection_set->live_data());
+    tty->print_cr("garbage to be collected: "SIZE_FORMAT, collection_set->garbage());
+    tty->print_cr("objects to be evacuated: "SIZE_FORMAT, collection_set->live_data());
     */
     _max_live_data = MAX2(_max_live_data, collection_set->live_data());
   }
@@ -405,7 +405,7 @@ static DynamicHeuristics *configureDynamicHeuristics() {
   heuristics->set_allocation_threshold(ShenandoahAllocationThreshold);
   heuristics->set_used_threshold(ShenandoahUsedThreshold);
   if (ShenandoahLogConfig) {
-    tty->print_cr("Shenandoah dynamic heuristics thresholds: allocation %d, used %d, garbage %d",
+    tty->print_cr("Shenandoah dynamic heuristics thresholds: allocation "SIZE_FORMAT", used "SIZE_FORMAT", garbage "SIZE_FORMAT,
                   heuristics->get_allocation_threshold(),
                   heuristics->get_used_threshold(),
                   heuristics->get_garbage_threshold());
@@ -553,7 +553,7 @@ void print_summary(const char* str,
 void print_summary_sd(const char* str,
 		      const NumberSeq* seq) {
   print_summary(str, seq);
-  gclog_or_tty->print_cr("%+45s = %5d, std dev = %8.2lf ms, max = %8.2lf ms)",
+  gclog_or_tty->print_cr("%s = "INT32_FORMAT_W(5)", std dev = %8.2lf ms, max = %8.2lf ms)",
                 "(num", seq->num(), seq->sd(), seq->maximum());
 }
 

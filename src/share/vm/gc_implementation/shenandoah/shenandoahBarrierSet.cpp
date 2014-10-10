@@ -109,7 +109,7 @@ void ShenandoahBarrierSet::read_ref_array(MemRegion mr) {
 }
 
 void ShenandoahBarrierSet::read_ref_field(void* v) {
-  //    tty->print("read_ref_field: v = "PTR_FORMAT"\n", v);
+  //    tty->print_cr("read_ref_field: v = "PTR_FORMAT, v);
   // return *v;
 }
 
@@ -159,21 +159,21 @@ void ShenandoahBarrierSet::write_ref_array_pre_work(T* dst, int count) {
     ShenandoahHeap *sh = (ShenandoahHeap*) Universe::heap();
     if (sh->is_in(dst) && 
 	sh->heap_region_containing((HeapWord*) dst)->is_in_collection_set()){
-      tty->print("dst = %p\n", dst);
+      tty->print_cr("dst = "PTR_FORMAT, p2i(dst));
       sh->heap_region_containing((HeapWord*) dst)->print();
       assert(false, "We should have fixed this earlier");   
     }   
 #endif
 
   if (! JavaThread::satb_mark_queue_set().is_active()) return;
-  // tty->print_cr("write_ref_array_pre_work: %p, %d", dst, count);
+  // tty->print_cr("write_ref_array_pre_work: "PTR_FORMAT", "INT32_FORMAT, dst, count);
   T* elem_ptr = dst;
   for (int i = 0; i < count; i++, elem_ptr++) {
     T heap_oop = oopDesc::load_heap_oop(elem_ptr);
     if (!oopDesc::is_null(heap_oop)) {
       G1SATBCardTableModRefBS::enqueue(oopDesc::decode_heap_oop_not_null(heap_oop));
     }
-    // tty->print("write_ref_array_pre_work: oop: "PTR_FORMAT"\n", heap_oop);
+    // tty->print_cr("write_ref_array_pre_work: oop: "PTR_FORMAT, heap_oop);
   }
 }
 
@@ -197,7 +197,7 @@ void ShenandoahBarrierSet::write_ref_field_pre_static(T* field, oop newVal) {
     ShenandoahHeap *sh = (ShenandoahHeap*) Universe::heap();
     if (sh->is_in(field) && 
 	sh->heap_region_containing((HeapWord*)field)->is_in_collection_set()){
-      tty->print("field = %p\n", field);
+      tty->print_cr("field = "PTR_FORMAT, p2i(field));
       sh->heap_region_containing((HeapWord*)field)->print();
       assert(false, "We should have fixed this earlier");   
     }   
@@ -205,7 +205,7 @@ void ShenandoahBarrierSet::write_ref_field_pre_static(T* field, oop newVal) {
 
   if (!oopDesc::is_null(heap_oop)) {
     G1SATBCardTableModRefBS::enqueue(oopDesc::decode_heap_oop(heap_oop));
-    // tty->print("write_ref_field_pre_static: v = "PTR_FORMAT" o = "PTR_FORMAT" old: %p\n", field, newVal, heap_oop);
+    // tty->print_cr("write_ref_field_pre_static: v = "PTR_FORMAT" o = "PTR_FORMAT" old: "PTR_FORMAT, field, newVal, heap_oop);
   }
 }
 
@@ -231,7 +231,7 @@ void ShenandoahBarrierSet::write_ref_field_work(void* v, oop o) {
   if (! need_update_refs_barrier()) return;
   assert (! UseCompressedOops, "compressed oops not supported yet");
   ShenandoahHeap::heap()->maybe_update_oop_ref((oop*) v);
-  // tty->print("write_ref_field_work: v = "PTR_FORMAT" o = "PTR_FORMAT"\n", v, o);
+  // tty->print_cr("write_ref_field_work: v = "PTR_FORMAT" o = "PTR_FORMAT, v, o);
 }
 
 void ShenandoahBarrierSet::write_region_work(MemRegion mr) {
@@ -243,7 +243,7 @@ void ShenandoahBarrierSet::write_region_work(MemRegion mr) {
   // it would be NULL in any case. But we *are* interested in any oop*
   // that potentially need to be updated.
 
-  // tty->print_cr("write_region_work: %p, %p", mr.start(), mr.end());
+  // tty->print_cr("write_region_work: "PTR_FORMAT", "PTR_FORMAT, mr.start(), mr.end());
   oop obj = oop(mr.start());
   assert(obj->is_oop(), "must be an oop");
   UpdateRefsForOopClosure cl;
@@ -282,8 +282,8 @@ oop ShenandoahBarrierSet::resolve_and_maybe_copy_oop_work2(oop src) {
   oop dst = sh->evacuate_object(src, Thread::current());
 #ifdef ASSERT
     if (ShenandoahTraceEvacuations) {
-      tty->print("src = %p dst = %p src = %p src-2 = %p\n",
-                 (HeapWord*) src, (HeapWord*) dst, (HeapWord*) src, ((HeapWord*) src) - 2);
+      tty->print_cr("src = "PTR_FORMAT" dst = "PTR_FORMAT" src = "PTR_FORMAT" src-2 = "PTR_FORMAT,
+                 p2i((HeapWord*) src), p2i((HeapWord*) dst), p2i((HeapWord*) src), p2i(((HeapWord*) src) - 2));
     }
 #endif
   assert(sh->is_in(dst), "result should be in the heap");
@@ -305,13 +305,14 @@ oop ShenandoahBarrierSet::resolve_and_maybe_copy_oopHelper(oop src) {
 
 IRT_LEAF(oopDesc*, ShenandoahBarrierSet::resolve_and_maybe_copy_oop_static(oopDesc* src))
   oop result = ((ShenandoahBarrierSet*)oopDesc::bs())->resolve_and_maybe_copy_oop_work(oop(src));
-  // tty->print_cr("called static write barrier with: %p result: %p copy: %d", (oopDesc*) src, (oopDesc*) result, src != result);
+  // tty->print_cr("called static write barrier with: "PTR_FORMAT" result: "PTR_FORMAT" copy: %s", p2i(src), p2i((oopDesc*) result), BOOL_TO_STR(src != result));
+  assert((src == NULL) == (result == NULL), "src and result must both be NULL or not-NULL");
   return (oopDesc*) result;
 IRT_END
 
 IRT_LEAF(oopDesc*, ShenandoahBarrierSet::resolve_and_maybe_copy_oop_static2(oopDesc* src))
   oop result = ((ShenandoahBarrierSet*)oopDesc::bs())->resolve_and_maybe_copy_oop_work2(oop(src));
-  // tty->print_cr("called write barrier with: %p result: %p", src, result);
+  // tty->print_cr("called static write barrier (2) with: "PTR_FORMAT" result: "PTR_FORMAT, p2i(src), p2i((oopDesc*)(result)));
   return (oopDesc*) result;
 IRT_END
 

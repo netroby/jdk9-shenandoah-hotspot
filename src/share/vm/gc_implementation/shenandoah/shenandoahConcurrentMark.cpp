@@ -67,7 +67,7 @@ public:
 
 #ifdef ASSERT
       if (_heap->heap_region_containing(obj)->is_in_collection_set()) {
-        tty->print_cr("trying to mark obj: %p (%d) in dirty region: ", (HeapWord*) obj, _heap->isMarkedCurrent(obj));
+        tty->print_cr("trying to mark obj: "PTR_FORMAT" (%s) in dirty region: ", p2i((HeapWord*) obj), BOOL_TO_STR(_heap->isMarkedCurrent(obj)));
         //      _heap->heap_region_containing(obj)->print();
         //      _heap->print_heap_regions();
       }
@@ -77,7 +77,7 @@ public:
       if (_heap->mark_current(obj)) {
 #ifdef ASSERT
         if (ShenandoahTraceConcurrentMarking) {
-          tty->print_cr("marked obj: %p", (HeapWord*) obj);
+          tty->print_cr("marked obj: "PTR_FORMAT, p2i((HeapWord*) obj));
         }
 #endif
 
@@ -90,7 +90,7 @@ public:
 #ifdef ASSERT
       else {
         if (ShenandoahTraceConcurrentMarking) {
-          tty->print_cr("failed to mark obj (already marked): %p", (HeapWord*) obj);
+          tty->print_cr("failed to mark obj (already marked): "PTR_FORMAT, p2i((HeapWord*) obj));
         }
         assert(_heap->isMarkedCurrent(obj), "make sure object is marked");
       }
@@ -98,14 +98,14 @@ public:
 
       /*
         else {
-        tty->print_cr("already marked object %p, %d", obj, getMark(obj)->age());
+        tty->print_cr("already marked object "PTR_FORMAT", "INT32_FORMAT, p2i(obj), getMark(obj)->age());
         }
       */
     }
     /*
       else {
       if (obj != NULL) {
-      tty->print_cr("not marking root object because it's not in heap: %p", obj);
+      tty->print_cr("not marking root object because it's not in heap: "PTR_FORMAT, p2i(obj));
       }
       }
     */
@@ -148,7 +148,7 @@ private:
 #ifdef ASSERT
     if (ShenandoahTraceUpdates) {
       if (p != old) 
-        tty->print("Update %p => %p  to %p => %p\n", p, (HeapWord*) *p, old, (HeapWord*) *old);
+        tty->print_cr("Update "PTR_FORMAT" => "PTR_FORMAT"  to "PTR_FORMAT" => "PTR_FORMAT, p2i(p), p2i((HeapWord*) *p), p2i(old), p2i((HeapWord*) *old));
     }
 #endif
 
@@ -197,12 +197,12 @@ private:
 #ifdef ASSERT
       if (obj != oopDesc::bs()->resolve_oop(obj)) {
         oop obj_prime = oopDesc::bs()->resolve_oop(obj);
-        tty->print("We've got one: obj = %p : obj_prime = %p\n", (HeapWord*) obj, (HeapWord*)obj_prime);
+        tty->print_cr("We've got one: obj = "PTR_FORMAT" : obj_prime = "PTR_FORMAT, p2i((HeapWord*) obj), p2i((HeapWord*) obj_prime));
       }
 #endif
       assert(obj == oopDesc::bs()->resolve_oop(obj), "only mark forwarded copy of objects");
       if (ShenandoahTraceConcurrentMarking) {
-        tty->print("Calling ShenandoahMarkRefsNoUpdateClosure on %p\n", (HeapWord*)obj);
+        tty->print_cr("Calling ShenandoahMarkRefsNoUpdateClosure on "PTR_FORMAT, p2i((HeapWord*) obj));
         ShenandoahHeap::heap()->print_heap_locations((HeapWord*) obj, (HeapWord*) obj + obj->size());
       }
 
@@ -218,7 +218,7 @@ public:
   }
 
   void work(uint worker_id) {
-    // tty->print_cr("start mark roots worker: %d", worker_id);
+    // tty->print_cr("start mark roots worker: "INT32_FORMAT, worker_id);
     ExtendedOopClosure* cl;
     ShenandoahMarkRefsClosure rootsCl1(worker_id);
     ShenandoahMarkRefsNoUpdateClosure rootsCl2(worker_id);
@@ -237,7 +237,7 @@ public:
     ResourceMark m;
     heap->process_strong_roots(false, false, SharedHeap::ScanningOption(so), cl, &blobsCl, &klassCl);
 
-    // tty->print_cr("finish mark roots worker: %d", worker_id);
+    // tty->print_cr("finish mark roots worker: "INT32_FORMAT, worker_id);
   }
 };
 
@@ -464,9 +464,9 @@ void ShenandoahConcurrentMark::finish_mark_from_roots(bool full_gc) {
     tty->print_cr("Finishing finishMarkFromRoots");
 #ifdef SLOWDEBUG
     for (int i = 0; i <(int)_max_worker_id; i++) {
-      tty->print("Queue: %d:", i);
+      tty->print("Queue: "INT32_FORMAT":", i);
       _task_queues->queue(i)->stats.print(tty, 10);
-      tty->print("\n");
+      tty->cr();
       //    _task_queues->queue(i)->stats.verify();
     }
 #endif
@@ -537,12 +537,12 @@ void ShenandoahConcurrentMark::add_task(oop obj, int q) {
   assert(ShenandoahHeap::heap()->is_in((HeapWord*) obj), "Only push heap objects on the queue");
 #ifdef ASSERT
   if (ShenandoahTraceConcurrentMarking){
-    tty->print_cr("Adding object %p to marking queue %d", (HeapWord*) obj, q);
+    tty->print_cr("Adding object "PTR_FORMAT" to marking queue "INT32_FORMAT, p2i((HeapWord*) obj), q);
   }
 #endif
 
   if (!_task_queues->queue(q)->push(obj)) {
-    //    tty->print_cr("WARNING: Shenandoah mark queues overflown overflow_queue: obj = %p", (HeapWord*) obj);
+    //    tty->print_cr("WARNING: Shenandoah mark queues overflown overflow_queue: obj = "PTR_FORMAT, p2i((HeapWord*) obj));
     _overflow_queue->push(obj);
   }
 }
@@ -564,7 +564,7 @@ void ShenandoahConcurrentMark::print_taskqueue_stats(outputStream* const st) con
   TaskQueueStats totals;
   const int n = sh->workers() != NULL ? sh->workers()->total_workers() : 1;
   for (int i = 0; i < n; ++i) {
-    st->print("%3d ", i); _task_queues->queue(i)->stats.print(st); st->cr();
+    st->print_cr(INT32_FORMAT_W(3), i); _task_queues->queue(i)->stats.print(st);
     totals += _task_queues->queue(i)->stats;
   }
   st->print_raw("tot "); totals.print(st); st->cr();
@@ -650,9 +650,9 @@ public:
 
     if (obj != NULL) {
       if (Verbose && ShenandoahTraceWeakReferences) {
-	gclog_or_tty->print_cr("\t[%u] we're looking at location "
+	gclog_or_tty->print_cr("\t["UINT32_FORMAT"] we're looking at location "
 			       "*"PTR_FORMAT" = "PTR_FORMAT,
-			       _worker_id, p, (void*) obj);
+			       _worker_id, p2i(p), p2i((void*) obj));
 	obj->print();
       }
 
@@ -703,7 +703,7 @@ void ShenandoahConcurrentMark::weak_refs_work(bool clear_all_soft_refs, int work
 				     &complete_gc, &par_task_executor, &gc_timer);
    
    if (ShenandoahTraceWeakReferences) {
-     gclog_or_tty->print_cr("finished processing references, processed %d refs", keep_alive.ref_count());
+     gclog_or_tty->print_cr("finished processing references, processed "SIZE_FORMAT" refs", keep_alive.ref_count());
      gclog_or_tty->print_cr("start enqueuing references");
    }
 

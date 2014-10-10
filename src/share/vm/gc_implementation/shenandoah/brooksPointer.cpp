@@ -22,7 +22,7 @@ void BrooksPointer::set_forwardee(oop forwardee) {
   *_heap_word = (HeapWord*) forwardee;
 #ifdef ASSERT
   if (ShenandoahTraceBrooksPointers) {
-    tty->print("setting_forwardee to %p = %p\n", (HeapWord*) forwardee, *_heap_word);
+    tty->print_cr("setting_forwardee to "PTR_FORMAT" = "PTR_FORMAT, p2i((HeapWord*) forwardee), p2i(*_heap_word));
   }
 #endif
 }
@@ -38,7 +38,7 @@ HeapWord* BrooksPointer::cas_forwardee(HeapWord* old, HeapWord* forwardee) {
 
 #ifdef ASSERT
   if (ShenandoahTraceBrooksPointers) {
-    tty->print("Attempting to CAS %p value %p from %p to %p\n", _heap_word, *_heap_word, o, n);
+    tty->print_cr("Attempting to CAS "PTR_FORMAT" value "PTR_FORMAT" from "PTR_FORMAT" to "PTR_FORMAT, p2i(_heap_word), p2i(*_heap_word), p2i(o), p2i(n));
   }
 #endif
 
@@ -61,7 +61,7 @@ HeapWord* BrooksPointer::cas_forwardee(HeapWord* old, HeapWord* forwardee) {
   
 #ifdef ASSERT
   if (ShenandoahTraceBrooksPointers) {
-    tty->print("Result of CAS from %p to %p was %p read value was %p\n", o, n, result, *_heap_word);
+    tty->print_cr("Result of CAS from "PTR_FORMAT" to "PTR_FORMAT" was "PTR_FORMAT" read value was "PTR_FORMAT, p2i(o), p2i(n), p2i(result), p2i(*_heap_word));
   }
 #endif
 

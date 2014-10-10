@@ -51,7 +51,7 @@ size_t ShenandoahHeapRegion::getLiveData() {
 }
 
 size_t ShenandoahHeapRegion::garbage() {
-  assert(used() >= getLiveData() || is_humonguous(), err_msg("Live Data must be a subset of used() live: %d used: %d", getLiveData(), used()));
+  assert(used() >= getLiveData() || is_humonguous(), err_msg("Live Data must be a subset of used() live: "SIZE_FORMAT" used: "SIZE_FORMAT, getLiveData(), used()));
   size_t result = used() - getLiveData();
   return result;
 }
@@ -66,7 +66,7 @@ bool ShenandoahHeapRegion::is_in_collection_set() {
 
 void ShenandoahHeapRegion::memProtectionOn() {
   /*
-  tty->print_cr("protect memory on region level: %d", _mem_protection_level);
+  tty->print_cr("protect memory on region level: "INT32_FORMAT, _mem_protection_level);
   print(tty);
   */
   MutexLockerEx ml(ShenandoahMemProtect_lock, true);
@@ -86,7 +86,7 @@ void ShenandoahHeapRegion::memProtectionOn() {
 
 void ShenandoahHeapRegion::memProtectionOff() {
   /*
-  tty->print_cr("unprotect memory on region level: %d", _mem_protection_level);
+  tty->print_cr("unprotect memory on region level: "INT32_FORMAT, _mem_protection_level);
   print(tty);
   */
   MutexLockerEx ml(ShenandoahMemProtect_lock, true);
@@ -127,7 +127,7 @@ ByteSize ShenandoahHeapRegion::is_in_collection_set_offset() {
 }
 
 void ShenandoahHeapRegion::print(outputStream* st) {
-  st->print("ShenandoahHeapRegion: %p/%d ", this, _region_number);
+  st->print_cr("ShenandoahHeapRegion: "PTR_FORMAT"/"INT32_FORMAT, p2i(this), _region_number);
 
   if (is_in_collection_set())
     st->print("C");
@@ -140,8 +140,8 @@ void ShenandoahHeapRegion::print(outputStream* st) {
   //else
     st->print(" ");
 
-  st->print("live = %u garbage = %u bottom = %p end = %p top = %p\n", 
-            getLiveData(), garbage(), bottom(), end(), top());
+  st->print_cr("live = "SIZE_FORMAT" garbage = "SIZE_FORMAT" bottom = "PTR_FORMAT" end = "PTR_FORMAT" top = "PTR_FORMAT,
+               getLiveData(), garbage(), p2i(bottom()), p2i(end()), p2i(top()));
 }
 
 
@@ -254,8 +254,8 @@ void ShenandoahHeapRegion::reset() {
 
 HeapWord* ShenandoahHeapRegion::block_start_const(const void* p) const {
   assert(MemRegion(bottom(), end()).contains(p),
-         err_msg("p (" PTR_FORMAT ") not in space [" PTR_FORMAT ", " PTR_FORMAT ")",
-                  p, bottom(), end()));
+         err_msg("p ("PTR_FORMAT") not in space ["PTR_FORMAT", "PTR_FORMAT")",
+                 p2i(p), p2i(bottom()), p2i(end())));
   if (p >= top()) {
     return top();
   } else {
@@ -266,7 +266,7 @@ HeapWord* ShenandoahHeapRegion::block_start_const(const void* p) const {
       cur += oop(cur)->size() + BrooksPointer::BROOKS_POINTER_OBJ_SIZE;
     }
     assert(oop(last)->is_oop(),
-           err_msg(PTR_FORMAT " should be an object start", last));
+           err_msg(PTR_FORMAT" should be an object start", p2i(last)));
     return last;
   }
 }

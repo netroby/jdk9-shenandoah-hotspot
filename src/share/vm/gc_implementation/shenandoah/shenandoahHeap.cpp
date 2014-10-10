@@ -30,7 +30,7 @@ ShenandoahHeap* ShenandoahHeap::_pgc = NULL;
 void ShenandoahHeap::print_heap_locations(HeapWord* start, HeapWord* end) {
   HeapWord* cur = NULL;
   for (cur = start; cur < end; cur++) {
-    tty->print("%p : %p \n", cur, *cur);
+    tty->print_cr(PTR_FORMAT" : "PTR_FORMAT, p2i(cur), p2i(*((HeapWord**) cur)));
   }
 }
 
@@ -58,8 +58,8 @@ public:
 class PrintHeapObjectsClosure : public ShenandoahHeapRegionClosure {
 public:
   bool doHeapRegion(ShenandoahHeapRegion* r) {
-    tty->print("Region %d top = "PTR_FORMAT" used = %x free = %x\n", 
-	       r->region_number(), r->top(), r->used(), r->free());
+    tty->print_cr("Region "INT32_FORMAT" top = "PTR_FORMAT" used = "SIZE_FORMAT_HEX" free = "SIZE_FORMAT_HEX, 
+	       r->region_number(), p2i(r->top()), r->used(), r->free());
     
     ShenandoahHeap::heap()->print_heap_objects(r->bottom(), r->top());
     return false;
@@ -72,7 +72,7 @@ jint ShenandoahHeap::initialize() {
   size_t init_byte_size = collector_policy()->initial_heap_byte_size();
   size_t max_byte_size = collector_policy()->max_heap_byte_size();
   if (ShenandoahGCVerbose) 
-    tty->print("init_byte_size = %d,%x  max_byte_size = %d,%x\n", 
+    tty->print_cr("init_byte_size = "SIZE_FORMAT","SIZE_FORMAT_HEX"  max_byte_size = "INT64_FORMAT","SIZE_FORMAT_HEX, 
 	     init_byte_size, init_byte_size, max_byte_size, max_byte_size);
 
   Universe::check_alignment(max_byte_size,  
@@ -92,8 +92,8 @@ jint ShenandoahHeap::initialize() {
   ReservedSpace pgc_rs = heap_rs.first_part(max_byte_size);
   _storage.initialize(pgc_rs, init_byte_size);
   if (ShenandoahGCVerbose) {
-    tty->print("Calling initialize on reserved space base = %p end = %p\n", 
-	       pgc_rs.base(), pgc_rs.base() + pgc_rs.size());
+    tty->print_cr("Calling initialize on reserved space base = "PTR_FORMAT" end = "PTR_FORMAT, 
+	       p2i(pgc_rs.base()), p2i(pgc_rs.base() + pgc_rs.size()));
   }
 
   _num_regions = init_byte_size / ShenandoahHeapRegion::RegionSizeBytes;
@@ -314,7 +314,7 @@ HeapWord* ShenandoahHeap::allocate_new_tlab(size_t word_size) {
 
 #ifdef ASSERT
     if (ShenandoahTraceTLabs)
-      tty->print("allocating new tlab of size %d at addr %p\n", word_size, result);
+      tty->print_cr("allocating new tlab of size "SIZE_FORMAT" at addr "PTR_FORMAT, word_size, p2i(result));
 #endif
 
   }
@@ -326,7 +326,7 @@ HeapWord* ShenandoahHeap::allocate_new_gclab(size_t word_size) {
   assert(! heap_region_containing(result)->is_in_collection_set(), "Never allocate in dirty region");
   if (result != NULL) {
     if (ShenandoahTraceTLabs) {
-      tty->print("allocating new gclab of size %d at addr %p\n", word_size, result);
+      tty->print_cr("allocating new gclab of size "SIZE_FORMAT" at addr "PTR_FORMAT, word_size, p2i(result));
     }
 
   }
@@ -472,7 +472,7 @@ HeapWord* ShenandoahHeap::allocate_memory_work(size_t word_size, bool evacuation
 
 HeapWord* ShenandoahHeap::allocate_large_memory(size_t words) {
   if (ShenandoahTraceHumonguous) {
-    gclog_or_tty->print_cr("allocating humonguous object of size: %d words", words);
+    gclog_or_tty->print_cr("allocating humonguous object of size: "SIZE_FORMAT" words", words);
   }
 
   uint required_regions = (words * HeapWordSize) / ShenandoahHeapRegion::RegionSizeBytes  + 1;
@@ -507,7 +507,7 @@ HeapWord* ShenandoahHeap::allocate_large_memory(size_t words) {
 
 bool ShenandoahHeap::find_contiguous_free_regions(uint num_free_regions, ShenandoahHeapRegion** free_regions) {
   if (ShenandoahTraceHumonguous) {
-    gclog_or_tty->print_cr("trying to find %u contiguous free regions", num_free_regions);
+    gclog_or_tty->print_cr("trying to find "UINT32_FORMAT" contiguous free regions", num_free_regions);
   }
   uint free_regions_index = 0;
   for (uint regions_index = 0; regions_index < _num_regions; regions_index++) {
@@ -531,9 +531,9 @@ bool ShenandoahHeap::find_contiguous_free_regions(uint num_free_regions, Shenand
 
     if (free_regions_index == num_free_regions) {
       if (ShenandoahTraceHumonguous) {
-        gclog_or_tty->print_cr("found %u contiguous free regions:", num_free_regions);
+        gclog_or_tty->print_cr("found "UINT32_FORMAT" contiguous free regions:", num_free_regions);
         for (uint i = 0; i < num_free_regions; i++) {
-          gclog_or_tty->print("%u: " , i);
+          gclog_or_tty->print(UINT32_FORMAT": " , i);
           free_regions[i]->print(gclog_or_tty);
         }
       }
@@ -542,7 +542,7 @@ bool ShenandoahHeap::find_contiguous_free_regions(uint num_free_regions, Shenand
 
   }
   if (ShenandoahTraceHumonguous) {
-    gclog_or_tty->print_cr("failed to find %u free regions", num_free_regions);
+    gclog_or_tty->print_cr("failed to find "UINT32_FORMAT" free regions", num_free_regions);
   }
   return false;
 }
@@ -594,7 +594,7 @@ HeapWord* ShenandoahHeap::mem_allocate_locked(size_t size,
     if (ShenandoahTraceAllocations) {
       if (*gc_overhead_limit_was_exceeded)
 	tty->print("gc_overhead_limit_was_exceeded");
-      tty->print("mem_allocate_locked object of size %d at addr %p \n", size, result);
+      tty->print_cr("mem_allocate_locked object of size "SIZE_FORMAT" uat addr "PTR_FORMAT, size, p2i(result));
     }
 #endif
 
@@ -605,11 +605,11 @@ HeapWord* ShenandoahHeap::mem_allocate_locked(size_t size,
 
     return result;
   } else {
-    tty->print_cr("Out of memory. Requested number of words: %d used heap: %ld, bytes allocated since last CM: %ld", size, used(), _bytesAllocSinceCM);
+    tty->print_cr("Out of memory. Requested number of words: "SIZE_FORMAT" used heap: "INT64_FORMAT", bytes allocated since last CM: "INT64_FORMAT, size, used(), _bytesAllocSinceCM);
     MutexLockerEx ml(ShenandoahHeap_lock, true);
     {
       print_heap_regions();
-      tty->print("Printing %d free regions:\n", _free_regions->length());
+      tty->print("Printing "SIZE_FORMAT" free regions:\n", _free_regions->length());
       _free_regions->print();
     }
     assert(false, "Out of memory");
@@ -621,7 +621,7 @@ class PrintOopContents: public OopClosure {
 public:
   void do_oop(oop* o) {
     oop obj = *o;
-    tty->print("References oop "PTR_FORMAT"\n", (HeapWord*) obj);
+    tty->print_cr("References oop "PTR_FORMAT, p2i((HeapWord*) obj));
     obj->print();
   }
 
@@ -665,7 +665,7 @@ private:
 
 #ifdef ASSERT
     if (ShenandoahTraceEvacuations) {
-      tty->print("Calling ParallelEvacuateRegionObjectClosure on %p \n", (HeapWord*) p);
+      tty->print_cr("Calling ParallelEvacuateRegionObjectClosure on "PTR_FORMAT, p2i((HeapWord*) p));
     }
 #endif
 
@@ -717,7 +717,7 @@ void ShenandoahHeap::parallel_evacuate_region(ShenandoahHeapRegion* from_region)
   
 #ifdef ASSERT
   if (ShenandoahGCVerbose) {
-    tty->print("parallel_evacuate_region starting from_region %d: free_regions = %d\n",  from_region->region_number(), _free_regions->available_regions());
+    tty->print_cr("parallel_evacuate_region starting from_region "INT32_FORMAT": free_regions = "SIZE_FORMAT,  from_region->region_number(), _free_regions->available_regions());
   }
 #endif
 
@@ -727,7 +727,7 @@ void ShenandoahHeap::parallel_evacuate_region(ShenandoahHeapRegion* from_region)
     verify_evacuated_region(from_region);
   }
   if (ShenandoahGCVerbose) {
-    tty->print("parallel_evacuate_region after from_region = %d: free_regions = %d\n", from_region->region_number(), _free_regions->available_regions());
+    tty->print_cr("parallel_evacuate_region after from_region = "INT32_FORMAT": free_regions = "SIZE_FORMAT, from_region->region_number(), _free_regions->available_regions());
   }
 #endif
 }
@@ -753,7 +753,7 @@ public:
 
     while (from_hr != NULL) {
       if (ShenandoahGCVerbose) {
-     	tty->print("Thread %d claimed Heap Region %d\n",
+     	tty->print_cr("Thread "INT32_FORMAT" claimed Heap Region "INT32_FORMAT,
      		   worker_id,
      		   from_hr->region_number());
 	from_hr->print();
@@ -768,11 +768,11 @@ public:
     }
 
     if (ShenandoahGCVerbose) 
-      tty->print("Thread %d entering barrier sync\n", worker_id);
+      tty->print("Thread "INT32_FORMAT" entering barrier sync\n", worker_id);
 
     _barrier_sync->enter();
     if (ShenandoahGCVerbose) 
-      tty->print("Thread %d post barrier sync\n", worker_id);
+      tty->print("Thread "INT32_FORMAT" post barrier sync\n", worker_id);
   }
 };
 
@@ -785,7 +785,7 @@ public:
   bool doHeapRegion(ShenandoahHeapRegion* r) {
 
     if (r->is_in_collection_set()) {
-      // tty->print_cr("recycling region %d:", r->region_number());
+      // tty->print_cr("recycling region "INT32_FORMAT":", r->region_number());
       // r->print_on(tty);
       // tty->print_cr("");
       _heap->decrease_used(r->used());
@@ -826,12 +826,12 @@ public:
     oop o = *p;
     if (o != NULL) {
       if (ShenandoahHeap::heap()->is_in(o) && o->is_oop()) {
-	tty->print_cr("%s %d (%p)-> %p (marked: %d) (%s %p)", _prefix, _index, p, (HeapWord*) o, ShenandoahHeap::heap()->isMarkedCurrent(o), o->klass()->internal_name(), o->klass());
+	tty->print_cr("%s "INT32_FORMAT" ("PTR_FORMAT")-> "PTR_FORMAT" (marked: %s) (%s "PTR_FORMAT")", _prefix, _index, p2i(p), p2i((HeapWord*) o), BOOL_TO_STR(ShenandoahHeap::heap()->isMarkedCurrent(o)), o->klass()->internal_name(), p2i(o->klass()));
       } else {
-        tty->print_cr("%s %d (%p dirty: %d) -> %p (not in heap, possibly corrupted or dirty (%d))", _prefix, _index, p, ShenandoahHeap::heap()->heap_region_containing(p)->is_in_collection_set(), (HeapWord*) o, ShenandoahHeap::heap()->heap_region_containing(o)->is_in_collection_set());
+        tty->print_cr("%s "INT32_FORMAT" ("PTR_FORMAT" dirty: %s) -> "PTR_FORMAT" (not in heap, possibly corrupted or dirty (%s))", _prefix, _index, p2i(p), BOOL_TO_STR(ShenandoahHeap::heap()->heap_region_containing(p)->is_in_collection_set()), p2i((HeapWord*) o), BOOL_TO_STR(ShenandoahHeap::heap()->heap_region_containing(o)->is_in_collection_set()));
       }
     } else {
-      tty->print_cr("%s %d (%p) -> %p", _prefix, _index, p, (HeapWord*) o);
+      tty->print_cr("%s "INT32_FORMAT" ("PTR_FORMAT") -> "PTR_FORMAT, _prefix, _index, p2i(p), p2i((HeapWord*) o));
     }
     _index++;
   }
@@ -849,7 +849,7 @@ public:
   PrintAllRefsObjectClosure(const char* prefix) : _prefix(prefix) {}
 
   void do_object(oop p) {
-    tty->print_cr("%s object %p (marked: %d) (%s %p) refers to:", _prefix, (HeapWord*) p, ShenandoahHeap::heap()->isMarkedCurrent(p), p->klass()->internal_name(), p->klass());
+    tty->print_cr("%s object "PTR_FORMAT" (marked: %s) (%s "PTR_FORMAT") refers to:", _prefix, p2i((HeapWord*) p), BOOL_TO_STR(ShenandoahHeap::heap()->isMarkedCurrent(p)), p->klass()->internal_name(), p2i(p->klass()));
     PrintAllRefsOopClosure cl(_prefix);
     p->oop_iterate(&cl);
   }
@@ -883,14 +883,14 @@ public:
       if (! _heap->isMarkedCurrent(o)) {
 	_heap->print_heap_regions();
 	_heap->print_all_refs("post-mark");
-	tty->print_cr("oop not marked, although referrer is marked: %p: in_heap: %d, is_marked: %d", 
-		      (HeapWord*) o, _heap->is_in(o), _heap->isMarkedCurrent(o));
+	tty->print_cr("oop not marked, although referrer is marked: "PTR_FORMAT": in_heap: %s, is_marked: %s", 
+		      p2i((HeapWord*) o), BOOL_TO_STR(_heap->is_in(o)), BOOL_TO_STR(_heap->isMarkedCurrent(o)));
 	_heap->print_heap_locations((HeapWord*) o, (HeapWord*) o + o->size());
 
         tty->print_cr("oop class: %s", o->klass()->internal_name());
 	if (_heap->is_in(p)) {
 	  oop referrer = oop(_heap->heap_region_containing(p)->block_start_const(p));
-	  tty->print("Referrer starts at addr %p\n", (HeapWord*) referrer);
+	  tty->print_cr("Referrer starts at addr "PTR_FORMAT, p2i((HeapWord*) referrer));
 	  referrer->print();
 	  _heap->print_heap_locations((HeapWord*) referrer, (HeapWord*) referrer + referrer->size());
 	}
@@ -904,7 +904,7 @@ public:
       assert(o->is_oop(), "oop must be an oop");
       assert(Metaspace::contains(o->klass()), "klass pointer must go to metaspace");
       if (! (o == oopDesc::bs()->resolve_oop(o))) {
-        tty->print_cr("oops has forwardee: p: %p (%d), o = %p (%d), new-o: %p (%d)", p, _heap->heap_region_containing(p)->is_in_collection_set(), (HeapWord*) o,  _heap->heap_region_containing(o)->is_in_collection_set(), (HeapWord*) oopDesc::bs()->resolve_oop(o),  _heap->heap_region_containing(oopDesc::bs()->resolve_oop(o))->is_in_collection_set());
+        tty->print_cr("oops has forwardee: p: "PTR_FORMAT" (%s), o = "PTR_FORMAT" (%s), new-o: "PTR_FORMAT" (%s)", p2i(p), BOOL_TO_STR(_heap->heap_region_containing(p)->is_in_collection_set()), p2i((HeapWord*) o),  BOOL_TO_STR(_heap->heap_region_containing(o)->is_in_collection_set()), p2i((HeapWord*) oopDesc::bs()->resolve_oop(o)), BOOL_TO_STR(_heap->heap_region_containing(oopDesc::bs()->resolve_oop(o))->is_in_collection_set()));
         tty->print_cr("oop class: %s", o->klass()->internal_name());
       }
       assert(o == oopDesc::bs()->resolve_oop(o), "oops must not be forwarded");
@@ -1138,7 +1138,7 @@ void ShenandoahHeap::update_references() {
   _allocated_last_gc = used() - _used_start_gc;
   size_t max_allocated_gc = MAX2(_max_allocated_gc, _allocated_last_gc);
   /*
-  tty->print_cr("prev max_allocated_gc: %d, new max_allocated_gc: %d, allocated_last_gc: %d diff %f", _max_allocated_gc, max_allocated_gc, _allocated_last_gc, ((double) max_allocated_gc/ (double) _allocated_last_gc));
+  tty->print_cr("prev max_allocated_gc: "SIZE_FORMAT", new max_allocated_gc: "SIZE_FORMAT", allocated_last_gc: "SIZE_FORMAT" diff %f", _max_allocated_gc, max_allocated_gc, _allocated_last_gc, ((double) max_allocated_gc/ (double) _allocated_last_gc));
   */
   _max_allocated_gc = max_allocated_gc;
 
@@ -1173,6 +1173,11 @@ public:
     if (obj != NULL && _heap->in_cset_fast_test(obj)) {
       *p = _heap->evacuate_object(*p, _thread);
     }
+#ifdef ASSERT
+    else if (! oopDesc::is_null(obj)) {
+      // tty->print_cr("not updating root at: "PTR_FORMAT" with object: "PTR_FORMAT", is_in_heap: %s, is_in_cset: %s, is_marked: %s", p2i(p), p2i((HeapWord*) obj), BOOL_TO_STR(_heap->is_in(obj)), BOOL_TO_STR(_heap->in_cset_fast_test(obj)), BOOL_TO_STR(_heap->is_marked_current(obj)));
+    }
+#endif
   }
 
   void do_oop(narrowOop* p) {
@@ -1261,7 +1266,7 @@ void ShenandoahHeap::parallel_evacuate() {
   }
 
   if (ShenandoahPrintCollectionSet) {
-    tty->print("Printing collection set which contains %d regions:\n", _collection_set->available_regions());
+    tty->print("Printing collection set which contains "SIZE_FORMAT" regions:\n", _collection_set->available_regions());
     _collection_set->print();
   }
 
@@ -1273,10 +1278,10 @@ void ShenandoahHeap::parallel_evacuate() {
 
   if (ShenandoahGCVerbose) {
 
-    tty->print("Printing postgc collection set which contains %d regions:\n", _collection_set->available_regions());
+    tty->print("Printing postgc collection set which contains "SIZE_FORMAT" regions:\n", _collection_set->available_regions());
     _collection_set->print();
 
-    tty->print("Printing postgc free regions which contain %d free regions:\n", _free_regions->available_regions());
+    tty->print("Printing postgc free regions which contain "SIZE_FORMAT" free regions:\n", _free_regions->available_regions());
     _free_regions->print();
 
     tty->print_cr("finished parallel_evacuate");
@@ -1301,7 +1306,7 @@ public:
   void do_oop(oop* p)       {
     oop heap_oop = oopDesc::load_heap_oop(p);
     if (! oopDesc::is_null(heap_oop)) {
-      guarantee(! _from_region->is_in(heap_oop), err_msg("no references to from-region allowed after evacuation: %p", (HeapWord*) heap_oop));
+      guarantee(! _from_region->is_in(heap_oop), err_msg("no references to from-region allowed after evacuation: "PTR_FORMAT, p2i((HeapWord*) heap_oop)));
     }
   }
 
@@ -1348,7 +1353,7 @@ oop ShenandoahHeap::maybe_update_oop_ref(oop* p) {
 #ifdef ASSERT
     if (! is_in(heap_oop)) {
       print_heap_regions();
-      tty->print_cr("object not in heap: %p, referenced by: %p", (HeapWord*) heap_oop, p);
+      tty->print_cr("object not in heap: "PTR_FORMAT", referenced by: "PTR_FORMAT, p2i((HeapWord*) heap_oop), p2i(p));
       assert(is_in(heap_oop), "object must be in heap");
     }
 #endif
@@ -1356,7 +1361,7 @@ oop ShenandoahHeap::maybe_update_oop_ref(oop* p) {
     assert(! (is_in(p) && heap_region_containing(p)->is_in_collection_set()), "we don't want to update references in from-space");
     oop forwarded_oop = ShenandoahBarrierSet::resolve_oop_static_not_null(heap_oop); // read brooks ptr
     if (forwarded_oop != heap_oop) {
-      // tty->print_cr("updating old ref: %p pointing to %p to new ref: %p", p, heap_oop, forwarded_oop);
+      // tty->print_cr("updating old ref: "PTR_FORMAT" pointing to "PTR_FORMAT" to new ref: "PTR_FORMAT, p2i(p), p2i(heap_oop), p2i(forwarded_oop));
       assert(forwarded_oop->is_oop(), "oop required");
       // If this fails, another thread wrote to p before us, it will be logged in SATB and the
       // reference be updated later.
@@ -1370,7 +1375,7 @@ oop ShenandoahHeap::maybe_update_oop_ref(oop* p) {
     }
     /*
       else {
-      tty->print_cr("not updating ref: %p", heap_oop);
+      tty->print_cr("not updating ref: "PTR_FORMAT, p2i(heap_oop));
       }
     */
   }
@@ -1505,8 +1510,8 @@ public:
       oop obj = oopDesc::decode_heap_oop_not_null(heap_oop);
       if (!obj->is_oop()) {
         { // Just for debugging.
-	  gclog_or_tty->print_cr("Root location "PTR_FORMAT" "
-				 "verified "PTR_FORMAT, p, (void*) obj);
+	  gclog_or_tty->print_cr("Root location "PTR_FORMAT
+				 "verified "PTR_FORMAT, p2i(p), p2i((void*) obj));
 	  //	  obj->print_on(gclog_or_tty);
         }
       }
@@ -1553,7 +1558,7 @@ void ShenandoahHeap::verify(bool silent , VerifyOption vo) {
 
     bool failures = rootsCl.failures();
     if (ShenandoahGCVerbose)
-      gclog_or_tty->print("verify failures: %d", failures); 
+      gclog_or_tty->print("verify failures: %s", BOOL_TO_STR(failures));
 
     ShenandoahVerifyHeapClosure heapCl(rootsCl);
 
@@ -1652,6 +1657,12 @@ void  ShenandoahHeap::space_iterate(SpaceClosure* cl) {
 uint ShenandoahHeap::heap_region_index_containing(const void* addr) const {
   uintptr_t region_start = ((uintptr_t) addr) & ~(ShenandoahHeapRegion::RegionSizeBytes - 1);
   uintptr_t index = (region_start - (uintptr_t) _first_region_bottom) >> ShenandoahHeapRegion::RegionSizeShift;
+#ifdef ASSERT
+  if (!(index >= 0 && index < _num_regions)) {
+    tty->print_cr("heap region does not contain address, first_region_bottom: "PTR_FORMAT", real bottom of first region: "PTR_FORMAT", num_regions: "SIZE_FORMAT", region_size: "SIZE_FORMAT, p2i(_first_region_bottom), p2i(_ordered_regions[0]->bottom()), _num_regions, ShenandoahHeapRegion::RegionSizeBytes);
+  }
+#endif
+  assert(index >= 0 && index < _num_regions, "heap region index must be in range");
   return index;
 }
 
@@ -1659,6 +1670,11 @@ ShenandoahHeapRegion*
 ShenandoahHeap::heap_region_containing(const void* addr) const {
   uint index = heap_region_index_containing(addr);
   ShenandoahHeapRegion* result = _ordered_regions[index];
+#ifdef ASSERT
+  if (!(addr >= result->bottom() && addr < result->end())) {
+    tty->print_cr("heap region does not contain address, first_region_bottom: "PTR_FORMAT", real bottom of first region: "PTR_FORMAT", num_regions: "SIZE_FORMAT, p2i(_first_region_bottom), p2i(_ordered_regions[0]->bottom()), _num_regions);
+  }
+#endif
   assert(addr >= result->bottom() && addr < result->end(), "address must be in found region");
   return result;
 }
@@ -1783,9 +1799,9 @@ public:
     if (!oopDesc::is_null(heap_oop)) {
       oop obj = oopDesc::decode_heap_oop_not_null(heap_oop);
       guarantee(_sh->heap_region_containing(obj)->is_in_collection_set() == (obj != oopDesc::bs()->resolve_oop(obj)),
-                err_msg("forwarded objects can only exist in dirty (from-space) regions is_dirty: %d, is_forwarded: %d",
-                        _sh->heap_region_containing(obj)->is_in_collection_set(),
-                        obj != oopDesc::bs()->resolve_oop(obj))
+                err_msg("forwarded objects can only exist in dirty (from-space) regions is_dirty: %s, is_forwarded: %s",
+                        BOOL_TO_STR(_sh->heap_region_containing(obj)->is_in_collection_set()),
+                        BOOL_TO_STR(obj != oopDesc::bs()->resolve_oop(obj)))
                 );
       obj = oopDesc::bs()->resolve_oop(obj);
       guarantee(! _sh->heap_region_containing(obj)->is_in_collection_set(), "forwarded oops must not point to dirty regions");
@@ -1794,8 +1810,8 @@ public:
       if (! sh->isMarkedCurrent(obj)) {
         sh->print_on(tty);
       }
-      assert(sh->isMarkedCurrent(obj), err_msg("Referenced Objects should be marked obj: %p, marked: %d, is_in_heap: %d", 
-                                               (HeapWord*) obj, sh->isMarkedCurrent(obj), sh->is_in(obj)));
+      assert(sh->isMarkedCurrent(obj), err_msg("Referenced Objects should be marked obj: "PTR_FORMAT", marked: %s, is_in_heap: %s", 
+                                               p2i((HeapWord*) obj), BOOL_TO_STR(sh->isMarkedCurrent(obj)), BOOL_TO_STR(sh->is_in(obj))));
     }
   }
 
@@ -1826,9 +1842,9 @@ public:
     if (!oopDesc::is_null(heap_oop)) {
       oop obj = oopDesc::decode_heap_oop_not_null(heap_oop);
       guarantee(_sh->heap_region_containing(obj)->is_in_collection_set() == (obj != oopDesc::bs()->resolve_oop(obj)),
-                err_msg("forwarded objects can only exist in dirty (from-space) regions is_dirty: %d, is_forwarded: %d",
-                        _sh->heap_region_containing(obj)->is_in_collection_set(),
-                        obj != oopDesc::bs()->resolve_oop(obj))
+                err_msg("forwarded objects can only exist in dirty (from-space) regions is_dirty: %s, is_forwarded: %s",
+                        BOOL_TO_STR(_sh->heap_region_containing(obj)->is_in_collection_set()),
+                        BOOL_TO_STR(obj != oopDesc::bs()->resolve_oop(obj)))
                 );
       obj = oopDesc::bs()->resolve_oop(obj);
       guarantee(! _sh->heap_region_containing(obj)->is_in_collection_set(), "forwarded oops must not point to dirty regions");
@@ -1854,8 +1870,8 @@ public:
     if (!oopDesc::is_null(heap_oop)) {
       oop obj = oopDesc::decode_heap_oop_not_null(heap_oop);
       guarantee(! _sh->heap_region_containing(obj)->is_in_collection_set(), "no live reference must point to from-space");
-      if (obj != oopDesc::bs()->resolve_oop(obj)) {
-        tty->print_cr("top-limit: %p, p: %p", _sh->heap_region_containing(p)->concurrent_iteration_safe_limit(), p);
+      if (obj != oopDesc::bs()->resolve_oop(obj) && _sh->is_in(p)) {
+        tty->print_cr("top-limit: "PTR_FORMAT", p: "PTR_FORMAT, p2i(_sh->heap_region_containing(p)->concurrent_iteration_safe_limit()), p2i(p));
       }
       guarantee(obj == oopDesc::bs()->resolve_oop(obj), "no live reference must point to forwarded object");
       guarantee(obj->is_oop(), "is_oop");
@@ -1976,7 +1992,7 @@ void ShenandoahHeap::post_allocation_collector_specific_setup(HeapWord* hw) {
 
   // Assuming for now that objects can't be created already locked
   assert(! obj->has_displaced_mark(), "hopefully new objects don't have displaced mark");
-  // tty->print_cr("post_allocation_collector_specific_setup:: %p", obj);
+  // tty->print_cr("post_allocation_collector_specific_setup:: "PTR_FORMAT, p2i(obj));
 
   if (_concurrent_mark_in_progress || (ShenandoahUpdateRefsEarly && _evacuation_in_progress)) {
     mark_current_no_checks(obj);
@@ -1994,11 +2010,11 @@ bool ShenandoahHeap::mark_current(oop obj) const {
     tty->print_cr("heap region containing obj:");
     ShenandoahHeapRegion* obj_region = heap_region_containing(obj);
     obj_region->print();
-    tty->print_cr("obj has been marked prev: %d", is_marked_prev(obj));
+    tty->print_cr("obj has been marked prev: %s", BOOL_TO_STR(is_marked_prev(obj)));
     tty->print_cr("heap region containing forwardee:");
     ShenandoahHeapRegion* forward_region = heap_region_containing(oopDesc::bs()->resolve_oop(obj));
     forward_region->print();    
-    tty->print_cr("fwd has been marked prev: %d", is_marked_prev(oopDesc::bs()->resolve_oop(obj)));
+    tty->print_cr("fwd has been marked prev: %s", BOOL_TO_STR(is_marked_prev(oopDesc::bs()->resolve_oop(obj))));
   }
 #endif
 
@@ -2024,7 +2040,7 @@ void ShenandoahHeap::verify_copy(oop p,oop c){
     if (p->klass() != c->klass()) {
       print_heap_regions();
     }
-    assert(p->klass() == c->klass(), err_msg("verify class p-size: %d c-size: %d", p->size(), c->size()));
+    assert(p->klass() == c->klass(), err_msg("verify class p-size: "INT32_FORMAT" c-size: "INT32_FORMAT, p->size(), c->size()));
     assert(p->size() == c->size(), "verify size");
     // Object may have been locked between copy and verification
     //    assert(p->mark() == c->mark(), "verify mark");
@@ -2041,7 +2057,7 @@ void ShenandoahHeap::copy_object(oop p, HeapWord* s) {
 
 #ifdef ASSERT
   if (ShenandoahTraceEvacuations) {
-    tty->print_cr("copy object from %p to: %p", (HeapWord*) p, copy);
+    tty->print_cr("copy object from "PTR_FORMAT" to: "PTR_FORMAT, p2i((HeapWord*) p), p2i(copy));
   }
 #endif
 }
@@ -2151,7 +2167,7 @@ oop ShenandoahHeap::evacuate_object(oop p, Thread* thread) {
 
 #ifdef ASSERT
     if (ShenandoahTraceEvacuations) {
-      tty->print("Copy of %p to %p succeeded \n", (HeapWord*) p, copy);
+      tty->print("Copy of "PTR_FORMAT" to "PTR_FORMAT" succeeded \n", p2i((HeapWord*) p), p2i(copy));
     }
 #endif
   }  else {
@@ -2160,7 +2176,7 @@ oop ShenandoahHeap::evacuate_object(oop p, Thread* thread) {
     }
 #ifdef ASSERT
     if (ShenandoahTraceEvacuations) {
-      tty->print("Copy of %p to %p \n", (HeapWord*) p, copy);
+      tty->print_cr("Copy of "PTR_FORMAT" to "PTR_FORMAT, p2i((HeapWord*) p), p2i(copy));
     }
 #endif
     return_val = (oopDesc*) result;
@@ -2190,7 +2206,7 @@ bool ShenandoahHeap::grow_heap_by() {
     HeapWord* start = _first_region_bottom + (ShenandoahHeapRegion::RegionSizeBytes / HeapWordSize) * new_region_index;
     new_region->initialize(start, ShenandoahHeapRegion::RegionSizeBytes / HeapWordSize, new_region_index);
     if (ShenandoahGCVerbose) {
-      tty->print_cr("allocating new region at index: %d", new_region_index);
+      tty->print_cr("allocating new region at index: "INT32_FORMAT, new_region_index);
       new_region->print();
     }
     _ordered_regions[new_region_index] = new_region;
@@ -2212,7 +2228,7 @@ int ShenandoahHeap::ensure_new_regions(int new_regions) {
 
   size_t expand_size = new_regions * ShenandoahHeapRegion::RegionSizeBytes;
   if (ShenandoahGCVerbose) {
-    tty->print_cr("expanding storage by %x bytes, for %d new regions", expand_size, new_regions);
+    tty->print_cr("expanding storage by "SIZE_FORMAT_HEX" bytes, for "INT32_FORMAT" new regions", expand_size, new_regions);
   }
   bool success = _storage.expand_by(expand_size);
   assert(success, "should always be able to expand by requested size");
@@ -2235,6 +2251,13 @@ bool  ShenandoahIsAliveClosure:: do_object_b(oop obj) {
   if (! ShenandoahUpdateRefsEarly) {
     obj = ShenandoahBarrierSet::resolve_oop_static(obj);
   }
+#ifdef ASSERT
+  if (obj != ShenandoahBarrierSet::resolve_oop_static(obj)) {
+    ShenandoahHeap* sh = ShenandoahHeap::heap();
+    tty->print_cr("from-space object is marked: %s", BOOL_TO_STR(sh->is_marked_current(obj)));
+    tty->print_cr("to-space object is marked: %s", BOOL_TO_STR(sh->is_marked_current(ShenandoahBarrierSet::resolve_oop_static(obj))));
+  }
+#endif
   assert(obj == ShenandoahBarrierSet::resolve_oop_static(obj), "needs to be in to-space");
 
     HeapWord* addr = (HeapWord*) obj;
@@ -2246,17 +2269,17 @@ bool  ShenandoahIsAliveClosure:: do_object_b(oop obj) {
 	if(sh->is_in(addr)) {
 	  if (sh->is_obj_ill(obj)) {
 	    HandleMark hm;
-	    tty->print("ShenandoahIsAliveClosure Found an ill object %p\n", (HeapWord*)obj);
+	    tty->print_cr("ShenandoahIsAliveClosure Found an ill object "PTR_FORMAT, p2i((HeapWord*) obj));
 	    obj->print();
 	  }
 	  else 
-	    tty->print("found a healthy object %p\n", (HeapWord*)obj);
+	    tty->print_cr("found a healthy object "PTR_FORMAT, p2i((HeapWord*) obj));
 
 	} else {
-	  tty->print("found an object outside the heap %p\n", (HeapWord*)obj);
+	  tty->print_cr("found an object outside the heap "PTR_FORMAT, p2i((HeapWord*) obj));
 	}
       } else {
-	tty->print("found a null object %p\n", (HeapWord*)obj);
+	tty->print_cr("found a null object "PTR_FORMAT, p2i((HeapWord*) obj));
       }
     }
 

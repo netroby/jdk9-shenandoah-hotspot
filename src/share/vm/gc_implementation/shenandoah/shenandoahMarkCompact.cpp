@@ -129,17 +129,17 @@ private:
     size_t obj_size = p->size() + BrooksPointer::BROOKS_POINTER_OBJ_SIZE;
     assert((*_current_region)->end() >= _next_free_address, "expect next address to be within region");
     if (_next_free_address + obj_size >= (*_current_region)->end()) {
-      // tty->print_cr("skipping to next region. obj_size=%d, current-region-end: %p, _next_free_addr: %p, free: %d", obj_size, (*_current_region)->end(), _next_free_address, ((*_current_region)->end() - _next_free_address));
+      // tty->print_cr("skipping to next region. obj_size="INT32_FORMAT", current-region-end: "PTR_FORMAT", _next_free_addr: "PTR_FORMAT", free: "SIZ_EiFORMAT, obj_size, (*_current_region)->end(), _next_free_address, ((*_current_region)->end() - _next_free_address));
       // Skip to next region.
       _current_region = _next_region;
       assert(_current_region < _regions + _num_regions, "no overflow on regions");
 
-      // tty->print_cr("skip to next region: %p", _current_region);
+      // tty->print_cr("skip to next region: "PTR_FORMAT, _current_region);
       _next_region++;
-      // tty->print_cr("skip next region to: %p", _next_region);
+      // tty->print_cr("skip next region to: "PTR_FORMAT, _next_region);
       _next_free_address = (*_current_region)->bottom();
     }
-    // tty->print_cr("forward object at: %p to new location: %p, current-region-end: %p", (HeapWord*) p, (HeapWord*)(_next_free_address + 1), (*_current_region)->end());
+    // tty->print_cr("forward object at: "PTR_FORMAT" to new location: "PTR_FORMAT", current-region-end: "PTR_FORMAT, (HeapWord*) p, (HeapWord*)(_next_free_address + 1), (*_current_region)->end());
     // We keep the pointer to the new location in the object's brooks ptr field, not the pointer
     // to the (new) brooks pointer location.
     BrooksPointer::get(p).set_forwardee(oop(_next_free_address + 1));
@@ -163,7 +163,7 @@ class ShenandoahMarkCompactUpdateRefsClosure : public ExtendedOopClosure {
       assert(obj->is_oop(), "expect oop");
       oop new_obj = BrooksPointer::get(obj).get_forwardee_raw();
       assert((HeapWord*) new_obj <= (HeapWord*) obj, "new object location must be down in the heap");
-      // tty->print_cr("update reference at: %p pointing to: %p to new location at: %p", p, obj, new_obj);
+      // tty->print_cr("update reference at: "PTR_FORMAT" pointing to: "PTR_FORMAT" to new location at: "PTR_FORMAT, p, obj, new_obj);
       oopDesc::store_heap_oop(p, new_obj);
     }
   }
@@ -217,7 +217,7 @@ public:
       HeapWord* old_addr = (HeapWord*) p;
       HeapWord* new_addr = (HeapWord*) BrooksPointer::get(p).get_forwardee_raw();
       assert(new_addr <= old_addr, "new location must not be higher up in the heap");
-      // tty->print_cr("copying object size %d from %p to %p", obj_size, old_addr, new_addr);
+      // tty->print_cr("copying object size "INT32_FORMAT" from "PTR_FORMAT" to "PTR_FORMAT, obj_size, old_addr, new_addr);
       oop new_obj = oop(new_addr);
       if (new_addr != old_addr) {
         if (new_addr + obj_size < old_addr) {
@@ -239,7 +239,7 @@ public:
   }
 
   void finish_humonguous_regions(oop old_obj, oop new_obj) {
-    // tty->print_cr("finish humonguous object: %p -> %p", old_obj, new_obj);
+    // tty->print_cr("finish humonguous object: "PTR_FORMAT" -> "PTR_FORMAT, old_obj, new_obj);
     size_t obj_size = new_obj->size();
     size_t required_regions = (obj_size * HeapWordSize) / ShenandoahHeapRegion::RegionSizeBytes + 1;
 

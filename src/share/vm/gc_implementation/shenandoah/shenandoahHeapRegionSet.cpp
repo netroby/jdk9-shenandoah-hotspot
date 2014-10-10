@@ -218,7 +218,7 @@ void ShenandoahHeapRegionSet::choose_collection_set_min_garbage(ShenandoahHeapRe
   FREE_C_HEAP_ARRAY(ShenandoahHeapRegion*, tmp, mtGC);
 
   /*
-  tty->print_cr("choosen region with %u garbage given %u min_garbage", garbage, min_garbage);
+  tty->print_cr("choosen region with "SIZE_FORMAT" garbage given "SIZE_FORMAT" min_garbage", garbage, min_garbage);
   */
 }
 
@@ -261,7 +261,7 @@ void ShenandoahHeapRegionSet::reclaim_humonguous_region_at(ShenandoahHeapRegion*
   uint required_regions = (size * HeapWordSize) / ShenandoahHeapRegion::RegionSizeBytes  + 1;
 
   if (ShenandoahTraceHumonguous) {
-    tty->print_cr("reclaiming %d humonguous regions for object of size: %d words", required_regions, size);
+    tty->print_cr("reclaiming "UINT32_FORMAT" humonguous regions for object of size: "SIZE_FORMAT" words", required_regions, size);
   }
 
   assert((*r)->getLiveData() == 0, "liveness must be zero");

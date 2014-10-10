@@ -102,11 +102,11 @@ public:
         // We should never be forwarded more than once.
         if (result != second_forwarding) {
           ShenandoahHeap* sh = (ShenandoahHeap*) Universe::heap();
-          tty->print("first reference %p is in heap region:\n", (HeapWord*) p);
+          tty->print("first reference "PTR_FORMAT" is in heap region:\n", p2i((HeapWord*) p));
           sh->heap_region_containing(p)->print();
-          tty->print("first_forwarding %p is in heap region:\n", (HeapWord*) result);
+          tty->print("first_forwarding "PTR_FORMAT" is in heap region:\n", p2i((HeapWord*) result));
           sh->heap_region_containing(result)->print();
-          tty->print("final reference %p is in heap region:\n", (HeapWord*) second_forwarding);
+          tty->print("final reference "PTR_FORMAT" is in heap region:\n", p2i((HeapWord*) second_forwarding));
           sh->heap_region_containing(second_forwarding)->print();
           assert(get_shenandoah_forwardee_helper(result) == result, "Only one fowarding per customer");
         }
