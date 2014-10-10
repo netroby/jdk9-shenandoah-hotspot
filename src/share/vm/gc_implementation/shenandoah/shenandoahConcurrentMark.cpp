@@ -25,6 +25,7 @@
  *
  */
 
+#include "classfile/stringTable.hpp"
 #include "gc_implementation/shared/gcTimer.hpp"
 #include "gc_implementation/shenandoah/shenandoahBarrierSet.hpp"
 #include "gc_implementation/shenandoah/shenandoahConcurrentMark.hpp"
