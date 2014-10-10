@@ -4,6 +4,7 @@ Copyright 2014 Red Hat, Inc. and/or its affiliates.
 #include "precompiled.hpp"
 #include "asm/macroAssembler.hpp"
 
+#include "gc_implementation/shared/cmBitMap.inline.hpp"
 #include "gc_implementation/shared/gcHeapSummary.hpp"
 #include "gc_implementation/shared/gcTimer.hpp"
 #include "gc_implementation/shared/gcTrace.hpp"
@@ -134,19 +135,25 @@ jint ShenandoahHeap::initialize() {
                                                SATB_Q_FL_lock,
                                                20 /*G1SATBProcessCompletedThreshold */,
                                                Shared_SATB_Q_lock);
-  if (!_mark_bit_map0.allocate(heap_rs)) {
-    fatal("Failed to allocate CM bit map 0");
-    return JNI_ENOMEM;
-  }
-  if (!_mark_bit_map1.allocate(heap_rs)) {
-    fatal("Failed to allocate CM bit map 1");
-    return JNI_ENOMEM;
-  }
+
+  // Reserve space for prev and next bitmap.
+  size_t bitmap_size = CMBitMap::compute_size(heap_rs.size());
+  MemRegion heap_region = MemRegion((HeapWord*) heap_rs.base(), heap_rs.size() / HeapWordSize);
+
+  ReservedSpace bitmap_0(ReservedSpace::allocation_align_size_up(bitmap_size));
+  os::commit_memory_or_exit(bitmap_0.base(), bitmap_0.size(), false, err_msg("couldn't allocate mark bitmap 0"));
+
+  MemRegion bitmap_0_region = MemRegion((HeapWord*) bitmap_0.base(), bitmap_0.size() / HeapWordSize);
+  _mark_bit_map0.initialize(heap_region, bitmap_0_region);
+
+  ReservedSpace bitmap_1(ReservedSpace::allocation_align_size_up(bitmap_size));
+  os::commit_memory_or_exit(bitmap_1.base(), bitmap_1.size(), false, err_msg("couldn't allocate mark bitmap 1"));
+  MemRegion bitmap_1_region = MemRegion((HeapWord*) bitmap_1.base(), bitmap_1.size() / HeapWordSize);
+  _mark_bit_map1.initialize(heap_region, bitmap_1_region);
+
   _prev_mark_bit_map = &_mark_bit_map0;
   _next_mark_bit_map = &_mark_bit_map1;
   reset_mark_bitmap();
-
-  // TODO: Implement swapping of mark bitmaps.
 
   // Initialize fast collection set test structure.
   _in_cset_fast_test_length = _max_regions;
@@ -178,8 +185,8 @@ ShenandoahHeap::ShenandoahHeap(ShenandoahCollectorPolicy* policy) :
   _ref_processor_cm(NULL),
   _in_cset_fast_test(NULL),
   _in_cset_fast_test_base(NULL),
-  _mark_bit_map0(log2_intptr(MinObjAlignment)),
-  _mark_bit_map1(log2_intptr(MinObjAlignment)) {
+  _mark_bit_map0(),
+  _mark_bit_map1() {
   _pgc = this;
   _scm = new ShenandoahConcurrentMark();
   _used = 0;

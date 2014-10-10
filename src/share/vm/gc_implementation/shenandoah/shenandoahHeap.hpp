@@ -10,7 +10,7 @@ Copyright 2014 Red Hat, Inc. and/or its affiliates.
 #include "gc_implementation/shenandoah/shenandoahHeapRegion.hpp"
 #include "gc_implementation/shenandoah/shenandoahHeapRegionSet.hpp"
 
-#include "gc_implementation/g1/concurrentMark.hpp"
+#include "gc_implementation/shared/cmBitMap.hpp"
 
 
 #include "memory/barrierSet.hpp"
