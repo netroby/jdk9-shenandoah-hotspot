@@ -1387,7 +1387,7 @@ void PhaseMacroExpand::expand_allocate_common(
     if (UseShenandoahGC) {
       // Bump up object by one word. The preceding word is used for
       // the Shenandoah brooks pointer.
-      fast_oop = new (C) AddPNode(top(), fast_oop, _igvn.MakeConX(8));
+      fast_oop = new AddPNode(top(), fast_oop, _igvn.MakeConX(8));
       transform_later(fast_oop);
     }
 

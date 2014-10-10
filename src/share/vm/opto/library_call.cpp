@@ -2982,9 +2982,9 @@ bool LibraryCallKit::inline_unsafe_load_store(BasicType type, LoadStoreKind kind
       if (UseShenandoahGC) {
         // We need to update the value in memory in order to avoid comparison failures
         // (false negatives).
-        Node* current = make_load(control(), adr, TypeInstPtr::BOTTOM, type, TypeInstPtr::BOTTOM, false);
+        Node* current = make_load(control(), adr, TypeInstPtr::BOTTOM, type, TypeInstPtr::BOTTOM, MemNode::unordered, false);
         Node* new_current = shenandoah_write_barrier(current);
-        Node* cas_current = _gvn.transform(new (C) CompareAndSwapPNode(control(), mem, adr, new_current, current));
+        Node* cas_current = _gvn.transform(new CompareAndSwapPNode(control(), mem, adr, new_current, current));
         set_control(cas_current);
       }
       // The only known value which might get overwritten is oldval.

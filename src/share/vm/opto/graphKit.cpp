@@ -4208,7 +4208,7 @@ void GraphKit::store_String_length(Node* ctrl, Node* str, Node* value) {
   // TODO: Use incoming ctrl.
   str = shenandoah_write_barrier(str);
 
-  store_to_memory(control, basic_plus_adr(str, count_offset),
+  store_to_memory(control(), basic_plus_adr(str, count_offset),
                   value, T_INT, count_field_idx, MemNode::unordered);
 }
 
@@ -4227,7 +4227,7 @@ Node* GraphKit::make_shenandoah_read_barrier(Node* ctrl, Node* obj, const Type* 
   Node* bp_addr = basic_plus_adr(obj, -0x8);
   const TypePtr* adr_type = bp_addr->bottom_type()->is_ptr();
   assert(adr_type->offset() == -8, "sane address type offset");
-  Node* bp_load = make_load(ctrl, bp_addr, obj_type, T_OBJECT, adr_type, false);
+  Node* bp_load = make_load(ctrl, bp_addr, obj_type, T_OBJECT, adr_type, MemNode::unordered, false);
   return bp_load;
 }
 
@@ -4240,7 +4240,7 @@ Node* GraphKit::shenandoah_read_barrier_runtime(Node* obj) {
                                  NULL,
                                  obj);
 
-  Node* result = _gvn.transform(new (C) ProjNode(call, TypeFunc::Parms + 0));
+  Node* result = _gvn.transform(new ProjNode(call, TypeFunc::Parms + 0));
   return result;
 }
 
@@ -4269,8 +4269,8 @@ Node* GraphKit::shenandoah_read_barrier(Node* obj) {
 
     // Make the merge point.
     enum { _obj_path = 1, _null_path, PATH_LIMIT };
-    RegionNode* region = new(C) RegionNode(PATH_LIMIT);
-    Node*       phi    = new(C) PhiNode(region, obj_type);
+    RegionNode* region = new RegionNode(PATH_LIMIT);
+    Node*       phi    = new PhiNode(region, obj_type);
     
     region->init_req(_null_path, null_ctrl);
     phi   ->init_req(_null_path, null()); // Set null path value
@@ -4299,21 +4299,21 @@ Node* GraphKit::make_shenandoah_write_barrier(Node* ctrl, Node* obj, const Type*
 
   // Construct check for evacuation-in-progress.
   Node* evac_in_progr_addr = makecon(TypeRawPtr::make(ShenandoahHeap::evacuation_in_progress_addr()));
-  Node* evac_in_progr = make_load(control(), evac_in_progr_addr, TypeInt::BOOL, T_INT, Compile::AliasIdxRaw, false);
-  Node* chk = _gvn.transform(new (C) CmpINode(evac_in_progr, intcon(0)));
-  Node* test = _gvn.transform(new (C) BoolNode(chk, BoolTest::eq));
+  Node* evac_in_progr = make_load(control(), evac_in_progr_addr, TypeInt::BOOL, T_INT, Compile::AliasIdxRaw, MemNode::unordered, false);
+  Node* chk = _gvn.transform(new CmpINode(evac_in_progr, intcon(0)));
+  Node* test = _gvn.transform(new BoolNode(chk, BoolTest::eq));
 
   Node* oldmem = map()->memory();
 
   // Make the merge point.
   enum { _evac_path = 1, _no_evac_path, PATH_LIMIT };
-  RegionNode* region = new(C) RegionNode(PATH_LIMIT);
-  Node*       phi    = new(C) PhiNode(region, obj_type);
+  RegionNode* region = new RegionNode(PATH_LIMIT);
+  Node*       phi    = new PhiNode(region, obj_type);
 
   // Make the actual if-branch.
   IfNode* iff = create_and_map_if(control(), test, PROB_LIKELY_MAG(3), COUNT_UNKNOWN);
-  Node* iftrue = _gvn.transform(new (C) IfTrueNode(iff));
-  Node* iffalse = _gvn.transform(new (C) IfFalseNode(iff));
+  Node* iftrue = _gvn.transform(new IfTrueNode(iff));
+  Node* iffalse = _gvn.transform(new IfFalseNode(iff));
 
   // No-evacuation path.
   region->init_req(_no_evac_path, iftrue);
@@ -4328,7 +4328,7 @@ Node* GraphKit::make_shenandoah_write_barrier(Node* ctrl, Node* obj, const Type*
                                  obj_type->is_ptr()->add_offset(-8),
                                  obj);
 
-  Node* result = _gvn.transform(new (C) ProjNode(call, TypeFunc::Parms + 0));
+  Node* result = _gvn.transform(new ProjNode(call, TypeFunc::Parms + 0));
 
   region->init_req(_evac_path, control());
   phi->init_req(_evac_path, result);
@@ -4368,15 +4368,15 @@ Node* GraphKit::shenandoah_write_barrier(Node* obj) {
 
     // Make the merge point.
     enum { _obj_path = 1, _null_path, PATH_LIMIT };
-    RegionNode* region = new(C) RegionNode(PATH_LIMIT);
-    Node*       phi    = new(C) PhiNode(region, obj_type);
+    RegionNode* region = new RegionNode(PATH_LIMIT);
+    Node*       phi    = new PhiNode(region, obj_type);
 
     // Construct the null check.
-    Node* chk = _gvn.transform(new (C) CmpPNode(obj, null()));
-    Node* test = _gvn.transform(new (C) BoolNode(chk, BoolTest::ne));
+    Node* chk = _gvn.transform(new CmpPNode(obj, null()));
+    Node* test = _gvn.transform(new BoolNode(chk, BoolTest::ne));
     IfNode* iff = create_and_map_if(control(), test, PROB_LIKELY_MAG(3), COUNT_UNKNOWN);
-    Node* iftrue = _gvn.transform(new (C) IfTrueNode(iff));
-    Node* iffalse = _gvn.transform(new (C) IfFalseNode(iff));
+    Node* iftrue = _gvn.transform(new IfTrueNode(iff));
+    Node* iffalse = _gvn.transform(new IfFalseNode(iff));
 
     // Null-path.
     region->init_req(_null_path, iffalse);
