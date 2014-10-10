@@ -340,6 +340,8 @@ public:
 
   GCTracer* tracer();
 
+  size_t tlab_used(Thread* ignored) const;
+
 private:
 
   bool grow_heap_by();

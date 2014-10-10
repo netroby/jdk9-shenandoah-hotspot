@@ -5,6 +5,7 @@ Copyright 2014 Red Hat, Inc. and/or its affiliates.
 #define SHARE_VM_GC_IMPLEMENTATION_SHENANDOAH_SHENANDOAHCONCURRENTTHREAD_HPP
 
 #include "gc_implementation/shared/concurrentGCThread.hpp"
+#include "gc_implementation/shared/suspendibleThreadSet.hpp"
 #include "memory/resourceArea.hpp"
 
 // For now we just want to have a concurrent marking thread. 
@@ -26,6 +27,7 @@ class ShenandoahConcurrentThread: public ConcurrentGCThread {
   int _epoch;
 
   static SurrogateLockerThread* _slt;
+  static SuspendibleThreadSet _sts;
 
   bool _do_full_gc;
 

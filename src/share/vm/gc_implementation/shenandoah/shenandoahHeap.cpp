@@ -2311,12 +2311,9 @@ void ShenandoahHeap::ref_processing_init() {
                                 // degree of mt discovery
                            false,
                                 // Reference discovery is not atomic
-			   &isAlive,
+			   &isAlive);
                                 // is alive closure
                                 // (for efficiency/performance)
-                           true);
-                                // Setting next fields of discovered
-                                // lists requires a barrier.
 }
 
 #ifdef ASSERT
@@ -2352,4 +2349,8 @@ size_t ShenandoahHeap::num_regions() {
 
 GCTracer* ShenandoahHeap::tracer() {
   return _tracer;
+}
+
+size_t ShenandoahHeap::tlab_used(Thread* ignored) const {
+  Unimplemented();
 }

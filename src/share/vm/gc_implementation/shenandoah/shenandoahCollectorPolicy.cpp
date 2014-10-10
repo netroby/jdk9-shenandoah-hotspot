@@ -469,10 +469,6 @@ BarrierSet::Name ShenandoahCollectorPolicy::barrier_set_name() {
   return BarrierSet::ShenandoahBarrierSet;
 }
 
-GenRemSet::Name ShenandoahCollectorPolicy::rem_set_name() {
-  return GenRemSet::Other;
-}
-
 HeapWord* ShenandoahCollectorPolicy::mem_allocate_work(size_t size,
                                                        bool is_tlab,
                                                        bool* gc_overhead_limit_was_exceeded) {

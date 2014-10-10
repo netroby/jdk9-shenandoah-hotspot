@@ -183,17 +183,17 @@ void ShenandoahConcurrentThread::start() {
 }
 
 void ShenandoahConcurrentThread::yield() {
-  _sts.yield("Concurrent Mark");
+  _sts.yield();
 }
 
 void ShenandoahConcurrentThread::safepoint_synchronize() {
   assert(UseShenandoahGC, "just checking");
-  _sts.suspend_all();
+  _sts.synchronize();
 }
 
 void ShenandoahConcurrentThread::safepoint_desynchronize() {
   assert(UseShenandoahGC, "just checking");
-  _sts.resume_all();
+  _sts.desynchronize();
 }
 
 void ShenandoahConcurrentThread::makeSurrogateLockerThread(TRAPS) {

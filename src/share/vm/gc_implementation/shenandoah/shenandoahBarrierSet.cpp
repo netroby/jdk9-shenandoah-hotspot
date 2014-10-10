@@ -227,7 +227,7 @@ void ShenandoahBarrierSet::write_ref_field_pre_work(void* field, oop new_val) {
   guarantee(false, "Not needed");
 }
 
-void ShenandoahBarrierSet::write_ref_field_work(void* v, oop o) {
+void ShenandoahBarrierSet::write_ref_field_work(void* v, oop o, bool release) {
   if (! need_update_refs_barrier()) return;
   assert (! UseCompressedOops, "compressed oops not supported yet");
   ShenandoahHeap::heap()->maybe_update_oop_ref((oop*) v);

@@ -25,8 +25,6 @@ public:
 
   BarrierSet::Name barrier_set_name();
 
-  GenRemSet::Name rem_set_name();
-
   HeapWord* mem_allocate_work(size_t size,
 			      bool is_tlab,
 			      bool* gc_overhead_limit_was_exceeded);

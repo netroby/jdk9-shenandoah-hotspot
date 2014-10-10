@@ -85,7 +85,7 @@ public:
   void write_ref_field_pre_work(narrowOop* field, oop new_val);
   void write_ref_field_pre_work(void* field, oop new_val);
 
-  void write_ref_field_work(void* v, oop o);
+  void write_ref_field_work(void* v, oop o, bool release = false);
   void write_region_work(MemRegion mr);
 
   virtual oop resolve_oop(oop src);
