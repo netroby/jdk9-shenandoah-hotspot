@@ -97,6 +97,7 @@
   template(ShenandoahFullGC)                      \
   template(ShenandoahInitMark)                    \
   template(ShenandoahFinishMark)                  \
+  template(ShenandoahStartEvacuation)             \
   template(ShenandoahVerifyHeapAfterEvacuation)   \
   template(ShenandoahVerifyHeapAfterUpdateRefs)   \
   template(ShenandoahEvacuation)                  \

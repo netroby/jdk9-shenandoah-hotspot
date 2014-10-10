@@ -1877,13 +1877,23 @@ void LIRGenerator::write_barrier(LIR_Opr obj, CodeEmitInfo* info, bool need_null
       __ cmp(lir_cond_equal, obj, LIR_OprFact::oopConst(NULL));
       __ branch(lir_cond_equal, T_LONG, done->label());
     }
-    LIR_Address* brooks_ptr_address = generate_address(obj, -8, T_ADDRESS);
-    __ load(brooks_ptr_address, obj, info ? new CodeEmitInfo(info) : NULL, lir_patch_none);
 
     // Check if evacuation in progress.
     LIR_Opr evac_in_progress_addr = new_pointer_register();
     __ move(LIR_OprFact::intptrConst(ShenandoahHeap::evacuation_in_progress_addr()),
             evac_in_progress_addr);
+
+    // We need this membar here to prevent the loading of the brooks pointer to float above
+    // the loading of the evac_in_progress field. If that happened, it would be possible
+    // that the brooks pointer reads a from-space ref from a not-yet-copied oop,
+    // then another thread evacuates that object and turns off concurrent evacuation
+    // before we load the evac_in_progress field. We would end up with a from-space
+    // reference and write to it, which is forbidden.
+    __ membar_loadload();
+
+    LIR_Address* brooks_ptr_address = generate_address(obj, -8, T_ADDRESS);
+    __ load(brooks_ptr_address, obj, info ? new CodeEmitInfo(info) : NULL, lir_patch_none);
+
     __ cmp(lir_cond_notEqual, LIR_OprFact::address(new LIR_Address(evac_in_progress_addr, T_INT)),
            LIR_OprFact::intConst(0));
 

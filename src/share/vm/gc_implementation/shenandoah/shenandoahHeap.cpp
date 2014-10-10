@@ -1443,6 +1443,11 @@ void ShenandoahHeap::collect(GCCause::Cause cause) {
       _concurrent_gc_thread->do_full_gc();
     }
   } else if (cause == GCCause::_gc_locker) {
+
+    if (ShenandoahTraceJNICritical) {
+      gclog_or_tty->print_cr("Resuming deferred evacuation after JNI critical regions");
+    }
+
     _concurrent_gc_thread->notify_jni_critical();
   }
 }

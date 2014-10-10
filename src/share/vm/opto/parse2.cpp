@@ -1695,7 +1695,10 @@ void Parse::do_one_bytecode() {
     a = pop();                  // the array itself
     const TypeOopPtr* elemtype  = _gvn.type(a)->is_aryptr()->elem()->make_oopptr();
     const TypeAryPtr* adr_type = TypeAryPtr::OOPS;
-    a = shenandoah_write_barrier(a);
+    // Note: We don't need a write barrier for Shenandoah on a here, because
+    // a is not used except for an assert. The address d already has the
+    // write barrier. Adding a barrier on a only results in additional code
+    // being generated.
     c = shenandoah_read_barrier(c);
     Node* store = store_oop_to_array(control(), a, d, adr_type, c, elemtype, T_OBJECT, MemNode::release);
     break;
