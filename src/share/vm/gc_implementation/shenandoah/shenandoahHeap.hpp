@@ -21,6 +21,7 @@ Copyright 2014 Red Hat, Inc. and/or its affiliates.
 
 
 class SpaceClosure;
+class GCTracer;
 
 class ShenandoahIsAliveClosure: public BoolObjectClosure {
 
@@ -92,6 +93,8 @@ private:
   bool* _in_cset_fast_test;
   bool* _in_cset_fast_test_base;
   uint _in_cset_fast_test_length;
+
+  GCTracer* _tracer;
 
 public:
   size_t _bytesAllocSinceCM;
@@ -334,6 +337,8 @@ public:
     memset(_in_cset_fast_test_base, false,
            (size_t) _in_cset_fast_test_length * sizeof(bool));
   }
+
+  GCTracer* tracer();
 
 private:
 

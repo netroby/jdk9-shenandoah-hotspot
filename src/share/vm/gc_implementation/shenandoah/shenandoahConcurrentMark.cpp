@@ -700,7 +700,8 @@ void ShenandoahConcurrentMark::weak_refs_work(bool clear_all_soft_refs, int work
    }
 
    rp->process_discovered_references(&is_alive, &keep_alive, 
-				     &complete_gc, &par_task_executor, &gc_timer);
+				     &complete_gc, &par_task_executor, &gc_timer,
+                                     ShenandoahHeap::heap()->tracer()->gc_id());
    
    if (ShenandoahTraceWeakReferences) {
      gclog_or_tty->print_cr("finished processing references, processed "SIZE_FORMAT" refs", keep_alive.ref_count());

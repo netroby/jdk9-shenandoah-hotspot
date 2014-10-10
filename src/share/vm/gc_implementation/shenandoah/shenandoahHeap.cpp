@@ -185,6 +185,7 @@ ShenandoahHeap::ShenandoahHeap(ShenandoahCollectorPolicy* policy) :
   _ref_processor_cm(NULL),
   _in_cset_fast_test(NULL),
   _in_cset_fast_test_base(NULL),
+  _tracer(new (ResourceObj::C_HEAP, mtGC) ShenandoahTracer()),
   _mark_bit_map0(),
   _mark_bit_map1() {
   _pgc = this;
@@ -2347,4 +2348,8 @@ ShenandoahHeapRegion** ShenandoahHeap::heap_regions() {
 
 size_t ShenandoahHeap::num_regions() {
   return _num_regions;
+}
+
+GCTracer* ShenandoahHeap::tracer() {
+  return _tracer;
 }
