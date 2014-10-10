@@ -180,12 +180,11 @@ void ShenandoahMarkCompact::phase3_update_references() {
   ShenandoahMarkCompactUpdateRefsClosure cl;
 
   // tty->print_cr("updating strong roots");
-  KlassToOopClosure klassCl(&cl);
+  CodeBlobToOopClosure blobsCl(&cl, true);
+  CLDToOopClosure cldCl(&cl);
   ClassLoaderDataGraph::clear_claimed_marks();
-  _heap->process_strong_roots(true, false, SharedHeap::SO_AllClasses, &cl, NULL, &klassCl);
-  // tty->print_cr("updating weak roots");
-  _heap->weak_roots_iterate(&cl);
-  // tty->print_cr("updating heap references");
+  _heap->process_all_roots(true, SharedHeap::SO_AllCodeCache, &cl, &cldCl, &blobsCl);
+  _heap->process_weak_roots(&cl);
   _heap->oop_iterate(&cl, false, true);
 
   COMPILER2_PRESENT(DerivedPointerTable::update_pointers());

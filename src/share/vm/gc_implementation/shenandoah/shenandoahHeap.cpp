@@ -1017,9 +1017,16 @@ void ShenandoahHeap::update_roots() {
 
   COMPILER2_PRESENT(DerivedPointerTable::clear());
 
+  assert(SafepointSynchronize::is_at_safepoint(), "Only iterate roots while world is stopped");
+
   ShenandoahUpdateRootsClosure cl;
-  roots_iterate(&cl);
-  weak_roots_iterate(&cl);
+  CodeBlobToOopClosure blobsCl(&cl, false);
+  CLDToOopClosure cldCl(&cl);
+
+  ClassLoaderDataGraph::clear_claimed_marks();
+
+  process_all_roots(true, SO_AllCodeCache, &cl, &cldCl, &blobsCl);
+  process_weak_roots(&cl);
 
   COMPILER2_PRESENT(DerivedPointerTable::update_pointers());
 }
@@ -1206,11 +1213,17 @@ void ShenandoahHeap::evacuate_and_update_roots() {
     set_from_region_protection(false);
   }
 
-  ShenandoahEvacuateUpdateRootsClosure cl;
+  assert(SafepointSynchronize::is_at_safepoint(), "Only iterate roots while world is stopped");
 
-  roots_iterate(&cl);
-  weak_roots_iterate(&cl);
-  
+  ShenandoahEvacuateUpdateRootsClosure cl;
+  CodeBlobToOopClosure blobsCl(&cl, false);
+  CLDToOopClosure cldCl(&cl);
+
+  ClassLoaderDataGraph::clear_claimed_marks();
+
+  process_all_roots(true, SO_AllCodeCache, &cl, &cldCl, &blobsCl);
+  process_weak_roots(&cl);
+
   if (ShenandoahVerifyReadsToFromSpace) {
     set_from_region_protection(true);
   }
@@ -1329,19 +1342,16 @@ void ShenandoahHeap::roots_iterate(ExtendedOopClosure* cl) {
   assert(SafepointSynchronize::is_at_safepoint(), "Only iterate roots while world is stopped");
 
   CodeBlobToOopClosure blobsCl(cl, false);
-  KlassToOopClosure klassCl(cl);
-
-  const int so = SO_AllClasses | SO_Strings | SO_CodeCache;
+  CLDToOopClosure cldCl(cl);
 
   ClassLoaderDataGraph::clear_claimed_marks();
 
-  process_strong_roots(true, false, ScanningOption(so), cl, &blobsCl, &klassCl);
+  process_all_roots(true, SO_AllCodeCache, cl, &cldCl, &blobsCl);
 }
 
 void ShenandoahHeap::weak_roots_iterate(ExtendedOopClosure* cl) {
   ref_processor_cm()->weak_oops_do(cl);
-  CodeBlobToOopClosure blobsCl(cl, false);
-  process_weak_roots(cl, &blobsCl);
+  process_weak_roots(cl);
 }
 
 void ShenandoahHeap::verify_evacuation(ShenandoahHeapRegion* from_region) {

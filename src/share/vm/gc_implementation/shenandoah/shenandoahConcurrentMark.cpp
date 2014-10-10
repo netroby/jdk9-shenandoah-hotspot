@@ -229,13 +229,11 @@ public:
     }
 
     CodeBlobToOopClosure blobsCl(cl, true);
-    KlassToOopClosure klassCl(cl);
-
-    const int so = SharedHeap::SO_AllClasses | SharedHeap::SO_Strings | SharedHeap::SO_CodeCache;
+    CLDToOopClosure cldCl(cl);
 
     ShenandoahHeap* heap = ShenandoahHeap::heap();
     ResourceMark m;
-    heap->process_strong_roots(false, false, SharedHeap::ScanningOption(so), cl, &blobsCl, &klassCl);
+    heap->process_all_roots(false, SharedHeap::SO_AllCodeCache, cl, &cldCl, &blobsCl);
 
     // tty->print_cr("finish mark roots worker: "INT32_FORMAT, worker_id);
   }
