@@ -308,6 +308,31 @@ bool SATBMarkQueueSet::apply_closure_to_completed_buffer_work(bool par,
   }
 }
 
+// TODO: Refactor ShenandoahConcurrentMark and remove this.
+void SATBMarkQueueSet::par_iterate_closure_all_threads(int worker) {
+  SharedHeap* sh = SharedHeap::heap();
+  int parity = sh->strong_roots_parity();
+
+  for(JavaThread* t = Threads::first(); t; t = t->next()) {
+    if (t->claim_oops_do(true, parity)) {
+      t->satb_mark_queue().apply_closure_and_empty(_par_closures[worker]);
+    }
+  }
+
+  // We also need to claim the VMThread so that its parity is updated
+  // otherwise the next call to Thread::possibly_parallel_oops_do inside
+  // a StrongRootsScope might skip the VMThread because it has a stale
+  // parity that matches the parity set by the StrongRootsScope
+  //
+  // Whichever worker succeeds in claiming the VMThread gets to do
+  // the shared queue.
+
+  VMThread* vmt = VMThread::vm_thread();
+  if (vmt->claim_oops_do(true, parity)) {
+    shared_satb_queue()->apply_closure_and_empty(_par_closures[worker]);
+  }
+}
+
 void SATBMarkQueueSet::iterate_completed_buffers_read_only(ObjectClosure* cl) {
   assert(SafepointSynchronize::is_at_safepoint(), "Must be at safepoint.");
   assert(cl != NULL, "pre-condition");

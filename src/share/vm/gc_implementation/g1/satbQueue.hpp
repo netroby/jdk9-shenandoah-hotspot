@@ -132,6 +132,7 @@ public:
     return apply_closure_to_completed_buffer_work(true, worker);
   }
 
+  void par_iterate_closure_all_threads(int worker);
   // Apply the given closure on enqueued and currently-active buffers
   // respectively. Both methods are read-only, i.e., they do not
   // modify any of the buffers.
