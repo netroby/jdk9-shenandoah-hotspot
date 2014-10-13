@@ -49,7 +49,7 @@ private:
 
   bool drain_one_satb_buffer(uint worker_id);
   SharedOverflowMarkQueue* overflow_queue();
-  void weak_refs_work(bool clear_soft_refs, int worker_id);
+  void weak_refs_work();
 
   void traverse_object(ExtendedOopClosure *cl, oop obj);
 

@@ -452,7 +452,7 @@ void ShenandoahConcurrentMark::finish_mark_from_roots(bool full_gc) {
     obj = _overflow_queue->pop();
   }
 
-  weak_refs_work(true, 0);
+  weak_refs_work();
   
   // Finally mark everything else we've got in our queues during the previous steps.
   SCMConcurrentMarkingTask markingTask = SCMConcurrentMarkingTask(this, &terminator);
@@ -728,14 +728,19 @@ public:
 };
 
 
-void ShenandoahConcurrentMark::weak_refs_work(bool clear_all_soft_refs, int worker_id) {
+void ShenandoahConcurrentMark::weak_refs_work() {
    ShenandoahHeap* sh = (ShenandoahHeap*) Universe::heap();
    ReferenceProcessor* rp = sh->ref_processor_cm();
-   rp->setup_policy(false); // Don't clear all soft refs.
 
+   // Setup collector policy for softref cleaning.
+   bool clear_soft_refs = sh->collector_policy()->should_clear_all_soft_refs();
+   tty->print_cr("clearing soft refs: %s", BOOL_TO_STR(clear_soft_refs));
+   rp->setup_policy(clear_soft_refs);
+
+   uint serial_worker_id = 0;
    ShenandoahIsAliveClosure is_alive;
-   ShenandoahCMKeepAliveAndDrainClosure keep_alive(worker_id);
-   ShenandoahCMDrainMarkingStackClosure complete_gc(worker_id);
+   ShenandoahCMKeepAliveAndDrainClosure keep_alive(serial_worker_id);
+   ShenandoahCMDrainMarkingStackClosure complete_gc(serial_worker_id);
    ShenandoahRefProcTaskExecutor par_task_executor;
    bool processing_is_mt = true;
    AbstractRefProcTaskExecutor* executor = (processing_is_mt ? &par_task_executor : NULL);
@@ -765,6 +770,9 @@ void ShenandoahConcurrentMark::weak_refs_work(bool clear_all_soft_refs, int work
    rp->verify_no_references_recorded();
    assert(!rp->discovery_enabled(), "Post condition");
 
+   if (clear_soft_refs) {
+     sh->collector_policy()->cleared_all_soft_refs();
+   }
 
   // Now clean up stale oops in StringTable
    StringTable::unlink(&is_alive);
