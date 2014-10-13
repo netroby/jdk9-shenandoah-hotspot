@@ -585,9 +585,10 @@ void ShenandoahConcurrentMark::reset_taskqueue_stats() {
 class ShenandoahCMDrainMarkingStackClosure: public VoidClosure {
   ShenandoahHeap* _sh;
   ShenandoahConcurrentMark* _scm;
+  uint _worker_id;
 
 public:
-ShenandoahCMDrainMarkingStackClosure() {
+  ShenandoahCMDrainMarkingStackClosure(uint worker_id): _worker_id(worker_id) {
     _sh = (ShenandoahHeap*) Universe::heap();
     _scm = _sh->concurrentMark();
   }
@@ -595,8 +596,8 @@ ShenandoahCMDrainMarkingStackClosure() {
       
   void do_void() {
 
-    ShenandoahMarkRefsClosure cl1(0);
-    ShenandoahMarkRefsNoUpdateClosure cl2(0);
+    ShenandoahMarkRefsClosure cl1(_worker_id);
+    ShenandoahMarkRefsNoUpdateClosure cl2(_worker_id);
     ExtendedOopClosure* cl;
 
     if (! ShenandoahUpdateRefsEarly) {
@@ -606,9 +607,9 @@ ShenandoahCMDrainMarkingStackClosure() {
     }
 
     while (true) {
-      if (!_scm->try_queue(0,cl) &&
-	  !_scm->try_overflow_queue(0, cl) &&
-	  !_scm->try_draining_an_satb_buffer(0)) {
+      if (!_scm->try_queue(_worker_id, cl) &&
+	  !_scm->try_overflow_queue(_worker_id, cl) &&
+	  !_scm->try_draining_an_satb_buffer(_worker_id)) {
 	break;
       }
     }
@@ -667,16 +668,62 @@ public:
 
 };
 
-class ShenandoahRefProcTaskExecutor : public AbstractRefProcTaskExecutor {
+class ShenandoahRefProcTaskProxy : public AbstractGangTask {
+
+private:
+  AbstractRefProcTaskExecutor::ProcessTask& _proc_task;
 
 public:
 
-  // Executes a task using worker threads.
-  virtual void execute(ProcessTask& task) {
-    assert(false, "Parallel Reference Processing not implemented");
+  ShenandoahRefProcTaskProxy(AbstractRefProcTaskExecutor::ProcessTask& proc_task) :
+    AbstractGangTask("Process reference objects in parallel"),
+    _proc_task(proc_task) {
   }
-  virtual void execute(EnqueueTask& task) {
-    assert(false, "Parallel Reference Processing not implemented");
+
+  void work(uint worker_id) {
+    ShenandoahIsAliveClosure is_alive;
+    ShenandoahCMKeepAliveAndDrainClosure keep_alive(worker_id);
+    ShenandoahCMDrainMarkingStackClosure complete_gc(worker_id);
+    _proc_task.work(worker_id, is_alive, keep_alive, complete_gc);
+  }
+};
+
+class ShenandoahRefEnqueueTaskProxy : public AbstractGangTask {
+
+private:
+  AbstractRefProcTaskExecutor::EnqueueTask& _enqueue_task;
+
+public:
+
+  ShenandoahRefEnqueueTaskProxy(AbstractRefProcTaskExecutor::EnqueueTask& enqueue_task) :
+    AbstractGangTask("Enqueue reference objects in parallel"),
+    _enqueue_task(enqueue_task) {
+  }
+
+  void work(uint worker_id) {
+    _enqueue_task.work(worker_id);
+  }
+};
+
+class ShenandoahRefProcTaskExecutor : public AbstractRefProcTaskExecutor {
+
+private:
+  WorkGang* _workers;
+
+public:
+
+  ShenandoahRefProcTaskExecutor() : _workers(ShenandoahHeap::heap()->workers()) {
+  }
+
+  // Executes a task using worker threads.
+  void execute(ProcessTask& task) {
+    ShenandoahRefProcTaskProxy proc_task_proxy(task);
+    _workers->run_task(&proc_task_proxy);
+  }
+
+  void execute(EnqueueTask& task) {
+    ShenandoahRefEnqueueTaskProxy enqueue_task_proxy(task);
+    _workers->run_task(&enqueue_task_proxy);
   }
 };
 
@@ -684,11 +731,13 @@ public:
 void ShenandoahConcurrentMark::weak_refs_work(bool clear_all_soft_refs, int worker_id) {
    ShenandoahHeap* sh = (ShenandoahHeap*) Universe::heap();
    ReferenceProcessor* rp = sh->ref_processor_cm();
+   rp->setup_policy(false); // Don't clear all soft refs.
+
    ShenandoahIsAliveClosure is_alive;
    ShenandoahCMKeepAliveAndDrainClosure keep_alive(worker_id);
-   ShenandoahCMDrainMarkingStackClosure complete_gc;
+   ShenandoahCMDrainMarkingStackClosure complete_gc(worker_id);
    ShenandoahRefProcTaskExecutor par_task_executor;
-   bool processing_is_mt = false;
+   bool processing_is_mt = true;
    AbstractRefProcTaskExecutor* executor = (processing_is_mt ? &par_task_executor : NULL);
 
 
