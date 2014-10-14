@@ -379,10 +379,21 @@ public:
 };
 
 HeapWord* ShenandoahHeap::allocate_memory(size_t word_size, bool evacuation) {
-  MutexLockerEx ml(ShenandoahHeap_lock, true);
+  HeapWord* result = NULL;
   {
-    return allocate_memory_work(word_size, evacuation);
+    MutexLockerEx ml(ShenandoahHeap_lock, true);
+    result = allocate_memory_work(word_size, evacuation);
   }
+
+  if (result == NULL && ! evacuation) { // Allocation failed, try full-GC, then retry allocation.
+    collect(GCCause::_allocation_failure);
+    {
+      MutexLockerEx ml(ShenandoahHeap_lock, true);
+      result = allocate_memory_work(word_size, evacuation);
+    }
+  }
+
+  return result;
 }
 
 ShenandoahHeapRegion* ShenandoahHeap::check_skip_humonguous(ShenandoahHeapRegion* region, bool evacuation) {
@@ -1419,6 +1430,14 @@ void ShenandoahHeap::collect(GCCause::Cause cause) {
       }
       _concurrent_gc_thread->do_full_gc();
     }
+  } else if (cause == GCCause::_allocation_failure) {
+
+    if (ShenandoahTraceFullGC) {
+      gclog_or_tty->print_cr("Shenandoah-full-gc: full GC for allocation failure");
+    }
+    collector_policy()->set_should_clear_all_soft_refs(true);
+      _concurrent_gc_thread->do_full_gc();
+
   } else if (cause == GCCause::_gc_locker) {
 
     if (ShenandoahTraceJNICritical) {
@@ -2040,7 +2059,7 @@ void ShenandoahHeap::copy_object(oop p, HeapWord* s) {
   HeapWord* filler = s;
   assert(s != NULL, "allocation of brooks pointer must not fail");
   HeapWord* copy = s + BrooksPointer::BROOKS_POINTER_OBJ_SIZE;
-  assert(copy != NULL, "allocation of copy object must not fail");
+  guarantee(copy != NULL, "allocation of copy object must not fail");
   Copy::aligned_disjoint_words((HeapWord*) p, copy, p->size());
   initialize_brooks_ptr(filler, copy);
 

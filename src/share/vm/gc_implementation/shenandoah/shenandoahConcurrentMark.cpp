@@ -733,8 +733,10 @@ void ShenandoahConcurrentMark::weak_refs_work() {
    ReferenceProcessor* rp = sh->ref_processor_cm();
 
    // Setup collector policy for softref cleaning.
-   bool clear_soft_refs = sh->collector_policy()->should_clear_all_soft_refs();
-   tty->print_cr("clearing soft refs: %s", BOOL_TO_STR(clear_soft_refs));
+   bool clear_soft_refs = sh->collector_policy()->use_should_clear_all_soft_refs(true /* bogus arg*/);
+   if (ShenandoahTraceWeakReferences) {
+     tty->print_cr("clearing soft refs: %s", BOOL_TO_STR(clear_soft_refs));
+   }
    rp->setup_policy(clear_soft_refs);
 
    uint serial_worker_id = 0;
@@ -769,10 +771,6 @@ void ShenandoahConcurrentMark::weak_refs_work() {
 
    rp->verify_no_references_recorded();
    assert(!rp->discovery_enabled(), "Post condition");
-
-   if (clear_soft_refs) {
-     sh->collector_policy()->cleared_all_soft_refs();
-   }
 
   // Now clean up stale oops in StringTable
    StringTable::unlink(&is_alive);
