@@ -168,7 +168,7 @@ public:
 
 void ShenandoahHeapRegion::object_iterate(ObjectClosure* blk) {
   HeapWord* p = bottom() + BrooksPointer::BROOKS_POINTER_OBJ_SIZE;
-  while (p < top()) {
+  while (p < top() && ! blk->abort()) {
     blk->do_object(oop(p));
 #ifdef ASSERT
     if (ShenandoahVerifyReadsToFromSpace) {

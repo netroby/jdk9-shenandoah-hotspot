@@ -79,7 +79,7 @@ void ShenandoahConcurrentThread::run() {
 	VMThread::execute(&initMark);
 
         if (ShenandoahConcurrentMarking) {
-          ShenandoahHeap::heap()->concurrentMark()->mark_from_roots();
+          ShenandoahHeap::heap()->concurrentMark()->mark_from_roots(! ShenandoahUpdateRefsEarly);
 
           VM_ShenandoahFinishMark finishMark;
           VMThread::execute(&finishMark);
@@ -100,7 +100,7 @@ void ShenandoahConcurrentThread::run() {
           evacuation.doit();
 	}
 
-        if (ShenandoahUpdateRefsEarly) {
+        if (ShenandoahUpdateRefsEarly && ! heap->cancelled_evacuation()) {
           if (ShenandoahConcurrentUpdateRefs) {
             VM_ShenandoahUpdateRefs update_refs;
             VMThread::execute(&update_refs);
@@ -127,6 +127,10 @@ void ShenandoahConcurrentThread::do_full_gc() {
     ml.wait();
   }
   assert(_do_full_gc == false, "expect full GC to have completed");
+}
+
+void ShenandoahConcurrentThread::schedule_full_gc() {
+  _do_full_gc = true;
 }
 
 void ShenandoahConcurrentThread::print() const {

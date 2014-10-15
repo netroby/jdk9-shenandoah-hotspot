@@ -93,6 +93,8 @@ private:
   bool* _in_cset_fast_test_base;
   uint _in_cset_fast_test_length;
 
+  bool _cancelled_evacuation;
+
 public:
   size_t _bytesAllocSinceCM;
   size_t _bytes_allocated_since_last_cm;
@@ -346,6 +348,10 @@ private:
   HeapWord* allocate_from_gclab(Thread* thread, size_t size);
   HeapWord* allocate_from_gclab_slow(Thread* thread, size_t size);
 
+  void oom_during_evacuation();
+  void cancel_evacuation();
+public:
+  bool cancelled_evacuation();
 
 private:
   bool concurrent_mark_in_progress();

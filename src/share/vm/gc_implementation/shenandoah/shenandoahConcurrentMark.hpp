@@ -29,12 +29,12 @@ public:
   // We need to do this later when the heap is already created.
   void initialize();
 
-  void mark_from_roots();
+  void mark_from_roots(bool update_refs);
 
   // Prepares unmarked root objects by marking them and putting
   // them into the marking task queue.
   void prepare_unmarked_root_objs();
-  void prepare_unmarked_root_objs_no_derived_ptrs();
+  void prepare_unmarked_root_objs_no_derived_ptrs(bool update_refs);
 
   void finish_mark_from_roots(bool full_gc = false);
 

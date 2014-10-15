@@ -179,7 +179,8 @@ ShenandoahHeap::ShenandoahHeap(ShenandoahCollectorPolicy* policy) :
   _in_cset_fast_test(NULL),
   _in_cset_fast_test_base(NULL),
   _mark_bit_map0(log2_intptr(MinObjAlignment)),
-  _mark_bit_map1(log2_intptr(MinObjAlignment)) {
+  _mark_bit_map1(log2_intptr(MinObjAlignment)),
+  _cancelled_evacuation(false) {
   _pgc = this;
   _scm = new ShenandoahConcurrentMark();
   _used = 0;
@@ -323,6 +324,10 @@ HeapWord* ShenandoahHeap::allocate_new_tlab(size_t word_size) {
 
 HeapWord* ShenandoahHeap::allocate_new_gclab(size_t word_size) {
   HeapWord* result = allocate_memory(word_size, true);
+  if (result == NULL) {
+    oom_during_evacuation();
+    return NULL;
+  }
   assert(! heap_region_containing(result)->is_in_collection_set(), "Never allocate in dirty region");
   if (result != NULL) {
     if (ShenandoahTraceTLabs) {
@@ -680,6 +685,10 @@ private:
     }
 #endif
 
+    if (_heap->cancelled_evacuation()) {
+      set_abort();
+    }
+
     if (_heap->isMarkedCurrent(p)) {
       _heap->evacuate_object(p, _thread);
     }
@@ -734,7 +743,7 @@ void ShenandoahHeap::parallel_evacuate_region(ShenandoahHeapRegion* from_region)
 
   from_region->object_iterate(&evacuate_region);
 #ifdef ASSERT
-  if (ShenandoahVerify) {
+  if (ShenandoahVerify && ! cancelled_evacuation()) {
     verify_evacuated_region(from_region);
   }
   if (ShenandoahGCVerbose) {
@@ -774,7 +783,9 @@ public:
       if (from_hr->getLiveData() != 0) {
 	_sh->parallel_evacuate_region(from_hr);
       }
-
+      if (_sh->cancelled_evacuation()) {
+        break;
+      }
       from_hr = _cs->claim_next();
     }
 
@@ -975,6 +986,8 @@ void ShenandoahHeap::verify_heap_after_marking() {
 }
 
 void ShenandoahHeap::prepare_for_concurrent_evacuation() {
+
+  _cancelled_evacuation = false;
 
   if (! ShenandoahUpdateRefsEarly) {
     recycle_dirty_regions();
@@ -1243,7 +1256,7 @@ void ShenandoahHeap::do_evacuation() {
 
   set_evacuation_in_progress(false);
 
-  if (ShenandoahVerify) {
+  if (ShenandoahVerify && ! cancelled_evacuation()) {
     VM_ShenandoahVerifyHeapAfterEvacuation verify_after_evacuation;
     if (Thread::current()->is_VM_thread()) {
       verify_after_evacuation.doit();
@@ -2055,10 +2068,19 @@ void ShenandoahHeap::verify_copy(oop p,oop c){
     assert(c == oopDesc::bs()->resolve_oop(c), "verify only forwarded once");
   }
 
+void ShenandoahHeap::oom_during_evacuation() {
+  // tty->print_cr("Out of memory during evacuation, cancel evacuation, schedule full GC");
+  // We ran out of memory during evacuation. Cancel evacuation, and schedule a full-GC.
+  collector_policy()->set_should_clear_all_soft_refs(true);
+  concurrent_thread()->schedule_full_gc();
+  cancel_evacuation();
+}
+
 void ShenandoahHeap::copy_object(oop p, HeapWord* s) {
   HeapWord* filler = s;
   assert(s != NULL, "allocation of brooks pointer must not fail");
   HeapWord* copy = s + BrooksPointer::BROOKS_POINTER_OBJ_SIZE;
+
   guarantee(copy != NULL, "allocation of copy object must not fail");
   Copy::aligned_disjoint_words((HeapWord*) p, copy, p->size());
   initialize_brooks_ptr(filler, copy);
@@ -2099,10 +2121,10 @@ HeapWord* ShenandoahHeap::allocate_from_gclab_slow(Thread* thread, size_t size) 
 
   // Allocate a new TLAB...
   HeapWord* obj = allocate_new_gclab(new_gclab_size);
-  fill_with_object(obj, size);
   if (obj == NULL) {
     return NULL;
   }
+  fill_with_object(obj, size);
 
   if (ZeroTLAB) {
     // ..and clear it.
@@ -2147,6 +2169,11 @@ oop ShenandoahHeap::evacuate_object(oop p, Thread* thread) {
   if (filler == NULL) {
     filler = allocate_memory(required, true);
     alloc_from_gclab = false;
+  }
+
+  if (filler == NULL) {
+    oom_during_evacuation();
+    return p;
   }
 
   HeapWord* copy = filler + BrooksPointer::BROOKS_POINTER_OBJ_SIZE;
@@ -2256,9 +2283,7 @@ void ShenandoahHeap::compile_prepare_oop(MacroAssembler* masm, Register obj) {
 
 bool  ShenandoahIsAliveClosure:: do_object_b(oop obj) { 
 
-  if (! ShenandoahUpdateRefsEarly) {
-    obj = ShenandoahBarrierSet::resolve_oop_static(obj);
-  }
+  obj = ShenandoahBarrierSet::resolve_oop_static(obj);
   assert(obj == ShenandoahBarrierSet::resolve_oop_static(obj), "needs to be in to-space");
 
     HeapWord* addr = (HeapWord*) obj;
@@ -2341,4 +2366,13 @@ ShenandoahHeapRegion** ShenandoahHeap::heap_regions() {
 
 size_t ShenandoahHeap::num_regions() {
   return _num_regions;
+}
+
+void ShenandoahHeap::cancel_evacuation() {
+  _cancelled_evacuation = true;
+}
+
+bool ShenandoahHeap::cancelled_evacuation() {
+  bool cancelled = _cancelled_evacuation;
+  return cancelled;
 }

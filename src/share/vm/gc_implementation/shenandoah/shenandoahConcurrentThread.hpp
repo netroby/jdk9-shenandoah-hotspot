@@ -57,6 +57,8 @@ class ShenandoahConcurrentThread: public ConcurrentGCThread {
 
   void do_full_gc();
 
+  void schedule_full_gc();
+
   void set_waiting_for_jni_before_gc(bool wait) {
     _waiting_for_jni_critical = wait;
   }

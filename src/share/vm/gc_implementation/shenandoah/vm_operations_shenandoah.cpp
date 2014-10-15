@@ -23,7 +23,7 @@ void VM_ShenandoahInitMark::doit() {
   sh->shenandoahPolicy()->record_init_mark_end();
 
   if (! ShenandoahConcurrentMarking) {
-    sh->concurrentMark()->mark_from_roots();
+    sh->concurrentMark()->mark_from_roots(! ShenandoahUpdateRefsEarly);
     VM_ShenandoahFinishMark finishMark;
     finishMark.doit();
   }

@@ -60,10 +60,18 @@ void ShenandoahMarkCompact::phase1_mark_heap() {
     _heap->ensure_parsability(true);
   }
 
+  // We need to clear the is_in_collection_set flag in all regions.
+  ShenandoahHeapRegion** regions = _heap->heap_regions();
+  size_t num_regions = _heap->num_regions();
+  for (size_t i = 0; i < num_regions; i++) {
+    regions[i]->set_is_in_collection_set(false);
+  }
+  _heap->clear_cset_fast_test();
+
   // TODO: Move prepare_unmarked_root_objs() into SCM!
   // TODO: Make this whole sequence a separate method in SCM!
-  _heap->concurrentMark()->prepare_unmarked_root_objs_no_derived_ptrs();
-  _heap->concurrentMark()->mark_from_roots();
+  _heap->concurrentMark()->prepare_unmarked_root_objs_no_derived_ptrs(true /* update references */);
+  _heap->concurrentMark()->mark_from_roots(true /* update references */);
   _heap->concurrentMark()->finish_mark_from_roots(true);
 
 }
@@ -128,7 +136,9 @@ private:
     // Required space is object size plus brooks pointer.
     size_t obj_size = p->size() + BrooksPointer::BROOKS_POINTER_OBJ_SIZE;
     assert((*_current_region)->end() >= _next_free_address, "expect next address to be within region");
-    if (_next_free_address + obj_size >= (*_current_region)->end()) {
+    HeapWord* old_next_free = _next_free_address;
+    HeapWord* old_end = (*_current_region)->end();
+    if (_next_free_address + obj_size > (*_current_region)->end()) {
       // tty->print_cr("skipping to next region. obj_size=%d, current-region-end: %p, _next_free_addr: %p, free: %d", obj_size, (*_current_region)->end(), _next_free_address, ((*_current_region)->end() - _next_free_address));
       // Skip to next region.
       _current_region = _next_region;
@@ -142,6 +152,7 @@ private:
     // tty->print_cr("forward object at: %p to new location: %p, current-region-end: %p", (HeapWord*) p, (HeapWord*)(_next_free_address + 1), (*_current_region)->end());
     // We keep the pointer to the new location in the object's brooks ptr field, not the pointer
     // to the (new) brooks pointer location.
+    assert(_next_free_address + 1 <= ((HeapWord*) p), "new object address must be <= original address");
     BrooksPointer::get(p).set_forwardee(oop(_next_free_address + 1));
     _next_free_address += obj_size;
     assert(_next_free_address <= (*_current_region)->end(), "next free address must be within current region");
@@ -195,13 +206,11 @@ void ShenandoahMarkCompact::phase3_update_references() {
 class ShenandoahCompactObjectsClosure : public ObjectClosureCareful {
 private:
   ShenandoahHeap* _heap;
-  HeapWord* _last_end_addr;
-  HeapWord* _last_humonguous_end_addr;
-
+  HeapWord* _last_addr;
 public:
-  ShenandoahCompactObjectsClosure() : _heap(ShenandoahHeap::heap()) {
-    _last_end_addr = _heap->heap_regions()[0]->bottom();
-    _last_humonguous_end_addr = _heap->heap_regions()[0]->bottom();
+  ShenandoahCompactObjectsClosure() :
+    _heap(ShenandoahHeap::heap()),
+    _last_addr(_heap->heap_regions()[0]->bottom()) {
   }
 
   void do_object(oop p) {
@@ -228,18 +237,20 @@ public:
         BrooksPointer::get(new_obj).set_forwardee(new_obj);
       }
 
-      if (_heap->heap_region_containing(p)->is_humonguous_start()) {
+      if (obj_size + BrooksPointer::BROOKS_POINTER_OBJ_SIZE > ShenandoahHeapRegion::RegionSizeBytes / HeapWordSize) {
         finish_humonguous_regions(oop(old_addr), new_obj);
       } else {
         assert(! _heap->heap_region_containing(p)->is_humonguous(), "expect non-humonguous object");
-        maybe_finish_region((HeapWord*) new_obj);
+        _heap->heap_region_containing(new_addr)->set_top(new_addr + obj_size);
+        _last_addr = MAX2(new_addr + obj_size, _last_addr);
+        //maybe_finish_region((HeapWord*) new_obj);
       }
     }
     return obj_size;
   }
 
   void finish_humonguous_regions(oop old_obj, oop new_obj) {
-    // tty->print_cr("finish humonguous object: %p -> %p", old_obj, new_obj);
+    // tty->print_cr("finish humonguous object: %p -> %p", (HeapWord*) old_obj, (HeapWord*) new_obj);
     size_t obj_size = new_obj->size();
     size_t required_regions = (obj_size * HeapWordSize) / ShenandoahHeapRegion::RegionSizeBytes + 1;
 
@@ -274,44 +285,28 @@ public:
       region->setLiveData(0);
     }
 
-    _last_humonguous_end_addr = ((HeapWord*) new_obj) + new_obj->size();
-  }
-
-  void maybe_finish_region(HeapWord* new_addr) {
-    ShenandoahHeapRegion* last_region = _heap->heap_region_containing(_last_end_addr);
-    if (last_region != _heap->heap_region_containing(new_addr)) {
-      last_region->set_top(_last_end_addr);
-      last_region->setLiveData(0);
-    }
-    _last_end_addr = new_addr + oop(new_addr)->size();
+    _last_addr = MAX2(((HeapWord*) new_obj) + obj_size, _last_addr);
   }
 
   HeapWord* last_addr() {
-    return _last_end_addr;
+    return _last_addr;
   }
-
-  HeapWord* last_humonguous_addr() {
-    return _last_humonguous_end_addr;
-  }
-
 };
 
-void ShenandoahMarkCompact::finish_compaction(HeapWord* last_addr, HeapWord* last_humonguous_addr) {
-
-  // First finish last region that we compacted into.
-  ShenandoahHeapRegion* last_region = _heap->heap_region_containing(last_addr);
-  last_region->set_top(last_addr);
-  last_region->setLiveData(0);
+void ShenandoahMarkCompact::finish_compaction(HeapWord* last_addr) {
 
   // Recycle all unused regions.
-  HeapWord* total_last_addr = MAX2(last_addr, last_humonguous_addr);
   ShenandoahHeapRegion** regions = _heap->heap_regions();
   size_t num_regions = _heap->num_regions();
+  ShenandoahHeapRegionSet* free_regions = _heap->free_regions();
+  free_regions->clear();
   for (uint i = 0; i < num_regions; i++) {
     ShenandoahHeapRegion* region = regions[i];
-    if (region->bottom() > total_last_addr) {
+    if (region->bottom() > last_addr) {
       region->reset();
+      free_regions->append(region);
     }
+    region->clearLiveData();
   }
 }
 
@@ -330,5 +325,5 @@ void ShenandoahMarkCompact::phase4_compact_objects() {
   ShenandoahCompactObjectsClosure cl;
   _heap->object_iterate_careful(&cl);
 
-  finish_compaction(cl.last_addr(), cl.last_humonguous_addr());
+  finish_compaction(cl.last_addr());
 }

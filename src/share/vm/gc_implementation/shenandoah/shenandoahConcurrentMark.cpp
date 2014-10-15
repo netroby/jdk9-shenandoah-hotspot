@@ -212,9 +212,11 @@ private:
 };
 
 class ShenandoahMarkRootsTask : public AbstractGangTask {
+private:
+  bool _update_refs;
 public:
-  ShenandoahMarkRootsTask() :
-    AbstractGangTask("Shenandoah update roots task") {
+  ShenandoahMarkRootsTask(bool update_refs) :
+    AbstractGangTask("Shenandoah update roots task"), _update_refs(update_refs) {
   }
 
   void work(uint worker_id) {
@@ -222,7 +224,7 @@ public:
     ExtendedOopClosure* cl;
     ShenandoahMarkRefsClosure rootsCl1(worker_id);
     ShenandoahMarkRefsNoUpdateClosure rootsCl2(worker_id);
-    if (! ShenandoahUpdateRefsEarly) {
+    if (_update_refs) {
       cl = &rootsCl1;
     } else {
       cl = &rootsCl2;
@@ -246,10 +248,11 @@ private:
   ShenandoahConcurrentMark* _cm;
   ParallelTaskTerminator* _terminator;
   int _seed;
+  bool _update_refs;
 
 public:
-  SCMConcurrentMarkingTask(ShenandoahConcurrentMark* cm, ParallelTaskTerminator* terminator) :
-    AbstractGangTask("Root Region Scan"), _cm(cm), _terminator(terminator), _seed(17) {
+  SCMConcurrentMarkingTask(ShenandoahConcurrentMark* cm, ParallelTaskTerminator* terminator, bool update_refs) :
+    AbstractGangTask("Root Region Scan"), _cm(cm), _terminator(terminator), _update_refs(update_refs), _seed(17) {
   }
 
       
@@ -259,7 +262,7 @@ public:
     ShenandoahMarkRefsNoUpdateClosure cl2(worker_id);
     ExtendedOopClosure* cl;
 
-    if (! ShenandoahUpdateRefsEarly) {
+    if (_update_refs) {
       cl = &cl1;
     } else {
       cl = &cl2;
@@ -282,7 +285,7 @@ void ShenandoahConcurrentMark::prepare_unmarked_root_objs() {
     COMPILER2_PRESENT(DerivedPointerTable::clear());
   }
 
-  prepare_unmarked_root_objs_no_derived_ptrs();
+  prepare_unmarked_root_objs_no_derived_ptrs(! ShenandoahUpdateRefsEarly);
 
   if (! ShenandoahUpdateRefsEarly) {
     COMPILER2_PRESENT(DerivedPointerTable::update_pointers());
@@ -290,7 +293,7 @@ void ShenandoahConcurrentMark::prepare_unmarked_root_objs() {
 
 }
 
-void ShenandoahConcurrentMark::prepare_unmarked_root_objs_no_derived_ptrs() {
+void ShenandoahConcurrentMark::prepare_unmarked_root_objs_no_derived_ptrs(bool update_refs) {
   assert(Thread::current()->is_VM_thread(), "can only do this in VMThread");
 
   ShenandoahHeap* heap = ShenandoahHeap::heap();
@@ -298,14 +301,14 @@ void ShenandoahConcurrentMark::prepare_unmarked_root_objs_no_derived_ptrs() {
     heap->set_n_termination(heap->workers()->active_workers()); // Prepare for parallel processing.
     ClassLoaderDataGraph::clear_claimed_marks();
     SharedHeap::StrongRootsScope strong_roots_scope(heap, true);
-    ShenandoahMarkRootsTask mark_roots;
+    ShenandoahMarkRootsTask mark_roots(update_refs);
     heap->workers()->run_task(&mark_roots);
     heap->set_n_termination(0); // Prepare for serial processing in future calls to process_strong_roots.
   } else {
     ExtendedOopClosure* cl;
     ShenandoahMarkRefsClosure rootsCl1(0);
     ShenandoahMarkRefsNoUpdateClosure rootsCl2(0);
-    if (! ShenandoahUpdateRefsEarly) {
+    if (update_refs) {
       cl = &rootsCl1;
     } else {
       cl = &rootsCl2;
@@ -373,7 +376,7 @@ void ShenandoahConcurrentMark::initialize() {
   JavaThread::satb_mark_queue_set().set_buffer_size(1014 /* G1SATBBufferSize */);
 }
 
-void ShenandoahConcurrentMark::mark_from_roots() {
+void ShenandoahConcurrentMark::mark_from_roots(bool update_refs) {
   if (ShenandoahGCVerbose) {
     tty->print_cr("STOPPING THE WORLD: before marking");
     tty->print_cr("Starting markFromRoots");
@@ -387,7 +390,7 @@ void ShenandoahConcurrentMark::mark_from_roots() {
   rp->setup_policy(false); // snapshot the soft ref policy to be used in this cycle
 
   
-  SCMConcurrentMarkingTask markingTask = SCMConcurrentMarkingTask(this, &terminator);
+  SCMConcurrentMarkingTask markingTask = SCMConcurrentMarkingTask(this, &terminator, update_refs);
   sh->conc_workers()->run_task(&markingTask);
   
   if (ShenandoahGCVerbose) {
@@ -422,9 +425,7 @@ void ShenandoahConcurrentMark::finish_mark_from_roots(bool full_gc) {
   ShenandoahHeap* sh = (ShenandoahHeap *) Universe::heap();
 
   // Trace any (new) unmarked root references.
-  if (full_gc) {
-    prepare_unmarked_root_objs_no_derived_ptrs();
-  } else {
+  if (! full_gc) {
     prepare_unmarked_root_objs();
   }
 
@@ -455,7 +456,7 @@ void ShenandoahConcurrentMark::finish_mark_from_roots(bool full_gc) {
   weak_refs_work();
   
   // Finally mark everything else we've got in our queues during the previous steps.
-  SCMConcurrentMarkingTask markingTask = SCMConcurrentMarkingTask(this, &terminator);
+  SCMConcurrentMarkingTask markingTask = SCMConcurrentMarkingTask(this, &terminator, !ShenandoahUpdateRefsEarly);
   sh->conc_workers()->run_task(&markingTask);
 
   assert(_task_queues->queue(0)->is_empty(), "Should be empty");
