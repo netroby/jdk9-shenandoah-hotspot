@@ -2376,3 +2376,7 @@ bool ShenandoahHeap::cancelled_evacuation() {
   bool cancelled = _cancelled_evacuation;
   return cancelled;
 }
+
+int ShenandoahHeap::max_workers() {
+  return _max_workers;
+}

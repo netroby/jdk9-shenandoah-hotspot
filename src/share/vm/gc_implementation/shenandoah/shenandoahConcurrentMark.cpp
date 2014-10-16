@@ -453,13 +453,24 @@ void ShenandoahConcurrentMark::finish_mark_from_roots(bool full_gc) {
     obj = _overflow_queue->pop();
   }
 
-  weak_refs_work();
-  
   // Finally mark everything else we've got in our queues during the previous steps.
   SCMConcurrentMarkingTask markingTask = SCMConcurrentMarkingTask(this, &terminator, !ShenandoahUpdateRefsEarly);
-  sh->conc_workers()->run_task(&markingTask);
+  sh->workers()->run_task(&markingTask);
 
-  assert(_task_queues->queue(0)->is_empty(), "Should be empty");
+#ifdef ASSERT
+  for (int i = 0; i < sh->max_workers(); i++) {
+    assert(_task_queues->queue(i)->is_empty(), "Should be empty");
+  }
+#endif
+
+  // When we're done marking everything, we process weak references.
+  weak_refs_work();
+
+#ifdef ASSERT
+  for (int i = 0; i < sh->max_workers(); i++) {
+    assert(_task_queues->queue(i)->is_empty(), "Should be empty");
+  }
+#endif
 
   if (ShenandoahGCVerbose) {
     tty->print_cr("Finishing finishMarkFromRoots");

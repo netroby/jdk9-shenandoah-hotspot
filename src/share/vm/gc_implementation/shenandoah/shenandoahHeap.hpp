@@ -300,6 +300,8 @@ public:
 
   FlexibleWorkGang* conc_workers() const {return _conc_workers;}
 
+  int max_workers();
+
   ShenandoahHeapRegion** heap_regions();
   size_t num_regions();
 
