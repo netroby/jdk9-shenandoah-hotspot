@@ -522,10 +522,14 @@ void ShenandoahWriteBarrierStub::emit_code(LIR_Assembler* ce) {
   __ bind(_entry);
 
   // Do the runtime call.
-  __ xchgq(rax, obj()->as_register());
+  bool need_swap_regs = rax != obj()->as_register();
+  if (need_swap_regs) {
+    __ xchgq(rax, obj()->as_register());
+  }
   __ call(RuntimeAddress(Runtime1::entry_for(Runtime1::shenandoah_write_barrier_slow_id)));
-  __ xchgq(rax, obj()->as_register());
-  __ os_breakpoint();
+  if (need_swap_regs) {
+    __ xchgq(rax, obj()->as_register());
+  }
 
   __ jmp(_continuation);
 }
