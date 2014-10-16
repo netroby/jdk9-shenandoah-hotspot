@@ -99,7 +99,7 @@ void ShenandoahHeapRegion::memProtectionOff() {
 #endif
 
 void ShenandoahHeapRegion::set_is_in_collection_set(bool b) {
-  assert(! is_humonguous(), "never ever enter a humonguous region into the collection set");
+  assert(! (is_humonguous() && b), "never ever enter a humonguous region into the collection set");
 
   _is_in_collection_set = b;
 

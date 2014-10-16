@@ -242,9 +242,8 @@ public:
       } else {
         assert(! _heap->heap_region_containing(p)->is_humonguous(), "expect non-humonguous object");
         _heap->heap_region_containing(new_addr)->set_top(new_addr + obj_size);
-        _last_addr = MAX2(new_addr + obj_size, _last_addr);
-        //maybe_finish_region((HeapWord*) new_obj);
       }
+      _last_addr = MAX2(new_addr + obj_size, _last_addr);
     }
     return obj_size;
   }
@@ -254,21 +253,6 @@ public:
     size_t obj_size = new_obj->size();
     size_t required_regions = (obj_size * HeapWordSize) / ShenandoahHeapRegion::RegionSizeBytes + 1;
 
-    // First clear humonguous flags from old regions.
-    for (uint i = 0; i < required_regions; i++) {
-      HeapWord* ptr = ((HeapWord*) old_obj) + i * (ShenandoahHeapRegion::RegionSizeBytes / HeapWordSize);
-      ShenandoahHeapRegion* region = _heap->heap_region_containing(ptr);
-      if (i == 0) {
-        assert(region->is_humonguous_start(), "humonguous-start expected");
-        assert(! region->is_humonguous_continuation(), "no humonguous-continuation expected");
-        region->set_humonguous_start(false);
-      } else {
-        assert(! region->is_humonguous_start(), "no humonguous-start expected");
-        assert(region->is_humonguous_continuation(), "humonguous-continuation expected");
-        region->set_humonguous_continuation(false);
-      }
-    }
-
     size_t remaining_size = obj_size + BrooksPointer::BROOKS_POINTER_OBJ_SIZE;
     for (uint i = 0; i < required_regions; i++) {
       HeapWord* ptr = ((HeapWord*) new_obj) + i * (ShenandoahHeapRegion::RegionSizeBytes / HeapWordSize);
@@ -276,16 +260,8 @@ public:
       size_t region_size = MIN2(remaining_size, ShenandoahHeapRegion::RegionSizeBytes / HeapWordSize);
       region->set_top(region->bottom() + region_size);
       remaining_size -= region_size;
-
-      if (i == 0) {
-        region->set_humonguous_start(true);
-      } else {
-        region->set_humonguous_continuation(true);
-      }
-      region->setLiveData(0);
     }
-
-    _last_addr = MAX2(((HeapWord*) new_obj) + obj_size, _last_addr);
+    //tty->print_cr("end addr of humonguous object: %p", (((HeapWord*) new_obj) + obj_size), _last_addr);
   }
 
   HeapWord* last_addr() {
@@ -300,13 +276,31 @@ void ShenandoahMarkCompact::finish_compaction(HeapWord* last_addr) {
   size_t num_regions = _heap->num_regions();
   ShenandoahHeapRegionSet* free_regions = _heap->free_regions();
   free_regions->clear();
+  uint remaining_humonguous_continuations = 0;
   for (uint i = 0; i < num_regions; i++) {
     ShenandoahHeapRegion* region = regions[i];
+    region->clearLiveData();
+    if (remaining_humonguous_continuations > 0) {
+      region->set_humonguous_continuation(true);
+      remaining_humonguous_continuations--;
+      continue;
+    }
+    if (region->used() > 0) {
+      oop first_obj = oop(region->bottom() + BrooksPointer::BROOKS_POINTER_OBJ_SIZE);
+      if (first_obj->size() + BrooksPointer::BROOKS_POINTER_OBJ_SIZE > ShenandoahHeapRegion::RegionSizeBytes / HeapWordSize) {
+        // This is a humonguous object. Fix up the humonguous flags in this region and the following.
+        region->set_humonguous_start(true);
+        remaining_humonguous_continuations = (first_obj->size() * HeapWordSize) / ShenandoahHeapRegion::RegionSizeBytes;
+      } else {
+        region->set_humonguous_start(false);
+        region->set_humonguous_continuation(false);
+      }
+    }
     if (region->bottom() > last_addr) {
+      // tty->print_cr("recycling region after full-GC: %d", region->region_number());
       region->reset();
       free_regions->append(region);
     }
-    region->clearLiveData();
   }
 }
 
