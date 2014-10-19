@@ -282,6 +282,7 @@ void ShenandoahMarkCompact::finish_compaction(HeapWord* last_addr) {
     region->clearLiveData();
     if (remaining_humonguous_continuations > 0) {
       region->set_humonguous_continuation(true);
+      region->set_humonguous_start(false);
       remaining_humonguous_continuations--;
       continue;
     }
@@ -290,6 +291,7 @@ void ShenandoahMarkCompact::finish_compaction(HeapWord* last_addr) {
       if (first_obj->size() + BrooksPointer::BROOKS_POINTER_OBJ_SIZE > ShenandoahHeapRegion::RegionSizeBytes / HeapWordSize) {
         // This is a humonguous object. Fix up the humonguous flags in this region and the following.
         region->set_humonguous_start(true);
+        region->set_humonguous_continuation(false);
         remaining_humonguous_continuations = (first_obj->size() * HeapWordSize) / ShenandoahHeapRegion::RegionSizeBytes;
       } else {
         region->set_humonguous_start(false);
