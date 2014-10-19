@@ -1709,14 +1709,16 @@ void LIRGenerator::do_StoreField(StoreField* x) {
   }
 #endif
 
+  LIR_Opr obj = object.result();
+
   if (x->needs_null_check() &&
       (needs_patching ||
        MacroAssembler::needs_explicit_null_check(x->offset()))) {
     // emit an explicit null check because the offset is too large
-    __ null_check(object.result(), new CodeEmitInfo(info));
+    __ null_check(obj, new CodeEmitInfo(info));
   }
 
-  write_barrier(object.result(), info, x->needs_null_check());
+  obj = shenandoah_write_barrier(obj, info, x->needs_null_check());
   LIR_Opr val = value.result();
   if (is_oop) {
     if (! val->is_register()) {
@@ -1724,7 +1726,7 @@ void LIRGenerator::do_StoreField(StoreField* x) {
       __ move(val, tmp);
       val = tmp;
     }
-    read_barrier(val, NULL, true);
+    val = shenandoah_read_barrier(val, NULL, true);
   }
 
   LIR_Address* address;
@@ -1733,9 +1735,9 @@ void LIRGenerator::do_StoreField(StoreField* x) {
     // generate_address to try to be smart about emitting the -1.
     // Otherwise the patching code won't know how to find the
     // instruction to patch.
-    address = new LIR_Address(object.result(), PATCHED_ADDR, field_type);
+    address = new LIR_Address(obj, PATCHED_ADDR, field_type);
   } else {
-    address = generate_address(object.result(), x->offset(), field_type);
+    address = generate_address(obj, x->offset(), field_type);
   }
 
   if (is_volatile && os::is_MP()) {
@@ -1752,15 +1754,15 @@ void LIRGenerator::do_StoreField(StoreField* x) {
   }
 
   if (is_volatile && !needs_patching) {
-    volatile_field_store(value.result(), address, info);
+    volatile_field_store(val, address, info);
   } else {
     LIR_PatchCode patch_code = needs_patching ? lir_patch_normal : lir_patch_none;
-    __ store(value.result(), address, info, patch_code);
+    __ store(val, address, info, patch_code);
   }
 
   if (is_oop) {
     // Store to object so mark the card of the header
-    post_barrier(object.result(), value.result());
+    post_barrier(obj, val);
   }
 
   if (is_volatile && os::is_MP()) {
@@ -1797,13 +1799,12 @@ void LIRGenerator::do_LoadField(LoadField* x) {
                   x->is_static() ?  "static" : "field", x->printable_bci());
   }
 #endif
-
+  LIR_Opr obj = object.result();
   bool stress_deopt = StressLoopInvariantCodeMotion && info && info->deoptimize_on_exception();
   if (x->needs_null_check() &&
       (needs_patching ||
        MacroAssembler::needs_explicit_null_check(x->offset()) ||
        stress_deopt)) {
-    LIR_Opr obj = object.result();
     if (stress_deopt) {
       obj = new_register(T_OBJECT);
       __ move(LIR_OprFact::oopConst(NULL), obj);
@@ -1812,6 +1813,7 @@ void LIRGenerator::do_LoadField(LoadField* x) {
     __ null_check(obj, new CodeEmitInfo(info));
   }
 
+  obj = shenandoah_read_barrier(obj, info, x->needs_null_check() && x->explicit_null_check() != NULL);
   LIR_Opr reg = rlock_result(x, field_type);
   LIR_Address* address;
   if (needs_patching) {
@@ -1819,12 +1821,11 @@ void LIRGenerator::do_LoadField(LoadField* x) {
     // generate_address to try to be smart about emitting the -1.
     // Otherwise the patching code won't know how to find the
     // instruction to patch.
-    address = new LIR_Address(object.result(), PATCHED_ADDR, field_type);
+    address = new LIR_Address(obj, PATCHED_ADDR, field_type);
   } else {
-    address = generate_address(object.result(), x->offset(), field_type);
+    address = generate_address(obj, x->offset(), field_type);
   }
 
-  read_barrier(object.result(), info, x->needs_null_check() && x->explicit_null_check() != NULL);
   if (is_volatile && !needs_patching) {
     volatile_field_load(address, reg, info);
   } else {
@@ -1837,25 +1838,32 @@ void LIRGenerator::do_LoadField(LoadField* x) {
   }
 }
 
-void LIRGenerator::read_barrier(LIR_Opr obj, CodeEmitInfo* info, bool need_null_check) {
+LIR_Opr LIRGenerator::shenandoah_read_barrier(LIR_Opr obj, CodeEmitInfo* info, bool need_null_check) {
   if (UseShenandoahGC) {
 
     LabelObj* done = new LabelObj();
+    LIR_Opr result = new_register(T_OBJECT);
+    __ move(obj, result);
     if (need_null_check) {
       __ cmp(lir_cond_equal, obj, LIR_OprFact::oopConst(NULL));
       __ branch(lir_cond_equal, T_LONG, done->label());
     }
-    LIR_Address* brooks_ptr_address = generate_address(obj, -8, T_ADDRESS);
-    __ load(brooks_ptr_address, obj, info ? new CodeEmitInfo(info) : NULL, lir_patch_none);
+    LIR_Address* brooks_ptr_address = generate_address(result, -8, T_ADDRESS);
+    __ load(brooks_ptr_address, result, info ? new CodeEmitInfo(info) : NULL, lir_patch_none);
 
     __ branch_destination(done->label());
-
+    return result;
+  } else {
+    return obj;
   }
 }
 
-void LIRGenerator::write_barrier(LIR_Opr obj, CodeEmitInfo* info, bool need_null_check) {
+LIR_Opr LIRGenerator::shenandoah_write_barrier(LIR_Opr obj, CodeEmitInfo* info, bool need_null_check) {
   if (UseShenandoahGC) {
     LabelObj* done = new LabelObj();
+
+    LIR_Opr result = new_register(T_OBJECT);
+    __ move(obj, result);
 
     // Usual read barrier with optional explicit null check.
     if (need_null_check) {
@@ -1876,18 +1884,21 @@ void LIRGenerator::write_barrier(LIR_Opr obj, CodeEmitInfo* info, bool need_null
     // reference and write to it, which is forbidden.
     __ membar_loadload();
 
-    LIR_Address* brooks_ptr_address = generate_address(obj, -8, T_ADDRESS);
-    __ load(brooks_ptr_address, obj, info ? new CodeEmitInfo(info) : NULL, lir_patch_none);
+    LIR_Address* brooks_ptr_address = generate_address(result, -8, T_ADDRESS);
+    __ load(brooks_ptr_address, result, info ? new CodeEmitInfo(info) : NULL, lir_patch_none);
 
     __ cmp(lir_cond_notEqual, LIR_OprFact::address(new LIR_Address(evac_in_progress_addr, T_INT)),
            LIR_OprFact::intConst(0));
 
     // Do the slow-path runtime call.
-    CodeStub* slow = new ShenandoahWriteBarrierStub(obj);
+    CodeStub* slow = new ShenandoahWriteBarrierStub(result);
     __ branch(lir_cond_notEqual, T_INT, slow);
     __ branch_destination(slow->continuation());
     __ branch_destination(done->label());
 
+    return result;
+  } else {
+    return obj;
   }
 }
 
@@ -1986,8 +1997,11 @@ void LIRGenerator::do_LoadIndexed(LoadIndexed* x) {
     }
   }
 
+  LIR_Opr ary = array.result();
+  ary = shenandoah_read_barrier(ary, null_check_info, null_check_info != NULL);
+
   // emit array address setup early so it schedules better
-  LIR_Address* array_addr = emit_array_address(array.result(), index.result(), x->elt_type(), false);
+  LIR_Address* array_addr = emit_array_address(ary, index.result(), x->elt_type(), false);
 
   if (GenerateRangeChecks && needs_range_check) {
     if (StressLoopInvariantCodeMotion && range_check_info->deoptimize_on_exception()) {
@@ -1998,13 +2012,12 @@ void LIRGenerator::do_LoadIndexed(LoadIndexed* x) {
       __ cmp(lir_cond_belowEqual, length.result(), index.result());
       __ branch(lir_cond_belowEqual, T_INT, new RangeCheckStub(range_check_info, index.result()));
     } else {
-      array_range_check(array.result(), index.result(), null_check_info, range_check_info);
+      array_range_check(ary, index.result(), null_check_info, range_check_info);
       // The range check performs the null check, so clear it out for the load
       null_check_info = NULL;
     }
   }
 
-  read_barrier(array.result(), null_check_info, null_check_info != NULL);
   __ move(array_addr, rlock_result(x, x->elt_type()), null_check_info);
 }
 
@@ -2432,8 +2445,9 @@ void LIRGenerator::do_UnsafePrefetch(UnsafePrefetch* x, bool is_store) {
 
   set_no_result(x);
 
-  read_barrier(src.result(), NULL, false);
-  LIR_Address* addr = generate_address(src.result(), off.result(), 0, 0, T_BYTE);
+  LIR_Opr src_op = src.result();
+  src_op = shenandoah_read_barrier(src_op, NULL, false);
+  LIR_Address* addr = generate_address(src_op, off.result(), 0, 0, T_BYTE);
   __ prefetch(addr, is_store);
 }
 
@@ -3093,13 +3107,13 @@ void LIRGenerator::do_IfOp(IfOp* x) {
       __ move(left_opr, tmp);
       left_opr = tmp;
     }
-    write_barrier(left_opr, NULL, true);
+    left_opr = shenandoah_write_barrier(left_opr, NULL, true);
     if (! right_opr->is_register()) {
       LIR_Opr tmp = new_register(T_OBJECT);
       __ move(right_opr, tmp);
       right_opr = tmp;
     }
-    read_barrier(right_opr, NULL, true);
+    right_opr = shenandoah_read_barrier(right_opr, NULL, true);
   }
 
   __ cmp(lir_cond(x->cond()), left_opr, right_opr);
