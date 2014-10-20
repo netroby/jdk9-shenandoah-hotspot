@@ -248,14 +248,22 @@ void LIRItem::load_for_store(BasicType type) {
 void LIRItem::load_item_force(LIR_Opr reg) {
   LIR_Opr r = result();
   if (r != reg) {
+    _result = _gen->force_opr_to(r, reg);
+  }
+}
+
+LIR_Opr LIRGenerator::force_opr_to(LIR_Opr op, LIR_Opr reg) {
+  if (op != reg) {
 #if !defined(ARM) && !defined(E500V2)
-    if (r->type() != reg->type()) {
+    if (op->type() != reg->type()) {
       // moves between different types need an intervening spill slot
-      r = _gen->force_to_spill(r, reg->type());
+      op = force_to_spill(op, reg->type());
     }
 #endif
-    __ move(r, reg);
-    _result = reg;
+    __ move(op, reg);
+    return reg;
+  } else {
+    return op;
   }
 }
 

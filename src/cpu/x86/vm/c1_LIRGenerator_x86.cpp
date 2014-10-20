@@ -936,14 +936,38 @@ void LIRGenerator::do_ArrayCopy(Intrinsic* x) {
   LIRItem dst_pos(x->argument_at(3), this);
   LIRItem length(x->argument_at(4), this);
 
+  LIR_Opr dst_op = dst.result();
+  dst_op = shenandoah_write_barrier(dst_op, info, x->arg_needs_null_check(2) /* (flags & LIR_OpArrayCopy::dst_null_check) != 0 */);
+  LIR_Opr src_op = src.result();
+  src_op = shenandoah_read_barrier(src_op, info, x->arg_needs_null_check(0) /*(flags & LIR_OpArrayCopy::src_null_check) != 0 */);
+
+    /*
+  if (UseShenandoahGC) {
+    if (! dst_op->is_register()) {
+      LIR_Opr tmp = new_register(T_OBJECT);
+      __ move(dst_opr, tmp);
+      dst_opr = tmp;
+    }
+    */
+
+    /*
+    if (! src_opr->is_register()) {
+      LIR_Opr tmp = new_register(T_OBJECT);
+      __ move(src_opr, tmp);
+      src_opr = tmp;
+    }
+
+  }
+    */
+
   // operands for arraycopy must use fixed registers, otherwise
   // LinearScan will fail allocation (because arraycopy always needs a
   // call)
 
 #ifndef _LP64
-  src.load_item_force     (FrameMap::rcx_oop_opr);
+  src_op = force_opr_to(src_op, FrameMap::rcx_oop_opr);
   src_pos.load_item_force (FrameMap::rdx_opr);
-  dst.load_item_force     (FrameMap::rax_oop_opr);
+  dst_op = force_opr_to(dst_op, FrameMap::rax_oop_opr);
   dst_pos.load_item_force (FrameMap::rbx_opr);
   length.load_item_force  (FrameMap::rdi_opr);
   LIR_Opr tmp =           (FrameMap::rsi_opr);
@@ -957,20 +981,14 @@ void LIRGenerator::do_ArrayCopy(Intrinsic* x) {
   // of the C convention we can process the java args trivially into C
   // args without worry of overwriting during the xfer
 
-  src.load_item_force     (FrameMap::as_oop_opr(j_rarg0));
+  src_op = force_opr_to(src_op, FrameMap::as_oop_opr(j_rarg0));
   src_pos.load_item_force (FrameMap::as_opr(j_rarg1));
-  dst.load_item_force     (FrameMap::as_oop_opr(j_rarg2));
+  dst_op = force_opr_to(dst_op, FrameMap::as_oop_opr(j_rarg2));
   dst_pos.load_item_force (FrameMap::as_opr(j_rarg3));
   length.load_item_force  (FrameMap::as_opr(j_rarg4));
 
   LIR_Opr tmp =           FrameMap::as_opr(j_rarg5);
 #endif // LP64
-
-  LIR_Opr src_op = src.result();
-  src_op = shenandoah_read_barrier(src_op, info, x->arg_needs_null_check(0) /*(flags & LIR_OpArrayCopy::src_null_check) != 0 */);
-  LIR_Opr dst_op = dst.result();
-  dst_op = shenandoah_write_barrier(dst_op, info, x->arg_needs_null_check(2) /* (flags & LIR_OpArrayCopy::dst_null_check) != 0 */);
-
 
   set_no_result(x);
 
