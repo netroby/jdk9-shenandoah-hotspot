@@ -936,24 +936,6 @@ void LIRGenerator::do_ArrayCopy(Intrinsic* x) {
   LIRItem dst_pos(x->argument_at(3), this);
   LIRItem length(x->argument_at(4), this);
 
-  if (UseShenandoahGC) {
-    LIR_Opr dst_opr = dst.result();
-    if (! dst_opr->is_register()) {
-      LIR_Opr tmp = new_register(T_OBJECT);
-      __ move(dst_opr, tmp);
-      dst_opr = tmp;
-    }
-  dst_opr = shenandoah_write_barrier(dst_opr, info, x->arg_needs_null_check(2) /* (flags & LIR_OpArrayCopy::dst_null_check) != 0 */);
-
-    LIR_Opr src_opr = src.result();
-    if (! src_opr->is_register()) {
-      LIR_Opr tmp = new_register(T_OBJECT);
-      __ move(src_opr, tmp);
-      src_opr = tmp;
-    }
-    src_opr = shenandoah_read_barrier(src_opr, info, x->arg_needs_null_check(0) /*(flags & LIR_OpArrayCopy::src_null_check) != 0 */);
-  }
-
   // operands for arraycopy must use fixed registers, otherwise
   // LinearScan will fail allocation (because arraycopy always needs a
   // call)
@@ -984,13 +966,19 @@ void LIRGenerator::do_ArrayCopy(Intrinsic* x) {
   LIR_Opr tmp =           FrameMap::as_opr(j_rarg5);
 #endif // LP64
 
+  LIR_Opr src_op = src.result();
+  src_op = shenandoah_read_barrier(src_op, info, x->arg_needs_null_check(0) /*(flags & LIR_OpArrayCopy::src_null_check) != 0 */);
+  LIR_Opr dst_op = dst.result();
+  dst_op = shenandoah_write_barrier(dst_op, info, x->arg_needs_null_check(2) /* (flags & LIR_OpArrayCopy::dst_null_check) != 0 */);
+
+
   set_no_result(x);
 
   int flags;
   ciArrayKlass* expected_type;
   arraycopy_helper(x, &flags, &expected_type);
 
-  __ arraycopy(src.result(), src_pos.result(), dst.result(), dst_pos.result(), length.result(), tmp, expected_type, flags, info); // does add_safepoint
+  __ arraycopy(src_op, src_pos.result(), dst_op, dst_pos.result(), length.result(), tmp, expected_type, flags, info); // does add_safepoint
 }
 
 void LIRGenerator::do_update_CRC32(Intrinsic* x) {
