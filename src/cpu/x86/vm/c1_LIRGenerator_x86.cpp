@@ -941,25 +941,6 @@ void LIRGenerator::do_ArrayCopy(Intrinsic* x) {
   LIR_Opr src_op = src.result();
   src_op = shenandoah_read_barrier(src_op, info, x->arg_needs_null_check(0) /*(flags & LIR_OpArrayCopy::src_null_check) != 0 */);
 
-    /*
-  if (UseShenandoahGC) {
-    if (! dst_op->is_register()) {
-      LIR_Opr tmp = new_register(T_OBJECT);
-      __ move(dst_opr, tmp);
-      dst_opr = tmp;
-    }
-    */
-
-    /*
-    if (! src_opr->is_register()) {
-      LIR_Opr tmp = new_register(T_OBJECT);
-      __ move(src_opr, tmp);
-      src_opr = tmp;
-    }
-
-  }
-    */
-
   // operands for arraycopy must use fixed registers, otherwise
   // LinearScan will fail allocation (because arraycopy always needs a
   // call)
