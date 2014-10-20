@@ -286,6 +286,12 @@ void ShenandoahMarkCompact::finish_compaction(HeapWord* last_addr) {
       remaining_humonguous_continuations--;
       continue;
     }
+    if (region->bottom() > last_addr) {
+      // tty->print_cr("recycling region after full-GC: %d", region->region_number());
+      region->reset();
+      free_regions->append(region);
+      continue;
+    }
     if (region->used() > 0) {
       oop first_obj = oop(region->bottom() + BrooksPointer::BROOKS_POINTER_OBJ_SIZE);
       if (first_obj->size() + BrooksPointer::BROOKS_POINTER_OBJ_SIZE > ShenandoahHeapRegion::RegionSizeBytes / HeapWordSize) {
@@ -297,11 +303,6 @@ void ShenandoahMarkCompact::finish_compaction(HeapWord* last_addr) {
         region->set_humonguous_start(false);
         region->set_humonguous_continuation(false);
       }
-    }
-    if (region->bottom() > last_addr) {
-      // tty->print_cr("recycling region after full-GC: %d", region->region_number());
-      region->reset();
-      free_regions->append(region);
     }
   }
 }
