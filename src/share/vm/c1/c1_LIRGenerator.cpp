@@ -1853,7 +1853,7 @@ LIR_Opr LIRGenerator::shenandoah_read_barrier(LIR_Opr obj, CodeEmitInfo* info, b
     LIR_Opr result = new_register(T_OBJECT);
     __ move(obj, result);
     if (need_null_check) {
-      __ cmp(lir_cond_equal, obj, LIR_OprFact::oopConst(NULL));
+      __ cmp(lir_cond_equal, result, LIR_OprFact::oopConst(NULL));
       __ branch(lir_cond_equal, T_LONG, done->label());
     }
     LIR_Address* brooks_ptr_address = generate_address(result, -8, T_ADDRESS);
@@ -1875,7 +1875,7 @@ LIR_Opr LIRGenerator::shenandoah_write_barrier(LIR_Opr obj, CodeEmitInfo* info, 
 
     // Usual read barrier with optional explicit null check.
     if (need_null_check) {
-      __ cmp(lir_cond_equal, obj, LIR_OprFact::oopConst(NULL));
+      __ cmp(lir_cond_equal, result, LIR_OprFact::oopConst(NULL));
       __ branch(lir_cond_equal, T_LONG, done->label());
     }
 
