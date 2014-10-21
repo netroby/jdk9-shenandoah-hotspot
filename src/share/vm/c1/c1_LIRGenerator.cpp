@@ -3110,17 +3110,7 @@ void LIRGenerator::do_IfOp(IfOp* x) {
   LIR_Opr left_opr = left.result();
   LIR_Opr right_opr = right.result();
   if (xtag == objectTag && UseShenandoahGC && x->y()->type() != objectNull) { // Don't need to resolve for ifnull.
-    if (! left_opr->is_register()) {
-      LIR_Opr tmp = new_register(T_OBJECT);
-      __ move(left_opr, tmp);
-      left_opr = tmp;
-    }
     left_opr = shenandoah_write_barrier(left_opr, NULL, true);
-    if (! right_opr->is_register()) {
-      LIR_Opr tmp = new_register(T_OBJECT);
-      __ move(right_opr, tmp);
-      right_opr = tmp;
-    }
     right_opr = shenandoah_read_barrier(right_opr, NULL, true);
   }
 
