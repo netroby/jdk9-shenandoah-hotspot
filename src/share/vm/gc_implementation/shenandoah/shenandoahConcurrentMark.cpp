@@ -194,14 +194,7 @@ private:
   void do_oop_work(oop* p) {
     oop obj = *p;
     if (! oopDesc::is_null(obj)) {
-#ifdef ASSERT
-      if (obj != oopDesc::bs()->resolve_oop(obj)) {
-        oop obj_prime = oopDesc::bs()->resolve_oop(obj);
-        tty->print("We've got one: obj = %p : obj_prime = %p\n", (HeapWord*) obj, (HeapWord*)obj_prime);
-        tty->print_cr("obj type: %s, obj_prime type: %s", obj->klass()->internal_name(), obj_prime->klass()->internal_name());
-      }
-#endif
-      assert(obj == oopDesc::bs()->resolve_oop(obj), "only mark forwarded copy of objects");
+      assert(obj == oopDesc::bs()->resolve_oop(obj), err_msg("only mark forwarded copy of objects, obj: "PTR_FORMAT", obj_prime: "PTR_FORMAT", obj-klass: %s", obj, oopDesc::bs()->resolve_oop(obj), obj->klass()->internal_name()));
       if (ShenandoahTraceConcurrentMarking) {
         tty->print("Calling ShenandoahMarkRefsNoUpdateClosure on %p\n", (HeapWord*)obj);
         ShenandoahHeap::heap()->print_heap_locations((HeapWord*) obj, (HeapWord*) obj + obj->size());
