@@ -198,6 +198,7 @@ private:
       if (obj != oopDesc::bs()->resolve_oop(obj)) {
         oop obj_prime = oopDesc::bs()->resolve_oop(obj);
         tty->print("We've got one: obj = %p : obj_prime = %p\n", (HeapWord*) obj, (HeapWord*)obj_prime);
+        tty->print_cr("obj type: %s, obj_prime type: %s", obj->klass()->internal_name(), obj_prime->klass()->internal_name());
       }
 #endif
       assert(obj == oopDesc::bs()->resolve_oop(obj), "only mark forwarded copy of objects");
