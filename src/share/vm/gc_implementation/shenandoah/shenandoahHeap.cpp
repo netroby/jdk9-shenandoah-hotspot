@@ -1254,8 +1254,6 @@ void ShenandoahHeap::do_evacuation() {
     }
   }
 
-  set_evacuation_in_progress(false);
-
   if (ShenandoahVerify && ! cancelled_evacuation()) {
     VM_ShenandoahVerifyHeapAfterEvacuation verify_after_evacuation;
     if (Thread::current()->is_VM_thread()) {

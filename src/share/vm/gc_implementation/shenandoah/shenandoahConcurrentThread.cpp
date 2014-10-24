@@ -100,12 +100,17 @@ void ShenandoahConcurrentThread::run() {
           evacuation.doit();
 	}
 
-        if (ShenandoahUpdateRefsEarly && ! heap->cancelled_evacuation()) {
-          if (ShenandoahConcurrentUpdateRefs) {
-            VM_ShenandoahUpdateRefs update_refs;
-            VMThread::execute(&update_refs);
-            heap->update_references();
+        if (ShenandoahUpdateRefsEarly) {
+          if (! heap->cancelled_evacuation()) {
+            if (ShenandoahConcurrentUpdateRefs) {
+              VM_ShenandoahUpdateRefs update_refs;
+              VMThread::execute(&update_refs);
+              heap->update_references();
+            }
           }
+        } else {
+          VM_ShenandoahFinishEvacuation finish_evac;
+          VMThread::execute(&finish_evac);
         }
 
         heap->reset_mark_bitmap();

@@ -119,6 +119,19 @@ const char* VM_ShenandoahStartEvacuation::name() const {
   return "Start shenandoah evacuation";
 }
 
+void VM_ShenandoahFinishEvacuation::doit() {
+  ShenandoahHeap *sh = ShenandoahHeap::heap();
+  sh->set_evacuation_in_progress(false);
+}
+
+VM_Operation::VMOp_Type VM_ShenandoahFinishEvacuation::type() const {
+  return VMOp_ShenandoahFinishEvacuation;
+}
+
+const char* VM_ShenandoahFinishEvacuation::name() const {
+  return "Finish shenandoah evacuation";
+}
+
 VM_Operation::VMOp_Type VM_ShenandoahVerifyHeapAfterEvacuation::type() const {
   return VMOp_ShenandoahVerifyHeapAfterEvacuation;
 }
@@ -202,6 +215,7 @@ void VM_ShenandoahUpdateRefs::doit() {
     tty->print("vm_ShenandoahUpdateRefs\n");
 
   ShenandoahHeap *sh = ShenandoahHeap::heap();
+  sh->set_evacuation_in_progress(false);
   sh->prepare_for_update_references();
   assert(ShenandoahConcurrentUpdateRefs, "only do this when concurrent update references is turned on");
 }
