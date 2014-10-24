@@ -27,6 +27,7 @@
 #include "classfile/vmSymbols.hpp"
 #include "compiler/compileBroker.hpp"
 #include "compiler/compileLog.hpp"
+#include "gc_implementation/shenandoah/shenandoahHeap.hpp"
 #include "oops/objArrayKlass.hpp"
 #include "opto/addnode.hpp"
 #include "opto/callGenerator.hpp"
@@ -3006,16 +3007,7 @@ bool LibraryCallKit::inline_unsafe_load_store(BasicType type, LoadStoreKind kind
       if (_gvn.type(oldval) == TypePtr::NULL_PTR) {
         oldval = _gvn.makecon(TypePtr::NULL_PTR);
       }
-      oldval = shenandoah_write_barrier(oldval);
 
-      if (UseShenandoahGC) {
-        // We need to update the value in memory in order to avoid comparison failures
-        // (false negatives).
-        Node* current = make_load(control(), adr, TypeInstPtr::BOTTOM, type, TypeInstPtr::BOTTOM, false);
-        Node* new_current = shenandoah_write_barrier(current);
-        Node* cas_current = _gvn.transform(new (C) CompareAndSwapPNode(control(), mem, adr, new_current, current));
-        set_control(cas_current);
-      }
       // The only known value which might get overwritten is oldval.
       pre_barrier(false /* do_load */,
                   control(), NULL, NULL, max_juint, NULL, NULL,
@@ -3044,8 +3036,52 @@ bool LibraryCallKit::inline_unsafe_load_store(BasicType type, LoadStoreKind kind
         load_store = _gvn.transform(new (C) GetAndSetPNode(control(), mem, adr, newval, adr_type, value_type->is_oopptr()));
       } else {
         assert(kind == LS_cmpxchg, "wrong LoadStore operation");
-        // TODO Shenandoah: Add barrier for the value-in-memory and write that back to the memory location.
         load_store = _gvn.transform(new (C) CompareAndSwapPNode(control(), mem, adr, newval, oldval));
+
+        if (UseShenandoahGC) {
+          // set_control(load_store);
+          IfNode* iff = create_and_map_if(control(), load_store, PROB_UNKNOWN, COUNT_UNKNOWN);
+          Node* iftrue = _gvn.transform(new (C) IfTrueNode(iff));
+          Node* iffalse = _gvn.transform(new (C) IfFalseNode(iff));
+
+          enum { _success_path = 1, _fail_path, _shenandoah_path, PATH_LIMIT };
+          RegionNode* region = new(C) RegionNode(PATH_LIMIT);
+          Node*       phi    = new(C) PhiNode(region, TypeInt::BOOL);
+
+          region->init_req(_success_path, iftrue);
+          phi   ->init_req(_success_path, load_store);
+
+          set_control(iffalse);
+
+          oldval = shenandoah_read_barrier(oldval);
+
+          // We need to resolve the value in memory in order to avoid comparison failures
+          // (false negatives).
+          Node* current = make_load(control(), adr, TypeInstPtr::BOTTOM, type, TypeInstPtr::BOTTOM, false);
+          Node* new_current = shenandoah_read_barrier(current);
+
+          Node* chk = _gvn.transform(new (C) CmpPNode(new_current, oldval));
+          Node* test = _gvn.transform(new (C) BoolNode(chk, BoolTest::eq));
+
+          IfNode* iff2 = create_and_map_if(control(), test, PROB_UNLIKELY_MAG(3), COUNT_UNKNOWN);
+          Node* iftrue2 = _gvn.transform(new (C) IfTrueNode(iff2));
+          Node* iffalse2 = _gvn.transform(new (C) IfFalseNode(iff2));
+
+          region->init_req(_fail_path, iffalse2);
+          phi   ->init_req(_fail_path, load_store);
+
+          set_control(iftrue2);
+          Node* cas_current = _gvn.transform(new (C) CompareAndSwapPNode(control(), mem, adr, new_current, current));
+          load_store = _gvn.transform(new (C) CompareAndSwapPNode(cas_current, mem, adr, newval, oldval));
+          region->init_req(_shenandoah_path, iftrue2);
+          phi   ->init_req(_shenandoah_path, load_store);
+
+          set_control(_gvn.transform(region));
+          record_for_igvn(region);
+          phi = _gvn.transform(phi);
+          load_store = phi;
+        }
+
       }
     }
     post_barrier(control(), load_store, base, adr, alias_idx, newval, T_OBJECT, true);

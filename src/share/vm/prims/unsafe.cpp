@@ -1185,22 +1185,33 @@ UNSAFE_ENTRY(jboolean, Unsafe_CompareAndSwapObject(JNIEnv *env, jobject unsafe, 
   // We are about to write to this entry so check to see if we need to copy it.
   oop p = oopDesc::bs()->resolve_and_maybe_copy_oop(JNIHandles::resolve(obj));
   HeapWord* addr = (HeapWord *)index_oop_from_field_offset_long(p, offset);
-  if (UseShenandoahGC) {
-    // We need to update the field so that the old value points to to-space, otherwise
-    // the comparison could fail even though it should not. I.e. when the old value
-    // points to from-space and the expected points to to-space, but they are the same
-    // object, we would fail the comparison, but it should succeed.
-    oop old_val = oopDesc::load_heap_oop((oop*) addr);
-    oop resolved_old_val = oopDesc::bs()->resolve_and_maybe_copy_oop(old_val);
-    // We need to CAS the resolved oop here to avoid race condition with other threads
-    // that might have CASed another value in there. If it fails, we can ignore it,
-    // it would make our update stale anyway.
-    oopDesc::atomic_compare_exchange_oop(resolved_old_val, addr, old_val);
-  }
   oop x = JNIHandles::resolve(x_h);
   oop e = JNIHandles::resolve(e_h);
   oop res = oopDesc::atomic_compare_exchange_oop(x, addr, e, true);
-  jboolean success  = (oopDesc::bs()->resolve_oop(res) == e);
+  jboolean success  = (res == e);
+  if (UseShenandoahGC) {
+    // It can only fail in 3 cases:
+    // 1. the existing and expected values are really different objects.
+    // 2. expected is in from-space, existing in to-space.
+    // 3. existing is in from-space, expected in to-space.
+    if (! success) {
+      oop res_exp = oopDesc::bs()->resolve_oop(e); // Handle case #2
+      if (res_exp == oopDesc::bs()->resolve_oop(res)) { // Exclude case #1.
+        bool cas_again = true;
+        if (res_exp == e) {
+          // Exclude case #2, must be case #3 here.
+          oop in_mem = oopDesc::load_heap_oop((oop*) addr);
+          oop in_mem_resolved = oopDesc::bs()->resolve_oop(in_mem);
+          oop old = oopDesc::atomic_compare_exchange_oop(in_mem_resolved, addr, in_mem);
+          cas_again = (old == in_mem); // We don't need to attempt another cas if we fail here.
+        } // else, case #2
+        if (cas_again) {
+          res = oopDesc::atomic_compare_exchange_oop(x, addr, res_exp, true);
+          success  = (res == e);
+        }
+      }
+    }
+  }
   if (success)
     update_barrier_set((void*)addr, x);
   return success;

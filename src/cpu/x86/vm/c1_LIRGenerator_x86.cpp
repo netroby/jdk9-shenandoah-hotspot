@@ -803,33 +803,11 @@ void LIRGenerator::do_CompareAndSwap(Intrinsic* x, ValueType* type) {
   LIR_Opr ill = LIR_OprFact::illegalOpr;  // for convenience
 
   LIR_Opr val_op = val.result();
-  if (type == objectType && UseShenandoahGC) {
-    LIR_Opr tmp1 = new_register(T_OBJECT);
-    LIR_Opr tmp2 = new_register(T_OBJECT);
-    LIR_Opr tmp3 = new_register(T_OBJECT);
-    // We need to write-resolve the value at addr, and read-resolve
-    // the value in cmp, so that we don't get false negatives when comparing.
-    // First we move the real cmp value to tmp1.
-    __ move(cmp.result(), tmp1);
-    // Then we load what is at addr into the cmp reg (rax).
-    __ move(new LIR_Address(addr, T_OBJECT), tmp2);
-    // Duplicate this into tmp2.
-    __ move(tmp2, tmp3);
-    // Do the write barrier on tmp2.
-    tmp3 = shenandoah_write_barrier(tmp3, NULL, true);
-    // We need to CAS the resolved value back to protect against other threads
-    // attempting the same. We need the compare value in rax/cmp.
-    __ move(tmp2, cmp.result());
-    __ cas_obj(addr, cmp.result(), tmp3, ill, ill);
-    // Finally we move back the original cmp value into rax.
-    tmp1 = shenandoah_read_barrier(tmp1, NULL, true);
-    __ move(tmp1, cmp.result());
-    val_op = shenandoah_read_barrier(val_op, NULL, true);
-    // .. and do the read barrier on it.
-  }
 
-  if (type == objectType)
-    __ cas_obj(addr, cmp.result(), val_op, ill, ill);
+  if (type == objectType) {
+    val_op = shenandoah_read_barrier(val_op, NULL, true);
+    __ cas_obj(addr, cmp.result(), val_op, new_register(T_OBJECT), new_register(T_OBJECT));
+  }
   else if (type == intType)
     __ cas_int(addr, cmp.result(), val_op, ill, ill);
   else if (type == longType)

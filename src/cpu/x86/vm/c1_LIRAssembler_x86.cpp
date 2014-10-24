@@ -2007,10 +2007,50 @@ void LIR_Assembler::emit_compare_and_swap(LIR_OpCompareAndSwap* op) {
       } else
 #endif
       {
+        if (UseShenandoahGC) {
+          // Save original cmp-value into tmp1, before following cas destroys it.
+          __ movptr(op->tmp1()->as_register(), op->cmp_value()->as_register());
+        }
+        // The actual cmpxchg.
         if (os::is_MP()) {
           __ lock();
         }
         __ cmpxchgptr(newval, Address(addr, 0));
+        if (UseShenandoahGC) {
+          Label done;
+          // We're done if the cmpxchg succeeded.
+          __ jcc(Assembler::equal, done);
+          // Resolve the original cmp value.
+          oopDesc::bs()->compile_resolve_oop(masm(), op->tmp1()->as_register());
+          // Resolve the old value at address. We get the old value in cmp/rax
+          // when the comparison in cmpxchg failed.
+          oopDesc::bs()->compile_resolve_oop(masm(), op->cmp_value()->as_register());
+          // We're done if the expected/cmp value is not the same as old. It's a valid
+          // cmpxchg failure then. Otherwise we need special treatment for Shenandoah
+          // to prevent false positives.
+          __ cmpptr(op->tmp1()->as_register(), op->cmp_value()->as_register());
+          __ jcc(Assembler::notEqual, done);
+          // Load in-memory value into cmp/rax.
+          __ movptr(cmpval, Address(addr, 0));
+          // Copy this value into tmp2.
+          __ movptr(op->tmp2()->as_register(), cmpval);
+          // Resolve it.
+          oopDesc::bs()->compile_resolve_oop(masm(), op->tmp2()->as_register());
+          // CAS it back to memory.
+          if (os::is_MP()) {
+            __ lock();
+          }
+          __ cmpxchgptr(op->tmp2()->as_register(), Address(addr, 0)); // cmp in rax.
+          // Load original resolved cmp value back into cmp/rax.
+          __ movptr(cmpval, op->tmp1()->as_register());
+          // Retry CAS.
+          if (os::is_MP()) {
+            __ lock();
+          }
+          __ cmpxchgptr(newval, Address(addr, 0)); // cmp in rax.
+
+          __ bind(done);
+        }
       }
     } else {
       assert(op->code() == lir_cas_int, "lir_cas_int expected");
