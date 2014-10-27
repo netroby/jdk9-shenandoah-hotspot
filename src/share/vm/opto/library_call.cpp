@@ -3039,7 +3039,7 @@ bool LibraryCallKit::inline_unsafe_load_store(BasicType type, LoadStoreKind kind
         load_store = _gvn.transform(new (C) CompareAndSwapPNode(control(), mem, adr, newval, oldval));
 
         if (UseShenandoahGC) {
-          // set_control(load_store);
+          set_control(load_store);
           IfNode* iff = create_and_map_if(control(), load_store, PROB_UNKNOWN, COUNT_UNKNOWN);
           Node* iftrue = _gvn.transform(new (C) IfTrueNode(iff));
           Node* iffalse = _gvn.transform(new (C) IfFalseNode(iff));
