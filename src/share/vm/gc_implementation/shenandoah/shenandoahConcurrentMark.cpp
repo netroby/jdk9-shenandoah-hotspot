@@ -361,7 +361,8 @@ void ShenandoahConcurrentMark::traverse_object(ExtendedOopClosure* cl, oop obj) 
 }
 
 void ShenandoahConcurrentMark::initialize() {
-  _max_worker_id = MAX2((uint)ShenandoahConcurrentGCThreads, 1U);
+  _max_worker_id = MAX2((uint) ParallelGCThreads, 1U);
+  _max_conc_worker_id = MAX2((uint) ShenandoahConcurrentGCThreads, 1U);
   _task_queues = new SCMObjToScanQueueSet((int) _max_worker_id);
   _overflow_queue = new SharedOverflowMarkQueue();
 
@@ -373,13 +374,14 @@ void ShenandoahConcurrentMark::initialize() {
   JavaThread::satb_mark_queue_set().set_buffer_size(1014 /* G1SATBBufferSize */);
 }
 
-void ShenandoahConcurrentMark::mark_from_roots(bool update_refs) {
+void ShenandoahConcurrentMark::mark_from_roots(bool update_refs, bool full_gc) {
   if (ShenandoahGCVerbose) {
     tty->print_cr("STOPPING THE WORLD: before marking");
     tty->print_cr("Starting markFromRoots");
   }
   ShenandoahHeap* sh = (ShenandoahHeap *) Universe::heap();
-  ParallelTaskTerminator terminator(_max_worker_id, _task_queues);
+  uint max_workers = full_gc ? _max_worker_id : _max_conc_worker_id;
+  ParallelTaskTerminator terminator(max_workers, _task_queues);
   ReferenceProcessor* rp = sh->ref_processor_cm();
   
   // enable ("weak") refs discovery
@@ -388,8 +390,11 @@ void ShenandoahConcurrentMark::mark_from_roots(bool update_refs) {
 
   
   SCMConcurrentMarkingTask markingTask = SCMConcurrentMarkingTask(this, &terminator, update_refs);
-  sh->conc_workers()->run_task(&markingTask);
-  
+  if (full_gc) {
+    sh->workers()->run_task(&markingTask);
+  } else {
+    sh->conc_workers()->run_task(&markingTask);
+  }
   if (ShenandoahGCVerbose) {
     tty->print_cr("Finishing markFromRoots");
     tty->print_cr("RESUMING THE WORLD: after marking");

@@ -23,13 +23,14 @@ private:
 
   bool                    _aborted;       
   uint _max_worker_id;
+  uint _max_conc_worker_id;
   ParallelTaskTerminator* _terminator;
 
 public:
   // We need to do this later when the heap is already created.
   void initialize();
 
-  void mark_from_roots(bool update_refs);
+  void mark_from_roots(bool update_refs, bool full_gc = false);
 
   // Prepares unmarked root objects by marking them and putting
   // them into the marking task queue.
