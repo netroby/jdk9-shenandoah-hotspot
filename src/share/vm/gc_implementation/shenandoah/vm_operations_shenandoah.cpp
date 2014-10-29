@@ -80,7 +80,6 @@ void VM_ShenandoahFinishMark::doit() {
   sh->shenandoahPolicy()->record_final_mark_start();  
   sh->concurrentMark()->finish_mark_from_roots();
   sh->stop_concurrent_marking();
-  sh->prepare_for_concurrent_evacuation();
   sh->shenandoahPolicy()->record_final_mark_end();    
 
   if (! GC_locker::check_active_before_gc()) {
@@ -101,6 +100,7 @@ void VM_ShenandoahFinishMark::doit() {
 
 void VM_ShenandoahStartEvacuation::doit() {
   ShenandoahHeap *sh = ShenandoahHeap::heap();
+  sh->prepare_for_concurrent_evacuation();
   sh->set_evacuation_in_progress(true);
 
   if (! ShenandoahConcurrentEvacuation) {
