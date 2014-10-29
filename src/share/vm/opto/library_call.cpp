@@ -28,6 +28,7 @@
 #include "compiler/compileBroker.hpp"
 #include "compiler/compileLog.hpp"
 #include "gc_implementation/shenandoah/shenandoahHeap.hpp"
+#include "gc_implementation/shenandoah/shenandoahRuntime.hpp"
 #include "oops/objArrayKlass.hpp"
 #include "opto/addnode.hpp"
 #include "opto/callGenerator.hpp"
@@ -3040,6 +3041,7 @@ bool LibraryCallKit::inline_unsafe_load_store(BasicType type, LoadStoreKind kind
 
         if (UseShenandoahGC) {
           set_control(load_store);
+          // if (! success)
           IfNode* iff = create_and_map_if(control(), load_store, PROB_UNKNOWN, COUNT_UNKNOWN);
           Node* iftrue = _gvn.transform(new (C) IfTrueNode(iff));
           Node* iffalse = _gvn.transform(new (C) IfFalseNode(iff));
@@ -3047,34 +3049,47 @@ bool LibraryCallKit::inline_unsafe_load_store(BasicType type, LoadStoreKind kind
           enum { _success_path = 1, _fail_path, _shenandoah_path, PATH_LIMIT };
           RegionNode* region = new(C) RegionNode(PATH_LIMIT);
           Node*       phi    = new(C) PhiNode(region, TypeInt::BOOL);
-
+          // success -> return result of CAS1.
           region->init_req(_success_path, iftrue);
           phi   ->init_req(_success_path, load_store);
 
+          // failure
           set_control(iffalse);
 
+          // if (read_barrier(expected) == read_barrier(old)
           oldval = shenandoah_read_barrier(oldval);
 
-          // We need to resolve the value in memory in order to avoid comparison failures
-          // (false negatives).
+          // Load old value from memory. We shuold really use what we get back from the CAS,
+          // if we can.
           Node* current = make_load(control(), adr, TypeInstPtr::BOTTOM, type, TypeInstPtr::BOTTOM, false);
+          // read_barrier(old)
           Node* new_current = shenandoah_read_barrier(current);
 
           Node* chk = _gvn.transform(new (C) CmpPNode(new_current, oldval));
           Node* test = _gvn.transform(new (C) BoolNode(chk, BoolTest::eq));
 
-          IfNode* iff2 = create_and_map_if(control(), test, PROB_UNLIKELY_MAG(3), COUNT_UNKNOWN);
+          IfNode* iff2 = create_and_map_if(control(), test, PROB_UNLIKELY_MAG(2), COUNT_UNKNOWN);
           Node* iftrue2 = _gvn.transform(new (C) IfTrueNode(iff2));
           Node* iffalse2 = _gvn.transform(new (C) IfFalseNode(iff2));
 
+          // If they are not equal, it's a legitimate failure and we return the result of CAS1.
           region->init_req(_fail_path, iffalse2);
           phi   ->init_req(_fail_path, load_store);
 
+          // Otherwise we retry with old.
           set_control(iftrue2);
-          Node* cas_current = _gvn.transform(new (C) CompareAndSwapPNode(control(), mem, adr, new_current, current));
-          load_store = _gvn.transform(new (C) CompareAndSwapPNode(cas_current, mem, adr, newval, oldval));
-          region->init_req(_shenandoah_path, iftrue2);
-          phi   ->init_req(_shenandoah_path, load_store);
+
+          Node *call = make_runtime_call(RC_LEAF | RC_NO_IO,
+                                         OptoRuntime::shenandoah_cas_obj_Type(),
+                                         CAST_FROM_FN_PTR(address, ShenandoahRuntime::compare_and_swap_object),
+                                         "shenandoah_cas_obj",
+                                         NULL,
+                                         adr, newval, current);
+
+          Node* result = _gvn.transform(new (C) ProjNode(call, TypeFunc::Parms + 0));
+
+          region->init_req(_shenandoah_path, control());
+          phi   ->init_req(_shenandoah_path, result);
 
           set_control(_gvn.transform(region));
           record_for_igvn(region);

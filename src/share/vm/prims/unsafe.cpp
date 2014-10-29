@@ -1186,31 +1186,17 @@ UNSAFE_ENTRY(jboolean, Unsafe_CompareAndSwapObject(JNIEnv *env, jobject unsafe, 
   oop p = oopDesc::bs()->resolve_and_maybe_copy_oop(JNIHandles::resolve(obj));
   HeapWord* addr = (HeapWord *)index_oop_from_field_offset_long(p, offset);
   oop x = JNIHandles::resolve(x_h);
-  oop e = JNIHandles::resolve(e_h);
-  oop res = oopDesc::atomic_compare_exchange_oop(x, addr, e, true);
-  jboolean success  = (res == e);
+  oop old = JNIHandles::resolve(e_h);
+  jboolean success;
   if (UseShenandoahGC) {
-    // It can only fail in 3 cases:
-    // 1. the existing and expected values are really different objects.
-    // 2. expected is in from-space, existing in to-space.
-    // 3. existing is in from-space, expected in to-space.
-    if (! success) {
-      oop res_exp = oopDesc::bs()->resolve_oop(e); // Handle case #2
-      if (res_exp == oopDesc::bs()->resolve_oop(res)) { // Exclude case #1.
-        bool cas_again = true;
-        if (res_exp == e) {
-          // Exclude case #2, must be case #3 here.
-          oop in_mem = oopDesc::load_heap_oop((oop*) addr);
-          oop in_mem_resolved = oopDesc::bs()->resolve_oop(in_mem);
-          oop old = oopDesc::atomic_compare_exchange_oop(in_mem_resolved, addr, in_mem);
-          cas_again = (old == in_mem); // We don't need to attempt another cas if we fail here.
-        } // else, case #2
-        if (cas_again) {
-          res = oopDesc::atomic_compare_exchange_oop(x, addr, res_exp, true);
-          success  = (res == e);
-        }
-      }
-    }
+    oop expected;
+    do {
+      expected = old;
+      old = oopDesc::atomic_compare_exchange_oop(x, addr, expected, true);
+      success  = (old == expected);
+    } while ((! success) && oopDesc::bs()->resolve_oop(old) == oopDesc::bs()->resolve_oop(expected));
+  } else {
+    success = (old == oopDesc::atomic_compare_exchange_oop(x, addr, old, true));
   }
   if (success)
     update_barrier_set((void*)addr, x);

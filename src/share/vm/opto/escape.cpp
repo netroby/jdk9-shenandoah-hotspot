@@ -937,6 +937,7 @@ void ConnectionGraph::process_call_arguments(CallNode *call) {
                   strcmp(call->as_CallLeaf()->_name, "shenandoah_clone_barrier")  == 0 ||
                   strcmp(call->as_CallLeaf()->_name, "shenandoah_write_barrier")  == 0 ||
                   strcmp(call->as_CallLeaf()->_name, "shenandoah_read_barrier")  == 0 ||
+                  strcmp(call->as_CallLeaf()->_name, "shenandoah_cas_obj")  == 0 ||
                   strcmp(call->as_CallLeaf()->_name, "updateBytesCRC32") == 0 ||
                   strcmp(call->as_CallLeaf()->_name, "aescrypt_encryptBlock") == 0 ||
                   strcmp(call->as_CallLeaf()->_name, "aescrypt_decryptBlock") == 0 ||
