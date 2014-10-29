@@ -355,7 +355,7 @@ public:
   virtual void doit() {
     if (ShenandoahGCVerbose)
       tty->print_cr("verifying heap");
-     Universe::heap()->prepare_for_verify();
+     Universe::heap()->ensure_parsability(false);
      Universe::verify();
   }
   virtual const char* name() const {
@@ -795,6 +795,8 @@ public:
     _barrier_sync->enter();
     if (ShenandoahGCVerbose) 
       tty->print("Thread %d post barrier sync\n", worker_id);
+
+    Thread::current()->gclab().make_parsable(true);
   }
 };
 
@@ -881,7 +883,7 @@ void ShenandoahHeap::print_all_refs(const char* prefix) {
   tty->print_cr("printing all references in the heap");
   tty->print_cr("root references:");
 
-  prepare_for_verify();
+  ensure_parsability(false);
 
   PrintAllRefsOopClosure cl(prefix);
   roots_iterate(&cl);
@@ -977,7 +979,7 @@ void ShenandoahHeap::verify_heap_after_marking() {
   if (ShenandoahGCVerbose) {
     tty->print("verifying heap after marking\n");
   }
-  prepare_for_verify();
+  ensure_parsability(false);
   VerifyAfterMarkingOopClosure cl;
   roots_iterate(&cl);
 
@@ -1194,7 +1196,7 @@ public:
     assert(_heap->is_evacuation_in_progress(), "Only do this when evacuation is in progress");
 
     oop obj = *p;
-    if (obj != NULL && _heap->in_cset_fast_test(obj)) {
+    if (obj != NULL && _heap->in_cset_fast_test((HeapWord*) obj)) {
       *p = _heap->evacuate_object(*p, _thread);
     }
   }
@@ -1499,6 +1501,9 @@ jlong ShenandoahHeap::millis_since_last_gc() {
 
 void ShenandoahHeap::prepare_for_verify() {
   if (SafepointSynchronize::is_at_safepoint() || ! UseTLAB) {
+    if (is_evacuation_in_progress()) {
+      cancel_evacuation();
+    }
     ensure_parsability(false);
   }
 }
@@ -1788,7 +1793,7 @@ void ShenandoahHeap::start_concurrent_marking() {
 
 #ifdef ASSERT
   if (ShenandoahDumpHeapBeforeConcurrentMark) {
-    prepare_for_verify();
+    ensure_parsability(false);
     print_all_refs("pre-mark");
   }
 #endif
@@ -1905,7 +1910,7 @@ public:
 
 void ShenandoahHeap::verify_heap_after_evacuation() {
 
-  prepare_for_verify();
+  ensure_parsability(false);
 
   VerifyAfterEvacuationClosure cl;
   roots_iterate(&cl);
@@ -1915,10 +1920,21 @@ void ShenandoahHeap::verify_heap_after_evacuation() {
 
 }
 
+class VerifyRegionsAfterUpdateRefsClosure : public ShenandoahHeapRegionClosure {
+public:
+  bool doHeapRegion(ShenandoahHeapRegion* r) {
+    assert(! r->is_in_collection_set(), "no region must be in collection set");
+    assert(! ShenandoahHeap::heap()->in_cset_fast_test(r->bottom()), "no region must be in collection set");
+    return false;
+  }
+};
+
 void ShenandoahHeap::verify_heap_after_update_refs() {
 
-  prepare_for_verify();
+  ensure_parsability(false);
 
+  VerifyRegionsAfterUpdateRefsClosure verify_regions;
+  heap_region_iterate(&verify_regions);
   VerifyAfterUpdateRefsClosure cl;
 
   roots_iterate(&cl);
@@ -2368,6 +2384,9 @@ size_t ShenandoahHeap::num_regions() {
 
 void ShenandoahHeap::cancel_evacuation() {
   _cancelled_evacuation = true;
+  while (! workers()->is_idle()) { // wait.
+    Thread::current()->_ParkEvent->park(1) ;
+  }
 }
 
 bool ShenandoahHeap::cancelled_evacuation() {

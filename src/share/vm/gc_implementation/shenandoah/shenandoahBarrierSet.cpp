@@ -266,7 +266,7 @@ oop ShenandoahBarrierSet::resolve_and_maybe_copy_oop_work(oop src) {
   ShenandoahHeap *sh = (ShenandoahHeap*) Universe::heap();
   assert(src != NULL, "only evacuated non NULL oops");
 
-  if (sh->in_cset_fast_test(src)) {
+  if (sh->in_cset_fast_test((HeapWord*) src)) {
     return resolve_and_maybe_copy_oop_work2(src);
   } else {
     return src;

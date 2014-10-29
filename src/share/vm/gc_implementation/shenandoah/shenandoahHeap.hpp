@@ -315,13 +315,12 @@ public:
     assert(!_in_cset_fast_test_base[index], "invariant");
     _in_cset_fast_test_base[index] = true;
   }
-
-  bool in_cset_fast_test(oop obj) {
+  bool in_cset_fast_test(HeapWord* obj) {
     assert(_in_cset_fast_test != NULL, "sanity");
-    if (is_in((HeapWord*) obj)) {
+    if (is_in(obj)) {
       // no need to subtract the bottom of the heap from obj,
       // _in_cset_fast_test is biased
-      uintx index = cast_from_oop<uintx>(obj) >> ShenandoahHeapRegion::RegionSizeShift;
+      uintx index = ((uintx) obj) >> ShenandoahHeapRegion::RegionSizeShift;
       bool ret = _in_cset_fast_test[index];
       // let's make sure the result is consistent with what the slower
       // test returns

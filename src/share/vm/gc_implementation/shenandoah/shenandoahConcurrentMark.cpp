@@ -482,7 +482,7 @@ void ShenandoahConcurrentMark::finish_mark_from_roots(bool full_gc) {
   }
 #ifdef ASSERT
   if (ShenandoahDumpHeapAfterConcurrentMark) {
-    sh->prepare_for_verify();
+    sh->ensure_parsability(false);
     sh->print_all_refs("post-mark");
   }
 #endif
