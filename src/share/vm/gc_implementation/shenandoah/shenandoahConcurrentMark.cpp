@@ -295,12 +295,12 @@ void ShenandoahConcurrentMark::prepare_unmarked_root_objs_no_derived_ptrs(bool u
 
   ShenandoahHeap* heap = ShenandoahHeap::heap();
   if (ShenandoahParallelRootScan) {
-    heap->set_n_termination(heap->workers()->active_workers()); // Prepare for parallel processing.
+    heap->set_par_threads(heap->workers()->active_workers()); // Prepare for parallel processing.
     ClassLoaderDataGraph::clear_claimed_marks();
     SharedHeap::StrongRootsScope strong_roots_scope(heap, true);
     ShenandoahMarkRootsTask mark_roots(update_refs);
     heap->workers()->run_task(&mark_roots);
-    heap->set_n_termination(0); // Prepare for serial processing in future calls to process_strong_roots.
+    heap->set_par_threads(0); // Prepare for serial processing in future calls to process_strong_roots.
   } else {
     ExtendedOopClosure* cl;
     ShenandoahMarkRefsClosure rootsCl1(0);
@@ -391,6 +391,7 @@ void ShenandoahConcurrentMark::mark_from_roots(bool update_refs, bool full_gc) {
   
   SCMConcurrentMarkingTask markingTask = SCMConcurrentMarkingTask(this, &terminator, update_refs);
   if (full_gc) {
+    sh->workers()->set_active_workers(max_workers);
     sh->workers()->run_task(&markingTask);
   } else {
     sh->conc_workers()->run_task(&markingTask);
@@ -431,11 +432,12 @@ void ShenandoahConcurrentMark::finish_mark_from_roots(bool full_gc) {
     prepare_unmarked_root_objs();
   }
 
-  ParallelTaskTerminator terminator(_max_worker_id, _task_queues);
   {
+    ParallelTaskTerminator terminator(_max_worker_id, _task_queues);
     ShenandoahHeap::StrongRootsScope srs(sh);
     // drain_satb_buffers(0, true);
     FinishDrainSATBBuffersTask drain_satb_buffers(this, &terminator);
+    sh->workers()->set_active_workers(_max_worker_id);
     sh->workers()->run_task(&drain_satb_buffers);
   }
 
@@ -456,8 +458,12 @@ void ShenandoahConcurrentMark::finish_mark_from_roots(bool full_gc) {
   }
 
   // Finally mark everything else we've got in our queues during the previous steps.
-  SCMConcurrentMarkingTask markingTask = SCMConcurrentMarkingTask(this, &terminator, !ShenandoahUpdateRefsEarly);
-  sh->workers()->run_task(&markingTask);
+  {
+    ParallelTaskTerminator terminator(_max_worker_id, _task_queues);
+    SCMConcurrentMarkingTask markingTask = SCMConcurrentMarkingTask(this, &terminator, !ShenandoahUpdateRefsEarly);
+    sh->workers()->set_active_workers(_max_worker_id);
+    sh->workers()->run_task(&markingTask);
+  }
 
 #ifdef ASSERT
   for (int i = 0; i < sh->max_workers(); i++) {

@@ -1635,6 +1635,12 @@ void Arguments::set_g1_gc_flags() {
   }
 }
 
+void Arguments::set_shenandoah_gc_flags() {
+
+  FLAG_SET_DEFAULT(UseDynamicNumberOfGCThreads, true);
+
+}
+
 julong Arguments::limit_by_allocatable_memory(julong limit) {
   julong max_allocatable;
   julong result = limit;
@@ -3657,6 +3663,8 @@ jint Arguments::apply_ergo() {
     set_parnew_gc_flags();
   } else if (UseG1GC) {
     set_g1_gc_flags();
+  } else if (UseShenandoahGC) {
+    set_shenandoah_gc_flags();
   }
   check_deprecated_gcs();
   check_deprecated_gc_flags();

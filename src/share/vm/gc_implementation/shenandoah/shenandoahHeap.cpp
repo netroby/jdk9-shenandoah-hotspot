@@ -14,6 +14,7 @@ Copyright 2014 Red Hat, Inc. and/or its affiliates.
 #include "gc_implementation/shenandoah/shenandoahHeap.hpp"
 #include "gc_implementation/shenandoah/shenandoahBarrierSet.hpp"
 #include "gc_implementation/shenandoah/vm_operations_shenandoah.hpp"
+#include "oops/oop.inline.hpp"
 #include "runtime/vmThread.hpp"
 #include "memory/iterator.hpp"
 #include "memory/oopFactory.hpp"
@@ -1195,9 +1196,9 @@ public:
   void do_oop(oop* p) {
     assert(_heap->is_evacuation_in_progress(), "Only do this when evacuation is in progress");
 
-    oop obj = *p;
+    oop obj = oopDesc::load_heap_oop(p);
     if (obj != NULL && _heap->in_cset_fast_test((HeapWord*) obj)) {
-      *p = _heap->evacuate_object(*p, _thread);
+      oopDesc::store_heap_oop(p, _heap->evacuate_object(obj, _thread));
     }
   }
 
@@ -1210,6 +1211,39 @@ public:
   }
 };
 
+class ShenandoahEvacuateUpdateStrongRootsTask : public AbstractGangTask {
+public:
+
+  ShenandoahEvacuateUpdateStrongRootsTask() : AbstractGangTask("Shenandoah evacuate and update strong roots") {
+    // Nothing else to do.
+  }
+
+  void work(uint worker_id) {
+    ShenandoahEvacuateUpdateRootsClosure cl;
+    CodeBlobToOopClosure blobsCl(&cl, false);
+    KlassToOopClosure klassCl(&cl);
+
+    ShenandoahHeap* heap = ShenandoahHeap::heap();
+    ResourceMark rm;
+    heap->process_strong_roots(false, false, SharedHeap::SO_AllClasses, &cl, &blobsCl, &klassCl);
+
+  }
+};
+
+class ShenandoahEvacuateUpdateWeakRootsTask : public AbstractGangTask {
+public:
+
+  ShenandoahEvacuateUpdateWeakRootsTask() : AbstractGangTask("Shenandoah evacuate and update weak roots") {
+    // Nothing else to do.
+  }
+
+  void work(uint worker_id) {
+    ShenandoahEvacuateUpdateRootsClosure cl;
+    ShenandoahHeap* heap = ShenandoahHeap::heap();
+    heap->weak_roots_iterate(&cl);
+
+  }
+};
 
 void ShenandoahHeap::evacuate_and_update_roots() {
 
@@ -1219,11 +1253,23 @@ void ShenandoahHeap::evacuate_and_update_roots() {
     set_from_region_protection(false);
   }
 
-  ShenandoahEvacuateUpdateRootsClosure cl;
+  set_par_threads(_max_workers); // Prepare for parallel processing.
+  ClassLoaderDataGraph::clear_claimed_marks();
+  SharedHeap::StrongRootsScope strong_roots_scope(this, true);
+  ShenandoahEvacuateUpdateStrongRootsTask strong_roots_task;
+  workers()->run_task(&strong_roots_task);
+  set_par_threads(0); // Prepare for serial processing in future calls to process_strong_roots.
 
-  roots_iterate(&cl);
-  weak_roots_iterate(&cl);
-  
+  // We process weak roots using only 1 worker thread, multi-threaded weak roots
+  // processing is not implemented yet. We can't use the VMThread itself, because
+  // we need to grab the Heap_lock.
+  ShenandoahEvacuateUpdateWeakRootsTask weak_roots_task;
+  set_par_threads(1); // Prepare for parallel processing.
+  workers()->set_active_workers(1);
+  workers()->run_task(&weak_roots_task);
+  workers()->set_active_workers(workers()->total_workers());
+  set_par_threads(0); // Prepare for serial processing in future calls to process_strong_roots.
+
   if (ShenandoahVerifyReadsToFromSpace) {
     set_from_region_protection(true);
   }
@@ -1690,7 +1736,7 @@ void  ShenandoahHeap::space_iterate(SpaceClosure* cl) {
 }
 
 uint ShenandoahHeap::heap_region_index_containing(const void* addr) const {
-  uintptr_t region_start = ((uintptr_t) addr) & ~(ShenandoahHeapRegion::RegionSizeBytes - 1);
+  uintptr_t region_start = ((uintptr_t) addr); // & ~(ShenandoahHeapRegion::RegionSizeBytes - 1);
   uintptr_t index = (region_start - (uintptr_t) _first_region_bottom) >> ShenandoahHeapRegion::RegionSizeShift;
   return index;
 }
