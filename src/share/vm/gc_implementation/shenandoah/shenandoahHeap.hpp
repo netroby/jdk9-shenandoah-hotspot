@@ -80,7 +80,6 @@ private:
   WorkGangBarrierSync barrierSync;
   int _max_workers;
   int _max_conc_workers;
-  FlexibleWorkGang* _conc_workers;
   volatile size_t _used;
 
   CMBitMap _mark_bit_map0;
@@ -297,8 +296,6 @@ public:
 
   void acquire_pending_refs_lock();
   void release_pending_refs_lock();
-
-  FlexibleWorkGang* conc_workers() const {return _conc_workers;}
 
   int max_workers();
 

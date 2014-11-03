@@ -174,8 +174,8 @@ ShenandoahHeap::ShenandoahHeap(ShenandoahCollectorPolicy* policy) :
   _max_allocated_gc(0),
   _allocated_last_gc(0),
   _used_start_gc(0),
-  _max_workers((int) MAX2((uint)ParallelGCThreads, 1U)),
-  _max_conc_workers((int) MAX2((uint)ShenandoahConcurrentGCThreads, 1U)),
+  _max_workers((int) MAX2((uint) ParallelGCThreads, 1U)),
+  _max_conc_workers((int) MAX2((uint) ConcGCThreads, 1U)),
   _ref_processor_cm(NULL),
   _in_cset_fast_test(NULL),
   _in_cset_fast_test_base(NULL),
@@ -185,9 +185,6 @@ ShenandoahHeap::ShenandoahHeap(ShenandoahCollectorPolicy* policy) :
   _pgc = this;
   _scm = new ShenandoahConcurrentMark();
   _used = 0;
-  _conc_workers = new FlexibleWorkGang("ShenandoahConcWorkers", _max_conc_workers, false, true);
-  _conc_workers->initialize_workers();
-  _conc_workers->set_active_workers(_max_conc_workers);
   
 }
 
@@ -1153,7 +1150,9 @@ void ShenandoahHeap::update_references() {
 
   ShenandoahHeapRegionSet regions = ShenandoahHeapRegionSet(_num_regions, _ordered_regions, _num_regions);
   ParallelUpdateRefsTask task = ParallelUpdateRefsTask(&regions);
-  conc_workers()->run_task(&task);
+  workers()->set_active_workers(_max_conc_workers);
+  workers()->run_task(&task);
+  workers()->set_active_workers(_max_workers);
 
   VM_ShenandoahUpdateRootRefs update_roots;
   if (ShenandoahConcurrentUpdateRefs) {
@@ -1339,7 +1338,9 @@ void ShenandoahHeap::parallel_evacuate() {
   
   ParallelEvacuationTask evacuationTask = ParallelEvacuationTask(this, _collection_set, &barrierSync);
 
-  conc_workers()->run_task(&evacuationTask);
+  workers()->set_active_workers(_max_conc_workers);
+  workers()->run_task(&evacuationTask);
+  workers()->set_active_workers(_max_workers);
 
   if (ShenandoahGCVerbose) {
 
@@ -1560,7 +1561,6 @@ void ShenandoahHeap::print_gc_threads_on(outputStream* st) const {
 
 void ShenandoahHeap::gc_threads_do(ThreadClosure* tcl) const {
   workers()->threads_do(tcl);
-  conc_workers()->threads_do(tcl);
 }
 
 void ShenandoahHeap::print_tracing_info() const {
@@ -2383,9 +2383,9 @@ void ShenandoahHeap::ref_processing_init() {
                                 // mt processing
                            (int) ParallelGCThreads,
                                 // degree of mt processing
-                           (ParallelGCThreads > 1) || (ShenandoahConcurrentGCThreads > 1),
+                           (ParallelGCThreads > 1) || (ConcGCThreads > 1),
                                 // mt discovery
-                           (int) MAX2(ParallelGCThreads, ShenandoahConcurrentGCThreads),
+                           (int) MAX2(ParallelGCThreads, ConcGCThreads),
                                 // degree of mt discovery
                            false,
                                 // Reference discovery is not atomic

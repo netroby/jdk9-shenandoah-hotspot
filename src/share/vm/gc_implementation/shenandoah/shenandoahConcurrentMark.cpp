@@ -362,7 +362,7 @@ void ShenandoahConcurrentMark::traverse_object(ExtendedOopClosure* cl, oop obj) 
 
 void ShenandoahConcurrentMark::initialize() {
   _max_worker_id = MAX2((uint) ParallelGCThreads, 1U);
-  _max_conc_worker_id = MAX2((uint) ShenandoahConcurrentGCThreads, 1U);
+  _max_conc_worker_id = MAX2((uint) ConcGCThreads, 1U);
   _task_queues = new SCMObjToScanQueueSet((int) _max_worker_id);
   _overflow_queue = new SharedOverflowMarkQueue();
 
@@ -390,12 +390,11 @@ void ShenandoahConcurrentMark::mark_from_roots(bool update_refs, bool full_gc) {
 
   
   SCMConcurrentMarkingTask markingTask = SCMConcurrentMarkingTask(this, &terminator, update_refs);
-  if (full_gc) {
-    sh->workers()->set_active_workers(max_workers);
-    sh->workers()->run_task(&markingTask);
-  } else {
-    sh->conc_workers()->run_task(&markingTask);
-  }
+
+  sh->workers()->set_active_workers(max_workers);
+  sh->workers()->run_task(&markingTask);
+  sh->workers()->set_active_workers(_max_worker_id);
+
   if (ShenandoahGCVerbose) {
     tty->print_cr("Finishing markFromRoots");
     tty->print_cr("RESUMING THE WORLD: after marking");
