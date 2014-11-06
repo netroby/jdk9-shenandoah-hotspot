@@ -2430,8 +2430,12 @@ size_t ShenandoahHeap::num_regions() {
 
 void ShenandoahHeap::cancel_evacuation() {
   _cancelled_evacuation = true;
-  while (! workers()->is_idle()) { // wait.
-    Thread::current()->_ParkEvent->park(1) ;
+  // If this is a GC thread, we let it return immediately, otherwise we wait
+  // until all GC threads are done.
+  if (! Thread::current()->is_GC_task_thread()) {
+    while (! workers()->is_idle()) { // wait.
+      Thread::current()->_ParkEvent->park(1) ;
+    }
   }
 }
 
