@@ -302,7 +302,7 @@ const char* Runtime1::name_for_address(address entry) {
   FUNCTION_CASE(entry, TRACE_TIME_METHOD);
 #endif
   FUNCTION_CASE(entry, StubRoutines::updateBytesCRC32());
-  FUNCTION_CASE(entry, ShenandoahBarrierSet::resolve_and_maybe_copy_oop_static);
+  FUNCTION_CASE(entry, ShenandoahBarrierSet::resolve_and_maybe_copy_oop_c1);
 
 #undef FUNCTION_CASE
 

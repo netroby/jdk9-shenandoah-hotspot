@@ -132,8 +132,10 @@ public:
   oop resolve_and_maybe_copy_oop_work(oop src);
   oop resolve_and_maybe_copy_oop_work2(oop src);
   virtual oop resolve_and_maybe_copy_oop(oop src);
-  static oopDesc* resolve_and_maybe_copy_oop_static(oopDesc* src);
-  static oopDesc* resolve_and_maybe_copy_oop_static2(oopDesc* src);
+
+  static void resolve_and_maybe_copy_oop_c2(oopDesc* src, JavaThread* thread);
+  static void resolve_and_maybe_copy_oop_static2(JavaThread* thread, oopDesc* src);
+  static void resolve_and_maybe_copy_oop_c1(JavaThread* thread, oopDesc* src);
 
 private:
   bool need_update_refs_barrier();
@@ -143,7 +145,7 @@ public:
   // TODO: The following should really live in an X86 specific subclass.
   virtual void compile_resolve_oop(MacroAssembler* masm, Register dst);
   virtual void compile_resolve_oop_not_null(MacroAssembler* masm, Register dst);
-  void compile_resolve_oop_for_write(MacroAssembler* masm, Register dst, bool explicit_null_check, int num_save_state = 0, ...);
+  void compile_resolve_oop_for_write(MacroAssembler* masm, Register dst, bool explicit_null_check, int stack_adjust, int num_save_state, ...);
 
 private:
   void compile_resolve_oop_runtime(MacroAssembler* masm, Register dst);

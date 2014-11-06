@@ -384,14 +384,14 @@ public:
 HeapWord* ShenandoahHeap::allocate_memory(size_t word_size, bool evacuation) {
   HeapWord* result = NULL;
   {
-    MutexLockerEx ml(Heap_lock, true);
+    MutexLockerEx ml(Heap_lock);
     result = allocate_memory_work(word_size, evacuation);
   }
 
   if (result == NULL && ! evacuation) { // Allocation failed, try full-GC, then retry allocation.
     collect(GCCause::_allocation_failure);
     {
-      MutexLockerEx ml(Heap_lock, true);
+      MutexLockerEx ml(Heap_lock);
       result = allocate_memory_work(word_size, evacuation);
     }
   }
@@ -620,7 +620,7 @@ HeapWord* ShenandoahHeap::mem_allocate_locked(size_t size,
     return result;
   } else {
     tty->print_cr("Out of memory. Requested number of words: %d used heap: %ld, bytes allocated since last CM: %ld", size, used(), _bytesAllocSinceCM);
-    MutexLockerEx ml(Heap_lock, true);
+    MutexLockerEx ml(Heap_lock);
     {
       print_heap_regions();
       tty->print("Printing %d free regions:\n", _free_regions->length());

@@ -812,7 +812,7 @@ bool GraphKit::dead_locals_are_killed() {
 // Helper function for enforcing certain bytecodes to reexecute if
 // deoptimization happens
 static bool should_reexecute_implied_by_bytecode(JVMState *jvms, bool is_anewarray) {
-  ciMethod* cur_method = jvms->method();
+  ciMethod* cur_method = jvms->has_method() ? jvms->method() : NULL;
   int       cur_bci   = jvms->bci();
   if (cur_method != NULL && cur_bci != InvocationEntryBci) {
     Bytecodes::Code code = cur_method->java_code_at_bci(cur_bci);
@@ -4278,9 +4278,10 @@ Node* GraphKit::make_shenandoah_write_barrier(Node* ctrl, Node* obj, const Type*
 
   // Evacuation path.
   set_control(iffalse);
-  Node *call = make_runtime_call(RC_LEAF | RC_NO_IO,
+  kill_dead_locals();
+  Node *call = make_runtime_call(RC_NO_LEAF | RC_NO_IO,
                                  OptoRuntime::shenandoah_barrier_Type(obj_type),
-                                 CAST_FROM_FN_PTR(address, ShenandoahBarrierSet::resolve_and_maybe_copy_oop_static),
+                                 OptoRuntime::shenandoah_write_barrier_Java(),
                                  "shenandoah_write_barrier",
                                  obj_type->is_ptr()->add_offset(-8),
                                  obj);
