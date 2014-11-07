@@ -284,7 +284,7 @@ void ShenandoahMarkCompact::finish_compaction(HeapWord* last_addr) {
     if (remaining_humonguous_continuations > 0) {
       region->set_humonguous_continuation(true);
       region->set_humonguous_start(false);
-      assert(region->free() > 0, "no empty humonguous region");
+      assert(region->used() > 0, "no empty humonguous region");
       remaining_humonguous_continuations--;
       continue;
     }
@@ -300,7 +300,7 @@ void ShenandoahMarkCompact::finish_compaction(HeapWord* last_addr) {
         // This is a humonguous object. Fix up the humonguous flags in this region and the following.
         region->set_humonguous_start(true);
         region->set_humonguous_continuation(false);
-        assert(region->free() > 0, "no empty humonguous region");
+        assert(region->used() > 0, "no empty humonguous region");
         remaining_humonguous_continuations = (first_obj->size() * HeapWordSize) / ShenandoahHeapRegion::RegionSizeBytes;
       } else {
         region->set_humonguous_start(false);
