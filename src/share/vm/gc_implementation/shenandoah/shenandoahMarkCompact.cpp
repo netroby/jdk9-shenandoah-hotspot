@@ -18,12 +18,31 @@ ShenandoahMarkCompact::ShenandoahMarkCompact() :
 
 }
 
+class ResetSafeIterationLimitsClosure : public ShenandoahHeapRegionClosure {
+  bool doHeapRegion(ShenandoahHeapRegion* r) {
+    r->set_concurrent_iteration_safe_limit(r->top());
+    return false;
+  }
+};
+
 void ShenandoahMarkCompact::do_mark_compact() {
+
+  if (UseTLAB) {
+    _heap->ensure_parsability(true);
+  }
 
   BarrierSet* old_bs = oopDesc::bs();
   oopDesc::set_bs(&_barrier_set);
 
   assert(Thread::current()->is_VM_thread(), "Do full GC only while world is stopped");
+
+  ResetSafeIterationLimitsClosure hrcl;
+  _heap->heap_region_iterate(&hrcl);
+
+  _heap->update_roots();
+  _heap->update_references_work();
+
+  _heap->reset_mark_bitmap();
 
   if (ShenandoahTraceFullGC) {
     gclog_or_tty->print_cr("Shenandoah-full-gc: phase 1: marking the heap");
@@ -52,13 +71,11 @@ void ShenandoahMarkCompact::do_mark_compact() {
     _heap->verify_heap_after_evacuation();
     _heap->verify_heap_after_update_refs();
   }
+
+  _heap->reset_mark_bitmap();
 }
 
 void ShenandoahMarkCompact::phase1_mark_heap() {
-
-  if (UseTLAB) {
-    _heap->ensure_parsability(true);
-  }
 
   // We need to clear the is_in_collection_set flag in all regions.
   ShenandoahHeapRegion** regions = _heap->heap_regions();
@@ -70,8 +87,8 @@ void ShenandoahMarkCompact::phase1_mark_heap() {
 
   // TODO: Move prepare_unmarked_root_objs() into SCM!
   // TODO: Make this whole sequence a separate method in SCM!
-  _heap->concurrentMark()->prepare_unmarked_root_objs_no_derived_ptrs(true /* update references */);
-  _heap->concurrentMark()->mark_from_roots(true /* update-refs */, true /* full-gc */);
+  _heap->concurrentMark()->prepare_unmarked_root_objs_no_derived_ptrs(false /* update references */);
+  _heap->concurrentMark()->mark_from_roots(false /* update-refs */, true /* full-gc */);
   _heap->concurrentMark()->finish_mark_from_roots(true);
 
 }
@@ -170,6 +187,10 @@ class ShenandoahMarkCompactUpdateRefsClosure : public ExtendedOopClosure {
   void do_oop(oop* p) {
     oop obj = oopDesc::load_heap_oop(p);
     if (! oopDesc::is_null(obj)) {
+      if (!(ShenandoahHeap::heap()->is_marked_current(obj))) {
+        tty->print_cr("got a ref to an unmarked object out of a marked object %s", obj->klass()->external_name());
+        
+      }
       assert(ShenandoahHeap::heap()->is_marked_current(obj), "only update references to marked objects");
       assert(obj->is_oop(), "expect oop");
       oop new_obj = BrooksPointer::get(obj).get_forwardee_raw();
@@ -310,17 +331,7 @@ void ShenandoahMarkCompact::finish_compaction(HeapWord* last_addr) {
   }
 }
 
-class ResetSafeIterationLimitsClosure : public ShenandoahHeapRegionClosure {
-  bool doHeapRegion(ShenandoahHeapRegion* r) {
-    r->set_concurrent_iteration_safe_limit(r->top());
-    return false;
-  }
-};
-
 void ShenandoahMarkCompact::phase4_compact_objects() {
-
-  ResetSafeIterationLimitsClosure hrcl;
-  _heap->heap_region_iterate(&hrcl);
 
   ShenandoahCompactObjectsClosure cl;
   _heap->object_iterate_careful(&cl);
