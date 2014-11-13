@@ -295,6 +295,7 @@ void ShenandoahConcurrentMark::prepare_unmarked_root_objs_no_derived_ptrs(bool u
 
   ShenandoahHeap* heap = ShenandoahHeap::heap();
   if (ShenandoahParallelRootScan) {
+    heap->workers()->set_active_workers(_max_worker_id);
     heap->set_par_threads(heap->workers()->active_workers()); // Prepare for parallel processing.
     ClassLoaderDataGraph::clear_claimed_marks();
     SharedHeap::StrongRootsScope strong_roots_scope(heap, true);
