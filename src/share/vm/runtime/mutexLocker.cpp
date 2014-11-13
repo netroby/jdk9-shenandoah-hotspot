@@ -52,6 +52,7 @@ Monitor* JNICritical_lock             = NULL;
 Mutex*   JvmtiThreadState_lock        = NULL;
 Monitor* JvmtiPendingEvent_lock       = NULL;
 Monitor* Heap_lock                    = NULL;
+Monitor* ShenandoahHeap_lock          = NULL;
 Monitor* ShenandoahFullGC_lock        = NULL;
 Monitor* ShenandoahJNICritical_lock   = NULL;
 Mutex*   ExpandHeap_lock              = NULL;
@@ -262,6 +263,7 @@ void mutex_init() {
                     // used in CMS GC for locking PLL lock
   }
   def(Heap_lock                    , Monitor, nonleaf+1,   false);
+  def(ShenandoahHeap_lock          , Monitor, nonleaf+1,   false);
   def(JfieldIdCreation_lock        , Mutex  , nonleaf+1,   true ); // jfieldID, Used in VM_Operation
   def(MemberNameTable_lock         , Mutex  , nonleaf+1,   false); // Used to protect MemberNameTable
 

@@ -357,6 +357,9 @@ private:
   void verify_live();
   void verify_liveness_after_concurrent_mark();
 
+  HeapWord* allocate_memory_with_lock(size_t word_size, bool evacuation);
+  HeapWord* allocate_memory_heap_lock(size_t word_size, bool evacuation);
+  HeapWord* allocate_memory_shenandoah_lock(size_t word_size, bool evacuation);
   HeapWord* allocate_memory_work(size_t word_size, bool evacuation);
   HeapWord* allocate_large_memory(size_t word_size);
   ShenandoahHeapRegion* check_skip_humonguous(ShenandoahHeapRegion* region, bool evacuation);
