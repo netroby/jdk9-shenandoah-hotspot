@@ -517,23 +517,6 @@ void ArrayCopyStub::emit_code(LIR_Assembler* ce) {
 /////////////////////////////////////////////////////////////////////////////
 #if INCLUDE_ALL_GCS
 
-void ShenandoahWriteBarrierStub::emit_code(LIR_Assembler* ce) {
-
-  __ bind(_entry);
-
-  // Do the runtime call.
-  bool need_swap_regs = rax != obj()->as_register();
-  if (need_swap_regs) {
-    __ xchgq(rax, obj()->as_register());
-  }
-  __ call(RuntimeAddress(Runtime1::entry_for(Runtime1::shenandoah_write_barrier_slow_id)));
-  if (need_swap_regs) {
-    __ xchgq(rax, obj()->as_register());
-  }
-
-  __ jmp(_continuation);
-}
-
 void G1PreBarrierStub::emit_code(LIR_Assembler* ce) {
   // At this point we know that marking is in progress.
   // If do_load() is true then we have to emit the
