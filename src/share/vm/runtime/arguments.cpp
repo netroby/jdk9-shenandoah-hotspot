@@ -1520,6 +1520,7 @@ void Arguments::set_ergonomics_flags() {
         !UseConcMarkSweepGC &&
         !UseG1GC &&
         !UseParNewGC &&
+        !UseShenandoahGC &&
         FLAG_IS_DEFAULT(UseParallelGC)) {
       if (should_auto_select_low_pause_collector()) {
         FLAG_SET_ERGO(bool, UseConcMarkSweepGC, true);
