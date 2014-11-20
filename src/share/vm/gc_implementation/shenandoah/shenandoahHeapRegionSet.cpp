@@ -79,7 +79,7 @@ size_t ShenandoahHeapRegionSet::available_regions() {
 
 void ShenandoahHeapRegionSet::append(ShenandoahHeapRegion* region) {
   assert(_next_free < _regions + _max_regions, "need space for additional regions");
-  assert(Thread::current()->is_VM_thread() || ! Universe::is_fully_initialized(), "only append regions to list while world is stopped");
+  assert(SafepointSynchronize::is_at_safepoint() || Heap_lock->owned_by_self() || ! Universe::is_fully_initialized(), "only append regions to list while world is stopped");
 
   // Grab next slot.
   ShenandoahHeapRegion** next_free = _next_free;

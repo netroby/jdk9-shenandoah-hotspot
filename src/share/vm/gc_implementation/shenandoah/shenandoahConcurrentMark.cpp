@@ -44,9 +44,9 @@ public:
   ShenandoahMarkObjsClosure(uint worker_id) :
     _worker_id(worker_id),
     _heap((ShenandoahHeap*)(Universe::heap())),
-    _live_data(NEW_C_HEAP_ARRAY(size_t, _heap->num_regions(), mtGC))
+    _live_data(NEW_C_HEAP_ARRAY(size_t, _heap->max_regions(), mtGC))
   {
-    Copy::zero_to_bytes(_live_data, _heap->num_regions() * sizeof(size_t));
+    Copy::zero_to_bytes(_live_data, _heap->max_regions() * sizeof(size_t));
   }
 
   ~ShenandoahMarkObjsClosure()  {

@@ -2445,6 +2445,10 @@ size_t ShenandoahHeap::num_regions() {
   return _num_regions;
 }
 
+size_t ShenandoahHeap::max_regions() {
+  return _max_regions;
+}
+
 void ShenandoahHeap::cancel_evacuation() {
   _cancelled_evacuation = true;
   // If this is a GC thread, we let it return immediately, otherwise we wait

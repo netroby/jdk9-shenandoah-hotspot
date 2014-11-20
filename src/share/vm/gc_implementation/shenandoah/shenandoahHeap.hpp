@@ -302,6 +302,7 @@ public:
 
   ShenandoahHeapRegion** heap_regions();
   size_t num_regions();
+  size_t max_regions();
 
   void recycle_dirty_regions();
 
