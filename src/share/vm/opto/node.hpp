@@ -654,7 +654,8 @@ public:
     Flag_avoid_back_to_back  = Flag_may_be_short_branch << 1,
     Flag_has_call            = Flag_avoid_back_to_back << 1,
     Flag_is_expensive        = Flag_has_call << 1,
-    _max_flags = (Flag_is_expensive << 1) - 1 // allow flags combination
+    Flag_is_shenandoah_wb    = Flag_is_expensive << 1,
+    _max_flags = (Flag_is_shenandoah_wb << 1) - 1 // allow flags combination
   };
 
 private:
@@ -667,10 +668,6 @@ protected:
     assert(c <= _max_classes, "invalid node class");
     _class_id = c; // cast out const
   }
-  void init_flags(jushort fl) {
-    assert(fl <= _max_flags, "invalid node flag");
-    _flags |= fl;
-  }
   void clear_flag(jushort fl) {
     assert(fl <= _max_flags, "invalid node flag");
     _flags &= ~fl;
@@ -680,6 +677,10 @@ public:
   const jushort class_id() const { return _class_id; }
 
   const jushort flags() const { return _flags; }
+  void init_flags(jushort fl) {
+    assert(fl <= _max_flags, "invalid node flag");
+    _flags |= fl;
+  }
 
   // Return a dense integer opcode number
   virtual int Opcode() const;
@@ -801,6 +802,8 @@ public:
 
   // is_Copy() returns copied edge index (0 or 1)
   uint is_Copy() const { return (_flags & Flag_is_Copy); }
+
+  bool is_shenandoah_wb() const { return (_flags & Flag_is_shenandoah_wb) != 0; }
 
   virtual bool is_CFG() const { return false; }
 

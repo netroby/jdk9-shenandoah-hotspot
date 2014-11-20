@@ -4305,6 +4305,10 @@ Node* GraphKit::shenandoah_write_barrier(Node* obj) {
 
   if (UseShenandoahGC) {
 
+    if (obj->is_shenandoah_wb()) {
+      return obj;
+    }
+
     if (! ShenandoahWriteBarrier) {
       assert(! ShenandoahConcurrentEvacuation, "Can only do this without concurrent evacuation");
       return shenandoah_read_barrier(obj);
@@ -4319,7 +4323,10 @@ Node* GraphKit::shenandoah_write_barrier(Node* obj) {
 
     // Fast path 2: we know it's not null.
     if (obj_type->meet(TypePtr::NULL_PTR) != obj_type) {
-      return make_shenandoah_write_barrier(NULL, obj, obj_type);
+      Node* wb = make_shenandoah_write_barrier(NULL, obj, obj_type);
+      wb->init_flags(Node::Flag_is_shenandoah_wb);
+      replace_in_map(obj, wb);
+      return wb;
     }
 
     Node* oldmem = map()->memory();
@@ -4354,6 +4361,8 @@ Node* GraphKit::shenandoah_write_barrier(Node* obj) {
 
     merge_memory(oldmem, region, _null_path);
 
+    phi->init_flags(Node::Flag_is_shenandoah_wb);
+    replace_in_map(obj, phi);
     return phi;
   } else {
     return obj;
