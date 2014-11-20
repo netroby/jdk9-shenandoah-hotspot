@@ -236,6 +236,10 @@ void ShenandoahHeap::increase_used(size_t bytes) {
   // Atomic::add_ptr(bytes, &_used);
 }
 
+void ShenandoahHeap::set_used(size_t bytes) {
+  _used = bytes;
+}
+
 void ShenandoahHeap::decrease_used(size_t bytes) {
   assert(_used - bytes >= 0, "never decrease heap size by more than we've left");
   _used -= bytes;

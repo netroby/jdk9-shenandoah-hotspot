@@ -228,10 +228,12 @@ class ShenandoahCompactObjectsClosure : public ObjectClosureCareful {
 private:
   ShenandoahHeap* _heap;
   HeapWord* _last_addr;
+  size_t _used;
 public:
   ShenandoahCompactObjectsClosure() :
     _heap(ShenandoahHeap::heap()),
-    _last_addr(_heap->heap_regions()[0]->bottom()) {
+    _last_addr(_heap->heap_regions()[0]->bottom()),
+    _used(0) {
   }
 
   void do_object(oop p) {
@@ -244,6 +246,7 @@ public:
   size_t do_object_careful(oop p) {
     size_t obj_size = p->size();
     if (_heap->is_marked_current(p)) {
+      _used += obj_size;
       HeapWord* old_addr = (HeapWord*) p;
       HeapWord* new_addr = (HeapWord*) BrooksPointer::get(p).get_forwardee_raw();
       assert(new_addr <= old_addr, "new location must not be higher up in the heap");
@@ -288,6 +291,10 @@ public:
 
   HeapWord* last_addr() {
     return _last_addr;
+  }
+
+  size_t used() {
+    return _used;
   }
 };
 
@@ -337,4 +344,6 @@ void ShenandoahMarkCompact::phase4_compact_objects() {
   _heap->object_iterate_careful(&cl);
 
   finish_compaction(cl.last_addr());
+
+  _heap->set_used(cl.used() * HeapWordSize);
 }

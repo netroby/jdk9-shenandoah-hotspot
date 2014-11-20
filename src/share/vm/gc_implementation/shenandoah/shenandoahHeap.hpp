@@ -273,6 +273,7 @@ public:
 
   void increase_used(size_t bytes);
   void decrease_used(size_t bytes);
+  void set_used(size_t bytes);
 
   int ensure_new_regions(int num_new_regions);
 
