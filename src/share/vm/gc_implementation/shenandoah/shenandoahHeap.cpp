@@ -2472,3 +2472,11 @@ bool ShenandoahHeap::cancelled_evacuation() {
 int ShenandoahHeap::max_workers() {
   return _max_workers;
 }
+
+void ShenandoahHeap::shutdown() {
+  // We set this early here, to let GC threads terminate before we ask the concurrent thread
+  // to terminate, which would otherwise block until all GC threads come to finish normally.
+  _cancelled_evacuation = true;
+  _concurrent_gc_thread->shutdown();
+  cancel_evacuation();
+}

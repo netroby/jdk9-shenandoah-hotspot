@@ -354,6 +354,8 @@ private:
 public:
   bool cancelled_evacuation();
 
+  void shutdown();
+
 private:
   bool concurrent_mark_in_progress();
   void verify_live();

@@ -625,6 +625,9 @@ class CollectedHeap : public CHeapObj<mtInternal> {
   // Heap verification
   virtual void verify(bool silent, VerifyOption option) = 0;
 
+  // Shut down all GC workers and other GC related threads.
+  virtual void shutdown();
+
   // Non product verification and debugging.
 #ifndef PRODUCT
   // Support for PromotionFailureALot.  Return true if it's time to cause a

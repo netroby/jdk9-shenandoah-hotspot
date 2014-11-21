@@ -98,12 +98,14 @@ void ShenandoahConcurrentThread::run() {
           }
         }
 
-        // If we're not concurrently evacuating, evacuation is done
-        // from VM_ShenandoahFinishMark within the VMThread above.
-	if (ShenandoahConcurrentEvacuation) {
-          VM_ShenandoahEvacuation evacuation;
-          evacuation.doit();
-	}
+        if (! _should_terminate) {
+          // If we're not concurrently evacuating, evacuation is done
+          // from VM_ShenandoahFinishMark within the VMThread above.
+          if (ShenandoahConcurrentEvacuation) {
+            VM_ShenandoahEvacuation evacuation;
+            evacuation.doit();
+          }
+        }
 
         if (ShenandoahUpdateRefsEarly) {
           if (! heap->cancelled_evacuation()) {
@@ -208,4 +210,8 @@ void ShenandoahConcurrentThread::makeSurrogateLockerThread(TRAPS) {
   assert(THREAD->is_Java_thread(), "must be a Java thread");
   assert(_slt == NULL, "SLT already created");
   _slt = SurrogateLockerThread::make(THREAD);
+}
+
+void ShenandoahConcurrentThread::shutdown() {
+  _should_terminate = true;
 }
