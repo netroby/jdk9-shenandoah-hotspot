@@ -119,6 +119,7 @@ jint ShenandoahHeap::initialize() {
   }
   _first_region = _ordered_regions[0];
   _first_region_bottom = _first_region->bottom();
+  assert((((size_t) _first_region_bottom) & (ShenandoahHeapRegion::RegionSizeBytes - 1)) == 0, err_msg("misaligned heap: "PTR_FORMAT, _first_region_bottom));
 
   _numAllocs = 0;
 

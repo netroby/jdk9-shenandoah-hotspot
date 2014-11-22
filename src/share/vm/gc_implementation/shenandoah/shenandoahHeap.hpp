@@ -123,6 +123,7 @@ public:
   ShenandoahCollectorPolicy *shenandoahPolicy() { return _shenandoah_policy;}
 
   jint initialize();
+  static size_t conservative_max_heap_alignment() { return ShenandoahHeapRegion::RegionSizeBytes; }
   void post_initialize();
   size_t capacity() const;
   size_t used() const;
