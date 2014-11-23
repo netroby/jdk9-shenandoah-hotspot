@@ -4149,6 +4149,7 @@ void GraphKit::store_String_value(Node* ctrl, Node* str, Node* value) {
 
   // TODO: See comment in load_String_offset().
   str = shenandoah_write_barrier(str);
+  value = shenandoah_read_barrier(value);
 
   store_oop_to_object(control(), str,  basic_plus_adr(str, value_offset), value_field_type,
       value, TypeAryPtr::CHARS, T_OBJECT);
