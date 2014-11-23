@@ -1934,9 +1934,9 @@ public:
     if (!oopDesc::is_null(heap_oop)) {
       oop obj = oopDesc::decode_heap_oop_not_null(heap_oop);
       guarantee(_sh->heap_region_containing(obj)->is_in_collection_set() == (obj != oopDesc::bs()->resolve_oop(obj)),
-                err_msg("forwarded objects can only exist in dirty (from-space) regions is_dirty: %d, is_forwarded: %d",
+                err_msg("forwarded objects can only exist in dirty (from-space) regions is_dirty: %d, is_forwarded: %d obj-klass: %s, marked: %s, forwarded-marked: %s",
                         _sh->heap_region_containing(obj)->is_in_collection_set(),
-                        obj != oopDesc::bs()->resolve_oop(obj))
+                        obj != oopDesc::bs()->resolve_oop(obj), obj->klass()->external_name(), BOOL_TO_STR(_sh->is_marked_current(obj)), BOOL_TO_STR(_sh->is_marked_current(oopDesc::bs()->resolve_oop(obj))))
                 );
       obj = oopDesc::bs()->resolve_oop(obj);
       guarantee(! _sh->heap_region_containing(obj)->is_in_collection_set(), "forwarded oops must not point to dirty regions");
