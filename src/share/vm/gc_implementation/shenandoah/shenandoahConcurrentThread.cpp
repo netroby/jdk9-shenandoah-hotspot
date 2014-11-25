@@ -19,7 +19,7 @@ ShenandoahConcurrentThread::ShenandoahConcurrentThread() :
   _waiting_for_jni_critical(false),
   _do_full_gc(false)
 {
-  //  create_and_start();
+  create_and_start();
 }
 
 ShenandoahConcurrentThread::~ShenandoahConcurrentThread() {
@@ -52,8 +52,12 @@ void ShenandoahConcurrentThread::run() {
 
   wait_for_universe_init();
 
-  while(_slt == NULL) {
-    // Wait for initialization to finish.
+  // Wait until we have the surrogate locker thread in place.
+  {
+    MutexLockerEx x(CGC_lock, true);
+    while(_slt == NULL && !_should_terminate) {
+      CGC_lock->wait(true, 200);
+    }
   }
 
   ShenandoahHeap* heap = ShenandoahHeap::heap();

@@ -159,7 +159,6 @@ jint ShenandoahHeap::initialize() {
   clear_cset_fast_test();
 
   _concurrent_gc_thread = new ShenandoahConcurrentThread();
-  _concurrent_gc_thread->start();
   return JNI_OK;
 }
 
