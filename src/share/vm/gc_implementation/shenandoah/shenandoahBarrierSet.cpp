@@ -303,26 +303,17 @@ oop ShenandoahBarrierSet::resolve_and_maybe_copy_oopHelper(oop src) {
     }
 }
 
-JRT_ENTRY(void, ShenandoahBarrierSet::resolve_and_maybe_copy_oop_c2(oopDesc* src, JavaThread* thread))
-  oop result = ((ShenandoahBarrierSet*) oopDesc::bs())->resolve_and_maybe_copy_oop_work(oop(src));
-  // tty->print_cr("called C2 write barrier with: %p result: %p copy: %d", (oopDesc*) src, (oopDesc*) result, src != result);
-  thread->set_vm_result(result);
-  // eturn (oopDesc*) result;
-JRT_END
-
-IRT_ENTRY(void, ShenandoahBarrierSet::resolve_and_maybe_copy_oop_static2(JavaThread* thread, oopDesc* src))
-  oop result = ((ShenandoahBarrierSet*)oopDesc::bs())->resolve_and_maybe_copy_oop_work2(oop(src));
-  // tty->print_cr("called interpreter write barrier with: %p result: %p", src, result);
-  thread->set_vm_result(result);
-  //return (oopDesc*) result;
+IRT_LEAF(oopDesc*, ShenandoahBarrierSet::resolve_and_maybe_copy_oop_static(oopDesc* src))
+  oop result = ((ShenandoahBarrierSet*)oopDesc::bs())->resolve_and_maybe_copy_oop_work(oop(src));
+  // tty->print_cr("called static write barrier with: %p result: %p copy: %d", (oopDesc*) src, (oopDesc*) result, src != result);
+  return (oopDesc*) result;
 IRT_END
 
-JRT_ENTRY(void, ShenandoahBarrierSet::resolve_and_maybe_copy_oop_c1(JavaThread* thread, oopDesc* src))
+IRT_LEAF(oopDesc*, ShenandoahBarrierSet::resolve_and_maybe_copy_oop_static2(oopDesc* src))
   oop result = ((ShenandoahBarrierSet*)oopDesc::bs())->resolve_and_maybe_copy_oop_work2(oop(src));
-  // tty->print_cr("called C1 write barrier with: %p result: %p", src, result);
-  thread->set_vm_result(result);
-  //return (oopDesc*) result;
-JRT_END
+  // tty->print_cr("called write barrier with: %p result: %p", src, result);
+  return (oopDesc*) result;
+IRT_END
 
 oop ShenandoahBarrierSet::resolve_and_maybe_copy_oop(oop src) {
     ShenandoahHeap *sh = (ShenandoahHeap*) Universe::heap();      
@@ -495,7 +486,7 @@ void ShenandoahBarrierSet::compile_resolve_oop_not_null(MacroAssembler* masm, Re
   }
 }
 
-void ShenandoahBarrierSet::compile_resolve_oop_for_write(MacroAssembler* masm, Register dst, bool explicit_null_check, int stack_adjust, int num_state_save, ...) {
+void ShenandoahBarrierSet::compile_resolve_oop_for_write(MacroAssembler* masm, Register dst, bool explicit_null_check, int num_state_save, ...) {
 
   if (! ShenandoahWriteBarrier) {
     assert(! ShenandoahConcurrentEvacuation, "Can only do this without concurrent evacuation");
@@ -510,12 +501,11 @@ void ShenandoahBarrierSet::compile_resolve_oop_for_write(MacroAssembler* masm, R
   // Resolve oop first.
   // TODO: Make this not-null-checking as soon as we have implicit null checks in c1!
 
+  __ push(rscratch1);
   if (explicit_null_check) {
     __ testptr(dst, dst);
     __ jcc(Assembler::zero, done);
   }
-
-  __ push(rscratch1);
 
   // Now check if evacuation is in progress.
   ExternalAddress evacuation_in_progress = ExternalAddress(ShenandoahHeap::evacuation_in_progress_addr());
@@ -524,16 +514,15 @@ void ShenandoahBarrierSet::compile_resolve_oop_for_write(MacroAssembler* masm, R
   compile_resolve_oop_not_null(masm, dst);
 
   __ cmpl(rscratch1, 0);
-  __ pop(rscratch1);
   __ jcc(Assembler::equal, done);
-  __ push(rscratch1);
+
   __ push(rscratch2);
 
   ExternalAddress heap_address = ExternalAddress((address) Universe::heap_addr());
   __ movptr(rscratch1, heap_address);
   // Compute index into regions array.
   __ movq(rscratch2, dst);
-  // __ andq(rscratch2, ~(ShenandoahHeapRegion::RegionSizeBytes - 1));
+  __ andq(rscratch2, ~(ShenandoahHeapRegion::RegionSizeBytes - 1));
   Address first_region_bottom_addr = Address(rscratch1, ShenandoahHeap::first_region_bottom_offset());
   __ subq(rscratch2, first_region_bottom_addr);
   __ shrq(rscratch2, ShenandoahHeapRegion::RegionSizeShift);
@@ -549,7 +538,6 @@ void ShenandoahBarrierSet::compile_resolve_oop_for_write(MacroAssembler* masm, R
   __ testb(rscratch1, 0x1);
 
   __ pop(rscratch2);
-  __ pop(rscratch1);
 
   __ jcc(Assembler::zero, done);
 
@@ -557,18 +545,12 @@ void ShenandoahBarrierSet::compile_resolve_oop_for_write(MacroAssembler* masm, R
   va_list vl;
   va_start(vl, num_state_save);
   for (int i = 0; i < num_state_save; i++) {
-    save_states.at_put(i, va_arg(vl, int));
+    save_states.at_put(i, va_arg(vl, int /* SaveState */));
   }
   va_end(vl);
 
-  if (stack_adjust != 0) {
-    __ addptr(rsp, stack_adjust * Interpreter::stackElementSize);
-  }
   for (int i = 0; i < num_state_save; i++) {
     switch (save_states[i]) {
-    case noreg:
-      __ subptr(rsp, Interpreter::stackElementSize);
-      break;
     case ss_rax:
       __ push(rax);
       break;
@@ -632,9 +614,9 @@ void ShenandoahBarrierSet::compile_resolve_oop_for_write(MacroAssembler* masm, R
       if (dst != rsi) {
         __ push(rsi);
       }
-      //if (dst != rbp) {
-      //  __ push(rbp);
-      //  }
+      if (dst != rbp) {
+        __ push(rbp);
+      }
       if (dst != r8) {
         __ push(r8);
       }
@@ -682,13 +664,13 @@ void ShenandoahBarrierSet::compile_resolve_oop_for_write(MacroAssembler* masm, R
     }
   }
 
-  __ call_VM(dst, CAST_FROM_FN_PTR(address, ShenandoahBarrierSet::resolve_and_maybe_copy_oop_static2), dst, false);
+
+  __ mov(c_rarg1, dst);
+  __ super_call_VM_leaf(CAST_FROM_FN_PTR(address, ShenandoahBarrierSet::resolve_and_maybe_copy_oop_static2), c_rarg1);
+  __ mov(rscratch1, rax);
 
   for (int i = num_state_save - 1; i >= 0; i--) {
     switch (save_states[i]) {
-    case noreg:
-      __ addptr(rsp, Interpreter::stackElementSize);
-      break;
     case ss_rax:
       __ pop(rax);
       break;
@@ -773,9 +755,9 @@ void ShenandoahBarrierSet::compile_resolve_oop_for_write(MacroAssembler* masm, R
       if (dst != r8) {
         __ pop(r8);
       }
-      // if (dst != rbp) {
-      //   __ pop(rbp);
-      // }
+      if (dst != rbp) {
+        __ pop(rbp);
+      }
       if (dst != rsi) {
         __ pop(rsi);
       }
@@ -800,10 +782,10 @@ void ShenandoahBarrierSet::compile_resolve_oop_for_write(MacroAssembler* masm, R
     }
   }
 
-  if (stack_adjust != 0) {
-    __ subptr(rsp, stack_adjust * Interpreter::stackElementSize);
-  }
+  __ mov(dst, rscratch1);
+
   __ bind(done);
+  __ pop(rscratch1);
 }
 
 /*

@@ -90,7 +90,7 @@ class CE_Eliminator: public BlockClosure {
   virtual void block_do(BlockBegin* block);
 
  private:
-  Value make_ifop(Value x, Instruction::Condition cond, Value y, Value tval, Value fval, ValueStack* state_before);
+  Value make_ifop(Value x, Instruction::Condition cond, Value y, Value tval, Value fval);
 };
 
 void CE_Eliminator::block_do(BlockBegin* block) {
@@ -194,8 +194,7 @@ void CE_Eliminator::block_do(BlockBegin* block) {
     cur_end = cur_end->set_next(f_value);
   }
 
-  ValueStack* state_before = if_->state_before();
-  Value result = make_ifop(if_->x(), if_->cond(), if_->y(), t_value, f_value, state_before);
+  Value result = make_ifop(if_->x(), if_->cond(), if_->y(), t_value, f_value);
   assert(result != NULL, "make_ifop must return a non-null instruction");
   if (!result->is_linked() && result->can_be_linked()) {
     NOT_PRODUCT(result->set_printable_bci(if_->printable_bci()));
@@ -203,6 +202,7 @@ void CE_Eliminator::block_do(BlockBegin* block) {
   }
 
   // append Goto to successor
+  ValueStack* state_before = if_->state_before();
   Goto* goto_ = new Goto(sux, state_before, if_->is_safepoint() || t_goto->is_safepoint() || f_goto->is_safepoint());
 
   // prepare state for Goto
@@ -246,9 +246,9 @@ void CE_Eliminator::block_do(BlockBegin* block) {
   _hir->verify();
 }
 
-Value CE_Eliminator::make_ifop(Value x, Instruction::Condition cond, Value y, Value tval, Value fval, ValueStack* state_before) {
+Value CE_Eliminator::make_ifop(Value x, Instruction::Condition cond, Value y, Value tval, Value fval) {
   if (!OptimizeIfOps) {
-    return new IfOp(x, cond, y, tval, fval, state_before);
+    return new IfOp(x, cond, y, tval, fval);
   }
 
   tval = tval->subst();
@@ -283,7 +283,7 @@ Value CE_Eliminator::make_ifop(Value x, Instruction::Condition cond, Value y, Va
           if (new_tval == new_fval) {
             return new_tval;
           } else {
-            return new IfOp(x_ifop->x(), x_ifop_cond, x_ifop->y(), new_tval, new_fval, state_before);
+            return new IfOp(x_ifop->x(), x_ifop_cond, x_ifop->y(), new_tval, new_fval);
           }
         }
       }
@@ -299,7 +299,7 @@ Value CE_Eliminator::make_ifop(Value x, Instruction::Condition cond, Value y, Va
       }
     }
   }
-  return new IfOp(x, cond, y, tval, fval, state_before);
+  return new IfOp(x, cond, y, tval, fval);
 }
 
 void Optimizer::eliminate_conditional_expressions() {

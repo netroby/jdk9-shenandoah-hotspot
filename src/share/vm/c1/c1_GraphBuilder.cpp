@@ -1185,7 +1185,7 @@ void GraphBuilder::if_node(Value x, If::Condition cond, Value y, ValueStack* sta
   bool is_bb = tsux->bci() < stream()->cur_bci() || fsux->bci() < stream()->cur_bci();
   // In case of loop invariant code motion or predicate insertion
   // before the body of a loop the state is needed
-  Instruction *i = append(new If(x, cond, false, y, tsux, fsux, (is_bb || compilation()->is_optimistic() || UseShenandoahGC) ? state_before : NULL, is_bb));
+  Instruction *i = append(new If(x, cond, false, y, tsux, fsux, (is_bb || compilation()->is_optimistic()) ? state_before : NULL, is_bb));
 
   assert(i->as_Goto() == NULL ||
          (i->as_Goto()->sux_at(0) == tsux  && i->as_Goto()->is_safepoint() == tsux->bci() < stream()->cur_bci()) ||
@@ -4194,16 +4194,13 @@ bool GraphBuilder::append_unsafe_get_obj(ciMethod* callee, BasicType t, bool is_
 
 bool GraphBuilder::append_unsafe_put_obj(ciMethod* callee, BasicType t, bool is_volatile) {
   if (InlineUnsafeOps) {
-    ValueStack* stack = copy_state_before();
     Values* args = state()->pop_arguments(callee->arg_size());
     null_check(args->at(0));
     Instruction* offset = args->at(2);
 #ifndef _LP64
     offset = append(new Convert(Bytecodes::_l2i, offset, as_ValueType(T_INT)));
 #endif
-    UnsafePutObject* unsafe_put_object = new UnsafePutObject(t, args->at(1), offset, args->at(3), is_volatile);
-    unsafe_put_object->set_state_before(stack);
-    Instruction* op = append(unsafe_put_object);
+    Instruction* op = append(new UnsafePutObject(t, args->at(1), offset, args->at(3), is_volatile));
     compilation()->set_has_unsafe_access(true);
     kill_all();
   }
@@ -4326,9 +4323,7 @@ bool GraphBuilder::append_unsafe_get_and_set_obj(ciMethod* callee, bool is_add) 
 #ifndef _LP64
     offset = append(new Convert(Bytecodes::_l2i, offset, as_ValueType(T_INT)));
 #endif
-    UnsafeGetAndSetObject* inst = new UnsafeGetAndSetObject(t, args->at(1), offset, args->at(3), is_add);
-    inst->set_state_before(copy_state_before());
-    Instruction* op = append(inst);
+    Instruction* op = append(new UnsafeGetAndSetObject(t, args->at(1), offset, args->at(3), is_add));
     compilation()->set_has_unsafe_access(true);
     kill_all();
     push(op->type(), op);

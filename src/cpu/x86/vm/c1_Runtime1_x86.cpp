@@ -1655,12 +1655,9 @@ OopMapSet* Runtime1::generate_code_for(StubID id, StubAssembler* sasm) {
         __ jcc(Assembler::zero, done);
 
 
-        OopMap* map = save_live_registers(sasm, 2);
-        int call_offset = __ call_RT(rax, noreg, CAST_FROM_FN_PTR(address, ShenandoahBarrierSet::resolve_and_maybe_copy_oop_c1), rax);
-        oop_maps = new OopMapSet();
-        oop_maps->add_gc_map(call_offset, map);
+        save_live_registers(sasm, 1);
+        __ super_call_VM_leaf(CAST_FROM_FN_PTR(address, ShenandoahBarrierSet::resolve_and_maybe_copy_oop_static2), rax);
         restore_live_registers_except_rax(sasm);
-        __ verify_oop(rax);
         __ bind(done);
   
       }

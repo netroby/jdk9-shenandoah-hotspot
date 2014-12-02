@@ -297,7 +297,7 @@ class LIRGenerator: public InstructionVisitor, public BlockClosure {
   void volatile_field_store(LIR_Opr value, LIR_Address* address, CodeEmitInfo* info);
   void volatile_field_load(LIR_Address* address, LIR_Opr result, CodeEmitInfo* info);
 
-  void put_Object_unsafe(LIR_Opr src, LIR_Opr offset, LIR_Opr data, BasicType type, bool is_volatile, CodeEmitInfo* info);
+  void put_Object_unsafe(LIR_Opr src, LIR_Opr offset, LIR_Opr data, BasicType type, bool is_volatile);
   void get_Object_unsafe(LIR_Opr dest, LIR_Opr src, LIR_Opr offset, BasicType type, bool is_volatile);
 
   void arithmetic_call_op (Bytecodes::Code code, LIR_Opr result, LIR_OprList* args);

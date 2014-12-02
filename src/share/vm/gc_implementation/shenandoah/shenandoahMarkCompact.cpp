@@ -84,8 +84,8 @@ void ShenandoahMarkCompact::phase1_mark_heap() {
 
   // TODO: Move prepare_unmarked_root_objs() into SCM!
   // TODO: Make this whole sequence a separate method in SCM!
-  _heap->concurrentMark()->prepare_unmarked_root_objs_no_derived_ptrs(false /* update references */);
-  _heap->concurrentMark()->mark_from_roots(false /* update-refs */, true /* full-gc */);
+  _heap->concurrentMark()->prepare_unmarked_root_objs_no_derived_ptrs(true /* update references */);
+  _heap->concurrentMark()->mark_from_roots(true /* update-refs */, true /* full-gc */);
   _heap->concurrentMark()->finish_mark_from_roots(true);
 
 }

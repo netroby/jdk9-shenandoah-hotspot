@@ -54,7 +54,6 @@ public:
   };
 
   enum SaveState {
-    noreg,
     ss_rax,
     ss_rbx,
     ss_rcx,
@@ -225,7 +224,7 @@ public:
     // Default implementation does nothing.
   }
 
-  virtual void compile_resolve_oop_for_write(MacroAssembler* masm, Register dst, bool explicit_null_check, int stack_adjust, int num_save_state, ...) {
+  virtual void compile_resolve_oop_for_write(MacroAssembler* masm, Register dst, bool explicit_null_check, int num_save_state = 0, ...) {
     // Default implementation does nothing.
   }
 };

@@ -120,7 +120,6 @@ class OptoRuntime : public AllStatic {
   static address _multianewarray4_Java;
   static address _multianewarray5_Java;
   static address _multianewarrayN_Java;
-  static address _shenandoah_write_barrier_Java;
   static address _g1_wb_pre_Java;
   static address _g1_wb_post_Java;
   static address _vtable_must_compile_Java;
@@ -221,7 +220,6 @@ private:
   static address multianewarray4_Java()                  { return _multianewarray4_Java; }
   static address multianewarray5_Java()                  { return _multianewarray5_Java; }
   static address multianewarrayN_Java()                  { return _multianewarrayN_Java; }
-  static address shenandoah_write_barrier_Java()         { return _shenandoah_write_barrier_Java; }
   static address g1_wb_pre_Java()                        { return _g1_wb_pre_Java; }
   static address g1_wb_post_Java()                       { return _g1_wb_post_Java; }
   static address vtable_must_compile_stub()              { return _vtable_must_compile_Java; }
@@ -314,7 +312,6 @@ private:
 
   // Shenandoah support
   static const TypeFunc* shenandoah_barrier_Type(const Type* type);
-  static const TypeFunc* shenandoah_write_barrier_Type();
 
 # ifdef ENABLE_ZAP_DEAD_LOCALS
   static const TypeFunc* zap_dead_locals_Type();

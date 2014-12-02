@@ -205,6 +205,7 @@ void mutex_init() {
     def(SATB_Q_FL_lock             , Mutex  , special,     true );
     def(SATB_Q_CBL_mon             , Monitor, nonleaf,     true );
     def(Shared_SATB_Q_lock         , Mutex,   nonleaf,     true );
+    def(ShenandoahHeap_lock        , Monitor, special,     false);
     def(ShenandoahFullGC_lock      , Monitor, leaf,        true);
     def(ShenandoahJNICritical_lock , Monitor, nonleaf+1,   true);
     def(ShenandoahMemProtect_lock  , Monitor, native,      false);
@@ -263,7 +264,6 @@ void mutex_init() {
                     // used in CMS GC for locking PLL lock
   }
   def(Heap_lock                    , Monitor, nonleaf+1,   false);
-  def(ShenandoahHeap_lock          , Monitor, nonleaf+1,   false);
   def(JfieldIdCreation_lock        , Mutex  , nonleaf+1,   true ); // jfieldID, Used in VM_Operation
   def(MemberNameTable_lock         , Mutex  , nonleaf+1,   false); // Used to protect MemberNameTable
 

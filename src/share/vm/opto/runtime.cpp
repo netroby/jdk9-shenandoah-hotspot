@@ -36,7 +36,6 @@
 #include "compiler/oopMap.hpp"
 #include "gc_implementation/g1/g1SATBCardTableModRefBS.hpp"
 #include "gc_implementation/g1/heapRegion.hpp"
-#include "gc_implementation/shenandoah/shenandoahBarrierSet.hpp"
 #include "gc_interface/collectedHeap.hpp"
 #include "interpreter/bytecode.hpp"
 #include "interpreter/interpreter.hpp"
@@ -109,7 +108,6 @@ address OptoRuntime::_multianewarray3_Java                        = NULL;
 address OptoRuntime::_multianewarray4_Java                        = NULL;
 address OptoRuntime::_multianewarray5_Java                        = NULL;
 address OptoRuntime::_multianewarrayN_Java                        = NULL;
-address OptoRuntime::_shenandoah_write_barrier_Java               = NULL;
 address OptoRuntime::_g1_wb_pre_Java                              = NULL;
 address OptoRuntime::_g1_wb_post_Java                             = NULL;
 address OptoRuntime::_vtable_must_compile_Java                    = NULL;
@@ -159,7 +157,6 @@ bool OptoRuntime::generate(ciEnv* env) {
   gen(env, _multianewarray4_Java           , multianewarray4_Type         , multianewarray4_C               ,    0 , true , false, false);
   gen(env, _multianewarray5_Java           , multianewarray5_Type         , multianewarray5_C               ,    0 , true , false, false);
   gen(env, _multianewarrayN_Java           , multianewarrayN_Type         , multianewarrayN_C               ,    0 , true , false, false);
-  gen(env, _shenandoah_write_barrier_Java  , shenandoah_write_barrier_Type, ShenandoahBarrierSet::resolve_and_maybe_copy_oop_c2, 0, true, false, false);
   gen(env, _g1_wb_pre_Java                 , g1_wb_pre_Type               , SharedRuntime::g1_wb_pre        ,    0 , false, false, false);
   gen(env, _g1_wb_post_Java                , g1_wb_post_Type              , SharedRuntime::g1_wb_post       ,    0 , false, false, false);
   gen(env, _complete_monitor_locking_Java  , complete_monitor_enter_Type  , SharedRuntime::complete_monitor_locking_C, 0, false, false, false);
@@ -1293,20 +1290,6 @@ const TypeFunc* OptoRuntime::shenandoah_barrier_Type(const Type* type) {
   // result type needed
   fields = TypeTuple::fields(1);
   fields[TypeFunc::Parms+0] = type;
-  const TypeTuple* range = TypeTuple::make(TypeFunc::Parms + 1, fields);
-  return TypeFunc::make(domain, range);
-}
-
-const TypeFunc* OptoRuntime::shenandoah_write_barrier_Type() {
-  // create input type (domain)
-  const Type** fields = TypeTuple::fields(1);
-  fields[TypeFunc::Parms+0] = TypeOopPtr::NOTNULL;
-
-  const TypeTuple* domain = TypeTuple::make(TypeFunc::Parms+1, fields);
-
-  // result type needed
-  fields = TypeTuple::fields(1);
-  fields[TypeFunc::Parms+0] = TypeOopPtr::NOTNULL;
   const TypeTuple* range = TypeTuple::make(TypeFunc::Parms + 1, fields);
   return TypeFunc::make(domain, range);
 }

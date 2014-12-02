@@ -1726,7 +1726,7 @@ void LIRGenerator::do_StoreField(StoreField* x) {
     __ null_check(obj, new CodeEmitInfo(info));
   }
 
-  obj = shenandoah_write_barrier(obj, state_for(x, x->state_before()), x->needs_null_check());
+  obj = shenandoah_write_barrier(obj, info, x->needs_null_check());
   LIR_Opr val = value.result();
   if (is_oop) {
     if (! val->is_register()) {
@@ -1868,12 +1868,35 @@ LIR_Opr LIRGenerator::shenandoah_read_barrier(LIR_Opr obj, CodeEmitInfo* info, b
 
 LIR_Opr LIRGenerator::shenandoah_write_barrier(LIR_Opr obj, CodeEmitInfo* info, bool need_null_check) {
   if (UseShenandoahGC) {
+    LabelObj* done = new LabelObj();
 
     LIR_Opr result = new_register(T_OBJECT);
-    LIR_Opr tmp = new_register(T_INT);
-    __ shenandoah_wb(obj, result, tmp, new CodeEmitInfo(info), need_null_check);
-    return result;
+    __ move(obj, result);
 
+    // Usual read barrier with optional explicit null check.
+    if (need_null_check) {
+      __ cmp(lir_cond_equal, result, LIR_OprFact::oopConst(NULL));
+      __ branch(lir_cond_equal, T_LONG, done->label());
+    }
+
+    // Check if evacuation in progress.
+    LIR_Opr evac_in_progress_addr = new_pointer_register();
+    __ move(LIR_OprFact::intptrConst(ShenandoahHeap::evacuation_in_progress_addr()),
+            evac_in_progress_addr);
+
+    LIR_Address* brooks_ptr_address = generate_address(result, -8, T_ADDRESS);
+    __ load(brooks_ptr_address, result, info ? new CodeEmitInfo(info) : NULL, lir_patch_none);
+
+    __ cmp(lir_cond_notEqual, LIR_OprFact::address(new LIR_Address(evac_in_progress_addr, T_INT)),
+           LIR_OprFact::intConst(0));
+
+    // Do the slow-path runtime call.
+    CodeStub* slow = new ShenandoahWriteBarrierStub(result);
+    __ branch(lir_cond_notEqual, T_INT, slow);
+    __ branch_destination(slow->continuation());
+    __ branch_destination(done->label());
+
+    return result;
   } else {
     return obj;
   }
@@ -2403,8 +2426,7 @@ void LIRGenerator::do_UnsafePutObject(UnsafePutObject* x) {
   set_no_result(x);
 
   if (x->is_volatile() && os::is_MP()) __ membar_release();
-  CodeEmitInfo* info = state_for(x, x->state_before());
-  put_Object_unsafe(src.result(), off.result(), data.result(), type, x->is_volatile(), info);
+  put_Object_unsafe(src.result(), off.result(), data.result(), type, x->is_volatile());
   if (x->is_volatile() && os::is_MP()) __ membar();
 }
 
@@ -3080,9 +3102,8 @@ void LIRGenerator::do_IfOp(IfOp* x) {
   LIR_Opr left_opr = left.result();
   LIR_Opr right_opr = right.result();
   if (xtag == objectTag && UseShenandoahGC && x->y()->type() != objectNull) { // Don't need to resolve for ifnull.
-    CodeEmitInfo* info = state_for(x, x->state_before());
-    left_opr = shenandoah_write_barrier(left_opr, info, true);
-    right_opr = shenandoah_read_barrier(right_opr, info, true);
+    left_opr = shenandoah_write_barrier(left_opr, NULL, true);
+    right_opr = shenandoah_read_barrier(right_opr, NULL, true);
   }
 
   __ cmp(lir_cond(x->cond()), left_opr, right_opr);

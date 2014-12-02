@@ -887,8 +887,8 @@ void Compile::Process_OopMap_Node(MachNode *mach, int current_offset) {
             !method->is_synchronized() ||
             method->is_native() ||
             num_mon > 0 ||
-            !GenerateSynchronizationCode || (UseShenandoahGC && jvms->bci() < 0),
-            err_msg("monitors must always exist for synchronized methods, bci: %d", jvms->bci()));
+            !GenerateSynchronizationCode,
+            "monitors must always exist for synchronized methods");
 
     // Build the growable array of ScopeValues for exp stack
     GrowableArray<MonitorValue*> *monarray = new GrowableArray<MonitorValue*>(num_mon);

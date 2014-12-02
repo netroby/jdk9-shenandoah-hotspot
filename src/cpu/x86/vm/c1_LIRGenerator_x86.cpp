@@ -301,7 +301,7 @@ void LIRGenerator::do_StoreIndexed(StoreIndexed* x) {
   }
 
   LIR_Opr ary = array.result();
-  ary = shenandoah_write_barrier(ary, range_check_info, x->needs_null_check());
+  ary = shenandoah_write_barrier(ary, null_check_info, x->needs_null_check());
   LIR_Opr val = value.result();
   if (obj_store) {
     if (! val->is_register()) {
@@ -747,9 +747,6 @@ void LIRGenerator::do_CompareAndSwap(Intrinsic* x, ValueType* type) {
   obj.load_item();
   offset.load_nonconstant();
 
-  LIR_Opr obj_op = obj.result();
-  obj_op = shenandoah_write_barrier(obj_op, state_for(x, x->state_before()), false);
-
   if (type == objectType) {
     cmp.load_item_force(FrameMap::rax_oop_opr);
     val.load_item();
@@ -765,6 +762,9 @@ void LIRGenerator::do_CompareAndSwap(Intrinsic* x, ValueType* type) {
 
   LIR_Opr addr = new_pointer_register();
   LIR_Address* a;
+
+  LIR_Opr obj_op = obj.result();
+  obj_op = shenandoah_write_barrier(obj_op, NULL, false);
 
   if(offset.result()->is_constant()) {
 #ifdef _LP64
@@ -1346,8 +1346,7 @@ void LIRGenerator::do_If(If* x) {
   LIR_Opr left = xin->result();
   LIR_Opr right = yin->result();
   if (tag == objectTag && UseShenandoahGC && x->y()->type() != objectNull) { // Don't need to resolve for ifnull.
-    CodeEmitInfo* info = state_for(x, x->state_before());
-    left = shenandoah_write_barrier(left, info, true);
+    left = shenandoah_write_barrier(left, NULL, true);
     right = shenandoah_read_barrier(right, NULL, true);
   }
   __ cmp(lir_cond(cond), left, right);
@@ -1446,8 +1445,8 @@ void LIRGenerator::get_Object_unsafe(LIR_Opr dst, LIR_Opr src, LIR_Opr offset,
 
 
 void LIRGenerator::put_Object_unsafe(LIR_Opr src, LIR_Opr offset, LIR_Opr data,
-                                     BasicType type, bool is_volatile, CodeEmitInfo* info) {
-  src = shenandoah_write_barrier(src, info, false);
+                                     BasicType type, bool is_volatile) {
+  src = shenandoah_write_barrier(src, NULL, false);
   if (is_volatile && type == T_LONG) {
     LIR_Address* addr = new LIR_Address(src, offset, T_DOUBLE);
     LIR_Opr tmp = new_register(T_DOUBLE);
@@ -1492,7 +1491,7 @@ void LIRGenerator::do_UnsafeGetAndSetObject(UnsafeGetAndSetObject* x) {
   assert (type == T_INT || (!x->is_add() && is_obj) LP64_ONLY( || type == T_LONG ), "unexpected type");
 
   LIR_Opr src_op = src.result();
-  src_op = shenandoah_write_barrier(src_op, state_for(x, x->state_before()), false);
+  src_op = shenandoah_write_barrier(src_op, NULL, false);
   if (is_obj) {
     data = shenandoah_read_barrier(data, NULL, true);
   }
