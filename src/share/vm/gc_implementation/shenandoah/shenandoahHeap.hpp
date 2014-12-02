@@ -291,7 +291,6 @@ public:
   void prepare_for_update_references();
 
   void update_references();
-  void update_references_work();
 
   ShenandoahHeapRegionSet* free_regions();
 

@@ -1162,18 +1162,13 @@ void ShenandoahHeap::prepare_for_update_references() {
   set_update_references_in_progress(true);
 }
 
-void ShenandoahHeap::update_references_work() {
+void ShenandoahHeap::update_references() {
+
   ShenandoahHeapRegionSet regions = ShenandoahHeapRegionSet(_num_regions, _ordered_regions, _num_regions);
   ParallelUpdateRefsTask task = ParallelUpdateRefsTask(&regions);
   workers()->set_active_workers(_max_conc_workers);
   workers()->run_task(&task);
   workers()->set_active_workers(_max_workers);
-
-}
-
-void ShenandoahHeap::update_references() {
-
-  update_references_work();
 
   VM_ShenandoahUpdateRootRefs update_roots;
   if (ShenandoahConcurrentUpdateRefs) {
