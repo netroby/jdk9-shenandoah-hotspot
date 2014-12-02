@@ -844,6 +844,13 @@ public:
 
   bool doHeapRegion(ShenandoahHeapRegion* r) {
 
+    // If evacuation has been cancelled, we can't recycle regions, we only
+    // clear their collection-set status.
+    if (_heap->cancelled_evacuation()) {
+      r->set_is_in_collection_set(false);
+      return false;
+    }
+
     if (r->is_in_collection_set()) {
       // tty->print_cr("recycling region %d:", r->region_number());
       // r->print_on(tty);
