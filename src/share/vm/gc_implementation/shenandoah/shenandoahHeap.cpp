@@ -4,6 +4,8 @@ Copyright 2014 Red Hat, Inc. and/or its affiliates.
 #include "precompiled.hpp"
 #include "asm/macroAssembler.hpp"
 
+#include "gc_implementation/g1/concurrentMark.inline.hpp"
+
 #include "gc_implementation/shared/gcHeapSummary.hpp"
 #include "gc_implementation/shared/gcTimer.hpp"
 #include "gc_implementation/shared/gcTrace.hpp"
@@ -195,7 +197,27 @@ void ShenandoahHeap::reset_mark_bitmap() {
   _next_mark_bit_map->clearAll();
 }
 
+class BitmapClearClosure : public BitMapClosure {
+private:
+  CMBitMap* _bm;
 
+public:
+
+  BitmapClearClosure(CMBitMap* bm) : _bm(bm) {
+  }
+
+  bool do_bit(BitMap::idx_t offset) {
+    HeapWord* hw = _bm->offsetToHeapWord(offset);
+    bool is_marked = _bm->isMarked(hw);
+    return ! is_marked;
+  }
+};
+
+bool ShenandoahHeap::is_bitmap_clear() {
+  
+  BitmapClearClosure bitmap_clear_cl(_next_mark_bit_map);
+  return _next_mark_bit_map->iterate(&bitmap_clear_cl);
+}
 
 void ShenandoahHeap::print_on(outputStream* st) const {
   st->print("Shenandoah Heap");
@@ -1183,19 +1205,11 @@ void ShenandoahHeap::update_references() {
   tty->print_cr("prev max_allocated_gc: %d, new max_allocated_gc: %d, allocated_last_gc: %d diff %f", _max_allocated_gc, max_allocated_gc, _allocated_last_gc, ((double) max_allocated_gc/ (double) _allocated_last_gc));
   */
   _max_allocated_gc = max_allocated_gc;
+ 
+ set_update_references_in_progress(false);
 
-
-  if (ShenandoahVerify) {
-    VM_ShenandoahVerifyHeapAfterUpdateRefs verify_after_update_refs;
-    if (ShenandoahConcurrentUpdateRefs) {
-      VMThread::execute(&verify_after_update_refs);
-    } else {
-      verify_after_update_refs.doit();
-    }
-  }
-
-  set_update_references_in_progress(false);
-
+ // In case evacuation has been cancelled, the cancallation protocol is done here.
+ _cancelled_evacuation = false;
 }
 
 
@@ -1955,7 +1969,9 @@ public:
     T heap_oop = oopDesc::load_heap_oop(p);
     if (!oopDesc::is_null(heap_oop)) {
       oop obj = oopDesc::decode_heap_oop_not_null(heap_oop);
-      guarantee(! _sh->heap_region_containing(obj)->is_in_collection_set(), "no live reference must point to from-space");
+      guarantee((! _sh->heap_region_containing(obj)->is_in_collection_set()) || _sh->cancelled_evacuation(),
+                err_msg("no live reference must point to from-space, is_marked: %s",
+                        BOOL_TO_STR(_sh->is_marked_current(obj))));
       if (obj != oopDesc::bs()->resolve_oop(obj)) {
         tty->print_cr("top-limit: %p, p: %p", _sh->heap_region_containing(p)->concurrent_iteration_safe_limit(), p);
       }
@@ -1991,12 +2007,15 @@ public:
   }
 };
 
+void ShenandoahHeap::verify_regions_after_update_refs() {
+  VerifyRegionsAfterUpdateRefsClosure verify_regions;
+  heap_region_iterate(&verify_regions);
+}
+
 void ShenandoahHeap::verify_heap_after_update_refs() {
 
   ensure_parsability(false);
 
-  VerifyRegionsAfterUpdateRefsClosure verify_regions;
-  heap_region_iterate(&verify_regions);
   VerifyAfterUpdateRefsClosure cl;
 
   roots_iterate(&cl);

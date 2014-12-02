@@ -168,7 +168,7 @@ void VM_ShenandoahEvacuation::doit() {
     sh->update_references();
   }
 }
-
+/*
 VM_Operation::VMOp_Type VM_ShenandoahVerifyHeapAfterUpdateRefs::type() const {
   return VMOp_ShenandoahVerifyHeapAfterUpdateRefs;
 }
@@ -183,7 +183,7 @@ void VM_ShenandoahVerifyHeapAfterUpdateRefs::doit() {
   sh->verify_heap_after_update_refs();
 
 }
-
+*/
 VM_Operation::VMOp_Type VM_ShenandoahUpdateRootRefs::type() const {
   return VMOp_ShenandoahUpdateRootRefs;
 }
@@ -199,7 +199,18 @@ void VM_ShenandoahUpdateRootRefs::doit() {
   ShenandoahHeap *sh = ShenandoahHeap::heap();
   sh->update_roots();
 
+  if (ShenandoahVerify) {
+    sh->verify_heap_after_update_refs();
+  }
+
   sh->recycle_dirty_regions();
+
+  if (ShenandoahVerify) {
+    sh->verify_regions_after_update_refs();
+  }
+
+  sh->reset_mark_bitmap();
+
 }
 
 VM_Operation::VMOp_Type VM_ShenandoahUpdateRefs::type() const {

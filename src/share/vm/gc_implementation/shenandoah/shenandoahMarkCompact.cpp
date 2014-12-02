@@ -5,6 +5,7 @@ Copyright 2014 Red Hat, Inc. and/or its affiliates.
 #include "gc_implementation/shenandoah/brooksPointer.hpp"
 #include "gc_implementation/shenandoah/shenandoahMarkCompact.hpp"
 #include "gc_implementation/shenandoah/shenandoahHeap.hpp"
+#include "gc_implementation/shenandoah/vm_operations_shenandoah.hpp"
 #include "memory/sharedHeap.hpp"
 #include "oops/oop.inline.hpp"
 #include "runtime/thread.hpp"
@@ -24,6 +25,18 @@ void ShenandoahMarkCompact::do_mark_compact() {
   oopDesc::set_bs(&_barrier_set);
 
   assert(Thread::current()->is_VM_thread(), "Do full GC only while world is stopped");
+
+  assert(_heap->is_bitmap_clear(), "require cleared bitmap");
+  assert(!_heap->concurrent_mark_in_progress(), "can't do full-GC while marking is in progress");
+  assert(!_heap->is_evacuation_in_progress(), "can't do full-GC while evacuation is in progress");
+  assert(!_heap->is_update_references_in_progress(), "can't do full-GC while updating of references is in progress");
+
+  if (ShenandoahVerify) {
+    // Full GC should only be called between regular concurrent cycles, therefore
+    // those verifications should be valid.
+    _heap->verify_heap_after_evacuation();
+    _heap->verify_heap_after_update_refs();
+  }
 
   if (ShenandoahTraceFullGC) {
     gclog_or_tty->print_cr("Shenandoah-full-gc: phase 1: marking the heap");
@@ -47,11 +60,12 @@ void ShenandoahMarkCompact::do_mark_compact() {
 
   oopDesc::set_bs(old_bs);
 
-  _heap->reset_mark_bitmap();
   if (ShenandoahVerify) {
     _heap->verify_heap_after_evacuation();
     _heap->verify_heap_after_update_refs();
   }
+
+  _heap->reset_mark_bitmap();
 }
 
 void ShenandoahMarkCompact::phase1_mark_heap() {
@@ -70,8 +84,8 @@ void ShenandoahMarkCompact::phase1_mark_heap() {
 
   // TODO: Move prepare_unmarked_root_objs() into SCM!
   // TODO: Make this whole sequence a separate method in SCM!
-  _heap->concurrentMark()->prepare_unmarked_root_objs_no_derived_ptrs(true /* update references */);
-  _heap->concurrentMark()->mark_from_roots(true /* update-refs */, true /* full-gc */);
+  _heap->concurrentMark()->prepare_unmarked_root_objs_no_derived_ptrs(false /* update references */);
+  _heap->concurrentMark()->mark_from_roots(false /* update-refs */, true /* full-gc */);
   _heap->concurrentMark()->finish_mark_from_roots(true);
 
 }
@@ -107,6 +121,7 @@ public:
   void do_object(oop p) {
     if (_heap->is_marked_current(p)) {
       if (_heap->heap_region_containing(p)->is_humonguous()) {
+        tty->print_cr("humonguous object in full GC");
         do_humonguous_object(p);
       } else {
         do_normal_object(p);
@@ -170,9 +185,11 @@ class ShenandoahMarkCompactUpdateRefsClosure : public ExtendedOopClosure {
   void do_oop(oop* p) {
     oop obj = oopDesc::load_heap_oop(p);
     if (! oopDesc::is_null(obj)) {
+      assert(ShenandoahHeap::heap()->is_in(obj), "old object location must be inside heap");
       assert(ShenandoahHeap::heap()->is_marked_current(obj), "only update references to marked objects");
       assert(obj->is_oop(), "expect oop");
       oop new_obj = BrooksPointer::get(obj).get_forwardee_raw();
+      assert(ShenandoahHeap::heap()->is_in(new_obj), "new object location must be inside heap");
       assert((HeapWord*) new_obj <= (HeapWord*) obj, "new object location must be down in the heap");
       // tty->print_cr("update reference at: %p pointing to: %p to new location at: %p", p, obj, new_obj);
       oopDesc::store_heap_oop(p, new_obj);
@@ -192,8 +209,10 @@ void ShenandoahMarkCompact::phase3_update_references() {
 
   // tty->print_cr("updating strong roots");
   KlassToOopClosure klassCl(&cl);
+  CodeBlobToOopClosure blobsCl(&cl, true);
   ClassLoaderDataGraph::clear_claimed_marks();
-  _heap->process_strong_roots(true, false, SharedHeap::SO_AllClasses, &cl, NULL, &klassCl);
+  const int so = SharedHeap::SO_AllClasses;
+  _heap->process_strong_roots(true, false, SharedHeap::ScanningOption(so), &cl, NULL, &klassCl);
   // tty->print_cr("updating weak roots");
   _heap->weak_roots_iterate(&cl);
   // tty->print_cr("updating heap references");
@@ -225,7 +244,7 @@ public:
   size_t do_object_careful(oop p) {
     size_t obj_size = p->size();
     if (_heap->is_marked_current(p)) {
-      _used += obj_size;
+      _used += obj_size + BrooksPointer::BROOKS_POINTER_OBJ_SIZE;
       HeapWord* old_addr = (HeapWord*) p;
       HeapWord* new_addr = (HeapWord*) BrooksPointer::get(p).get_forwardee_raw();
       assert(new_addr <= old_addr, "new location must not be higher up in the heap");
@@ -241,6 +260,7 @@ public:
       }
 
       if (obj_size + BrooksPointer::BROOKS_POINTER_OBJ_SIZE > ShenandoahHeapRegion::RegionSizeBytes / HeapWordSize) {
+        tty->print_cr("finishing humonguous region");
         finish_humonguous_regions(oop(old_addr), new_obj);
       } else {
         assert(! _heap->heap_region_containing(p)->is_humonguous(), "expect non-humonguous object");

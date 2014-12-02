@@ -228,6 +228,7 @@ public:
   }
 
   void reset_mark_bitmap();
+  bool is_bitmap_clear();
 
   virtual void post_allocation_collector_specific_setup(HeapWord* obj);
 
@@ -262,6 +263,7 @@ public:
   void verify_heap_after_marking();
   void verify_heap_after_evacuation();
   void verify_heap_after_update_refs();
+  void verify_regions_after_update_refs();
 
   // This is here to get access to the otherwise protected method in CollectedHeap.
   static HeapWord* allocate_from_tlab_work(Thread* thread, size_t size);
@@ -356,8 +358,9 @@ public:
 
   void shutdown();
 
-private:
   bool concurrent_mark_in_progress();
+
+private:
   void verify_live();
   void verify_liveness_after_concurrent_mark();
 

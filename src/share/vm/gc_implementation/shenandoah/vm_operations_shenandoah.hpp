@@ -81,6 +81,7 @@ class VM_ShenandoahEvacuation: public VM_Operation {
 
 };
 
+/*
 class VM_ShenandoahVerifyHeapAfterUpdateRefs: public VM_Operation {
 
  public:
@@ -90,7 +91,7 @@ class VM_ShenandoahVerifyHeapAfterUpdateRefs: public VM_Operation {
   virtual const char* name() const;
 
 };
-
+*/
 class VM_ShenandoahUpdateRootRefs: public VM_Operation {
 
  public:
