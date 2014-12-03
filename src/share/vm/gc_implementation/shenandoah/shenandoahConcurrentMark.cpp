@@ -51,6 +51,9 @@ public:
 
   ~ShenandoahMarkObjsClosure()  {
     // Merge liveness data back into actual regions.
+
+    // We need to lock the heap here, to avoid race with growing of heap.
+    MutexLockerEx ml(ShenandoahHeap_lock, true);
     ShenandoahHeapRegion** regions = _heap->heap_regions();
     for (uint i = 0; i < _heap->num_regions(); i++) {
       regions[i]->increase_live_data(_live_data[i]);
