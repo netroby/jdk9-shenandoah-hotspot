@@ -305,6 +305,11 @@ void ShenandoahConcurrentMark::prepare_unmarked_root_objs_no_derived_ptrs(bool u
     ShenandoahMarkRootsTask mark_roots(update_refs);
     heap->workers()->run_task(&mark_roots);
     heap->set_par_threads(0); // Prepare for serial processing in future calls to process_strong_roots.
+
+    ReferenceProcessor* rp = heap->ref_processor_cm();
+    ShenandoahMarkRefsNoUpdateClosure rootsCl2(0);
+    rp->weak_oops_do(&rootsCl2);
+
   } else {
     ExtendedOopClosure* cl;
     ShenandoahMarkRefsClosure rootsCl1(0);
