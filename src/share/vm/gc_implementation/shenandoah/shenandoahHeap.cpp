@@ -1078,6 +1078,7 @@ void ShenandoahHeap::update_roots() {
   ClassLoaderDataGraph::clear_claimed_marks();
 
   process_all_roots(true, SO_AllCodeCache, &cl, &cldCl, &blobsCl);
+  ref_processor_cm()->weak_oops_do(&cl);
   process_weak_roots(&cl);
 
   COMPILER2_PRESENT(DerivedPointerTable::update_pointers());
@@ -1265,6 +1266,8 @@ public:
     ShenandoahHeap* heap = ShenandoahHeap::heap();
     ResourceMark rm;
     heap->process_all_roots(false, SharedHeap::SO_AllCodeCache, &cl, &cldCl, &blobsCl);
+    heap->ref_processor_cm()->weak_oops_do(&cl);
+    heap->process_weak_roots(&cl);
 
   }
 };
