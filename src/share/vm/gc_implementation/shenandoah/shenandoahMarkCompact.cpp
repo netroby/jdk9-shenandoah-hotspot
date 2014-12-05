@@ -151,8 +151,8 @@ private:
     // Required space is object size plus brooks pointer.
     size_t obj_size = p->size() + BrooksPointer::BROOKS_POINTER_OBJ_SIZE;
     assert((*_current_region)->end() >= _next_free_address, "expect next address to be within region");
-    HeapWord* old_free_addr = _next_free_address;
-    if (_next_free_address + obj_size >= (*_current_region)->end()) {
+    assert(_next_free_address <= ((HeapWord*) p) - BrooksPointer::BROOKS_POINTER_OBJ_SIZE, "target address > obj");
+    if (_next_free_address + obj_size > (*_current_region)->end()) {
       // tty->print_cr("skipping to next region. obj_size="INT32_FORMAT", current-region-end: "PTR_FORMAT", _next_free_addr: "PTR_FORMAT", free: "SIZ_EiFORMAT, obj_size, (*_current_region)->end(), _next_free_address, ((*_current_region)->end() - _next_free_address));
       // Skip to next region.
       _current_region = _next_region;
