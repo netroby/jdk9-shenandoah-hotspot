@@ -45,6 +45,15 @@ class VM_ShenandoahStartEvacuation: public VM_Operation {
 
 };
 
+class VM_ShenandoahFinishEvacuation: public VM_Operation {
+
+ public:
+  VMOp_Type type() const;
+  void doit();
+  const char* name() const;
+
+};
+
 class VM_ShenandoahFullGC : public VM_Operation {
  public:
   VMOp_Type type() const;
@@ -72,6 +81,7 @@ class VM_ShenandoahEvacuation: public VM_Operation {
 
 };
 
+/*
 class VM_ShenandoahVerifyHeapAfterUpdateRefs: public VM_Operation {
 
  public:
@@ -81,7 +91,7 @@ class VM_ShenandoahVerifyHeapAfterUpdateRefs: public VM_Operation {
   virtual const char* name() const;
 
 };
-
+*/
 class VM_ShenandoahUpdateRootRefs: public VM_Operation {
 
  public:

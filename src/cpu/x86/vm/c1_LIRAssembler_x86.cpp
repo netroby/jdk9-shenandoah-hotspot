@@ -2012,10 +2012,43 @@ void LIR_Assembler::emit_compare_and_swap(LIR_OpCompareAndSwap* op) {
       } else
 #endif
       {
-        if (os::is_MP()) {
-          __ lock();
+        if (UseShenandoahGC) {
+          Label done;
+          Label retry;
+
+          __ bind(retry);
+
+          // Save original cmp-value into tmp1, before following cas destroys it.
+          __ movptr(op->tmp1()->as_register(), op->cmp_value()->as_register());
+
+          if (os::is_MP()) {
+            __ lock();
+          }
+          __ cmpxchgptr(newval, Address(addr, 0));
+
+          // If the cmpxchg succeeded, then we're done.
+          __ jcc(Assembler::equal, done);
+
+          // Resolve the original cmp value.
+          oopDesc::bs()->compile_resolve_oop(masm(), op->tmp1()->as_register());
+          // Resolve the old value at address. We get the old value in cmp/rax
+          // when the comparison in cmpxchg failed.
+          __ movptr(op->tmp2()->as_register(), cmpval);
+          oopDesc::bs()->compile_resolve_oop(masm(), op->tmp2()->as_register());
+
+          // We're done if the expected/cmp value is not the same as old. It's a valid
+          // cmpxchg failure then. Otherwise we need special treatment for Shenandoah
+          // to prevent false positives.
+          __ cmpptr(op->tmp1()->as_register(), op->tmp2()->as_register());
+          __ jcc(Assembler::equal, retry);
+          
+          __ bind(done);
+        } else {
+          if (os::is_MP()) {
+            __ lock();
+          }
+          __ cmpxchgptr(newval, Address(addr, 0));
         }
-        __ cmpxchgptr(newval, Address(addr, 0));
       }
     } else {
       assert(op->code() == lir_cas_int, "lir_cas_int expected");

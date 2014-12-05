@@ -98,8 +98,8 @@
   template(ShenandoahInitMark)                    \
   template(ShenandoahFinishMark)                  \
   template(ShenandoahStartEvacuation)             \
+  template(ShenandoahFinishEvacuation)            \
   template(ShenandoahVerifyHeapAfterEvacuation)   \
-  template(ShenandoahVerifyHeapAfterUpdateRefs)   \
   template(ShenandoahEvacuation)                  \
   template(ShenandoahUpdateRootRefs)              \
   template(ShenandoahUpdateRefs)                  \

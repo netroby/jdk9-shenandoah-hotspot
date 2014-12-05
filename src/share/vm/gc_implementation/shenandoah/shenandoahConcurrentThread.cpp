@@ -19,7 +19,7 @@ ShenandoahConcurrentThread::ShenandoahConcurrentThread() :
   _waiting_for_jni_critical(false),
   _do_full_gc(false)
 {
-  //  create_and_start();
+  create_and_start();
 }
 
 ShenandoahConcurrentThread::~ShenandoahConcurrentThread() {
@@ -52,8 +52,12 @@ void ShenandoahConcurrentThread::run() {
 
   wait_for_universe_init();
 
-  while(_slt == NULL) {
-    // Wait for initialization to finish.
+  // Wait until we have the surrogate locker thread in place.
+  {
+    MutexLockerEx x(CGC_lock, true);
+    while(_slt == NULL && !_should_terminate) {
+      CGC_lock->wait(true, 200);
+    }
   }
 
   ShenandoahHeap* heap = ShenandoahHeap::heap();
@@ -84,7 +88,7 @@ void ShenandoahConcurrentThread::run() {
 	VMThread::execute(&initMark);
 
         if (ShenandoahConcurrentMarking) {
-          ShenandoahHeap::heap()->concurrentMark()->mark_from_roots();
+          ShenandoahHeap::heap()->concurrentMark()->mark_from_roots(! ShenandoahUpdateRefsEarly);
 
           VM_ShenandoahFinishMark finishMark;
           VMThread::execute(&finishMark);
@@ -98,12 +102,14 @@ void ShenandoahConcurrentThread::run() {
           }
         }
 
-        // If we're not concurrently evacuating, evacuation is done
-        // from VM_ShenandoahFinishMark within the VMThread above.
-	if (ShenandoahConcurrentEvacuation) {
-          VM_ShenandoahEvacuation evacuation;
-          evacuation.doit();
-	}
+        if (! _should_terminate) {
+          // If we're not concurrently evacuating, evacuation is done
+          // from VM_ShenandoahFinishMark within the VMThread above.
+          if (ShenandoahConcurrentEvacuation) {
+            VM_ShenandoahEvacuation evacuation;
+            evacuation.doit();
+          }
+        }
 
         if (ShenandoahUpdateRefsEarly) {
           if (ShenandoahConcurrentUpdateRefs) {
@@ -111,9 +117,10 @@ void ShenandoahConcurrentThread::run() {
             VMThread::execute(&update_refs);
             heap->update_references();
           }
+        } else {
+          VM_ShenandoahFinishEvacuation finish_evac;
+          VMThread::execute(&finish_evac);
         }
-
-        heap->reset_mark_bitmap();
 
       } else {
       Thread::current()->_ParkEvent->park(10) ;
@@ -132,6 +139,10 @@ void ShenandoahConcurrentThread::do_full_gc() {
     ml.wait();
   }
   assert(_do_full_gc == false, "expect full GC to have completed");
+}
+
+void ShenandoahConcurrentThread::schedule_full_gc() {
+  _do_full_gc = true;
 }
 
 void ShenandoahConcurrentThread::print() const {
@@ -199,4 +210,8 @@ void ShenandoahConcurrentThread::makeSurrogateLockerThread(TRAPS) {
   assert(THREAD->is_Java_thread(), "must be a Java thread");
   assert(_slt == NULL, "SLT already created");
   _slt = SurrogateLockerThread::make(THREAD);
+}
+
+void ShenandoahConcurrentThread::shutdown() {
+  _should_terminate = true;
 }

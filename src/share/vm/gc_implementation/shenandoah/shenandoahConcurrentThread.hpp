@@ -59,6 +59,8 @@ class ShenandoahConcurrentThread: public ConcurrentGCThread {
 
   void do_full_gc();
 
+  void schedule_full_gc();
+
   void set_waiting_for_jni_before_gc(bool wait) {
     _waiting_for_jni_critical = wait;
   }
@@ -82,6 +84,7 @@ class ShenandoahConcurrentThread: public ConcurrentGCThread {
   static void safepoint_synchronize();
   static void safepoint_desynchronize();
 
+  void shutdown();
 };
 
 #endif // SHARE_VM_GC_IMPLEMENTATION_SHENANDOAH_SHENANDOAHCONCURRENTTHREAD_HPP

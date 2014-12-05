@@ -3911,6 +3911,9 @@ bool Threads::destroy_vm() {
 
   thread->exit(true);
 
+  // Stop GC threads.
+  Universe::heap()->shutdown();
+
   // Stop VM thread.
   {
     // 4945125 The vm thread comes to a safepoint during exit.

@@ -28,6 +28,8 @@
 #include "classfile/vmSymbols.hpp"
 #include "compiler/compileBroker.hpp"
 #include "compiler/compileLog.hpp"
+#include "gc_implementation/shenandoah/shenandoahHeap.hpp"
+#include "gc_implementation/shenandoah/shenandoahRuntime.hpp"
 #include "oops/objArrayKlass.hpp"
 #include "opto/addnode.hpp"
 #include "opto/callGenerator.hpp"
@@ -2977,16 +2979,7 @@ bool LibraryCallKit::inline_unsafe_load_store(BasicType type, LoadStoreKind kind
       if (_gvn.type(oldval) == TypePtr::NULL_PTR) {
         oldval = _gvn.makecon(TypePtr::NULL_PTR);
       }
-      oldval = shenandoah_write_barrier(oldval);
 
-      if (UseShenandoahGC) {
-        // We need to update the value in memory in order to avoid comparison failures
-        // (false negatives).
-        Node* current = make_load(control(), adr, TypeInstPtr::BOTTOM, type, TypeInstPtr::BOTTOM, MemNode::unordered, false);
-        Node* new_current = shenandoah_write_barrier(current);
-        Node* cas_current = _gvn.transform(new CompareAndSwapPNode(control(), mem, adr, new_current, current));
-        set_control(cas_current);
-      }
       // The only known value which might get overwritten is oldval.
       pre_barrier(false /* do_load */,
                   control(), NULL, NULL, max_juint, NULL, NULL,
@@ -3016,6 +3009,65 @@ bool LibraryCallKit::inline_unsafe_load_store(BasicType type, LoadStoreKind kind
       } else {
         assert(kind == LS_cmpxchg, "wrong LoadStore operation");
         load_store = _gvn.transform(new CompareAndSwapPNode(control(), mem, adr, newval, oldval));
+
+        if (UseShenandoahGC) {
+          set_control(load_store);
+          // if (! success)
+          IfNode* iff = create_and_map_if(control(), load_store, PROB_UNKNOWN, COUNT_UNKNOWN);
+          Node* iftrue = _gvn.transform(new IfTrueNode(iff));
+          Node* iffalse = _gvn.transform(new IfFalseNode(iff));
+
+          enum { _success_path = 1, _fail_path, _shenandoah_path, PATH_LIMIT };
+          RegionNode* region = new RegionNode(PATH_LIMIT);
+          Node*       phi    = new PhiNode(region, TypeInt::BOOL);
+          // success -> return result of CAS1.
+          region->init_req(_success_path, iftrue);
+          phi   ->init_req(_success_path, load_store);
+
+          // failure
+          set_control(iffalse);
+
+          // if (read_barrier(expected) == read_barrier(old)
+          oldval = shenandoah_read_barrier(oldval);
+
+          // Load old value from memory. We shuold really use what we get back from the CAS,
+          // if we can.
+          Node* current = make_load(control(), adr, TypeInstPtr::BOTTOM, type, TypeInstPtr::BOTTOM, MemNode::unordered, false);
+          // read_barrier(old)
+          Node* new_current = shenandoah_read_barrier(current);
+
+          Node* chk = _gvn.transform(new CmpPNode(new_current, oldval));
+          Node* test = _gvn.transform(new BoolNode(chk, BoolTest::eq));
+
+          IfNode* iff2 = create_and_map_if(control(), test, PROB_UNLIKELY_MAG(2), COUNT_UNKNOWN);
+          Node* iftrue2 = _gvn.transform(new IfTrueNode(iff2));
+          Node* iffalse2 = _gvn.transform(new IfFalseNode(iff2));
+
+          // If they are not equal, it's a legitimate failure and we return the result of CAS1.
+          region->init_req(_fail_path, iffalse2);
+          phi   ->init_req(_fail_path, load_store);
+
+          // Otherwise we retry with old.
+          set_control(iftrue2);
+
+          Node *call = make_runtime_call(RC_LEAF | RC_NO_IO,
+                                         OptoRuntime::shenandoah_cas_obj_Type(),
+                                         CAST_FROM_FN_PTR(address, ShenandoahRuntime::compare_and_swap_object),
+                                         "shenandoah_cas_obj",
+                                         NULL,
+                                         adr, newval, current);
+
+          Node* result = _gvn.transform(new ProjNode(call, TypeFunc::Parms + 0));
+
+          region->init_req(_shenandoah_path, control());
+          phi   ->init_req(_shenandoah_path, result);
+
+          set_control(_gvn.transform(region));
+          record_for_igvn(region);
+          phi = _gvn.transform(phi);
+          load_store = phi;
+        }
+
       }
     }
     post_barrier(control(), load_store, base, adr, alias_idx, newval, T_OBJECT, true);

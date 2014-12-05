@@ -1514,9 +1514,6 @@ class CommandLineFlags {
   product(bool, ShenandoahPrintCollectionSet, false,                        \
           "Print the collection set before each GC phase")                  \
                                                                             \
-  product(uintx, ShenandoahConcurrentGCThreads, 1,                          \
-          "Number of Concurrent GC Threads for Shenandoah")                 \
-                                                                            \
   product(bool, UseParallelGC, false,                                       \
           "Use the Parallel Scavenge garbage collector")                    \
                                                                             \

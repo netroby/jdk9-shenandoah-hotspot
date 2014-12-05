@@ -81,7 +81,6 @@ private:
   WorkGangBarrierSync barrierSync;
   int _max_workers;
   int _max_conc_workers;
-  FlexibleWorkGang* _conc_workers;
   volatile size_t _used;
 
   CMBitMap _mark_bit_map0;
@@ -95,6 +94,7 @@ private:
   uint _in_cset_fast_test_length;
 
   GCTracer* _tracer;
+  bool _cancelled_evacuation;
 
 public:
   size_t _bytesAllocSinceCM;
@@ -125,6 +125,7 @@ public:
   ShenandoahCollectorPolicy *shenandoahPolicy() { return _shenandoah_policy;}
 
   jint initialize();
+  static size_t conservative_max_heap_alignment() { return ShenandoahHeapRegion::RegionSizeBytes; }
   void post_initialize();
   size_t capacity() const;
   size_t used() const;
@@ -229,6 +230,7 @@ public:
   }
 
   void reset_mark_bitmap();
+  bool is_bitmap_clear();
 
   virtual void post_allocation_collector_specific_setup(HeapWord* obj);
 
@@ -263,6 +265,7 @@ public:
   void verify_heap_after_marking();
   void verify_heap_after_evacuation();
   void verify_heap_after_update_refs();
+  void verify_regions_after_update_refs();
 
   // This is here to get access to the otherwise protected method in CollectedHeap.
   static HeapWord* allocate_from_tlab_work(Thread* thread, size_t size);
@@ -275,6 +278,7 @@ public:
 
   void increase_used(size_t bytes);
   void decrease_used(size_t bytes);
+  void set_used(size_t bytes);
 
   int ensure_new_regions(int num_new_regions);
 
@@ -299,10 +303,11 @@ public:
   void acquire_pending_refs_lock();
   void release_pending_refs_lock();
 
-  FlexibleWorkGang* conc_workers() const {return _conc_workers;}
+  int max_workers();
 
   ShenandoahHeapRegion** heap_regions();
   size_t num_regions();
+  size_t max_regions();
 
   void recycle_dirty_regions();
 
@@ -314,13 +319,12 @@ public:
     assert(!_in_cset_fast_test_base[index], "invariant");
     _in_cset_fast_test_base[index] = true;
   }
-
-  bool in_cset_fast_test(oop obj) {
+  bool in_cset_fast_test(HeapWord* obj) {
     assert(_in_cset_fast_test != NULL, "sanity");
-    if (is_in((HeapWord*) obj)) {
+    if (is_in(obj)) {
       // no need to subtract the bottom of the heap from obj,
       // _in_cset_fast_test is biased
-      uintx index = cast_from_oop<uintx>(obj) >> ShenandoahHeapRegion::RegionSizeShift;
+      uintx index = ((uintx) obj) >> ShenandoahHeapRegion::RegionSizeShift;
       bool ret = _in_cset_fast_test[index];
       // let's make sure the result is consistent with what the slower
       // test returns
@@ -353,9 +357,16 @@ private:
   HeapWord* allocate_from_gclab(Thread* thread, size_t size);
   HeapWord* allocate_from_gclab_slow(Thread* thread, size_t size);
 
+  void oom_during_evacuation();
+  void cancel_evacuation();
+public:
+  bool cancelled_evacuation();
+
+  void shutdown();
+
+  bool concurrent_mark_in_progress();
 
 private:
-  bool concurrent_mark_in_progress();
   void verify_live();
   void verify_liveness_after_concurrent_mark();
 

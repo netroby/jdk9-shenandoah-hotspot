@@ -52,7 +52,7 @@ public:
 
   void oop_iterate(ExtendedOopClosure* cl, bool skip_unreachable_objects);
 
-  void object_iterate(ObjectClosure* blk);
+  void object_iterate(ObjectClosure* blk, bool allow_cancel);
 
   HeapWord* object_iterate_careful(ObjectClosureCareful* cl);
 

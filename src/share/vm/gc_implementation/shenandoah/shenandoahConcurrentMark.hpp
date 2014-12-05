@@ -23,18 +23,19 @@ private:
 
   bool                    _aborted;       
   uint _max_worker_id;
+  uint _max_conc_worker_id;
   ParallelTaskTerminator* _terminator;
 
 public:
   // We need to do this later when the heap is already created.
   void initialize();
 
-  void mark_from_roots();
+  void mark_from_roots(bool update_refs, bool full_gc = false);
 
   // Prepares unmarked root objects by marking them and putting
   // them into the marking task queue.
   void prepare_unmarked_root_objs();
-  void prepare_unmarked_root_objs_no_derived_ptrs();
+  void prepare_unmarked_root_objs_no_derived_ptrs(bool update_refs);
 
   void finish_mark_from_roots(bool full_gc = false);
 
@@ -49,7 +50,7 @@ private:
 
   bool drain_one_satb_buffer(uint worker_id);
   SharedOverflowMarkQueue* overflow_queue();
-  void weak_refs_work(bool clear_soft_refs, int worker_id);
+  void weak_refs_work();
 
   void traverse_object(ExtendedOopClosure *cl, oop obj);
 

@@ -1144,22 +1144,19 @@ UNSAFE_ENTRY(jboolean, Unsafe_CompareAndSwapObject(JNIEnv *env, jobject unsafe, 
   // We are about to write to this entry so check to see if we need to copy it.
   oop p = oopDesc::bs()->resolve_and_maybe_copy_oop(JNIHandles::resolve(obj));
   HeapWord* addr = (HeapWord *)index_oop_from_field_offset_long(p, offset);
-  if (UseShenandoahGC) {
-    // We need to update the field so that the old value points to to-space, otherwise
-    // the comparison could fail even though it should not. I.e. when the old value
-    // points to from-space and the expected points to to-space, but they are the same
-    // object, we would fail the comparison, but it should succeed.
-    oop old_val = oopDesc::load_heap_oop((oop*) addr);
-    oop resolved_old_val = oopDesc::bs()->resolve_and_maybe_copy_oop(old_val);
-    // We need to CAS the resolved oop here to avoid race condition with other threads
-    // that might have CASed another value in there. If it fails, we can ignore it,
-    // it would make our update stale anyway.
-    oopDesc::atomic_compare_exchange_oop(resolved_old_val, addr, old_val);
-  }
   oop x = JNIHandles::resolve(x_h);
-  oop e = JNIHandles::resolve(e_h);
-  oop res = oopDesc::atomic_compare_exchange_oop(x, addr, e, true);
-  jboolean success  = (oopDesc::bs()->resolve_oop(res) == e);
+  oop old = JNIHandles::resolve(e_h);
+  jboolean success;
+  if (UseShenandoahGC) {
+    oop expected;
+    do {
+      expected = old;
+      old = oopDesc::atomic_compare_exchange_oop(x, addr, expected, true);
+      success  = (old == expected);
+    } while ((! success) && oopDesc::bs()->resolve_oop(old) == oopDesc::bs()->resolve_oop(expected));
+  } else {
+    success = (old == oopDesc::atomic_compare_exchange_oop(x, addr, old, true));
+  }
   if (success)
     update_barrier_set((void*)addr, x);
   return success;

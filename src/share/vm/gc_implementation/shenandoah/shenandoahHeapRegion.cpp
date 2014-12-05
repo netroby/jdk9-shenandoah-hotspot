@@ -99,7 +99,7 @@ void ShenandoahHeapRegion::memProtectionOff() {
 #endif
 
 void ShenandoahHeapRegion::set_is_in_collection_set(bool b) {
-  assert(! is_humonguous(), "never ever enter a humonguous region into the collection set");
+  assert(! (is_humonguous() && b), "never ever enter a humonguous region into the collection set");
 
   _is_in_collection_set = b;
 
@@ -166,9 +166,10 @@ public:
   }
 };
 
-void ShenandoahHeapRegion::object_iterate(ObjectClosure* blk) {
+void ShenandoahHeapRegion::object_iterate(ObjectClosure* blk, bool allow_cancel) {
   HeapWord* p = bottom() + BrooksPointer::BROOKS_POINTER_OBJ_SIZE;
-  while (p < top()) {
+  ShenandoahHeap* heap = ShenandoahHeap::heap();
+  while (p < top() && !(allow_cancel && heap->cancelled_evacuation())) {
     blk->do_object(oop(p));
 #ifdef ASSERT
     if (ShenandoahVerifyReadsToFromSpace) {
@@ -200,7 +201,7 @@ HeapWord* ShenandoahHeapRegion::object_iterate_careful(ObjectClosureCareful* blk
 
 void ShenandoahHeapRegion::oop_iterate(ExtendedOopClosure* cl, bool skip_unreachable_objects) {
   SkipUnreachableObjectToOopClosure cl2(cl, skip_unreachable_objects);
-  object_iterate(&cl2);
+  object_iterate(&cl2, false);
 }
 
 void ShenandoahHeapRegion::fill_region() {

@@ -4192,6 +4192,7 @@ void GraphKit::store_String_value(Node* ctrl, Node* str, Node* value) {
   // TODO: See comment in load_String_offset().
   // TODO: Use incoming ctrl.
   str = shenandoah_write_barrier(str);
+  value = shenandoah_read_barrier(value);
 
   store_oop_to_object(control(), str,  basic_plus_adr(str, value_offset), value_field_type,
       value, TypeAryPtr::CHARS, T_OBJECT, MemNode::unordered);
@@ -4248,7 +4249,7 @@ Node* GraphKit::shenandoah_read_barrier(Node* obj) {
 
   if (UseShenandoahGC && ShenandoahReadBarrier) {
 
-    const Type* obj_type = _gvn.type(obj);
+    const Type* obj_type = _gvn.type(obj)->remove_speculative();
 
     // Fast path 1: We know it's NULL, so simply return it.
     if (obj_type->higher_equal(TypePtr::NULL_PTR)) {
@@ -4299,14 +4300,6 @@ Node* GraphKit::make_shenandoah_write_barrier(Node* ctrl, Node* obj, const Type*
   Node* evac_in_progr_addr = makecon(TypeRawPtr::make(ShenandoahHeap::evacuation_in_progress_addr()));
   Node* evac_in_progr = make_load(control(), evac_in_progr_addr, TypeInt::BOOL, T_INT, Compile::AliasIdxRaw, MemNode::unordered, false);
 
-  // This membar is needed, so that the following read barrier doesn't float above
-  // the evacuation_in_progress check above. If that were possible, we'd have a race.
-  // It could be possible that the read barrier reads a pointer to from-space
-  // then another thread evacuates the object, and turns of concurrent evacuation,
-  // which would make the evac_in_progr check fail, and thus don't take a write barrier.
-  // The result would be a write to a from-space object, which would get lost.
-  insert_mem_bar(Op_MemBarAcquire, evac_in_progr);
-
   obj = make_shenandoah_read_barrier(control(), obj, obj_type);
 
   Node* chk = _gvn.transform(new CmpINode(evac_in_progr, intcon(0)));
@@ -4356,12 +4349,16 @@ Node* GraphKit::shenandoah_write_barrier(Node* obj) {
 
   if (UseShenandoahGC) {
 
+    if (obj->is_shenandoah_wb()) {
+      return obj;
+    }
+
     if (! ShenandoahWriteBarrier) {
       assert(! ShenandoahConcurrentEvacuation, "Can only do this without concurrent evacuation");
       return shenandoah_read_barrier(obj);
     }
 
-    const TypePtr* obj_type = _gvn.type(obj)->is_ptr();
+    const TypePtr* obj_type = _gvn.type(obj)->remove_speculative()->is_ptr();
 
     // Fast path 1: We know it's NULL, so simply return it.
     if (obj_type->higher_equal(TypePtr::NULL_PTR)) {
@@ -4370,7 +4367,10 @@ Node* GraphKit::shenandoah_write_barrier(Node* obj) {
 
     // Fast path 2: we know it's not null.
     if (obj_type->meet(TypePtr::NULL_PTR) != obj_type) {
-      return make_shenandoah_write_barrier(NULL, obj, obj_type);
+      Node* wb = make_shenandoah_write_barrier(NULL, obj, obj_type);
+      wb->init_flags(Node::Flag_is_shenandoah_wb);
+      replace_in_map(obj, wb);
+      return wb;
     }
 
     Node* oldmem = map()->memory();
@@ -4405,6 +4405,8 @@ Node* GraphKit::shenandoah_write_barrier(Node* obj) {
 
     merge_memory(oldmem, region, _null_path);
 
+    phi->init_flags(Node::Flag_is_shenandoah_wb);
+    replace_in_map(obj, phi);
     return phi;
   } else {
     return obj;

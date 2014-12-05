@@ -50,6 +50,7 @@
 #include "gc_implementation/concurrentMarkSweep/compactibleFreeListSpace.hpp"
 #include "gc_implementation/g1/g1CollectedHeap.inline.hpp"
 #include "gc_implementation/parallelScavenge/parallelScavengeHeap.hpp"
+#include "gc_implementation/shenandoah/shenandoahHeap.hpp"
 #endif // INCLUDE_ALL_GCS
 
 // Note: This is a special bug reporting site for the JVM
@@ -1558,6 +1559,10 @@ void Arguments::set_conservative_max_heap_alignment() {
     heap_alignment = ParallelScavengeHeap::conservative_max_heap_alignment();
   } else if (UseG1GC) {
     heap_alignment = G1CollectedHeap::conservative_max_heap_alignment();
+  } else if (UseShenandoahGC) {
+    // TODO: This sucks. Can't we have a clean interface to call the GC's collector
+    // policy for this?
+    heap_alignment = ShenandoahHeap::conservative_max_heap_alignment();
   }
 #endif // INCLUDE_ALL_GCS
   _conservative_max_heap_alignment = MAX4(heap_alignment,
@@ -1576,6 +1581,7 @@ void Arguments::set_ergonomics_flags() {
         !UseConcMarkSweepGC &&
         !UseG1GC &&
         !UseParNewGC &&
+        !UseShenandoahGC &&
         FLAG_IS_DEFAULT(UseParallelGC)) {
       if (should_auto_select_low_pause_collector()) {
         FLAG_SET_ERGO(bool, UseConcMarkSweepGC, true);
@@ -1698,6 +1704,17 @@ void Arguments::set_g1_gc_flags() {
     tty->print_cr("MarkStackSize: %uk  MarkStackSizeMax: %uk",
       (unsigned int) (MarkStackSize / K), (uint) (MarkStackSizeMax / K));
     tty->print_cr("ConcGCThreads: %u", (uint) ConcGCThreads);
+  }
+}
+
+void Arguments::set_shenandoah_gc_flags() {
+
+  FLAG_SET_DEFAULT(UseDynamicNumberOfGCThreads, true);
+  FLAG_SET_DEFAULT(ParallelGCThreads,
+                   Abstract_VM_Version::parallel_worker_threads());
+
+  if (FLAG_IS_DEFAULT(ConcGCThreads)) {
+    FLAG_SET_DEFAULT(ConcGCThreads, 1);
   }
 }
 
@@ -3836,6 +3853,8 @@ jint Arguments::apply_ergo() {
     set_parnew_gc_flags();
   } else if (UseG1GC) {
     set_g1_gc_flags();
+  } else if (UseShenandoahGC) {
+    set_shenandoah_gc_flags();
   }
   check_deprecated_gcs();
   check_deprecated_gc_flags();

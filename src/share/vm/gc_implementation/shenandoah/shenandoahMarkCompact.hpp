@@ -46,7 +46,7 @@ private:
   void phase2_calculate_target_addresses();
   void phase3_update_references();
   void phase4_compact_objects();
-  void finish_compaction(HeapWord* last_addr, HeapWord* last_humonguous_addr);
+  void finish_compaction(HeapWord* last_addr);
 
 };
 

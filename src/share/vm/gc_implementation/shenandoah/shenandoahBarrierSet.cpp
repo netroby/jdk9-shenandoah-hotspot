@@ -266,7 +266,7 @@ oop ShenandoahBarrierSet::resolve_and_maybe_copy_oop_work(oop src) {
   ShenandoahHeap *sh = (ShenandoahHeap*) Universe::heap();
   assert(src != NULL, "only evacuated non NULL oops");
 
-  if (sh->in_cset_fast_test(src)) {
+  if (sh->in_cset_fast_test((HeapWord*) src)) {
     return resolve_and_maybe_copy_oop_work2(src);
   } else {
     return src;
@@ -511,14 +511,6 @@ void ShenandoahBarrierSet::compile_resolve_oop_for_write(MacroAssembler* masm, R
   // Now check if evacuation is in progress.
   ExternalAddress evacuation_in_progress = ExternalAddress(ShenandoahHeap::evacuation_in_progress_addr());
   __ movptr(rscratch1, evacuation_in_progress);
-
-  // We need this membar here to prevent the loading of the brooks pointer to float above
-  // the loading of the evac_in_progress field. If that happened, it would be possible
-  // that the brooks pointer reads a from-space ref from a not-yet-copied oop,
-  // then another thread evacuates that object and turns off concurrent evacuation
-  // before we load the evac_in_progress field. We would end up with a from-space
-  // reference and write to it, which is forbidden.
-  __ membar(Assembler::LoadLoad);
 
   compile_resolve_oop_not_null(masm, dst);
 
