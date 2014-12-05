@@ -1125,9 +1125,9 @@ public:
   void work(uint worker_id) {
     ShenandoahUpdateObjectsClosure update_refs_cl;
     ShenandoahHeapRegion* region = _regions->claim_next();
-
+    ShenandoahHeap* heap = ShenandoahHeap::heap();
     while (region != NULL) {
-      if (! (region->is_in_collection_set() || region->is_humonguous_continuation())) {
+      if (! ((region->is_in_collection_set() && ! heap->cancelled_evacuation()) || region->is_humonguous_continuation())) {
         HeapWord* failed = region->object_iterate_careful(&update_refs_cl);
         assert(failed == NULL, "careful iteration is implemented safe for now in Shenandaoh");
       }
@@ -1452,7 +1452,8 @@ void ShenandoahHeap::verify_evacuation(ShenandoahHeapRegion* from_region) {
 
 oop ShenandoahHeap::maybe_update_oop_ref(oop* p) {
 
-  assert((! is_in(p)) || (! heap_region_containing(p)->is_in_collection_set()), "never update refs in from-space"); 
+  assert((! is_in(p)) || (! heap_region_containing(p)->is_in_collection_set()) || cancelled_evacuation(),
+         "never update refs in from-space, unless evacuation has been cancelled"); 
 
   oop heap_oop = *p; // read p
   if (! oopDesc::is_null(heap_oop)) {
@@ -1465,7 +1466,7 @@ oop ShenandoahHeap::maybe_update_oop_ref(oop* p) {
     }
 #endif
     assert(is_in(heap_oop), "only ever call this on objects in the heap");
-    assert(! (is_in(p) && heap_region_containing(p)->is_in_collection_set()), "we don't want to update references in from-space");
+    assert((! (is_in(p) && heap_region_containing(p)->is_in_collection_set())) || cancelled_evacuation(), "we don't want to update references in from-space");
     oop forwarded_oop = ShenandoahBarrierSet::resolve_oop_static_not_null(heap_oop); // read brooks ptr
     if (forwarded_oop != heap_oop) {
       // tty->print_cr("updating old ref: "PTR_FORMAT" pointing to "PTR_FORMAT" to new ref: "PTR_FORMAT, p2i(p), p2i(heap_oop), p2i(forwarded_oop));
