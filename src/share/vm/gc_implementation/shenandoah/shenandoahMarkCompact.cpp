@@ -121,7 +121,7 @@ public:
   void do_object(oop p) {
     if (_heap->is_marked_current(p)) {
       if (_heap->heap_region_containing(p)->is_humonguous()) {
-        tty->print_cr("humonguous object in full GC");
+        // tty->print_cr("humonguous object in full GC");
         do_humonguous_object(p);
       } else {
         do_normal_object(p);
@@ -256,7 +256,7 @@ public:
       }
 
       if (obj_size + BrooksPointer::BROOKS_POINTER_OBJ_SIZE > ShenandoahHeapRegion::RegionSizeBytes / HeapWordSize) {
-        tty->print_cr("finishing humonguous region");
+        // tty->print_cr("finishing humonguous region");
         finish_humonguous_regions(oop(old_addr), new_obj);
       } else {
         assert(! _heap->heap_region_containing(p)->is_humonguous(), "expect non-humonguous object");
