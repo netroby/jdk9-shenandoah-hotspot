@@ -158,7 +158,8 @@ void ShenandoahBarrierSet::write_ref_array_pre_work(T* dst, int count) {
 #ifdef ASSERT
     ShenandoahHeap *sh = (ShenandoahHeap*) Universe::heap();
     if (sh->is_in(dst) && 
-	sh->heap_region_containing((HeapWord*) dst)->is_in_collection_set()){
+	sh->heap_region_containing((HeapWord*) dst)->is_in_collection_set() &&
+        ! sh->cancelled_evacuation()) {
       tty->print_cr("dst = "PTR_FORMAT, p2i(dst));
       sh->heap_region_containing((HeapWord*) dst)->print();
       assert(false, "We should have fixed this earlier");   
@@ -196,7 +197,8 @@ void ShenandoahBarrierSet::write_ref_field_pre_static(T* field, oop newVal) {
 #ifdef ASSERT
     ShenandoahHeap *sh = (ShenandoahHeap*) Universe::heap();
     if (sh->is_in(field) && 
-	sh->heap_region_containing((HeapWord*)field)->is_in_collection_set()){
+	sh->heap_region_containing((HeapWord*)field)->is_in_collection_set() &&
+        ! sh->cancelled_evacuation()) {
       tty->print_cr("field = "PTR_FORMAT, p2i(field));
       sh->heap_region_containing((HeapWord*)field)->print();
       assert(false, "We should have fixed this earlier");   
