@@ -73,15 +73,6 @@ void VM_ShenandoahReferenceOperation::doit_epilogue() {
 }
 
 void VM_ShenandoahFinishMark::doit() {
-  ShenandoahHeap *sh = ShenandoahHeap::heap();
-  if (ShenandoahGCVerbose)
-    tty->print("vm_ShenandoahFinalMark\n");
-
-  sh->shenandoahPolicy()->record_final_mark_start();  
-  sh->concurrentMark()->finish_mark_from_roots();
-  sh->stop_concurrent_marking();
-  sh->shenandoahPolicy()->record_final_mark_end();    
-
   if (! GC_locker::check_active_before_gc()) {
     VM_ShenandoahStartEvacuation start_evacuation;
     start_evacuation.doit();
@@ -93,13 +84,27 @@ void VM_ShenandoahFinishMark::doit() {
 
     // This makes the GC background thread wait, and kick off evacuation as
     // soon as JNI notifies us that critical regions have all been left.
+    ShenandoahHeap *sh = ShenandoahHeap::heap();
     sh->concurrent_thread()->set_waiting_for_jni_before_gc(true);
   }
 
 }
 
 void VM_ShenandoahStartEvacuation::doit() {
+
+  // We need to do the finish mark here, so that a JNI critical region
+  // can't divide it from evacuation start. It is critical that we
+  // evacuate roots right after finishing marking, so that we don't
+  // get unmarked objects in the roots.
   ShenandoahHeap *sh = ShenandoahHeap::heap();
+  if (ShenandoahGCVerbose)
+    tty->print("vm_ShenandoahFinalMark\n");
+
+  sh->shenandoahPolicy()->record_final_mark_start();  
+  sh->concurrentMark()->finish_mark_from_roots();
+  sh->stop_concurrent_marking();
+  sh->shenandoahPolicy()->record_final_mark_end();    
+
   sh->prepare_for_concurrent_evacuation();
   sh->set_evacuation_in_progress(true);
 

@@ -1059,10 +1059,6 @@ class ShenandoahUpdateRootsClosure: public ExtendedOopClosure {
   void do_oop(narrowOop* p) {
     Unimplemented();
   }
-
-  bool apply_to_weak_ref_discovered_field() {
-    return true;
-  }
 };
 
 void ShenandoahHeap::update_roots() {

@@ -121,7 +121,7 @@ unsigned int oopDesc::new_hash(juint seed) {
   }
 }
 
-#ifdef ASSERT
+#ifdef ASSERT_DISABLED
 void oopDesc::shenandoah_check_store_value(oop v) {
   if (UseShenandoahGC) {
     ShenandoahHeap* sh = ShenandoahHeap::heap();

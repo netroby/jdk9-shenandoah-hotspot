@@ -226,7 +226,7 @@ inline oop oopDesc::load_decode_heap_oop(narrowOop* p) {
 
 // Store already encoded heap oop into the heap.
 inline void oopDesc::store_heap_oop(oop* p, oop v)                 {
-#ifdef ASSERT
+#ifdef ASSERT_DISABLED
   shenandoah_check_store_value(v);
 #endif
  *p = v;
@@ -235,14 +235,14 @@ inline void oopDesc::store_heap_oop(narrowOop* p, narrowOop v)     { *p = v; }
 
 // Encode and store a heap oop.
 inline void oopDesc::encode_store_heap_oop_not_null(narrowOop* p, oop v) {
-#ifdef ASSERT
+#ifdef ASSERT_DISABLED
   shenandoah_check_store_value(v);
 #endif
 
   *p = encode_heap_oop_not_null(v);
 }
 inline void oopDesc::encode_store_heap_oop_not_null(oop* p, oop v) {
-#ifdef ASSERT
+#ifdef ASSERT_DISABLED
   shenandoah_check_store_value(v);
 #endif
  *p = v;
@@ -250,13 +250,13 @@ inline void oopDesc::encode_store_heap_oop_not_null(oop* p, oop v) {
 
 // Encode and store a heap oop allowing for null.
 inline void oopDesc::encode_store_heap_oop(narrowOop* p, oop v) {
-#ifdef ASSERT
+#ifdef ASSERT_DISABLED
   shenandoah_check_store_value(v);
 #endif
   *p = encode_heap_oop(v);
 }
 inline void oopDesc::encode_store_heap_oop(oop* p, oop v) {
-#ifdef ASSERT
+#ifdef ASSERT_DISABLED
   shenandoah_check_store_value(v);
 #endif
  *p = v;
