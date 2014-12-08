@@ -1233,6 +1233,7 @@ public:
 
     oop obj = oopDesc::load_heap_oop(p);
     if (obj != NULL && _heap->in_cset_fast_test((HeapWord*) obj)) {
+      assert(_heap->is_marked_current(obj), "only evacuate marked objects");
       oopDesc::store_heap_oop(p, _heap->evacuate_object(obj, _thread));
     }
 #ifdef ASSERT
@@ -1244,10 +1245,6 @@ public:
 
   void do_oop(narrowOop* p) {
     Unimplemented();
-  }
-
-  bool apply_to_weak_ref_discovered_field() {
-    return true;
   }
 };
 
@@ -2308,15 +2305,16 @@ oop ShenandoahHeap::evacuate_object(oop p, Thread* thread) {
     copy_object(p, filler);    
 #endif
 
+  if (ShenandoahUpdateRefsEarly) {
+    mark_current(oop(copy));
+  }
+
+
   HeapWord* result = BrooksPointer::get(p).cas_forwardee((HeapWord*) p, copy);
 
   oop return_val;
   if (result == (HeapWord*) p) {
     return_val = oop(copy);
-
-    if (ShenandoahUpdateRefsEarly) {
-      mark_current(return_val);
-    }
 
 #ifdef ASSERT
     if (ShenandoahTraceEvacuations) {
@@ -2436,7 +2434,7 @@ bool  ShenandoahIsAliveClosure:: do_object_b(oop obj) {
       }
     }
 
-    return addr != NULL && (!sh->is_in(addr) || !sh->is_obj_ill(obj));
+    return addr != NULL && sh->is_marked_current(obj); //(!sh->is_in(addr) || !sh->is_obj_ill(obj));
 }
 
 void ShenandoahHeap::ref_processing_init() {

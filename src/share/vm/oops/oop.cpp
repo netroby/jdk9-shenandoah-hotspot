@@ -25,6 +25,9 @@
 #include "precompiled.hpp"
 #include "classfile/altHashing.hpp"
 #include "classfile/javaClasses.hpp"
+#ifdef ASSERT
+#include "gc_implementation/shenandoah/shenandoahHeap.hpp"
+#endif
 #include "oops/oop.inline.hpp"
 #include "runtime/handles.inline.hpp"
 #include "runtime/thread.inline.hpp"
@@ -117,6 +120,17 @@ unsigned int oopDesc::new_hash(juint seed) {
     return 0;
   }
 }
+
+#ifdef ASSERT
+void oopDesc::shenandoah_check_store_value(oop v) {
+  if (UseShenandoahGC) {
+    ShenandoahHeap* sh = ShenandoahHeap::heap();
+    if (sh->is_evacuation_in_progress()) {
+      assert(v == NULL || sh->is_marked_current(v), "only store marked oops into fields or arrays");
+    }
+  }
+}
+#endif
 
 VerifyOopClosure VerifyOopClosure::verify_oop;
 

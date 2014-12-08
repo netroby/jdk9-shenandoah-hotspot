@@ -166,6 +166,10 @@ class oopDesc {
   static oop load_decode_heap_oop(narrowOop* p);
   static oop load_decode_heap_oop(oop* p);
 
+#ifdef ASSERT
+  static void shenandoah_check_store_value(oop v);
+#endif
+
   // Store an oop into the heap.
   static void store_heap_oop(narrowOop* p, narrowOop v);
   static void store_heap_oop(oop* p, oop v);
