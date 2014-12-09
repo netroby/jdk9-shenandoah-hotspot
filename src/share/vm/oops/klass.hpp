@@ -63,6 +63,7 @@ class ClassLoaderData;
 class klassVtable;
 class ParCompactionManager;
 class KlassSizeStats;
+class fieldDescriptor;
 
 class Klass : public Metadata {
   friend class VMStructs;
@@ -412,6 +413,7 @@ protected:
   virtual void initialize(TRAPS);
   // lookup operation for MethodLookupCache
   friend class MethodLookupCache;
+  virtual Klass* find_field(Symbol* name, Symbol* signature, fieldDescriptor* fd) const;
   virtual Method* uncached_lookup_method(Symbol* name, Symbol* signature, MethodLookupMode mode) const;
  public:
   Method* lookup_method(Symbol* name, Symbol* signature) const {

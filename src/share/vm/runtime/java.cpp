@@ -272,9 +272,6 @@ void print_statistics() {
 
   print_method_profiling_data();
 
-  if (TimeCompiler) {
-    COMPILER2_PRESENT(Compile::print_timers();)
-  }
   if (TimeCompilationPolicy) {
     CompilationPolicy::policy()->print_time();
   }
@@ -390,48 +387,6 @@ void print_statistics() {
 
 #endif
 
-
-// Helper class for registering on_exit calls through JVM_OnExit
-
-extern "C" {
-    typedef void (*__exit_proc)(void);
-}
-
-class ExitProc : public CHeapObj<mtInternal> {
- private:
-  __exit_proc _proc;
-  // void (*_proc)(void);
-  ExitProc* _next;
- public:
-  // ExitProc(void (*proc)(void)) {
-  ExitProc(__exit_proc proc) {
-    _proc = proc;
-    _next = NULL;
-  }
-  void evaluate()               { _proc(); }
-  ExitProc* next() const        { return _next; }
-  void set_next(ExitProc* next) { _next = next; }
-};
-
-
-// Linked list of registered on_exit procedures
-
-static ExitProc* exit_procs = NULL;
-
-
-extern "C" {
-  void register_on_exit_function(void (*func)(void)) {
-    ExitProc *entry = new ExitProc(func);
-    // Classic vm does not throw an exception in case the allocation failed,
-    if (entry != NULL) {
-      entry->set_next(exit_procs);
-      exit_procs = entry;
-    }
-  }
-}
-
-jint volatile vm_getting_terminated = 0;
-
 // Note: before_exit() can be executed only once, if more than one threads
 //       are trying to shutdown the VM at the same time, only one thread
 //       can run before_exit() and all other threads must wait.
@@ -460,18 +415,6 @@ void before_exit(JavaThread * thread) {
     case BEFORE_EXIT_DONE:
       return;
     }
-  }
-
-  OrderAccess::release_store(&vm_getting_terminated, 1);
-
-  // The only difference between this and Win32's _onexit procs is that
-  // this version is invoked before any threads get killed.
-  ExitProc* current = exit_procs;
-  while (current != NULL) {
-    ExitProc* next = current->next();
-    current->evaluate();
-    delete current;
-    current = next;
   }
 
   // Hang forever on exit if we're reporting an error.
@@ -587,7 +530,7 @@ void notify_vm_shutdown() {
 void vm_direct_exit(int code) {
   notify_vm_shutdown();
   os::wait_for_keypress_at_exit();
-  ::exit(code);
+  os::exit(code);
 }
 
 void vm_perform_shutdown_actions() {
@@ -762,25 +705,35 @@ int JDK_Version::compare(const JDK_Version& other) const {
 }
 
 void JDK_Version::to_string(char* buffer, size_t buflen) const {
+  assert(buffer && buflen > 0, "call with useful buffer");
   size_t index = 0;
+
   if (!is_valid()) {
     jio_snprintf(buffer, buflen, "%s", "(uninitialized)");
   } else if (is_partially_initialized()) {
     jio_snprintf(buffer, buflen, "%s", "(uninitialized) pre-1.6.0");
   } else {
-    index += jio_snprintf(
+    int rc = jio_snprintf(
         &buffer[index], buflen - index, "%d.%d", _major, _minor);
+    if (rc == -1) return;
+    index += rc;
     if (_micro > 0) {
-      index += jio_snprintf(&buffer[index], buflen - index, ".%d", _micro);
+      rc = jio_snprintf(&buffer[index], buflen - index, ".%d", _micro);
     }
     if (_update > 0) {
-      index += jio_snprintf(&buffer[index], buflen - index, "_%02d", _update);
+      rc = jio_snprintf(&buffer[index], buflen - index, "_%02d", _update);
+      if (rc == -1) return;
+      index += rc;
     }
     if (_special > 0) {
-      index += jio_snprintf(&buffer[index], buflen - index, "%c", _special);
+      rc = jio_snprintf(&buffer[index], buflen - index, "%c", _special);
+      if (rc == -1) return;
+      index += rc;
     }
     if (_build > 0) {
-      index += jio_snprintf(&buffer[index], buflen - index, "-b%02d", _build);
+      rc = jio_snprintf(&buffer[index], buflen - index, "-b%02d", _build);
+      if (rc == -1) return;
+      index += rc;
     }
   }
 }

@@ -65,7 +65,9 @@ GrowableArray<MemoryManager*>* MemoryService::_managers_list =
 
 GCMemoryManager* MemoryService::_minor_gc_manager      = NULL;
 GCMemoryManager* MemoryService::_major_gc_manager      = NULL;
-MemoryPool*      MemoryService::_code_heap_pool        = NULL;
+MemoryManager*   MemoryService::_code_cache_manager    = NULL;
+GrowableArray<MemoryPool*>* MemoryService::_code_heap_pools =
+    new (ResourceObj::C_HEAP, mtInternal) GrowableArray<MemoryPool*>(init_code_heap_pools_size, true);
 MemoryPool*      MemoryService::_metaspace_pool        = NULL;
 MemoryPool*      MemoryService::_compressed_class_pool = NULL;
 
@@ -420,15 +422,21 @@ void MemoryService::add_shenandoah_memory_pool(ShenandoahHeap* pgc,
 
 #endif // INCLUDE_ALL_GCS
 
-void MemoryService::add_code_heap_memory_pool(CodeHeap* heap) {
-  _code_heap_pool = new CodeHeapPool(heap,
-                                     "Code Cache",
-                                     true /* support_usage_threshold */);
-  MemoryManager* mgr = MemoryManager::get_code_cache_memory_manager();
-  mgr->add_pool(_code_heap_pool);
+void MemoryService::add_code_heap_memory_pool(CodeHeap* heap, const char* name) {
+  // Create new memory pool for this heap
+  MemoryPool* code_heap_pool = new CodeHeapPool(heap, name, true /* support_usage_threshold */);
 
-  _pools_list->append(_code_heap_pool);
-  _managers_list->append(mgr);
+  // Append to lists
+  _code_heap_pools->append(code_heap_pool);
+  _pools_list->append(code_heap_pool);
+
+  if (_code_cache_manager == NULL) {
+    // Create CodeCache memory manager
+    _code_cache_manager = MemoryManager::get_code_cache_memory_manager();
+    _managers_list->append(_code_cache_manager);
+  }
+
+  _code_cache_manager->add_pool(code_heap_pool);
 }
 
 void MemoryService::add_metaspace_memory_pools() {

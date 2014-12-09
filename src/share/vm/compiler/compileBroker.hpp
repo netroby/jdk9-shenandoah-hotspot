@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1999, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1999, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -290,8 +290,6 @@ class CompileBroker: AllStatic {
   static CompileQueue* _c2_compile_queue;
   static CompileQueue* _c1_compile_queue;
 
-  static GrowableArray<CompilerThread*>* _compiler_threads;
-
   // performance counters
   static PerfCounter* _perf_total_compilation;
   static PerfCounter* _perf_native_compilation;
@@ -322,6 +320,8 @@ class CompileBroker: AllStatic {
   static elapsedTimer _t_total_compilation;
   static elapsedTimer _t_osr_compilation;
   static elapsedTimer _t_standard_compilation;
+  static elapsedTimer _t_invalidated_compilation;
+  static elapsedTimer _t_bailedout_compilation;
 
   static int _total_compile_count;
   static int _total_bailout_count;
@@ -337,8 +337,8 @@ class CompileBroker: AllStatic {
 
   static volatile jint _print_compilation_warning;
 
-  static CompilerThread* make_compiler_thread(const char* name, CompileQueue* queue, CompilerCounters* counters, AbstractCompiler* comp, TRAPS);
-  static void init_compiler_threads(int c1_compiler_count, int c2_compiler_count);
+  static JavaThread* make_thread(const char* name, CompileQueue* queue, CompilerCounters* counters, AbstractCompiler* comp, bool compiler_thread, TRAPS);
+  static void init_compiler_sweeper_threads(int c1_compiler_count, int c2_compiler_count);
   static bool compilation_is_complete  (methodHandle method, int osr_bci, int comp_level);
   static bool compilation_is_prohibited(methodHandle method, int osr_bci, int comp_level);
   static bool is_compile_blocking();
@@ -434,7 +434,7 @@ class CompileBroker: AllStatic {
   static bool is_compilation_disabled_forever() {
     return _should_compile_new_jobs == shutdown_compilaton;
   }
-  static void handle_full_code_cache();
+  static void handle_full_code_cache(int code_blob_type);
   // Ensures that warning is only printed once.
   static bool should_print_compiler_warning() {
     jint old = Atomic::cmpxchg(1, &_print_compilation_warning, 0);
@@ -471,6 +471,9 @@ class CompileBroker: AllStatic {
   static int get_sum_nmethod_code_size() {        return _sum_nmethod_code_size; }
   static long get_peak_compilation_time() {       return _peak_compilation_time; }
   static long get_total_compilation_time() {      return _t_total_compilation.milliseconds(); }
+
+  // Log that compilation profiling is skipped because metaspace is full.
+  static void log_metaspace_failure();
 };
 
 #endif // SHARE_VM_COMPILER_COMPILEBROKER_HPP

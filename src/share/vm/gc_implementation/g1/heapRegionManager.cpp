@@ -66,10 +66,11 @@ bool HeapRegionManager::is_free(HeapRegion* hr) const {
 #endif
 
 HeapRegion* HeapRegionManager::new_heap_region(uint hrm_index) {
-  HeapWord* bottom = G1CollectedHeap::heap()->bottom_addr_for_region(hrm_index);
+  G1CollectedHeap* g1h = G1CollectedHeap::heap();
+  HeapWord* bottom = g1h->bottom_addr_for_region(hrm_index);
   MemRegion mr(bottom, bottom + HeapRegion::GrainWords);
   assert(reserved().contains(mr), "invariant");
-  return new HeapRegion(hrm_index, G1CollectedHeap::heap()->bot_shared(), mr);
+  return g1h->allocator()->new_heap_region(hrm_index, g1h->bot_shared(), mr);
 }
 
 void HeapRegionManager::commit_regions(uint index, size_t num_regions) {
@@ -259,20 +260,17 @@ uint HeapRegionManager::find_unavailable_from_idx(uint start_idx, uint* res_idx)
   return num_regions;
 }
 
-uint HeapRegionManager::start_region_for_worker(uint worker_i, uint num_workers, uint num_regions) const {
-  return num_regions * worker_i / num_workers;
-}
-
-void HeapRegionManager::par_iterate(HeapRegionClosure* blk, uint worker_id, uint num_workers, jint claim_value) const {
-  const uint start_index = start_region_for_worker(worker_id, num_workers, _allocated_heapregions_length);
+void HeapRegionManager::par_iterate(HeapRegionClosure* blk, uint worker_id, HeapRegionClaimer* hrclaimer) const {
+  const uint start_index = hrclaimer->start_region_for_worker(worker_id);
 
   // Every worker will actually look at all regions, skipping over regions that
   // are currently not committed.
   // This also (potentially) iterates over regions newly allocated during GC. This
   // is no problem except for some extra work.
-  for (uint count = 0; count < _allocated_heapregions_length; count++) {
-    const uint index = (start_index + count) % _allocated_heapregions_length;
-    assert(0 <= index && index < _allocated_heapregions_length, "sanity");
+  const uint n_regions = hrclaimer->n_regions();
+  for (uint count = 0; count < n_regions; count++) {
+    const uint index = (start_index + count) % n_regions;
+    assert(0 <= index && index < n_regions, "sanity");
     // Skip over unavailable regions
     if (!is_available(index)) {
       continue;
@@ -281,15 +279,15 @@ void HeapRegionManager::par_iterate(HeapRegionClosure* blk, uint worker_id, uint
     // We'll ignore "continues humongous" regions (we'll process them
     // when we come across their corresponding "start humongous"
     // region) and regions already claimed.
-    if (r->claim_value() == claim_value || r->continuesHumongous()) {
+    if (hrclaimer->is_region_claimed(index) || r->is_continues_humongous()) {
       continue;
     }
     // OK, try to claim it
-    if (!r->claimHeapRegion(claim_value)) {
+    if (!hrclaimer->claim_region(index)) {
       continue;
     }
     // Success!
-    if (r->startsHumongous()) {
+    if (r->is_starts_humongous()) {
       // If the region is "starts humongous" we'll iterate over its
       // "continues humongous" first; in fact we'll do them
       // first. The order is important. In one case, calling the
@@ -301,17 +299,15 @@ void HeapRegionManager::par_iterate(HeapRegionClosure* blk, uint worker_id, uint
       for (uint ch_index = index + 1; ch_index < index + r->region_num(); ch_index++) {
         HeapRegion* chr = _regions.get_by_index(ch_index);
 
-        assert(chr->continuesHumongous(), "Must be humongous region");
+        assert(chr->is_continues_humongous(), "Must be humongous region");
         assert(chr->humongous_start_region() == r,
                err_msg("Must work on humongous continuation of the original start region "
                        PTR_FORMAT ", but is " PTR_FORMAT, p2i(r), p2i(chr)));
-        assert(chr->claim_value() != claim_value,
+        assert(!hrclaimer->is_region_claimed(ch_index),
                "Must not have been claimed yet because claiming of humongous continuation first claims the start region");
 
-        bool claim_result = chr->claimHeapRegion(claim_value);
-        // We should always be able to claim it; no one else should
-        // be trying to claim this region.
-        guarantee(claim_result, "We should always be able to claim the continuesHumongous part of the humongous object");
+        // There's no need to actually claim the continues humongous region, but we can do it in an assert as an extra precaution.
+        assert(hrclaimer->claim_region(ch_index), "We should always be able to claim the continuesHumongous part of the humongous object");
 
         bool res2 = blk->doHeapRegion(chr);
         if (res2) {
@@ -322,7 +318,7 @@ void HeapRegionManager::par_iterate(HeapRegionClosure* blk, uint worker_id, uint
         // does something with "continues humongous" regions
         // clears them). We might have to weaken it in the future,
         // but let's leave these two asserts here for extra safety.
-        assert(chr->continuesHumongous(), "should still be the case");
+        assert(chr->is_continues_humongous(), "should still be the case");
         assert(chr->humongous_start_region() == r, "sanity");
       }
     }
@@ -424,7 +420,7 @@ void HeapRegionManager::verify() {
     // this method may be called, we have only completed allocation of the regions,
     // but not put into a region set.
     prev_committed = true;
-    if (hr->startsHumongous()) {
+    if (hr->is_starts_humongous()) {
       prev_end = hr->orig_end();
     } else {
       prev_end = hr->end();
@@ -444,3 +440,31 @@ void HeapRegionManager::verify_optional() {
 }
 #endif // PRODUCT
 
+HeapRegionClaimer::HeapRegionClaimer(uint n_workers) :
+    _n_workers(n_workers), _n_regions(G1CollectedHeap::heap()->_hrm._allocated_heapregions_length), _claims(NULL) {
+  assert(n_workers > 0, "Need at least one worker.");
+  _claims = NEW_C_HEAP_ARRAY(uint, _n_regions, mtGC);
+  memset(_claims, Unclaimed, sizeof(*_claims) * _n_regions);
+}
+
+HeapRegionClaimer::~HeapRegionClaimer() {
+  if (_claims != NULL) {
+    FREE_C_HEAP_ARRAY(uint, _claims, mtGC);
+  }
+}
+
+uint HeapRegionClaimer::start_region_for_worker(uint worker_id) const {
+  assert(worker_id < _n_workers, "Invalid worker_id.");
+  return _n_regions * worker_id / _n_workers;
+}
+
+bool HeapRegionClaimer::is_region_claimed(uint region_index) const {
+  assert(region_index < _n_regions, "Invalid index.");
+  return _claims[region_index] == Claimed;
+}
+
+bool HeapRegionClaimer::claim_region(uint region_index) {
+  assert(region_index < _n_regions, "Invalid index.");
+  uint old_val = Atomic::cmpxchg(Claimed, &_claims[region_index], Unclaimed);
+  return old_val == Unclaimed;
+}

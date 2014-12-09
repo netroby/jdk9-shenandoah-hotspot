@@ -512,15 +512,13 @@ void os::init_system_properties_values() {
 
 #define DEFAULT_LIBPATH "/usr/lib:/lib"
 #define EXTENSIONS_DIR  "/lib/ext"
-#define ENDORSED_DIR    "/lib/endorsed"
 
   // Buffer that fits several sprintfs.
   // Note that the space for the trailing null is provided
   // by the nulls included by the sizeof operator.
   const size_t bufsize =
-    MAX3((size_t)MAXPATHLEN,  // For dll_dir & friends.
-         (size_t)MAXPATHLEN + sizeof(EXTENSIONS_DIR), // extensions dir
-         (size_t)MAXPATHLEN + sizeof(ENDORSED_DIR)); // endorsed dir
+    MAX2((size_t)MAXPATHLEN,  // For dll_dir & friends.
+         (size_t)MAXPATHLEN + sizeof(EXTENSIONS_DIR)); // extensions dir
   char *buf = (char *)NEW_C_HEAP_ARRAY(char, bufsize, mtInternal);
 
   // sysclasspath, java_home, dll_dir
@@ -571,15 +569,10 @@ void os::init_system_properties_values() {
   sprintf(buf, "%s" EXTENSIONS_DIR, Arguments::get_java_home());
   Arguments::set_ext_dirs(buf);
 
-  // Endorsed standards default directory.
-  sprintf(buf, "%s" ENDORSED_DIR, Arguments::get_java_home());
-  Arguments::set_endorsed_dirs(buf);
-
   FREE_C_HEAP_ARRAY(char, buf, mtInternal);
 
 #undef DEFAULT_LIBPATH
 #undef EXTENSIONS_DIR
-#undef ENDORSED_DIR
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -1641,7 +1634,8 @@ void os::jvm_path(char *buf, jint buflen) {
   char* rp = realpath((char *)dlinfo.dli_fname, buf);
   assert(rp != NULL, "error in realpath(): maybe the 'path' argument is too long?");
 
-  strcpy(saved_jvm_path, buf);
+  strncpy(saved_jvm_path, buf, sizeof(saved_jvm_path));
+  saved_jvm_path[sizeof(saved_jvm_path) - 1] = '\0';
 }
 
 void os::print_jni_name_prefix_on(outputStream* st, int args_size) {
@@ -2777,6 +2771,10 @@ size_t os::read(int fd, void *buf, unsigned int nBytes) {
   return ::read(fd, buf, nBytes);
 }
 
+size_t os::read_at(int fd, void *buf, unsigned int nBytes, jlong offset) {
+  return ::pread(fd, buf, nBytes, offset);
+}
+
 void os::naked_short_sleep(jlong ms) {
   struct timespec req;
 
@@ -3829,11 +3827,6 @@ jint os::init_2(void) {
   return JNI_OK;
 }
 
-// this is called at the end of vm_initialization
-void os::init_3(void) {
-  return;
-}
-
 // Mark the polling page as unreadable
 void os::make_polling_page_unreadable(void) {
   if (!guard_memory((char*)_polling_page, Aix::page_size())) {
@@ -4002,10 +3995,6 @@ bool os::check_heap(bool force) {
   return true;
 }
 
-// int local_vsnprintf(char* buf, size_t count, const char* format, va_list args) {
-//   return ::vsnprintf(buf, count, format, args);
-// }
-
 // Is a (classpath) directory empty?
 bool os::dir_is_empty(const char* path) {
   DIR *dir = NULL;
@@ -4029,14 +4018,6 @@ bool os::dir_is_empty(const char* path) {
 // This code originates from JDK's sysOpen and open64_w
 // from src/solaris/hpi/src/system_md.c
 
-#ifndef O_DELETE
-#define O_DELETE 0x10000
-#endif
-
-// Open a file. Unlink the file immediately after open returns
-// if the specified oflag has the O_DELETE flag set.
-// O_DELETE is used only in j2se/src/share/native/java/util/zip/ZipFile.c
-
 int os::open(const char *path, int oflag, int mode) {
 
   if (strlen(path) > MAX_PATH - 1) {
@@ -4044,8 +4025,6 @@ int os::open(const char *path, int oflag, int mode) {
     return -1;
   }
   int fd;
-  int o_delete = (oflag & O_DELETE);
-  oflag = oflag & ~O_DELETE;
 
   fd = ::open64(path, oflag, mode);
   if (fd == -1) return -1;
@@ -4096,9 +4075,6 @@ int os::open(const char *path, int oflag, int mode) {
   }
 #endif
 
-  if (o_delete != 0) {
-    ::unlink(path);
-  }
   return fd;
 }
 
@@ -4152,15 +4128,6 @@ int os::available(int fd, jlong *bytes) {
   }
   *bytes = end - cur;
   return 1;
-}
-
-int os::socket_available(int fd, jint *pbytes) {
-  // Linux doc says EINTR not returned, unlike Solaris
-  int ret = ::ioctl(fd, FIONREAD, pbytes);
-
-  //%% note ioctl can return 0 when successful, JVM_SocketAvailable
-  // is expected to return 0 on failure and 1 on success to the jdk.
-  return (ret < 0) ? 0 : 1;
 }
 
 // Map a block of memory.

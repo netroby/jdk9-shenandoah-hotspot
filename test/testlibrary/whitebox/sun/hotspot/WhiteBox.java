@@ -30,6 +30,7 @@ import java.util.List;
 import java.util.function.Function;
 import java.util.stream.Stream;
 import java.security.BasicPermission;
+
 import sun.hotspot.parser.DiagnosticCommand;
 
 public class WhiteBox {
@@ -97,9 +98,10 @@ public class WhiteBox {
   public native void NMTCommitMemory(long addr, long size);
   public native void NMTUncommitMemory(long addr, long size);
   public native void NMTReleaseMemory(long addr, long size);
-  public native void NMTOverflowHashBucket(long num);
   public native long NMTMallocWithPseudoStack(long size, int index);
   public native boolean NMTIsDetailSupported();
+  public native boolean NMTChangeTrackingLevel();
+  public native int NMTGetHashSize();
 
   // Compiler
   public native void    deoptimizeAll();
@@ -151,6 +153,8 @@ public class WhiteBox {
   public native void readReservedMemory();
   public native long allocateMetaspace(ClassLoader classLoader, long size);
   public native void freeMetaspace(ClassLoader classLoader, long addr, long size);
+  public native long incMetaspaceCapacityUntilGC(long increment);
+  public native long metaspaceCapacityUntilGC();
 
   // force Young GC
   public native void youngGC();
@@ -168,7 +172,15 @@ public class WhiteBox {
   // CPU features
   public native String getCPUFeatures();
 
+  // Native extensions
+  public native long getHeapUsageForContext(int context);
+  public native long getHeapRegionCountForContext(int context);
+  public native int getContextForObject(Object obj);
+  public native void printRegionInfo(int context);
+
   // VM flags
+  public native boolean isConstantVMFlag(String name);
+  public native boolean isLockedVMFlag(String name);
   public native void    setBooleanVMFlag(String name, boolean value);
   public native void    setIntxVMFlag(String name, long value);
   public native void    setUintxVMFlag(String name, long value);

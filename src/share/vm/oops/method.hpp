@@ -333,11 +333,13 @@ class Method : public Metadata {
     return _method_counters;
   }
 
-  void set_method_counters(MethodCounters* counters) {
-    // The store into method must be released. On platforms without
-    // total store order (TSO) the reference may become visible before
-    // the initialization of data otherwise.
-    OrderAccess::release_store_ptr((volatile void *)&_method_counters, counters);
+  void clear_method_counters() {
+    _method_counters = NULL;
+  }
+
+  bool init_method_counters(MethodCounters* counters) {
+    // Try to install a pointer to MethodCounters, return true on success.
+    return Atomic::cmpxchg_ptr(counters, (volatile void*)&_method_counters, NULL) == NULL;
   }
 
 #ifdef TIERED
@@ -727,6 +729,11 @@ class Method : public Metadata {
   static jmethodID make_jmethod_id(ClassLoaderData* loader_data, Method* mh);
   static void destroy_jmethod_id(ClassLoaderData* loader_data, jmethodID mid);
 
+  // Ensure there is enough capacity in the internal tracking data
+  // structures to hold the number of jmethodIDs you plan to generate.
+  // This saves substantial time doing allocations.
+  static void ensure_jmethod_ids(ClassLoaderData* loader_data, int capacity);
+
   // Use resolve_jmethod_id() in situations where the caller is expected
   // to provide a valid jmethodID; the only sanity checks are in asserts;
   // result guaranteed not to be NULL.
@@ -809,6 +816,10 @@ class Method : public Metadata {
   // On-stack replacement support
   bool has_osr_nmethod(int level, bool match_level) {
    return method_holder()->lookup_osr_nmethod(this, InvocationEntryBci, level, match_level) != NULL;
+  }
+
+  int mark_osr_nmethods() {
+    return method_holder()->mark_osr_nmethods(this);
   }
 
   nmethod* lookup_osr_nmethod_for(int bci, int level, bool match_level) {

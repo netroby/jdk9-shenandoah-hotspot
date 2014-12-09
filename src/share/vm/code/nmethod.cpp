@@ -500,7 +500,7 @@ nmethod* nmethod::new_native_nmethod(methodHandle method,
     CodeOffsets offsets;
     offsets.set_value(CodeOffsets::Verified_Entry, vep_offset);
     offsets.set_value(CodeOffsets::Frame_Complete, frame_complete);
-    nm = new (native_nmethod_size) nmethod(method(), native_nmethod_size,
+    nm = new (native_nmethod_size, CompLevel_none) nmethod(method(), native_nmethod_size,
                                             compile_id, &offsets,
                                             code_buffer, frame_size,
                                             basic_lock_owner_sp_offset,
@@ -538,7 +538,7 @@ nmethod* nmethod::new_dtrace_nmethod(methodHandle method,
     offsets.set_value(CodeOffsets::Dtrace_trap, trap_offset);
     offsets.set_value(CodeOffsets::Frame_Complete, frame_complete);
 
-    nm = new (nmethod_size) nmethod(method(), nmethod_size,
+    nm = new (nmethod_size, CompLevel_none) nmethod(method(), nmethod_size,
                                     &offsets, code_buffer, frame_size);
 
     NOT_PRODUCT(if (nm != NULL)  nmethod_stats.note_nmethod(nm));
@@ -586,7 +586,7 @@ nmethod* nmethod::new_nmethod(methodHandle method,
       + round_to(nul_chk_table->size_in_bytes(), oopSize)
       + round_to(debug_info->data_size()       , oopSize);
 
-    nm = new (nmethod_size)
+    nm = new (nmethod_size, comp_level)
     nmethod(method(), nmethod_size, compile_id, entry_bci, offsets,
             orig_pc_offset, debug_info, dependencies, code_buffer, frame_size,
             oop_maps,
@@ -803,9 +803,8 @@ nmethod::nmethod(
 }
 #endif // def HAVE_DTRACE_H
 
-void* nmethod::operator new(size_t size, int nmethod_size) throw() {
-  // Not critical, may return null if there is too little continuous memory
-  return CodeCache::allocate(nmethod_size);
+void* nmethod::operator new(size_t size, int nmethod_size, int comp_level) throw () {
+  return CodeCache::allocate(nmethod_size, CodeCache::get_code_blob_type(comp_level));
 }
 
 nmethod::nmethod(
@@ -1128,6 +1127,18 @@ void nmethod::clear_inline_caches() {
   }
 }
 
+// Clear ICStubs of all compiled ICs
+void nmethod::clear_ic_stubs() {
+  assert_locked_or_safepoint(CompiledIC_lock);
+  RelocIterator iter(this);
+  while(iter.next()) {
+    if (iter.type() == relocInfo::virtual_call_type) {
+      CompiledIC* ic = CompiledIC_at(&iter);
+      ic->clear_ic_stub();
+    }
+  }
+}
+
 
 void nmethod::cleanup_inline_caches() {
 
@@ -1364,8 +1375,6 @@ void nmethod::invalidate_osr_method() {
   // Remove from list of active nmethods
   if (method() != NULL)
     method()->method_holder()->remove_osr_nmethod(this);
-  // Set entry as invalid
-  _entry_bci = InvalidOSREntryBci;
 }
 
 void nmethod::log_state_change() const {
@@ -1532,7 +1541,7 @@ void nmethod::flush() {
   Events::log(JavaThread::current(), "flushing nmethod " INTPTR_FORMAT, this);
   if (PrintMethodFlushing) {
     tty->print_cr("*flushing nmethod %3d/" INTPTR_FORMAT ". Live blobs:" UINT32_FORMAT "/Free CodeCache:" SIZE_FORMAT "Kb",
-        _compile_id, this, CodeCache::nof_blobs(), CodeCache::unallocated_capacity()/1024);
+        _compile_id, this, CodeCache::nof_blobs(), CodeCache::unallocated_capacity(CodeCache::get_code_blob_type(_comp_level))/1024);
   }
 
   // We need to deallocate any ExceptionCache data.
@@ -1558,7 +1567,6 @@ void nmethod::flush() {
 
   CodeCache::free(this);
 }
-
 
 //
 // Notify all classes this nmethod is dependent on that it is no
@@ -1689,11 +1697,17 @@ void nmethod::post_compiled_method_unload() {
   set_unload_reported();
 }
 
-void static clean_ic_if_metadata_is_dead(CompiledIC *ic, BoolObjectClosure *is_alive) {
+void static clean_ic_if_metadata_is_dead(CompiledIC *ic, BoolObjectClosure *is_alive, bool mark_on_stack) {
   if (ic->is_icholder_call()) {
     // The only exception is compiledICHolder oops which may
     // yet be marked below. (We check this further below).
     CompiledICHolder* cichk_oop = ic->cached_icholder();
+
+    if (mark_on_stack) {
+      Metadata::mark_on_stack(cichk_oop->holder_method());
+      Metadata::mark_on_stack(cichk_oop->holder_klass());
+    }
+
     if (cichk_oop->holder_method()->method_holder()->is_loader_alive(is_alive) &&
         cichk_oop->holder_klass()->is_loader_alive(is_alive)) {
       return;
@@ -1701,6 +1715,10 @@ void static clean_ic_if_metadata_is_dead(CompiledIC *ic, BoolObjectClosure *is_a
   } else {
     Metadata* ic_oop = ic->cached_metadata();
     if (ic_oop != NULL) {
+      if (mark_on_stack) {
+        Metadata::mark_on_stack(ic_oop);
+      }
+
       if (ic_oop->is_klass()) {
         if (((Klass*)ic_oop)->is_loader_alive(is_alive)) {
           return;
@@ -1761,7 +1779,7 @@ void nmethod::do_unloading(BoolObjectClosure* is_alive, bool unloading_occurred)
     while(iter.next()) {
       if (iter.type() == relocInfo::virtual_call_type) {
         CompiledIC *ic = CompiledIC_at(&iter);
-        clean_ic_if_metadata_is_dead(ic, is_alive);
+        clean_ic_if_metadata_is_dead(ic, is_alive, false);
       }
     }
   }
@@ -1829,6 +1847,53 @@ static bool clean_if_nmethod_is_unloaded(CompiledStaticCall *csc, BoolObjectClos
   return clean_if_nmethod_is_unloaded(csc, csc->destination(), is_alive, from);
 }
 
+bool nmethod::unload_if_dead_at(RelocIterator* iter_at_oop, BoolObjectClosure *is_alive, bool unloading_occurred) {
+  assert(iter_at_oop->type() == relocInfo::oop_type, "Wrong relocation type");
+
+  oop_Relocation* r = iter_at_oop->oop_reloc();
+  // Traverse those oops directly embedded in the code.
+  // Other oops (oop_index>0) are seen as part of scopes_oops.
+  assert(1 == (r->oop_is_immediate()) +
+         (r->oop_addr() >= oops_begin() && r->oop_addr() < oops_end()),
+         "oop must be found in exactly one place");
+  if (r->oop_is_immediate() && r->oop_value() != NULL) {
+    // Unload this nmethod if the oop is dead.
+    if (can_unload(is_alive, r->oop_addr(), unloading_occurred)) {
+      return true;;
+    }
+  }
+
+  return false;
+}
+
+void nmethod::mark_metadata_on_stack_at(RelocIterator* iter_at_metadata) {
+  assert(iter_at_metadata->type() == relocInfo::metadata_type, "Wrong relocation type");
+
+  metadata_Relocation* r = iter_at_metadata->metadata_reloc();
+  // In this metadata, we must only follow those metadatas directly embedded in
+  // the code.  Other metadatas (oop_index>0) are seen as part of
+  // the metadata section below.
+  assert(1 == (r->metadata_is_immediate()) +
+         (r->metadata_addr() >= metadata_begin() && r->metadata_addr() < metadata_end()),
+         "metadata must be found in exactly one place");
+  if (r->metadata_is_immediate() && r->metadata_value() != NULL) {
+    Metadata* md = r->metadata_value();
+    if (md != _method) Metadata::mark_on_stack(md);
+  }
+}
+
+void nmethod::mark_metadata_on_stack_non_relocs() {
+    // Visit the metadata section
+    for (Metadata** p = metadata_begin(); p < metadata_end(); p++) {
+      if (*p == Universe::non_oop_word() || *p == NULL)  continue;  // skip non-oops
+      Metadata* md = *p;
+      Metadata::mark_on_stack(md);
+    }
+
+    // Visit metadata not embedded in the other places.
+    if (_method != NULL) Metadata::mark_on_stack(_method);
+}
+
 bool nmethod::do_unloading_parallel(BoolObjectClosure* is_alive, bool unloading_occurred) {
   ResourceMark rm;
 
@@ -1858,6 +1923,11 @@ bool nmethod::do_unloading_parallel(BoolObjectClosure* is_alive, bool unloading_
     unloading_occurred = true;
   }
 
+  // When class redefinition is used all metadata in the CodeCache has to be recorded,
+  // so that unused "previous versions" can be purged. Since walking the CodeCache can
+  // be expensive, the "mark on stack" is piggy-backed on this parallel unloading code.
+  bool mark_metadata_on_stack = a_class_was_redefined;
+
   // Exception cache
   clean_exception_cache(is_alive);
 
@@ -1873,7 +1943,7 @@ bool nmethod::do_unloading_parallel(BoolObjectClosure* is_alive, bool unloading_
       if (unloading_occurred) {
         // If class unloading occurred we first iterate over all inline caches and
         // clear ICs where the cached oop is referring to an unloaded klass or method.
-        clean_ic_if_metadata_is_dead(CompiledIC_at(&iter), is_alive);
+        clean_ic_if_metadata_is_dead(CompiledIC_at(&iter), is_alive, mark_metadata_on_stack);
       }
 
       postponed |= clean_if_nmethod_is_unloaded(CompiledIC_at(&iter), is_alive, this);
@@ -1889,22 +1959,19 @@ bool nmethod::do_unloading_parallel(BoolObjectClosure* is_alive, bool unloading_
 
     case relocInfo::oop_type:
       if (!is_unloaded) {
-        // Unload check
-        oop_Relocation* r = iter.oop_reloc();
-        // Traverse those oops directly embedded in the code.
-        // Other oops (oop_index>0) are seen as part of scopes_oops.
-        assert(1 == (r->oop_is_immediate()) +
-                  (r->oop_addr() >= oops_begin() && r->oop_addr() < oops_end()),
-              "oop must be found in exactly one place");
-        if (r->oop_is_immediate() && r->oop_value() != NULL) {
-          if (can_unload(is_alive, r->oop_addr(), unloading_occurred)) {
-            is_unloaded = true;
-          }
-        }
+        is_unloaded = unload_if_dead_at(&iter, is_alive, unloading_occurred);
       }
       break;
 
+    case relocInfo::metadata_type:
+      if (mark_metadata_on_stack) {
+        mark_metadata_on_stack_at(&iter);
+      }
     }
+  }
+
+  if (mark_metadata_on_stack) {
+    mark_metadata_on_stack_non_relocs();
   }
 
   if (is_unloaded) {
@@ -2054,7 +2121,7 @@ void nmethod::metadata_do(void f(Metadata*)) {
     while (iter.next()) {
       if (iter.type() == relocInfo::metadata_type ) {
         metadata_Relocation* r = iter.metadata_reloc();
-        // In this lmetadata, we must only follow those metadatas directly embedded in
+        // In this metadata, we must only follow those metadatas directly embedded in
         // the code.  Other metadatas (oop_index>0) are seen as part of
         // the metadata section below.
         assert(1 == (r->metadata_is_immediate()) +
@@ -2088,7 +2155,7 @@ void nmethod::metadata_do(void f(Metadata*)) {
     f(md);
   }
 
-  // Call function Method*, not embedded in these other places.
+  // Visit metadata not embedded in the other places.
   if (_method != NULL) f(_method);
 }
 
@@ -2420,15 +2487,18 @@ void nmethod::check_all_dependencies(DepChange& changes) {
   // Turn off dependency tracing while actually testing dependencies.
   NOT_PRODUCT( FlagSetting fs(TraceDependencies, false) );
 
- typedef ResourceHashtable<DependencySignature, int, &DependencySignature::hash,
-                           &DependencySignature::equals, 11027> DepTable;
+  typedef ResourceHashtable<DependencySignature, int, &DependencySignature::hash,
+                            &DependencySignature::equals, 11027> DepTable;
 
- DepTable* table = new DepTable();
+  DepTable* table = new DepTable();
 
   // Iterate over live nmethods and check dependencies of all nmethods that are not
   // marked for deoptimization. A particular dependency is only checked once.
-  for(nmethod* nm = CodeCache::alive_nmethod(CodeCache::first()); nm != NULL; nm = CodeCache::alive_nmethod(CodeCache::next(nm))) {
-    if (!nm->is_marked_for_deoptimization()) {
+  NMethodIterator iter;
+  while(iter.next()) {
+    nmethod* nm = iter.method();
+    // Only notify for live nmethods
+    if (nm->is_alive() && !nm->is_marked_for_deoptimization()) {
       for (Dependencies::DepStream deps(nm); deps.next(); ) {
         // Construct abstraction of a dependency.
         DependencySignature* current_sig = new DependencySignature(deps);

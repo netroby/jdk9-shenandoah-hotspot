@@ -479,7 +479,7 @@ void ParScanThreadStateSet::flush()
     _next_gen.par_oop_since_save_marks_iterate_done(i);
   }
 
-  if (UseConcMarkSweepGC && ParallelGCThreads > 0) {
+  if (UseConcMarkSweepGC) {
     // We need to call this even when ResizeOldPLAB is disabled
     // so as to avoid breaking some asserts. While we may be able
     // to avoid this by reorganizing the code a bit, I am loathe
@@ -1065,10 +1065,8 @@ void ParNewGeneration::collect(bool   full,
     gch->print_heap_change(gch_prev_used);
   }
 
-  if (PrintGCDetails && ParallelGCVerbose) {
-    TASKQUEUE_STATS_ONLY(thread_state_set.print_termination_stats());
-    TASKQUEUE_STATS_ONLY(thread_state_set.print_taskqueue_stats());
-  }
+  TASKQUEUE_STATS_ONLY(if (PrintTerminationStats) thread_state_set.print_termination_stats());
+  TASKQUEUE_STATS_ONLY(if (PrintTaskqueue) thread_state_set.print_taskqueue_stats());
 
   if (UseAdaptiveSizePolicy) {
     size_policy->minor_collection_end(gch->gc_cause());

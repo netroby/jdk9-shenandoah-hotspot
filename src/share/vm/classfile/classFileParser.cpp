@@ -2557,7 +2557,7 @@ methodHandle ClassFileParser::parse_method(bool is_interface,
 Array<Method*>* ClassFileParser::parse_methods(bool is_interface,
                                                AccessFlags* promoted_flags,
                                                bool* has_final_method,
-                                               bool* has_default_methods,
+                                               bool* declares_default_methods,
                                                TRAPS) {
   ClassFileStream* cfs = stream();
   cfs->guarantee_more(2, CHECK_NULL);  // length
@@ -2576,11 +2576,11 @@ Array<Method*>* ClassFileParser::parse_methods(bool is_interface,
       if (method->is_final()) {
         *has_final_method = true;
       }
-      if (is_interface && !(*has_default_methods)
-        && !method->is_abstract() && !method->is_static()
-        && !method->is_private()) {
-        // default method
-        *has_default_methods = true;
+      // declares_default_methods: declares concrete instance methods, any access flags
+      // used for interface initialization, and default method inheritance analysis
+      if (is_interface && !(*declares_default_methods)
+        && !method->is_abstract() && !method->is_static()) {
+        *declares_default_methods = true;
       }
       _methods->at_put(index, method());
     }
@@ -2859,6 +2859,11 @@ void ClassFileParser::parse_classfile_bootstrap_methods_attribute(u4 attribute_b
       "bootstrap_method_index %u has bad constant type in class file %s",
       bootstrap_method_index,
       CHECK);
+
+    guarantee_property((operand_fill_index + 1 + argument_count) < operands->length(),
+      "Invalid BootstrapMethods num_bootstrap_methods or num_bootstrap_arguments value in class file %s",
+      CHECK);
+
     operands->at_put(operand_fill_index++, bootstrap_method_index);
     operands->at_put(operand_fill_index++, argument_count);
 
@@ -2874,8 +2879,6 @@ void ClassFileParser::parse_classfile_bootstrap_methods_attribute(u4 attribute_b
       operands->at_put(operand_fill_index++, argument_index);
     }
   }
-
-  assert(ConstantPool::operand_array_length(operands) == attribute_array_length, "correct decode");
 
   u1* current_end = cfs->current();
   guarantee_property(current_end == current_start + attribute_byte_length,
@@ -3736,6 +3739,7 @@ instanceKlassHandle ClassFileParser::parseClassFile(Symbol* name,
   JvmtiCachedClassFileData *cached_class_file = NULL;
   Handle class_loader(THREAD, loader_data->class_loader());
   bool has_default_methods = false;
+  bool declares_default_methods = false;
   ResourceMark rm(THREAD);
 
   ClassFileStream* cfs = stream();
@@ -3973,8 +3977,12 @@ instanceKlassHandle ClassFileParser::parseClassFile(Symbol* name,
     Array<Method*>* methods = parse_methods(access_flags.is_interface(),
                                             &promoted_flags,
                                             &has_final_method,
-                                            &has_default_methods,
+                                            &declares_default_methods,
                                             CHECK_(nullHandle));
+
+    if (declares_default_methods) {
+      has_default_methods = true;
+    }
 
     // Additional attributes
     ClassAnnotationCollector parsed_annotations;
@@ -4117,6 +4125,7 @@ instanceKlassHandle ClassFileParser::parseClassFile(Symbol* name,
     this_klass->set_minor_version(minor_version);
     this_klass->set_major_version(major_version);
     this_klass->set_has_default_methods(has_default_methods);
+    this_klass->set_declares_default_methods(declares_default_methods);
 
     if (!host_klass.is_null()) {
       assert (this_klass->is_anonymous(), "should be the same");

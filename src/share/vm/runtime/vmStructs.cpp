@@ -765,8 +765,8 @@ typedef TwoOopHashtable<Symbol*, mtClass>     SymbolTwoOopHashtable;
   /* CodeCache (NOTE: incomplete) */                                                                                                 \
   /********************************/                                                                                                 \
                                                                                                                                      \
-     static_field(CodeCache,                   _heap,                                         CodeHeap*)                             \
-     static_field(CodeCache,                   _scavenge_root_nmethods,                       nmethod*)                              \
+  static_field(CodeCache,                      _heaps,                                        GrowableArray<CodeHeap*>*)             \
+  static_field(CodeCache,                      _scavenge_root_nmethods,                       nmethod*)                              \
                                                                                                                                      \
   /*******************************/                                                                                                  \
   /* CodeHeap (NOTE: incomplete) */                                                                                                  \
@@ -1070,8 +1070,8 @@ typedef TwoOopHashtable<Symbol*, mtClass>     SymbolTwoOopHashtable;
   volatile_nonstatic_field(ObjectMonitor,      _header,                                       markOop)                               \
   unchecked_nonstatic_field(ObjectMonitor,     _object,                                       sizeof(void *)) /* NOTE: no type */    \
   unchecked_nonstatic_field(ObjectMonitor,     _owner,                                        sizeof(void *)) /* NOTE: no type */    \
-  volatile_nonstatic_field(ObjectMonitor,      _count,                                        intptr_t)                              \
-  volatile_nonstatic_field(ObjectMonitor,      _waiters,                                      intptr_t)                              \
+  volatile_nonstatic_field(ObjectMonitor,      _count,                                        jint)                                  \
+  volatile_nonstatic_field(ObjectMonitor,      _waiters,                                      jint)                                  \
   volatile_nonstatic_field(ObjectMonitor,      _recursions,                                   intptr_t)                              \
   nonstatic_field(ObjectMonitor,               FreeNext,                                      ObjectMonitor*)                        \
   volatile_nonstatic_field(BasicLock,          _displaced_header,                             markOop)                               \
@@ -1594,6 +1594,7 @@ typedef TwoOopHashtable<Symbol*, mtClass>     SymbolTwoOopHashtable;
            declare_type(JvmtiAgentThread, JavaThread)                     \
            declare_type(ServiceThread, JavaThread)                        \
   declare_type(CompilerThread, JavaThread)                                \
+  declare_type(CodeCacheSweeperThread, JavaThread)                        \
   declare_toplevel_type(OSThread)                                         \
   declare_toplevel_type(JavaFrameAnchor)                                  \
                                                                           \
@@ -2508,6 +2509,12 @@ typedef TwoOopHashtable<Symbol*, mtClass>     SymbolTwoOopHashtable;
   declare_constant(Deoptimization::Action_make_not_compilable)            \
   declare_constant(Deoptimization::Action_LIMIT)                          \
                                                                           \
+  /***************************************************/                   \
+  /* DEFAULT_CACHE_LINE_SIZE (globalDefinitions.hpp) */                   \
+  /***************************************************/                   \
+                                                                          \
+  declare_constant(DEFAULT_CACHE_LINE_SIZE)                               \
+                                                                          \
   /*********************/                                                 \
   /* Matcher (C2 only) */                                                 \
   /*********************/                                                 \
@@ -2519,7 +2526,6 @@ typedef TwoOopHashtable<Symbol*, mtClass>     SymbolTwoOopHashtable;
   /*********************************************/                         \
                                                                           \
   declare_constant(InvocationEntryBci)                                    \
-  declare_constant(InvalidOSREntryBci)                                    \
                                                                           \
   /***************/                                                       \
   /* OopMapValue */                                                       \

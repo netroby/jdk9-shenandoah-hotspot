@@ -956,8 +956,9 @@ class JNI_ArgumentPusherVaArg : public JNI_ArgumentPusher {
 
   // Optimized path if we have the bitvector form of signature
   void iterate( uint64_t fingerprint ) {
-    if ( fingerprint == UCONST64(-1) ) SignatureIterator::iterate();// Must be too many arguments
-    else {
+    if (fingerprint == (uint64_t)CONST64(-1)) {
+      SignatureIterator::iterate(); // Must be too many arguments
+    } else {
       _return_type = (BasicType)((fingerprint >> static_feature_size) &
                                   result_feature_mask);
 
@@ -1027,8 +1028,9 @@ class JNI_ArgumentPusherArray : public JNI_ArgumentPusher {
 
   // Optimized path if we have the bitvector form of signature
   void iterate( uint64_t fingerprint ) {
-    if ( fingerprint == UCONST64(-1) ) SignatureIterator::iterate(); // Must be too many arguments
-    else {
+    if (fingerprint == (uint64_t)CONST64(-1)) {
+      SignatureIterator::iterate(); // Must be too many arguments
+    } else {
       _return_type = (BasicType)((fingerprint >> static_feature_size) &
                                   result_feature_mask);
       assert(fingerprint, "Fingerprint should not be 0");
@@ -3861,6 +3863,7 @@ _JNI_IMPORT_OR_EXPORT_ jint JNICALL JNI_GetDefaultJavaVMInitArgs(void *args_) {
   unit_test_function_call
 
 // Forward declaration
+void TestOS_test();
 void TestReservedSpace_test();
 void TestReserveMemorySpecial_test();
 void TestVirtualSpace_test();
@@ -3873,6 +3876,7 @@ void TestKlass_test();
 void TestBitMap_test();
 void TestAsUtf8();
 void Test_linked_list();
+void TestChunkedList_test();
 #if INCLUDE_ALL_GCS
 void TestOldFreeSpaceCalculation_test();
 void TestG1BiasedArray_test();
@@ -3884,6 +3888,7 @@ void FreeRegionList_test();
 void execute_internal_vm_tests() {
   if (ExecuteInternalVMTests) {
     tty->print_cr("Running internal VM tests");
+    run_unit_test(TestOS_test());
     run_unit_test(TestReservedSpace_test());
     run_unit_test(TestReserveMemorySpecial_test());
     run_unit_test(TestVirtualSpace_test());
@@ -3905,6 +3910,7 @@ void execute_internal_vm_tests() {
     run_unit_test(TestAsUtf8());
     run_unit_test(ObjectMonitor::sanity_checks());
     run_unit_test(Test_linked_list());
+    run_unit_test(TestChunkedList_test());
 #if INCLUDE_VM_STRUCTS
     run_unit_test(VMStructs::test());
 #endif

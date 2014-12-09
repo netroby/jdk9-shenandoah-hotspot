@@ -577,7 +577,7 @@ void VMError::report(outputStream* st) {
 
   STEP(120, "(printing native stack)" )
 
-     if (_verbose) {
+   if (_verbose) {
      if (os::platform_print_native_stack(st, _context, buf, sizeof(buf))) {
        // We have printed the native stack in platform-specific code
        // Windows/x64 needs special handling.
@@ -585,43 +585,7 @@ void VMError::report(outputStream* st) {
        frame fr = _context ? os::fetch_frame_from_context(_context)
                            : os::current_frame();
 
-       // see if it's a valid frame
-       if (fr.pc()) {
-          st->print_cr("Native frames: (J=compiled Java code, j=interpreted, Vv=VM code, C=native code)");
-
-
-          int count = 0;
-          while (count++ < StackPrintLimit) {
-             fr.print_on_error(st, buf, sizeof(buf));
-             st->cr();
-             // Compiled code may use EBP register on x86 so it looks like
-             // non-walkable C frame. Use frame.sender() for java frames.
-             if (_thread && _thread->is_Java_thread()) {
-               // Catch very first native frame by using stack address.
-               // For JavaThread stack_base and stack_size should be set.
-               if (!_thread->on_local_stack((address)(fr.sender_sp() + 1))) {
-                 break;
-               }
-               if (fr.is_java_frame()) {
-                 RegisterMap map((JavaThread*)_thread, false); // No update
-                 fr = fr.sender(&map);
-               } else {
-                 fr = os::get_sender_for_C_frame(&fr);
-               }
-             } else {
-               // is_first_C_frame() does only simple checks for frame pointer,
-               // it will pass if java compiled code has a pointer in EBP.
-               if (os::is_first_C_frame(&fr)) break;
-               fr = os::get_sender_for_C_frame(&fr);
-             }
-          }
-
-          if (count > StackPrintLimit) {
-             st->print_cr("...<more frames>...");
-          }
-
-          st->cr();
-       }
+       print_native_stack(st, fr, _thread, buf, sizeof(buf));
      }
    }
 
@@ -776,7 +740,7 @@ void VMError::report(outputStream* st) {
 
   STEP(228, "(Native Memory Tracking)" )
      if (_verbose) {
-       MemTracker::final_report(st);
+       MemTracker::error_report(st);
      }
 
   STEP(230, "" )
@@ -1011,11 +975,13 @@ void VMError::report_and_die() {
     // Run error reporting to determine whether or not to report the crash.
     if (!transmit_report_done && should_report_bug(first_error->_id)) {
       transmit_report_done = true;
-      FILE* hs_err = os::open(log.fd(), "r");
+      const int fd2 = ::dup(log.fd());
+      FILE* const hs_err = ::fdopen(fd2, "r");
       if (NULL != hs_err) {
         ErrorReporter er;
         er.call(hs_err, buffer, O_BUFLEN);
       }
+      ::fclose(hs_err);
     }
 
     if (log.fd() != defaultStream::output_fd()) {

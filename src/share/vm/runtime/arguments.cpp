@@ -36,6 +36,7 @@
 #include "oops/oop.inline.hpp"
 #include "prims/jvmtiExport.hpp"
 #include "runtime/arguments.hpp"
+#include "runtime/arguments_ext.hpp"
 #include "runtime/globals_extension.hpp"
 #include "runtime/java.hpp"
 #include "runtime/os.hpp"
@@ -54,7 +55,7 @@
 #endif // INCLUDE_ALL_GCS
 
 // Note: This is a special bug reporting site for the JVM
-#define DEFAULT_VENDOR_URL_BUG "http://bugreport.sun.com/bugreport/crash.jsp"
+#define DEFAULT_VENDOR_URL_BUG "http://bugreport.java.com/bugreport/crash.jsp"
 #define DEFAULT_JAVA_LAUNCHER  "generic"
 
 // Disable options not supported in this release, with a warning if they
@@ -89,6 +90,8 @@ const char*  Arguments::_gc_log_filename        = NULL;
 bool   Arguments::_has_profile                  = false;
 size_t Arguments::_conservative_max_heap_alignment = 0;
 uintx  Arguments::_min_heap_size                = 0;
+uintx  Arguments::_min_heap_free_ratio          = 0;
+uintx  Arguments::_max_heap_free_ratio          = 0;
 Arguments::Mode Arguments::_mode                = _mixed;
 bool   Arguments::_java_compiler                = false;
 bool   Arguments::_xdebug_mode                  = false;
@@ -113,8 +116,6 @@ exit_hook_t      Arguments::_exit_hook          = NULL;
 vfprintf_hook_t  Arguments::_vfprintf_hook      = NULL;
 
 
-SystemProperty *Arguments::_java_ext_dirs = NULL;
-SystemProperty *Arguments::_java_endorsed_dirs = NULL;
 SystemProperty *Arguments::_sun_boot_library_path = NULL;
 SystemProperty *Arguments::_java_library_path = NULL;
 SystemProperty *Arguments::_java_home = NULL;
@@ -123,6 +124,7 @@ SystemProperty *Arguments::_sun_boot_class_path = NULL;
 
 char* Arguments::_meta_index_path = NULL;
 char* Arguments::_meta_index_dir = NULL;
+char* Arguments::_ext_dirs = NULL;
 
 // Check if head of 'option' matches 'name', and sets 'tail' remaining part of option string
 
@@ -182,8 +184,6 @@ void Arguments::init_system_properties() {
   // Following are JVMTI agent writable properties.
   // Properties values are set to NULL and they are
   // os specific they are initialized in os::init_system_properties_values().
-  _java_ext_dirs = new SystemProperty("java.ext.dirs", NULL,  true);
-  _java_endorsed_dirs = new SystemProperty("java.endorsed.dirs", NULL,  true);
   _sun_boot_library_path = new SystemProperty("sun.boot.library.path", NULL,  true);
   _java_library_path = new SystemProperty("java.library.path", NULL,  true);
   _java_home =  new SystemProperty("java.home", NULL,  true);
@@ -192,8 +192,6 @@ void Arguments::init_system_properties() {
   _java_class_path = new SystemProperty("java.class.path", "",  true);
 
   // Add to System Property list.
-  PropertyList_add(&_system_properties, _java_ext_dirs);
-  PropertyList_add(&_system_properties, _java_endorsed_dirs);
   PropertyList_add(&_system_properties, _sun_boot_library_path);
   PropertyList_add(&_system_properties, _java_library_path);
   PropertyList_add(&_system_properties, _java_home);
@@ -304,6 +302,9 @@ static ObsoleteFlag obsolete_jvm_flags[] = {
   { "ReflectionWrapResolutionErrors",JDK_Version::jdk(9), JDK_Version::jdk(10) },
   { "VerifyReflectionBytecodes",     JDK_Version::jdk(9), JDK_Version::jdk(10) },
   { "AutoShutdownNMT",               JDK_Version::jdk(9), JDK_Version::jdk(10) },
+  { "NmethodSweepFraction",          JDK_Version::jdk(9), JDK_Version::jdk(10) },
+  { "NmethodSweepCheckInterval",     JDK_Version::jdk(9), JDK_Version::jdk(10) },
+  { "CodeCacheMinimumFreeSpace",     JDK_Version::jdk(9), JDK_Version::jdk(10) },
 #ifndef ZERO
   { "UseFastAccessorMethods",        JDK_Version::jdk(9), JDK_Version::jdk(10) },
   { "UseFastEmptyMethods",           JDK_Version::jdk(9), JDK_Version::jdk(10) },
@@ -339,12 +340,8 @@ bool Arguments::is_newly_obsolete(const char *s, JDK_Version* version) {
 // components, in order:
 //
 //     prefix           // from -Xbootclasspath/p:...
-//     endorsed         // the expansion of -Djava.endorsed.dirs=...
 //     base             // from os::get_system_properties() or -Xbootclasspath=
 //     suffix           // from -Xbootclasspath/a:...
-//
-// java.endorsed.dirs is a list of directories; any jar or zip files in the
-// directories are added to the sysclasspath just before the base.
 //
 // This could be AllStatic, but it isn't needed after argument processing is
 // complete.
@@ -359,16 +356,9 @@ public:
   inline void add_suffix(const char* suffix);
   inline void reset_path(const char* base);
 
-  // Expand the jar/zip files in each directory listed by the java.endorsed.dirs
-  // property.  Must be called after all command-line arguments have been
-  // processed (in particular, -Djava.endorsed.dirs=...) and before calling
-  // combined_path().
-  void expand_endorsed();
-
   inline const char* get_base()     const { return _items[_scp_base]; }
   inline const char* get_prefix()   const { return _items[_scp_prefix]; }
   inline const char* get_suffix()   const { return _items[_scp_suffix]; }
-  inline const char* get_endorsed() const { return _items[_scp_endorsed]; }
 
   // Combine all the components into a single c-heap-allocated string; caller
   // must free the string if/when no longer needed.
@@ -385,20 +375,17 @@ private:
   // base are allocated in the C heap and freed by this class.
   enum {
     _scp_prefix,        // from -Xbootclasspath/p:...
-    _scp_endorsed,      // the expansion of -Djava.endorsed.dirs=...
     _scp_base,          // the default sysclasspath
     _scp_suffix,        // from -Xbootclasspath/a:...
     _scp_nitems         // the number of items, must be last.
   };
 
   const char* _items[_scp_nitems];
-  DEBUG_ONLY(bool _expansion_done;)
 };
 
 SysClassPath::SysClassPath(const char* base) {
   memset(_items, 0, sizeof(_items));
   _items[_scp_base] = base;
-  DEBUG_ONLY(_expansion_done = false;)
 }
 
 SysClassPath::~SysClassPath() {
@@ -406,7 +393,6 @@ SysClassPath::~SysClassPath() {
   for (int i = 0; i < _scp_nitems; ++i) {
     if (i != _scp_base) reset_item_at(i);
   }
-  DEBUG_ONLY(_expansion_done = false;)
 }
 
 inline void SysClassPath::set_base(const char* base) {
@@ -442,41 +428,11 @@ inline void SysClassPath::reset_path(const char* base) {
 
 //------------------------------------------------------------------------------
 
-void SysClassPath::expand_endorsed() {
-  assert(_items[_scp_endorsed] == NULL, "can only be called once.");
-
-  const char* path = Arguments::get_property("java.endorsed.dirs");
-  if (path == NULL) {
-    path = Arguments::get_endorsed_dir();
-    assert(path != NULL, "no default for java.endorsed.dirs");
-  }
-
-  char* expanded_path = NULL;
-  const char separator = *os::path_separator();
-  const char* const end = path + strlen(path);
-  while (path < end) {
-    const char* tmp_end = strchr(path, separator);
-    if (tmp_end == NULL) {
-      expanded_path = add_jars_to_path(expanded_path, path);
-      path = end;
-    } else {
-      char* dirpath = NEW_C_HEAP_ARRAY(char, tmp_end - path + 1, mtInternal);
-      memcpy(dirpath, path, tmp_end - path);
-      dirpath[tmp_end - path] = '\0';
-      expanded_path = add_jars_to_path(expanded_path, dirpath);
-      FREE_C_HEAP_ARRAY(char, dirpath, mtInternal);
-      path = tmp_end + 1;
-    }
-  }
-  _items[_scp_endorsed] = expanded_path;
-  DEBUG_ONLY(_expansion_done = true;)
-}
 
 // Combine the bootclasspath elements, some of which may be null, into a single
 // c-heap-allocated string.
 char* SysClassPath::combined_path() {
   assert(_items[_scp_base] != NULL, "empty default sysclasspath");
-  assert(_expansion_done, "must call expand_endorsed() first.");
 
   size_t lengths[_scp_nitems];
   size_t total_len = 0;
@@ -1133,6 +1089,21 @@ static void no_shared_spaces(const char* message) {
 }
 #endif
 
+// Returns threshold scaled with CompileThresholdScaling
+intx Arguments::get_scaled_compile_threshold(intx threshold) {
+  return (intx)(threshold * CompileThresholdScaling);
+}
+
+// Returns freq_log scaled with CompileThresholdScaling
+intx Arguments::get_scaled_freq_log(intx freq_log) {
+  intx scaled_freq = get_scaled_compile_threshold((intx)1 << freq_log);
+  if (scaled_freq == 0) {
+    return 0;
+  } else {
+    return log2_intptr(scaled_freq);
+  }
+}
+
 void Arguments::set_tiered_flags() {
   // With tiered, set default policy to AdvancedThresholdPolicy, which is 3.
   if (FLAG_IS_DEFAULT(CompilationPolicyChoice)) {
@@ -1144,11 +1115,59 @@ void Arguments::set_tiered_flags() {
   }
   // Increase the code cache size - tiered compiles a lot more.
   if (FLAG_IS_DEFAULT(ReservedCodeCacheSize)) {
-    FLAG_SET_DEFAULT(ReservedCodeCacheSize, ReservedCodeCacheSize * 5);
+    FLAG_SET_ERGO(uintx, ReservedCodeCacheSize, ReservedCodeCacheSize * 5);
+  }
+  // Enable SegmentedCodeCache if TieredCompilation is enabled and ReservedCodeCacheSize >= 240M
+  if (FLAG_IS_DEFAULT(SegmentedCodeCache) && ReservedCodeCacheSize >= 240*M) {
+    FLAG_SET_ERGO(bool, SegmentedCodeCache, true);
+
+    if (FLAG_IS_DEFAULT(ReservedCodeCacheSize)) {
+      // Multiply sizes by 5 but fix NonNMethodCodeHeapSize (distribute among non-profiled and profiled code heap)
+      if (FLAG_IS_DEFAULT(ProfiledCodeHeapSize)) {
+        FLAG_SET_ERGO(uintx, ProfiledCodeHeapSize, ProfiledCodeHeapSize * 5 + NonNMethodCodeHeapSize * 2);
+      }
+      if (FLAG_IS_DEFAULT(NonProfiledCodeHeapSize)) {
+        FLAG_SET_ERGO(uintx, NonProfiledCodeHeapSize, NonProfiledCodeHeapSize * 5 + NonNMethodCodeHeapSize * 2);
+      }
+      // Check consistency of code heap sizes
+      if ((NonNMethodCodeHeapSize + NonProfiledCodeHeapSize + ProfiledCodeHeapSize) != ReservedCodeCacheSize) {
+        jio_fprintf(defaultStream::error_stream(),
+                    "Invalid code heap sizes: NonNMethodCodeHeapSize(%dK) + ProfiledCodeHeapSize(%dK) + NonProfiledCodeHeapSize(%dK) = %dK. Must be equal to ReservedCodeCacheSize = %uK.\n",
+                    NonNMethodCodeHeapSize/K, ProfiledCodeHeapSize/K, NonProfiledCodeHeapSize/K,
+                    (NonNMethodCodeHeapSize + ProfiledCodeHeapSize + NonProfiledCodeHeapSize)/K, ReservedCodeCacheSize/K);
+        vm_exit(1);
+      }
+    }
   }
   if (!UseInterpreter) { // -Xcomp
     Tier3InvokeNotifyFreqLog = 0;
     Tier4InvocationThreshold = 0;
+  }
+  // Scale tiered compilation thresholds
+  if (!FLAG_IS_DEFAULT(CompileThresholdScaling)) {
+    FLAG_SET_ERGO(intx, Tier0InvokeNotifyFreqLog, get_scaled_freq_log(Tier0InvokeNotifyFreqLog));
+    FLAG_SET_ERGO(intx, Tier0BackedgeNotifyFreqLog, get_scaled_freq_log(Tier0BackedgeNotifyFreqLog));
+
+    FLAG_SET_ERGO(intx, Tier3InvocationThreshold, get_scaled_compile_threshold(Tier3InvocationThreshold));
+    FLAG_SET_ERGO(intx, Tier3MinInvocationThreshold, get_scaled_compile_threshold(Tier3MinInvocationThreshold));
+    FLAG_SET_ERGO(intx, Tier3CompileThreshold, get_scaled_compile_threshold(Tier3CompileThreshold));
+    FLAG_SET_ERGO(intx, Tier3BackEdgeThreshold, get_scaled_compile_threshold(Tier3BackEdgeThreshold));
+
+    // Tier2{Invocation,MinInvocation,Compile,Backedge}Threshold should be scaled here
+    // once these thresholds become supported.
+
+    FLAG_SET_ERGO(intx, Tier2InvokeNotifyFreqLog, get_scaled_freq_log(Tier2InvokeNotifyFreqLog));
+    FLAG_SET_ERGO(intx, Tier2BackedgeNotifyFreqLog, get_scaled_freq_log(Tier2BackedgeNotifyFreqLog));
+
+    FLAG_SET_ERGO(intx, Tier3InvokeNotifyFreqLog, get_scaled_freq_log(Tier3InvokeNotifyFreqLog));
+    FLAG_SET_ERGO(intx, Tier3BackedgeNotifyFreqLog, get_scaled_freq_log(Tier3BackedgeNotifyFreqLog));
+
+    FLAG_SET_ERGO(intx, Tier23InlineeNotifyFreqLog, get_scaled_freq_log(Tier23InlineeNotifyFreqLog));
+
+    FLAG_SET_ERGO(intx, Tier4InvocationThreshold, get_scaled_compile_threshold(Tier4InvocationThreshold));
+    FLAG_SET_ERGO(intx, Tier4MinInvocationThreshold, get_scaled_compile_threshold(Tier4MinInvocationThreshold));
+    FLAG_SET_ERGO(intx, Tier4CompileThreshold, get_scaled_compile_threshold(Tier4CompileThreshold));
+    FLAG_SET_ERGO(intx, Tier4BackEdgeThreshold, get_scaled_compile_threshold(Tier4BackEdgeThreshold));
   }
 }
 
@@ -1571,25 +1590,25 @@ void Arguments::set_conservative_max_heap_alignment() {
                                           CollectorPolicy::compute_heap_alignment());
 }
 
-void Arguments::set_ergonomics_flags() {
-
+void Arguments::select_gc_ergonomically() {
   if (os::is_server_class_machine()) {
-    // If no other collector is requested explicitly,
-    // let the VM select the collector based on
-    // machine class and automatic selection policy.
-    if (!UseSerialGC &&
-        !UseConcMarkSweepGC &&
-        !UseG1GC &&
-        !UseParNewGC &&
-        !UseShenandoahGC &&
-        FLAG_IS_DEFAULT(UseParallelGC)) {
-      if (should_auto_select_low_pause_collector()) {
-        FLAG_SET_ERGO(bool, UseConcMarkSweepGC, true);
-      } else {
-        FLAG_SET_ERGO(bool, UseParallelGC, true);
-      }
+    if (should_auto_select_low_pause_collector()) {
+      FLAG_SET_ERGO(bool, UseConcMarkSweepGC, true);
+    } else {
+      FLAG_SET_ERGO(bool, UseParallelGC, true);
     }
   }
+}
+
+void Arguments::select_gc() {
+  if (!gc_selected()) {
+    ArgumentsExt::select_gc_ergonomically();
+  }
+}
+
+void Arguments::set_ergonomics_flags() {
+  select_gc();
+
 #ifdef COMPILER2
   // Shared spaces work fine with other GCs but causes bytecode rewriting
   // to be disabled, which hurts interpreter performance and decreases
@@ -1641,9 +1660,11 @@ void Arguments::set_parallel_gc_flags() {
     // unless the user actually sets these flags.
     if (FLAG_IS_DEFAULT(MinHeapFreeRatio)) {
       FLAG_SET_DEFAULT(MinHeapFreeRatio, 0);
+      _min_heap_free_ratio = MinHeapFreeRatio;
     }
     if (FLAG_IS_DEFAULT(MaxHeapFreeRatio)) {
       FLAG_SET_DEFAULT(MaxHeapFreeRatio, 100);
+      _max_heap_free_ratio = MaxHeapFreeRatio;
     }
   }
 
@@ -1675,12 +1696,17 @@ void Arguments::set_g1_gc_flags() {
 #ifdef COMPILER1
   FastTLABRefill = false;
 #endif
-  FLAG_SET_DEFAULT(ParallelGCThreads,
-                     Abstract_VM_Version::parallel_worker_threads());
+  FLAG_SET_DEFAULT(ParallelGCThreads, Abstract_VM_Version::parallel_worker_threads());
   if (ParallelGCThreads == 0) {
-    FLAG_SET_DEFAULT(ParallelGCThreads,
-                     Abstract_VM_Version::parallel_worker_threads());
+    assert(!FLAG_IS_DEFAULT(ParallelGCThreads), "The default value for ParallelGCThreads should not be 0.");
+    vm_exit_during_initialization("The flag -XX:+UseG1GC can not be combined with -XX:ParallelGCThreads=0", NULL);
   }
+
+#if INCLUDE_ALL_GCS
+  if (G1ConcRefinementThreads == 0) {
+    FLAG_SET_DEFAULT(G1ConcRefinementThreads, ParallelGCThreads);
+  }
+#endif
 
   // MarkStackSize will be set (if it hasn't been set by the user)
   // when concurrent marking is initialized.
@@ -1708,7 +1734,6 @@ void Arguments::set_g1_gc_flags() {
 }
 
 void Arguments::set_shenandoah_gc_flags() {
-
   FLAG_SET_DEFAULT(UseDynamicNumberOfGCThreads, true);
   FLAG_SET_DEFAULT(ParallelGCThreads,
                    Abstract_VM_Version::parallel_worker_threads());
@@ -1716,6 +1741,48 @@ void Arguments::set_shenandoah_gc_flags() {
   if (FLAG_IS_DEFAULT(ConcGCThreads)) {
     FLAG_SET_DEFAULT(ConcGCThreads, 1);
   }
+}
+
+#if !INCLUDE_ALL_GCS
+#ifdef ASSERT
+static bool verify_serial_gc_flags() {
+  return (UseSerialGC &&
+        !(UseParNewGC || (UseConcMarkSweepGC || CMSIncrementalMode) || UseG1GC ||
+          UseParallelGC || UseParallelOldGC));
+}
+#endif // ASSERT
+#endif // INCLUDE_ALL_GCS
+
+void Arguments::set_gc_specific_flags() {
+#if INCLUDE_ALL_GCS
+  // Set per-collector flags
+  if (UseParallelGC || UseParallelOldGC) {
+    set_parallel_gc_flags();
+  } else if (UseConcMarkSweepGC) { // Should be done before ParNew check below
+    set_cms_and_parnew_gc_flags();
+  } else if (UseParNewGC) {  // Skipped if CMS is set above
+    set_parnew_gc_flags();
+  } else if (UseG1GC) {
+    set_g1_gc_flags();
+  } else if (UseShenandoahGC) {
+    set_shenandoah_gc_flags();
+  }
+  check_deprecated_gcs();
+  check_deprecated_gc_flags();
+  if (AssumeMP && !UseSerialGC) {
+    if (FLAG_IS_DEFAULT(ParallelGCThreads) && ParallelGCThreads == 1) {
+      warning("If the number of processors is expected to increase from one, then"
+              " you should configure the number of parallel GC threads appropriately"
+              " using -XX:ParallelGCThreads=N");
+    }
+  }
+  if (MinHeapFreeRatio == 100) {
+    // Keeping the heap 100% free is hard ;-) so limit it to 99%.
+    FLAG_SET_ERGO(uintx, MinHeapFreeRatio, 99);
+  }
+#else // INCLUDE_ALL_GCS
+  assert(verify_serial_gc_flags(), "SerialGC unset");
+#endif // INCLUDE_ALL_GCS
 }
 
 julong Arguments::limit_by_allocatable_memory(julong limit) {
@@ -1959,16 +2026,6 @@ bool Arguments::verify_percentage(uintx value, const char* name) {
   return false;
 }
 
-#if !INCLUDE_ALL_GCS
-#ifdef ASSERT
-static bool verify_serial_gc_flags() {
-  return (UseSerialGC &&
-        !(UseParNewGC || (UseConcMarkSweepGC || CMSIncrementalMode) || UseG1GC ||
-          UseParallelGC || UseParallelOldGC));
-}
-#endif // ASSERT
-#endif // INCLUDE_ALL_GCS
-
 // check if do gclog rotation
 // +UseGCLogFileRotation is a must,
 // no gc log rotation when log file not supplied or
@@ -2047,6 +2104,8 @@ bool Arguments::verify_MinHeapFreeRatio(FormatBuffer<80>& err_msg, uintx min_hea
                   MaxHeapFreeRatio);
     return false;
   }
+  // This does not set the flag itself, but stores the value in a safe place for later usage.
+  _min_heap_free_ratio = min_heap_free_ratio;
   return true;
 }
 
@@ -2061,11 +2120,13 @@ bool Arguments::verify_MaxHeapFreeRatio(FormatBuffer<80>& err_msg, uintx max_hea
                   MinHeapFreeRatio);
     return false;
   }
+  // This does not set the flag itself, but stores the value in a safe place for later usage.
+  _max_heap_free_ratio = max_heap_free_ratio;
   return true;
 }
 
 // Check consistency of GC selection
-bool Arguments::check_gc_consistency() {
+bool Arguments::check_gc_consistency_user() {
   check_gclog_consistency();
   bool status = true;
   // Ensure that the user has not selected conflicting sets
@@ -2224,7 +2285,7 @@ bool Arguments::check_vm_args_consistency() {
     FLAG_SET_DEFAULT(UseGCOverheadLimit, false);
   }
 
-  status = status && check_gc_consistency();
+  status = status && ArgumentsExt::check_gc_consistency_user();
   status = status && check_stack_pages();
 
   if (CMSIncrementalMode) {
@@ -2442,7 +2503,7 @@ bool Arguments::check_vm_args_consistency() {
 
   // Check lower bounds of the code cache
   // Template Interpreter code is approximately 3X larger in debug builds.
-  uint min_code_cache_size = (CodeCacheMinimumUseSpace DEBUG_ONLY(* 3)) + CodeCacheMinimumFreeSpace;
+  uint min_code_cache_size = CodeCacheMinimumUseSpace DEBUG_ONLY(* 3);
   if (InitialCodeCacheSize < (uintx)os::vm_page_size()) {
     jio_fprintf(defaultStream::error_stream(),
                 "Invalid InitialCodeCacheSize=%dK. Must be at least %dK.\n", InitialCodeCacheSize/K,
@@ -2464,12 +2525,25 @@ bool Arguments::check_vm_args_consistency() {
                 "Invalid ReservedCodeCacheSize=%dM. Must be at most %uM.\n", ReservedCodeCacheSize/M,
                 (2*G)/M);
     status = false;
+  } else if (NonNMethodCodeHeapSize < min_code_cache_size){
+    jio_fprintf(defaultStream::error_stream(),
+                "Invalid NonNMethodCodeHeapSize=%dK. Must be at least %uK.\n", NonNMethodCodeHeapSize/K,
+                min_code_cache_size/K);
+    status = false;
+  } else if ((!FLAG_IS_DEFAULT(NonNMethodCodeHeapSize) || !FLAG_IS_DEFAULT(ProfiledCodeHeapSize) || !FLAG_IS_DEFAULT(NonProfiledCodeHeapSize))
+             && (NonNMethodCodeHeapSize + NonProfiledCodeHeapSize + ProfiledCodeHeapSize) != ReservedCodeCacheSize) {
+    jio_fprintf(defaultStream::error_stream(),
+                "Invalid code heap sizes: NonNMethodCodeHeapSize(%dK) + ProfiledCodeHeapSize(%dK) + NonProfiledCodeHeapSize(%dK) = %dK. Must be equal to ReservedCodeCacheSize = %uK.\n",
+                NonNMethodCodeHeapSize/K, ProfiledCodeHeapSize/K, NonProfiledCodeHeapSize/K,
+                (NonNMethodCodeHeapSize + ProfiledCodeHeapSize + NonProfiledCodeHeapSize)/K, ReservedCodeCacheSize/K);
+    status = false;
   }
 
-  status &= verify_interval(NmethodSweepFraction, 1, ReservedCodeCacheSize/K, "NmethodSweepFraction");
   status &= verify_interval(NmethodSweepActivity, 0, 2000, "NmethodSweepActivity");
   status &= verify_interval(CodeCacheMinBlockLength, 1, 100, "CodeCacheMinBlockLength");
   status &= verify_interval(CodeCacheSegmentSize, 1, 1024, "CodeCacheSegmentSize");
+  status &= verify_interval(StartAggressiveSweepingAt, 0, 100, "StartAggressiveSweepingAt");
+
 
   int min_number_of_compiler_threads = get_min_number_of_compiler_threads();
   // The default CICompilerCount's value is CI_COMPILER_COUNT.
@@ -2480,8 +2554,6 @@ bool Arguments::check_vm_args_consistency() {
   if (!FLAG_IS_DEFAULT(CICompilerCount) && !FLAG_IS_DEFAULT(CICompilerCountPerCPU) && CICompilerCountPerCPU) {
     warning("The VM option CICompilerCountPerCPU overrides CICompilerCount.");
   }
-
-  status &= check_vm_args_consistency_ext();
 
   return status;
 }
@@ -2890,8 +2962,41 @@ jint Arguments::parse_each_vm_init_arg(const JavaVMInitArgs* args,
         return JNI_EINVAL;
       }
       FLAG_SET_CMDLINE(uintx, ReservedCodeCacheSize, (uintx)long_ReservedCodeCacheSize);
+      // -XX:NonNMethodCodeHeapSize=
+    } else if (match_option(option, "-XX:NonNMethodCodeHeapSize=", &tail)) {
+      julong long_NonNMethodCodeHeapSize = 0;
+
+      ArgsRange errcode = parse_memory_size(tail, &long_NonNMethodCodeHeapSize, 1);
+      if (errcode != arg_in_range) {
+        jio_fprintf(defaultStream::error_stream(),
+                    "Invalid maximum non-nmethod code heap size: %s.\n", option->optionString);
+        return JNI_EINVAL;
+      }
+      FLAG_SET_CMDLINE(uintx, NonNMethodCodeHeapSize, (uintx)long_NonNMethodCodeHeapSize);
+      // -XX:ProfiledCodeHeapSize=
+    } else if (match_option(option, "-XX:ProfiledCodeHeapSize=", &tail)) {
+      julong long_ProfiledCodeHeapSize = 0;
+
+      ArgsRange errcode = parse_memory_size(tail, &long_ProfiledCodeHeapSize, 1);
+      if (errcode != arg_in_range) {
+        jio_fprintf(defaultStream::error_stream(),
+                    "Invalid maximum profiled code heap size: %s.\n", option->optionString);
+        return JNI_EINVAL;
+      }
+      FLAG_SET_CMDLINE(uintx, ProfiledCodeHeapSize, (uintx)long_ProfiledCodeHeapSize);
+      // -XX:NonProfiledCodeHeapSizee=
+    } else if (match_option(option, "-XX:NonProfiledCodeHeapSize=", &tail)) {
+      julong long_NonProfiledCodeHeapSize = 0;
+
+      ArgsRange errcode = parse_memory_size(tail, &long_NonProfiledCodeHeapSize, 1);
+      if (errcode != arg_in_range) {
+        jio_fprintf(defaultStream::error_stream(),
+                    "Invalid maximum non-profiled code heap size: %s.\n", option->optionString);
+        return JNI_EINVAL;
+      }
+      FLAG_SET_CMDLINE(uintx, NonProfiledCodeHeapSize, (uintx)long_NonProfiledCodeHeapSize);
       //-XX:IncreaseFirstTierCompileThresholdAt=
-      } else if (match_option(option, "-XX:IncreaseFirstTierCompileThresholdAt=", &tail)) {
+    } else if (match_option(option, "-XX:IncreaseFirstTierCompileThresholdAt=", &tail)) {
         uintx uint_IncreaseFirstTierCompileThresholdAt = 0;
         if (!parse_uintx(tail, &uint_IncreaseFirstTierCompileThresholdAt, 0) || uint_IncreaseFirstTierCompileThresholdAt > 99) {
           jio_fprintf(defaultStream::error_stream(),
@@ -2951,6 +3056,20 @@ jint Arguments::parse_each_vm_init_arg(const JavaVMInitArgs* args,
 #endif
     // -D
     } else if (match_option(option, "-D", &tail)) {
+      if (match_option(option, "-Djava.endorsed.dirs=", &tail)) {
+        // abort if -Djava.endorsed.dirs is set
+        jio_fprintf(defaultStream::output_stream(),
+          "-Djava.endorsed.dirs is not supported. Endorsed standards and standalone APIs\n"
+          "in modular form will be supported via the concept of upgradeable modules.\n");
+        return JNI_EINVAL;
+      }
+      if (match_option(option, "-Djava.ext.dirs=", &tail)) {
+        // abort if -Djava.ext.dirs is set
+        jio_fprintf(defaultStream::output_stream(),
+          "-Djava.ext.dirs is not supported.  Use -classpath instead.\n");
+        return JNI_EINVAL;
+      }
+
       if (!add_property(tail)) {
         return JNI_ENOMEM;
       }
@@ -3396,11 +3515,89 @@ void Arguments::fix_appclasspath() {
   }
 }
 
-jint Arguments::finalize_vm_init_args(SysClassPath* scp_p, bool scp_assembly_required) {
-  // This must be done after all -D arguments have been processed.
-  scp_p->expand_endorsed();
+static bool has_jar_files(const char* directory) {
+  DIR* dir = os::opendir(directory);
+  if (dir == NULL) return false;
 
-  if (scp_assembly_required || scp_p->get_endorsed() != NULL) {
+  struct dirent *entry;
+  char *dbuf = NEW_C_HEAP_ARRAY(char, os::readdir_buf_size(directory), mtInternal);
+  bool hasJarFile = false;
+  while (!hasJarFile && (entry = os::readdir(dir, (dirent *) dbuf)) != NULL) {
+    const char* name = entry->d_name;
+    const char* ext = name + strlen(name) - 4;
+    hasJarFile = ext > name && (os::file_name_strcmp(ext, ".jar") == 0);
+  }
+  FREE_C_HEAP_ARRAY(char, dbuf, mtInternal);
+  os::closedir(dir);
+  return hasJarFile ;
+}
+
+static int check_non_empty_dirs(const char* path) {
+  const char separator = *os::path_separator();
+  const char* const end = path + strlen(path);
+  int nonEmptyDirs = 0;
+  while (path < end) {
+    const char* tmp_end = strchr(path, separator);
+    if (tmp_end == NULL) {
+      if (has_jar_files(path)) {
+        nonEmptyDirs++;
+        jio_fprintf(defaultStream::output_stream(),
+          "Non-empty directory: %s\n", path);
+      }
+      path = end;
+    } else {
+      char* dirpath = NEW_C_HEAP_ARRAY(char, tmp_end - path + 1, mtInternal);
+      memcpy(dirpath, path, tmp_end - path);
+      dirpath[tmp_end - path] = '\0';
+      if (has_jar_files(dirpath)) {
+        nonEmptyDirs++;
+        jio_fprintf(defaultStream::output_stream(),
+          "Non-empty directory: %s\n", dirpath);
+      }
+      FREE_C_HEAP_ARRAY(char, dirpath, mtInternal);
+      path = tmp_end + 1;
+    }
+  }
+  return nonEmptyDirs;
+}
+
+jint Arguments::finalize_vm_init_args(SysClassPath* scp_p, bool scp_assembly_required) {
+  // check if the default lib/endorsed directory exists; if so, error
+  char path[JVM_MAXPATHLEN];
+  const char* fileSep = os::file_separator();
+  sprintf(path, "%s%slib%sendorsed", Arguments::get_java_home(), fileSep, fileSep);
+
+  if (CheckEndorsedAndExtDirs) {
+    int nonEmptyDirs = 0;
+    // check endorsed directory
+    nonEmptyDirs += check_non_empty_dirs(path);
+    // check the extension directories
+    nonEmptyDirs += check_non_empty_dirs(Arguments::get_ext_dirs());
+    if (nonEmptyDirs > 0) {
+      return JNI_ERR;
+    }
+  }
+
+  DIR* dir = os::opendir(path);
+  if (dir != NULL) {
+    jio_fprintf(defaultStream::output_stream(),
+      "<JAVA_HOME>/lib/endorsed is not supported. Endorsed standards and standalone APIs\n"
+      "in modular form will be supported via the concept of upgradeable modules.\n");
+    os::closedir(dir);
+    return JNI_ERR;
+  }
+
+  sprintf(path, "%s%slib%sext", Arguments::get_java_home(), fileSep, fileSep);
+  dir = os::opendir(path);
+  if (dir != NULL) {
+    jio_fprintf(defaultStream::output_stream(),
+      "<JAVA_HOME>/lib/ext exists, extensions mechanism no longer supported; "
+      "Use -classpath instead.\n.");
+    os::closedir(dir);
+    return JNI_ERR;
+  }
+
+  if (scp_assembly_required) {
     // Assemble the bootclasspath elements into the final path.
     Arguments::set_sysclasspath(scp_p->combined_path());
   }
@@ -3413,7 +3610,9 @@ jint Arguments::finalize_vm_init_args(SysClassPath* scp_p, bool scp_assembly_req
     // not specified.
     set_mode_flags(_int);
   }
-  if (CompileThreshold == 0) {
+
+  if ((TieredCompilation && CompileThresholdScaling == 0)
+      || (!TieredCompilation && get_scaled_compile_threshold(CompileThreshold) == 0)) {
     set_mode_flags(_int);
   }
 
@@ -3465,7 +3664,7 @@ jint Arguments::finalize_vm_init_args(SysClassPath* scp_p, bool scp_assembly_req
     }
   }
 
-  if (!check_vm_args_consistency()) {
+  if (!ArgumentsExt::check_vm_args_consistency()) {
     return JNI_ERR;
   }
 
@@ -3655,21 +3854,29 @@ jint Arguments::parse(const JavaVMInitArgs* args) {
   int index;
   for (index = 0; index < args->nOptions; index++) {
     const JavaVMOption *option = args->options + index;
+    if (ArgumentsExt::process_options(option)) {
+      continue;
+    }
     if (match_option(option, "-XX:Flags=", &tail)) {
       flags_file = tail;
       settings_file_specified = true;
+      continue;
     }
     if (match_option(option, "-XX:+PrintVMOptions", &tail)) {
       PrintVMOptions = true;
+      continue;
     }
     if (match_option(option, "-XX:-PrintVMOptions", &tail)) {
       PrintVMOptions = false;
+      continue;
     }
     if (match_option(option, "-XX:+IgnoreUnrecognizedVMOptions", &tail)) {
       IgnoreUnrecognizedVMOptions = true;
+      continue;
     }
     if (match_option(option, "-XX:-IgnoreUnrecognizedVMOptions", &tail)) {
       IgnoreUnrecognizedVMOptions = false;
+      continue;
     }
     if (match_option(option, "-XX:+PrintFlagsInitial", &tail)) {
       CommandLineFlags::printFlags(tty, false);
@@ -3691,6 +3898,7 @@ jint Arguments::parse(const JavaVMInitArgs* args) {
       } else {
         vm_exit_during_initialization("Syntax error, expecting -XX:NativeMemoryTracking=[off|summary|detail]", NULL);
       }
+      continue;
     }
 #endif
 
@@ -3746,6 +3954,11 @@ jint Arguments::parse(const JavaVMInitArgs* args) {
   SharedArchivePath = get_shared_archive_path();
   if (SharedArchivePath == NULL) {
     return JNI_ENOMEM;
+  }
+
+  // Set up VerifySharedSpaces
+  if (FLAG_IS_DEFAULT(VerifySharedSpaces) && SharedArchiveFile != NULL) {
+    VerifySharedSpaces = true;
   }
 
   // Delay warning until here so that we've had a chance to process
@@ -3821,7 +4034,7 @@ jint Arguments::apply_ergo() {
   set_shared_spaces_flags();
 
   // Check the GC selections again.
-  if (!check_gc_consistency()) {
+  if (!ArgumentsExt::check_gc_consistency_ergo()) {
     return JNI_EINVAL;
   }
 
@@ -3833,16 +4046,24 @@ jint Arguments::apply_ergo() {
       vm_exit_during_initialization(
         "Incompatible compilation policy selected", NULL);
     }
-  }
-  // Set NmethodSweepFraction after the size of the code cache is adapted (in case of tiered)
-  if (FLAG_IS_DEFAULT(NmethodSweepFraction)) {
-    FLAG_SET_DEFAULT(NmethodSweepFraction, 1 + ReservedCodeCacheSize / (16 * M));
+    // Scale CompileThreshold
+    if (!FLAG_IS_DEFAULT(CompileThresholdScaling)) {
+      FLAG_SET_ERGO(intx, CompileThreshold, get_scaled_compile_threshold(CompileThreshold));
+    }
   }
 
+#ifdef COMPILER2
+#ifndef PRODUCT
+  if (PrintIdealGraphLevel > 0) {
+    FLAG_SET_ERGO(bool, PrintIdealGraph, true);
+  }
+#endif
+#endif
 
   // Set heap size based on available physical memory
   set_heap_size();
 
+<<<<<<< local
 #if INCLUDE_ALL_GCS
   // Set per-collector flags
   if (UseParallelGC || UseParallelOldGC) {
@@ -3872,6 +4093,9 @@ jint Arguments::apply_ergo() {
 #else // INCLUDE_ALL_GCS
   assert(verify_serial_gc_flags(), "SerialGC unset");
 #endif // INCLUDE_ALL_GCS
+=======
+  set_gc_specific_flags();
+>>>>>>> other
 
   // Initialize Metaspace flags and alignments
   Metaspace::ergo_initialize();
@@ -3935,13 +4159,6 @@ jint Arguments::apply_ergo() {
   }
 
 #ifndef PRODUCT
-  if (CompileTheWorld) {
-    // Force NmethodSweeper to sweep whole CodeCache each time.
-    if (FLAG_IS_DEFAULT(NmethodSweepFraction)) {
-      NmethodSweepFraction = 1;
-    }
-  }
-
   if (!LogVMOutput && FLAG_IS_DEFAULT(LogVMOutput)) {
     if (use_vm_log()) {
       LogVMOutput = true;

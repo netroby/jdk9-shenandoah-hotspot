@@ -119,19 +119,15 @@ public:
   // Record, if necessary, the fact that *p (where "p" is in region "from",
   // which is required to be non-NULL) has changed to a new non-NULL value.
   template <class T> void write_ref(HeapRegion* from, T* p);
-  template <class T> void par_write_ref(HeapRegion* from, T* p, int tid);
+  template <class T> void par_write_ref(HeapRegion* from, T* p, uint tid);
 
   // Requires "region_bm" and "card_bm" to be bitmaps with 1 bit per region
   // or card, respectively, such that a region or card with a corresponding
   // 0 bit contains no part of any live object.  Eliminates any remembered
-  // set entries that correspond to dead heap ranges.
-  void scrub(BitMap* region_bm, BitMap* card_bm);
-
-  // Like the above, but assumes is called in parallel: "worker_num" is the
-  // parallel thread id of the current thread, and "claim_val" is the
-  // value that should be used to claim heap regions.
-  void scrub_par(BitMap* region_bm, BitMap* card_bm,
-                 uint worker_num, int claim_val);
+  // set entries that correspond to dead heap ranges. "worker_num" is the
+  // parallel thread id of the current thread, and "hrclaimer" is the
+  // HeapRegionClaimer that should be used.
+  void scrub(BitMap* region_bm, BitMap* card_bm, uint worker_num, HeapRegionClaimer* hrclaimer);
 
   // Refine the card corresponding to "card_ptr".
   // If check_for_refs_into_cset is true, a true result is returned
@@ -192,19 +188,5 @@ public:
   //  bool idempotent() { return true; }
   bool apply_to_weak_ref_discovered_field() { return true; }
 };
-
-class UpdateRSetImmediate: public OopsInHeapRegionClosure {
-private:
-  G1RemSet* _g1_rem_set;
-
-  template <class T> void do_oop_work(T* p);
-public:
-  UpdateRSetImmediate(G1RemSet* rs) :
-    _g1_rem_set(rs) {}
-
-  virtual void do_oop(narrowOop* p) { do_oop_work(p); }
-  virtual void do_oop(      oop* p) { do_oop_work(p); }
-};
-
 
 #endif // SHARE_VM_GC_IMPLEMENTATION_G1_G1REMSET_HPP

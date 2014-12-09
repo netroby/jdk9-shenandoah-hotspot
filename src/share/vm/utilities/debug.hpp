@@ -245,7 +245,8 @@ template <> struct StaticAssert<true> {};
 enum SharedSpaceType {
   SharedReadOnly,
   SharedReadWrite,
-  SharedMiscData
+  SharedMiscData,
+  SharedMiscCode
 };
 
 void report_out_of_shared_space(SharedSpaceType space_type);
@@ -262,5 +263,8 @@ NOT_PRODUCT(void test_error_handler();)
 
 void pd_ps(frame f);
 void pd_obfuscate_location(char *buf, size_t buflen);
+
+class outputStream;
+void print_native_stack(outputStream* st, frame fr, Thread* t, char* buf, int buf_size);
 
 #endif // SHARE_VM_UTILITIES_DEBUG_HPP

@@ -60,7 +60,7 @@ class CMBitMapMappingChangedListener : public G1MappingChangedListener {
 
   void set_bitmap(CMBitMap* bm) { _bm = bm; }
 
-  virtual void on_commit(uint start_idx, size_t num_regions);
+  virtual void on_commit(uint start_idx, size_t num_regions, bool zero_filled);
 };
 
 class G1CMBitMap : public CMBitMap {
@@ -429,15 +429,6 @@ protected:
   double marking_task_overhead()            { return _marking_task_overhead;}
   double cleanup_sleep_factor()             { return _cleanup_sleep_factor; }
   double cleanup_task_overhead()            { return _cleanup_task_overhead;}
-
-  bool use_parallel_marking_threads() const {
-    assert(parallel_marking_threads() <=
-           max_parallel_marking_threads(), "sanity");
-    assert((_parallel_workers == NULL && parallel_marking_threads() == 0) ||
-           parallel_marking_threads() > 0,
-           "parallel workers not set up correctly");
-    return _parallel_workers != NULL;
-  }
 
   HeapWord*               finger()          { return _finger;   }
   bool                    concurrent()      { return _concurrent; }

@@ -25,7 +25,6 @@
  * @test MakeMethodNotCompilableTest
  * @bug 8012322 8006683 8007288 8022832
  * @library /testlibrary /testlibrary/whitebox
- * @ignore 8046268
  * @build MakeMethodNotCompilableTest
  * @run main ClassFileInstaller sun.hotspot.WhiteBox
  *                              sun.hotspot.WhiteBox$WhiteBoxPermission
@@ -133,14 +132,15 @@ public class MakeMethodNotCompilableTest extends CompilerWhiteBoxTest {
             throw new RuntimeException(method
                     + " is not compilable after clearMethodState()");
         }
-
+        // Make method not (OSR-)compilable (depending on testCase.isOsr())
         makeNotCompilable();
         if (isCompilable()) {
             throw new RuntimeException(method + " must be not compilable");
         }
-
+        // Try to (OSR-)compile method
         compile();
-        checkNotCompiled();
+        // Method should not be (OSR-)compiled
+        checkNotCompiled(testCase.isOsr());
         if (isCompilable()) {
             throw new RuntimeException(method + " must be not compilable");
         }

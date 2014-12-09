@@ -25,6 +25,12 @@
 # This makefile (sa.make) is included from the sa.make in the
 # build directories.
 
+define print_info
+  ifneq ($$(LOG_LEVEL), warn)
+    $$(shell echo >&2 "INFO: $1")
+  endif
+endef
+
 # This makefile is used to build Serviceability Agent java code
 # and generate JNI header file for native methods.
 
@@ -53,8 +59,12 @@ ifeq ($(ALT_SA_CLASSPATH),)
     endif
   endif
 else
-  _JUNK_ := $(shell echo >&2 "INFO: ALT_SA_CLASSPATH=$(ALT_SA_CLASSPATH)")
+  $(eval $(call print_info, "ALT_SA_CLASSPATH=$(ALT_SA_CLASSPATH)"))
   SA_CLASSPATH=$(shell test -f $(ALT_SA_CLASSPATH) && echo $(ALT_SA_CLASSPATH))
+endif
+
+ifneq ($(SA_CLASSPATH),)
+  SA_CLASSPATH_ARG := -classpath $(SA_CLASSPATH)
 endif
 
 # TODO: if it's a modules image, check if SA module is installed.
@@ -80,7 +90,7 @@ all:
 	fi
 
 $(GENERATED)/sa-jdi.jar: $(AGENT_FILES)
-	$(QUIETLY) echo "Making $@"
+	$(QUIETLY) echo $(LOG_INFO) "Making $@"
 	$(QUIETLY) if [ "$(BOOT_JAVA_HOME)" = "" ]; then \
 	  echo "ALT_BOOTDIR, BOOTDIR or JAVA_HOME needs to be defined to build SA"; \
 	  exit 1; \
@@ -108,7 +118,7 @@ $(GENERATED)/sa-jdi.jar: $(AGENT_FILES)
 # are in AGENT_FILES, so use the shell to expand them.
 # Be extra carefull to not produce too long command lines in the shell!
 	$(foreach file,$(AGENT_FILES),$(shell ls -1 $(file) >> $(AGENT_FILES_LIST)))
-	$(QUIETLY) $(REMOTE) $(COMPILE.JAVAC) -classpath $(SA_CLASSPATH) -sourcepath $(AGENT_SRC_DIR) -d $(SA_CLASSDIR) @$(AGENT_FILES_LIST)
+	$(QUIETLY) $(REMOTE) $(COMPILE.JAVAC) $(SA_CLASSPATH_ARG) -sourcepath $(AGENT_SRC_DIR) -d $(SA_CLASSDIR) @$(AGENT_FILES_LIST)
 	$(QUIETLY) $(REMOTE) $(COMPILE.RMIC)  -classpath $(SA_CLASSDIR) -d $(SA_CLASSDIR) sun.jvm.hotspot.debugger.remote.RemoteDebuggerServer
 	$(QUIETLY) echo "$(SA_BUILD_VERSION_PROP)" > $(SA_PROPERTIES)
 	$(QUIETLY) rm -f $(SA_CLASSDIR)/sun/jvm/hotspot/utilities/soql/sa.js

@@ -229,14 +229,11 @@ BufferBlob* BufferBlob::create(const char* name, CodeBuffer* cb) {
   return blob;
 }
 
-
-void* BufferBlob::operator new(size_t s, unsigned size, bool is_critical) throw() {
-  void* p = CodeCache::allocate(size, is_critical);
-  return p;
+void* BufferBlob::operator new(size_t s, unsigned size) throw() {
+  return CodeCache::allocate(size, CodeBlobType::NonNMethod);
 }
 
-
-void BufferBlob::free( BufferBlob *blob ) {
+void BufferBlob::free(BufferBlob *blob) {
   ThreadInVMfromUnknown __tiv;  // get to VM state in case we block on CodeCache_lock
   blob->flush();
   {
@@ -263,10 +260,7 @@ AdapterBlob* AdapterBlob::create(CodeBuffer* cb) {
   unsigned int size = allocation_size(cb, sizeof(AdapterBlob));
   {
     MutexLockerEx mu(CodeCache_lock, Mutex::_no_safepoint_check_flag);
-    // The parameter 'true' indicates a critical memory allocation.
-    // This means that CodeCacheMinimumFreeSpace is used, if necessary
-    const bool is_critical = true;
-    blob = new (size, is_critical) AdapterBlob(size, cb);
+    blob = new (size) AdapterBlob(size, cb);
   }
   // Track memory usage statistic after releasing CodeCache_lock
   MemoryService::track_code_cache_memory_usage();
@@ -288,17 +282,13 @@ MethodHandlesAdapterBlob* MethodHandlesAdapterBlob::create(int buffer_size) {
   size += round_to(buffer_size, oopSize);
   {
     MutexLockerEx mu(CodeCache_lock, Mutex::_no_safepoint_check_flag);
-    // The parameter 'true' indicates a critical memory allocation.
-    // This means that CodeCacheMinimumFreeSpace is used, if necessary
-    const bool is_critical = true;
-    blob = new (size, is_critical) MethodHandlesAdapterBlob(size);
+    blob = new (size) MethodHandlesAdapterBlob(size);
   }
   // Track memory usage statistic after releasing CodeCache_lock
   MemoryService::track_code_cache_memory_usage();
 
   return blob;
 }
-
 
 //----------------------------------------------------------------------------------------------------
 // Implementation of RuntimeStub
@@ -340,14 +330,14 @@ RuntimeStub* RuntimeStub::new_runtime_stub(const char* stub_name,
 
 
 void* RuntimeStub::operator new(size_t s, unsigned size) throw() {
-  void* p = CodeCache::allocate(size, true);
+  void* p = CodeCache::allocate(size, CodeBlobType::NonNMethod);
   if (!p) fatal("Initial size of CodeCache is too small");
   return p;
 }
 
 // operator new shared by all singletons:
 void* SingletonBlob::operator new(size_t s, unsigned size) throw() {
-  void* p = CodeCache::allocate(size, true);
+  void* p = CodeCache::allocate(size, CodeBlobType::NonNMethod);
   if (!p) fatal("Initial size of CodeCache is too small");
   return p;
 }

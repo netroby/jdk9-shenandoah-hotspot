@@ -84,8 +84,7 @@ static double non_young_other_cost_per_region_ms_defaults[] = {
 };
 
 G1CollectorPolicy::G1CollectorPolicy() :
-  _parallel_gc_threads(G1CollectedHeap::use_parallel_gc_threads()
-                        ? ParallelGCThreads : 1),
+  _parallel_gc_threads(ParallelGCThreads),
 
   _recent_gc_times_ms(new TruncatedSeq(NumPrevPausesForHeuristics)),
   _stop_world_start(0.0),
@@ -1544,32 +1543,6 @@ G1CollectorPolicy::decide_on_conc_mark_initiation() {
   }
 }
 
-class KnownGarbageClosure: public HeapRegionClosure {
-  G1CollectedHeap* _g1h;
-  CollectionSetChooser* _hrSorted;
-
-public:
-  KnownGarbageClosure(CollectionSetChooser* hrSorted) :
-    _g1h(G1CollectedHeap::heap()), _hrSorted(hrSorted) { }
-
-  bool doHeapRegion(HeapRegion* r) {
-    // We only include humongous regions in collection
-    // sets when concurrent mark shows that their contained object is
-    // unreachable.
-
-    // Do we have any marking information for this region?
-    if (r->is_marked()) {
-      // We will skip any region that's currently used as an old GC
-      // alloc region (we should not consider those for collection
-      // before we fill them up).
-      if (_hrSorted->should_add(r) && !_g1h->is_old_gc_alloc_region(r)) {
-        _hrSorted->add_region(r);
-      }
-    }
-    return false;
-  }
-};
-
 class ParKnownGarbageHRClosure: public HeapRegionClosure {
   G1CollectedHeap* _g1h;
   CSetChooserParUpdater _cset_updater;
@@ -1598,19 +1571,17 @@ class ParKnownGarbageTask: public AbstractGangTask {
   CollectionSetChooser* _hrSorted;
   uint _chunk_size;
   G1CollectedHeap* _g1;
+  HeapRegionClaimer _hrclaimer;
+
 public:
-  ParKnownGarbageTask(CollectionSetChooser* hrSorted, uint chunk_size) :
-    AbstractGangTask("ParKnownGarbageTask"),
-    _hrSorted(hrSorted), _chunk_size(chunk_size),
-    _g1(G1CollectedHeap::heap()) { }
+  ParKnownGarbageTask(CollectionSetChooser* hrSorted, uint chunk_size, uint n_workers) :
+      AbstractGangTask("ParKnownGarbageTask"),
+      _hrSorted(hrSorted), _chunk_size(chunk_size),
+      _g1(G1CollectedHeap::heap()), _hrclaimer(n_workers) {}
 
   void work(uint worker_id) {
     ParKnownGarbageHRClosure parKnownGarbageCl(_hrSorted, _chunk_size);
-
-    // Back to zero for the claim value.
-    _g1->heap_region_par_iterate_chunked(&parKnownGarbageCl, worker_id,
-                                         _g1->workers()->active_workers(),
-                                         HeapRegion::InitialClaimValue);
+    _g1->heap_region_par_iterate(&parKnownGarbageCl, worker_id, &_hrclaimer);
   }
 };
 
@@ -1619,38 +1590,29 @@ G1CollectorPolicy::record_concurrent_mark_cleanup_end(int no_of_gc_threads) {
   _collectionSetChooser->clear();
 
   uint region_num = _g1->num_regions();
-  if (G1CollectedHeap::use_parallel_gc_threads()) {
-    const uint OverpartitionFactor = 4;
-    uint WorkUnit;
-    // The use of MinChunkSize = 8 in the original code
-    // causes some assertion failures when the total number of
-    // region is less than 8.  The code here tries to fix that.
-    // Should the original code also be fixed?
-    if (no_of_gc_threads > 0) {
-      const uint MinWorkUnit = MAX2(region_num / no_of_gc_threads, 1U);
-      WorkUnit = MAX2(region_num / (no_of_gc_threads * OverpartitionFactor),
-                      MinWorkUnit);
-    } else {
-      assert(no_of_gc_threads > 0,
-        "The active gc workers should be greater than 0");
-      // In a product build do something reasonable to avoid a crash.
-      const uint MinWorkUnit = MAX2(region_num / (uint) ParallelGCThreads, 1U);
-      WorkUnit =
-        MAX2(region_num / (uint) (ParallelGCThreads * OverpartitionFactor),
-             MinWorkUnit);
-    }
-    _collectionSetChooser->prepare_for_par_region_addition(_g1->num_regions(),
-                                                           WorkUnit);
-    ParKnownGarbageTask parKnownGarbageTask(_collectionSetChooser,
-                                            (int) WorkUnit);
-    _g1->workers()->run_task(&parKnownGarbageTask);
-
-    assert(_g1->check_heap_region_claim_values(HeapRegion::InitialClaimValue),
-           "sanity check");
+  const uint OverpartitionFactor = 4;
+  uint WorkUnit;
+  // The use of MinChunkSize = 8 in the original code
+  // causes some assertion failures when the total number of
+  // region is less than 8.  The code here tries to fix that.
+  // Should the original code also be fixed?
+  if (no_of_gc_threads > 0) {
+    const uint MinWorkUnit = MAX2(region_num / no_of_gc_threads, 1U);
+    WorkUnit = MAX2(region_num / (no_of_gc_threads * OverpartitionFactor),
+                    MinWorkUnit);
   } else {
-    KnownGarbageClosure knownGarbagecl(_collectionSetChooser);
-    _g1->heap_region_iterate(&knownGarbagecl);
+    assert(no_of_gc_threads > 0,
+      "The active gc workers should be greater than 0");
+    // In a product build do something reasonable to avoid a crash.
+    const uint MinWorkUnit = MAX2(region_num / (uint) ParallelGCThreads, 1U);
+    WorkUnit =
+      MAX2(region_num / (uint) (ParallelGCThreads * OverpartitionFactor),
+           MinWorkUnit);
   }
+  _collectionSetChooser->prepare_for_par_region_addition(_g1->num_regions(),
+                                                         WorkUnit);
+  ParKnownGarbageTask parKnownGarbageTask(_collectionSetChooser, WorkUnit, (uint) no_of_gc_threads);
+  _g1->workers()->run_task(&parKnownGarbageTask);
 
   _collectionSetChooser->sort_regions();
 
@@ -1665,7 +1627,7 @@ G1CollectorPolicy::record_concurrent_mark_cleanup_end(int no_of_gc_threads) {
 // Add the heap region at the head of the non-incremental collection set
 void G1CollectorPolicy::add_old_region_to_cset(HeapRegion* hr) {
   assert(_inc_cset_build_state == Active, "Precondition");
-  assert(!hr->is_young(), "non-incremental add of young region");
+  assert(hr->is_old(), "the region should be old");
 
   assert(!hr->in_collection_set(), "should not already be in the CSet");
   hr->set_in_collection_set(true);
@@ -1811,7 +1773,7 @@ void G1CollectorPolicy::add_region_to_incremental_cset_common(HeapRegion* hr) {
 // Add the region at the RHS of the incremental cset
 void G1CollectorPolicy::add_region_to_incremental_cset_rhs(HeapRegion* hr) {
   // We should only ever be appending survivors at the end of a pause
-  assert( hr->is_survivor(), "Logic");
+  assert(hr->is_survivor(), "Logic");
 
   // Do the 'common' stuff
   add_region_to_incremental_cset_common(hr);
@@ -1829,7 +1791,7 @@ void G1CollectorPolicy::add_region_to_incremental_cset_rhs(HeapRegion* hr) {
 // Add the region to the LHS of the incremental cset
 void G1CollectorPolicy::add_region_to_incremental_cset_lhs(HeapRegion* hr) {
   // Survivors should be added to the RHS at the end of a pause
-  assert(!hr->is_survivor(), "Logic");
+  assert(hr->is_eden(), "Logic");
 
   // Do the 'common' stuff
   add_region_to_incremental_cset_common(hr);
@@ -1989,7 +1951,11 @@ void G1CollectorPolicy::finalize_cset(double target_pause_time_ms, EvacuationInf
   HeapRegion* hr = young_list->first_survivor_region();
   while (hr != NULL) {
     assert(hr->is_survivor(), "badly formed young list");
-    hr->set_young();
+    // There is a convention that all the young regions in the CSet
+    // are tagged as "eden", so we do this for the survivors here. We
+    // use the special set_eden_pre_gc() as it doesn't check that the
+    // region is free (which is not the case here).
+    hr->set_eden_pre_gc();
     hr = hr->get_next_young_region();
   }
 

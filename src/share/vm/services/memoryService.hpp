@@ -54,7 +54,8 @@ class MemoryService : public AllStatic {
 private:
   enum {
     init_pools_list_size = 10,
-    init_managers_list_size = 5
+    init_managers_list_size = 5,
+    init_code_heap_pools_size = 9
   };
 
   // index for minor and major generations
@@ -71,8 +72,9 @@ private:
   static GCMemoryManager*               _major_gc_manager;
   static GCMemoryManager*               _minor_gc_manager;
 
-  // Code heap memory pool
-  static MemoryPool*                    _code_heap_pool;
+  // memory manager and code heap pools for the CodeCache
+  static MemoryManager*                 _code_cache_manager;
+  static GrowableArray<MemoryPool*>*    _code_heap_pools;
 
   static MemoryPool*                    _metaspace_pool;
   static MemoryPool*                    _compressed_class_pool;
@@ -129,7 +131,7 @@ private:
 
 public:
   static void set_universe_heap(CollectedHeap* heap);
-  static void add_code_heap_memory_pool(CodeHeap* heap);
+  static void add_code_heap_memory_pool(CodeHeap* heap, const char* name);
   static void add_metaspace_memory_pools();
 
   static MemoryPool*    get_memory_pool(instanceHandle pool);
@@ -152,7 +154,10 @@ public:
 
   static void track_memory_usage();
   static void track_code_cache_memory_usage() {
-    track_memory_pool_usage(_code_heap_pool);
+    // Track memory pool usage of all CodeCache memory pools
+    for (int i = 0; i < _code_heap_pools->length(); ++i) {
+      track_memory_pool_usage(_code_heap_pools->at(i));
+    }
   }
   static void track_metaspace_memory_usage() {
     track_memory_pool_usage(_metaspace_pool);

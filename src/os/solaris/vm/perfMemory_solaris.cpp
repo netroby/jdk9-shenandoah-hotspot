@@ -545,6 +545,7 @@ static void cleanup_sharedmem_resources(const char* dirname) {
 
   if (!is_directory_secure(dirname)) {
     // the directory is not a secure directory
+    os::closedir(dirp);
     return;
   }
 
@@ -890,6 +891,9 @@ static void mmap_attach_shared(const char* user, int vmid, PerfMemory::PerfMemor
   //
   if (!is_directory_secure(dirname)) {
     FREE_C_HEAP_ARRAY(char, dirname, mtInternal);
+    if (luser != user) {
+      FREE_C_HEAP_ARRAY(char, luser, mtInternal);
+    }
     THROW_MSG(vmSymbols::java_lang_IllegalArgumentException(),
               "Process not found");
   }
@@ -1067,8 +1071,4 @@ void PerfMemory::detach(char* addr, size_t bytes, TRAPS) {
   }
 
   unmap_shared(addr, bytes);
-}
-
-char* PerfMemory::backing_store_filename() {
-  return backing_store_file_name;
 }

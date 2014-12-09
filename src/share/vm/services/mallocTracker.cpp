@@ -51,14 +51,6 @@ size_t MallocMemorySnapshot::total_arena() const {
   return amount;
 }
 
-
-void MallocMemorySnapshot::reset() {
-  _tracking_header.reset();
-  for (int index = 0; index < mt_number_of_types; index ++) {
-    _malloc[index].reset();
-  }
-}
-
 // Make adjustment by subtracting chunks used by arenas
 // from total chunks to get total free chunck size
 void MallocMemorySnapshot::make_adjustment() {
@@ -80,7 +72,7 @@ void MallocHeader::release() const {
 
   MallocMemorySummary::record_free(size(), flags());
   MallocMemorySummary::record_free_malloc_header(sizeof(MallocHeader));
-  if (tracking_level() == NMT_detail) {
+  if (MemTracker::tracking_level() == NMT_detail) {
     MallocSiteTable::deallocation_at(size(), _bucket_idx, _pos_idx);
   }
 }
@@ -116,14 +108,9 @@ bool MallocTracker::initialize(NMT_TrackingLevel level) {
 bool MallocTracker::transition(NMT_TrackingLevel from, NMT_TrackingLevel to) {
   assert(from != NMT_off, "Can not transition from off state");
   assert(to != NMT_off, "Can not transition to off state");
-  if (from == NMT_minimal) {
-    MallocMemorySummary::reset();
-  }
+  assert (from != NMT_minimal, "cannot transition from minimal state");
 
-  if (to == NMT_detail) {
-    assert(from == NMT_minimal || from == NMT_summary, "Just check");
-    return MallocSiteTable::initialize();
-  } else if (from == NMT_detail) {
+  if (from == NMT_detail) {
     assert(to == NMT_minimal || to == NMT_summary, "Just check");
     MallocSiteTable::shutdown();
   }
@@ -140,39 +127,18 @@ void* MallocTracker::record_malloc(void* malloc_base, size_t size, MEMFLAGS flag
     return NULL;
   }
 
-  // Check malloc size, size has to <= MAX_MALLOC_SIZE. This is only possible on 32-bit
-  // systems, when malloc size >= 1GB, but is is safe to assume it won't happen.
-  if (size > MAX_MALLOC_SIZE) {
-    fatal("Should not use malloc for big memory block, use virtual memory instead");
-  }
   // Uses placement global new operator to initialize malloc header
-  switch(level) {
-    case NMT_off:
-      return malloc_base;
-    case NMT_minimal: {
-      MallocHeader* hdr = ::new (malloc_base) MallocHeader();
-      break;
-    }
-    case NMT_summary: {
-      header = ::new (malloc_base) MallocHeader(size, flags);
-      break;
-    }
-    case NMT_detail: {
-      header = ::new (malloc_base) MallocHeader(size, flags, stack);
-      break;
-    }
-    default:
-      ShouldNotReachHere();
+
+  if (level == NMT_off) {
+    return malloc_base;
   }
+
+  header = ::new (malloc_base)MallocHeader(size, flags, stack, level);
   memblock = (void*)((char*)malloc_base + sizeof(MallocHeader));
 
   // The alignment check: 8 bytes alignment for 32 bit systems.
   //                      16 bytes alignment for 64-bit systems.
   assert(((size_t)memblock & (sizeof(size_t) * 2 - 1)) == 0, "Alignment check");
-
-  // Sanity check
-  assert(get_memory_tracking_level(memblock) == level,
-    "Wrong tracking level");
 
 #ifdef ASSERT
   if (level > NMT_minimal) {

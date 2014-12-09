@@ -97,10 +97,10 @@ class Compile : public Phase {
     AliasIdxRaw = 3   // hard-wired index for TypeRawPtr::BOTTOM
   };
 
-  // Variant of TraceTime(NULL, &_t_accumulator, TimeCompiler);
-  // Integrated with logging.  If logging is turned on, and dolog is true,
+  // Variant of TraceTime(NULL, &_t_accumulator, CITime);
+  // Integrated with logging.  If logging is turned on, and CITimeVerbose is true,
   // then brackets are put into the log, with time stamps and node counts.
-  // (The time collection itself is always conditionalized on TimeCompiler.)
+  // (The time collection itself is always conditionalized on CITime.)
   class TracePhase : public TraceTime {
    private:
     Compile*    C;
@@ -108,7 +108,7 @@ class Compile : public Phase {
     const char* _phase_name;
     bool _dolog;
    public:
-    TracePhase(const char* name, elapsedTimer* accumulator, bool dolog);
+    TracePhase(const char* name, elapsedTimer* accumulator);
     ~TracePhase();
   };
 
@@ -622,7 +622,9 @@ class Compile : public Phase {
 
   void begin_method() {
 #ifndef PRODUCT
-    if (_printer) _printer->begin_method(this);
+    if (_printer && _printer->should_print(_method)) {
+      _printer->begin_method(this);
+    }
 #endif
     C->_latest_stage_start_counter.stamp();
   }
@@ -639,7 +641,9 @@ class Compile : public Phase {
 
 
 #ifndef PRODUCT
-    if (_printer) _printer->print_method(this, CompilerPhaseTypeHelper::to_string(cpt), level);
+    if (_printer && _printer->should_print(_method)) {
+      _printer->print_method(this, CompilerPhaseTypeHelper::to_string(cpt), level);
+    }
 #endif
     C->_latest_stage_start_counter.stamp();
   }
@@ -654,7 +658,9 @@ class Compile : public Phase {
       event.commit();
     }
 #ifndef PRODUCT
-    if (_printer) _printer->end_method();
+    if (_printer && _printer->should_print(_method)) {
+      _printer->end_method();
+    }
 #endif
   }
 
@@ -707,12 +713,15 @@ class Compile : public Phase {
   void sort_expensive_nodes();
 
   // Compilation environment.
-  Arena*            comp_arena()                { return &_comp_arena; }
-  ciEnv*            env() const                 { return _env; }
-  CompileLog*       log() const                 { return _log; }
-  bool              failing() const             { return _env->failing() || _failure_reason != NULL; }
-  const char*       failure_reason() { return _failure_reason; }
-  bool              failure_reason_is(const char* r) { return (r==_failure_reason) || (r!=NULL && _failure_reason!=NULL && strcmp(r, _failure_reason)==0); }
+  Arena*      comp_arena()           { return &_comp_arena; }
+  ciEnv*      env() const            { return _env; }
+  CompileLog* log() const            { return _log; }
+  bool        failing() const        { return _env->failing() || _failure_reason != NULL; }
+  const char* failure_reason() const { return (_env->failing()) ? _env->failure_reason() : _failure_reason; }
+
+  bool failure_reason_is(const char* r) const {
+    return (r == _failure_reason) || (r != NULL && _failure_reason != NULL && strcmp(r, _failure_reason) == 0);
+  }
 
   void record_failure(const char* reason);
   void record_method_not_compilable(const char* reason, bool all_tiers = false) {

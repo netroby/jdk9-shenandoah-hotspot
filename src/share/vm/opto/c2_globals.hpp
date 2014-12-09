@@ -343,9 +343,15 @@
   product(bool, UseRDPCForConstantTableBase, false,                         \
           "Use Sparc RDPC instruction for the constant table base.")        \
                                                                             \
-  develop(intx, PrintIdealGraphLevel, 0,                                    \
+  develop(bool, PrintIdealGraph, false,                                     \
           "Print ideal graph to XML file / network interface. "             \
           "By default attempts to connect to the visualizer on a socket.")  \
+                                                                            \
+  develop(intx, PrintIdealGraphLevel, 0,                                    \
+          "Level of detail of the ideal graph printout. "                   \
+          "System-wide value, 0=nothing is printed, 3=all details printed. "\
+          "Level of detail of printouts can be set on a per-method level "  \
+          "as well by using CompileCommand=option.")                        \
                                                                             \
   develop(intx, PrintIdealGraphPort, 4444,                                  \
           "Ideal graph printer to network port")                            \
@@ -470,6 +476,9 @@
   product(bool, DoEscapeAnalysis, true,                                     \
           "Perform escape analysis")                                        \
                                                                             \
+  product(double, EscapeAnalysisTimeout, 20. DEBUG_ONLY(+40.),              \
+          "Abort EA when it reaches time limit (in sec)")                   \
+                                                                            \
   develop(bool, ExitEscapeAnalysisOnTimeout, true,                          \
           "Exit or throw assert in EA when it reaches time limit")          \
                                                                             \
@@ -589,9 +598,6 @@
                                                                             \
   product(intx, TypeProfileMajorReceiverPercent, 90,                        \
           "% of major receiver type to all profiled receivers")             \
-                                                                            \
-  notproduct(bool, TimeCompiler2, false,                                    \
-          "detailed time the compiler (requires +TimeCompiler)")            \
                                                                             \
   diagnostic(bool, PrintIntrinsics, false,                                  \
           "prints attempted and successful inlining of intrinsics")         \

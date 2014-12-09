@@ -383,7 +383,6 @@ Declares a structure type that can be used in other events.
     <event id="SweepCodeCache" path="vm/code_sweeper/sweep" label="Sweep Code Cache"
        has_thread="true" is_requestable="false" is_constant="false">
       <value type="INTEGER" field="sweepIndex" label="Sweep Index" relation="SWEEP_ID"/>
-      <value type="USHORT" field="sweepFractionIndex" label="Fraction Index"/>
       <value type="UINT" field="sweptCount" label="Methods Swept"/>
       <value type="UINT" field="flushedCount" label="Methods Flushed"/>
       <value type="UINT" field="markedCount" label="Methods Reclaimed"/>
@@ -394,6 +393,7 @@ Declares a structure type that can be used in other events.
 
     <event id="CodeCacheFull" path="vm/code_cache/full" label="Code Cache Full"
          has_thread="true" is_requestable="false" is_constant="false" is_instant="true">
+      <value type="CODEBLOBTYPE" field="codeBlobType" label="Code Heap"/>
       <value type="ADDRESS" field="startAddress" label="Start Address"/>
       <value type="ADDRESS" field="commitedTopAddress" label="Commited Top"/>
       <value type="ADDRESS" field="reservedTopAddress" label="Reserved Top"/>

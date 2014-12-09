@@ -68,6 +68,7 @@
   template(G1CollectFull)                         \
   template(G1CollectForAllocation)                \
   template(G1IncCollectionPause)                  \
+  template(DestroyAllocationContext)              \
   template(EnableBiasedLocking)                   \
   template(RevokeBias)                            \
   template(BulkRevokeBias)                        \
@@ -108,6 +109,7 @@
   template(RotateGCLog)                           \
   template(WhiteBoxOperation)                     \
   template(ClassLoaderStatsOperation)             \
+  template(MarkActiveNMethods)                    \
   template(PrintCompileQueue)                     \
   template(PrintCodeList)                         \
   template(PrintCodeCache)                        \
@@ -260,6 +262,13 @@ class VM_Deoptimize: public VM_Operation {
   bool allow_nested_vm_operations() const        { return true; }
 };
 
+class VM_MarkActiveNMethods: public VM_Operation {
+ public:
+  VM_MarkActiveNMethods() {}
+  VMOp_Type type() const                         { return VMOp_MarkActiveNMethods; }
+  void doit();
+  bool allow_nested_vm_operations() const        { return true; }
+};
 
 // Deopt helper that can deoptimize frames in threads other than the
 // current thread.  Only used through Deoptimization::deoptimize_frame.

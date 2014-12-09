@@ -137,6 +137,8 @@ PerfVariable*       CompileBroker::_perf_last_invalidated_type = NULL;
 elapsedTimer CompileBroker::_t_total_compilation;
 elapsedTimer CompileBroker::_t_osr_compilation;
 elapsedTimer CompileBroker::_t_standard_compilation;
+elapsedTimer CompileBroker::_t_invalidated_compilation;
+elapsedTimer CompileBroker::_t_bailedout_compilation;
 
 int CompileBroker::_total_bailout_count          = 0;
 int CompileBroker::_total_invalidated_count      = 0;
@@ -153,8 +155,6 @@ long CompileBroker::_peak_compilation_time       = 0;
 
 CompileQueue* CompileBroker::_c2_compile_queue   = NULL;
 CompileQueue* CompileBroker::_c1_compile_queue   = NULL;
-
-GrowableArray<CompilerThread*>* CompileBroker::_compiler_threads = NULL;
 
 
 class CompilationLog : public StringEventLog {
@@ -184,6 +184,14 @@ class CompilationLog : public StringEventLog {
     }
     lm.print("\n");
     log(thread, "%s", (const char*)lm);
+  }
+
+  void log_metaspace_failure(const char* reason) {
+    ResourceMark rm;
+    StringLogMessage lm;
+    lm.print("%4d   COMPILE PROFILING SKIPPED: %s", -1, reason);
+    lm.print("\n");
+    log(JavaThread::current(), "%s", (const char*)lm);
   }
 };
 
@@ -647,13 +655,10 @@ void CompileQueue::free_all() {
   lock()->notify_all();
 }
 
-// ------------------------------------------------------------------
-// CompileQueue::get
-//
-// Get the next CompileTask from a CompileQueue
+/**
+ * Get the next CompileTask from a CompileQueue
+ */
 CompileTask* CompileQueue::get() {
-  NMethodSweeper::possibly_sweep();
-
   MutexLocker locker(lock());
   // If _first is NULL we have no more compile jobs. There are two reasons for
   // having no compile jobs: First, we compiled everything we wanted. Second,
@@ -666,35 +671,16 @@ CompileTask* CompileQueue::get() {
       return NULL;
     }
 
-    if (UseCodeCacheFlushing && !CompileBroker::should_compile_new_jobs()) {
-      // Wait a certain amount of time to possibly do another sweep.
-      // We must wait until stack scanning has happened so that we can
-      // transition a method's state from 'not_entrant' to 'zombie'.
-      long wait_time = NmethodSweepCheckInterval * 1000;
-      if (FLAG_IS_DEFAULT(NmethodSweepCheckInterval)) {
-        // Only one thread at a time can do sweeping. Scale the
-        // wait time according to the number of compiler threads.
-        // As a result, the next sweep is likely to happen every 100ms
-        // with an arbitrary number of threads that do sweeping.
-        wait_time = 100 * CICompilerCount;
-      }
-      bool timeout = lock()->wait(!Mutex::_no_safepoint_check_flag, wait_time);
-      if (timeout) {
-        MutexUnlocker ul(lock());
-        NMethodSweeper::possibly_sweep();
-      }
-    } else {
-      // If there are no compilation tasks and we can compile new jobs
-      // (i.e., there is enough free space in the code cache) there is
-      // no need to invoke the sweeper. As a result, the hotness of methods
-      // remains unchanged. This behavior is desired, since we want to keep
-      // the stable state, i.e., we do not want to evict methods from the
-      // code cache if it is unnecessary.
-      // We need a timed wait here, since compiler threads can exit if compilation
-      // is disabled forever. We use 5 seconds wait time; the exiting of compiler threads
-      // is not critical and we do not want idle compiler threads to wake up too often.
-      lock()->wait(!Mutex::_no_safepoint_check_flag, 5*1000);
-    }
+    // If there are no compilation tasks and we can compile new jobs
+    // (i.e., there is enough free space in the code cache) there is
+    // no need to invoke the sweeper. As a result, the hotness of methods
+    // remains unchanged. This behavior is desired, since we want to keep
+    // the stable state, i.e., we do not want to evict methods from the
+    // code cache if it is unnecessary.
+    // We need a timed wait here, since compiler threads can exit if compilation
+    // is disabled forever. We use 5 seconds wait time; the exiting of compiler threads
+    // is not critical and we do not want idle compiler threads to wake up too often.
+    lock()->wait(!Mutex::_no_safepoint_check_flag, 5*1000);
   }
 
   if (CompileBroker::is_compilation_disabled_forever()) {
@@ -783,18 +769,22 @@ CompileQueue* CompileBroker::compile_queue(int comp_level) {
 
 
 void CompileBroker::print_compile_queues(outputStream* st) {
-  _c1_compile_queue->print(st);
-  _c2_compile_queue->print(st);
+  MutexLocker locker(MethodCompileQueue_lock);
+  if (_c1_compile_queue != NULL) {
+    _c1_compile_queue->print(st);
+  }
+  if (_c2_compile_queue != NULL) {
+    _c2_compile_queue->print(st);
+  }
 }
 
-
 void CompileQueue::print(outputStream* st) {
-  assert_locked_or_safepoint(lock());
+  assert(lock()->owned_by_self(), "must own lock");
   st->print_cr("Contents of %s", name());
   st->print_cr("----------------------------");
   CompileTask* task = _first;
   if (task == NULL) {
-    st->print_cr("Empty");;
+    st->print_cr("Empty");
   } else {
     while (task != NULL) {
       task->print_compilation(st, NULL, true, true);
@@ -880,8 +870,8 @@ void CompileBroker::compilation_init() {
   _compilers[1] = new SharkCompiler();
 #endif // SHARK
 
-  // Start the CompilerThreads
-  init_compiler_threads(c1_count, c2_count);
+  // Start the compiler thread(s) and the sweeper thread
+  init_compiler_sweeper_threads(c1_count, c2_count);
   // totalTime performance counter is always created as it is required
   // by the implementation of java.lang.management.CompilationMBean.
   {
@@ -985,13 +975,10 @@ void CompileBroker::compilation_init() {
 }
 
 
-CompilerThread* CompileBroker::make_compiler_thread(const char* name, CompileQueue* queue, CompilerCounters* counters,
-                                                    AbstractCompiler* comp, TRAPS) {
-  CompilerThread* compiler_thread = NULL;
-
-  Klass* k =
-    SystemDictionary::resolve_or_fail(vmSymbols::java_lang_Thread(),
-                                      true, CHECK_0);
+JavaThread* CompileBroker::make_thread(const char* name, CompileQueue* queue, CompilerCounters* counters,
+                                       AbstractCompiler* comp, bool compiler_thread, TRAPS) {
+  JavaThread* thread = NULL;
+  Klass* k = SystemDictionary::resolve_or_fail(vmSymbols::java_lang_Thread(), true, CHECK_0);
   instanceKlassHandle klass (THREAD, k);
   instanceHandle thread_oop = klass->allocate_instance_handle(CHECK_0);
   Handle string = java_lang_String::create_from_str(name, CHECK_0);
@@ -1009,7 +996,11 @@ CompilerThread* CompileBroker::make_compiler_thread(const char* name, CompileQue
 
   {
     MutexLocker mu(Threads_lock, THREAD);
-    compiler_thread = new CompilerThread(queue, counters);
+    if (compiler_thread) {
+      thread = new CompilerThread(queue, counters);
+    } else {
+      thread = new CodeCacheSweeperThread();
+    }
     // At this point the new CompilerThread data-races with this startup
     // thread (which I believe is the primoridal thread and NOT the VM
     // thread).  This means Java bytecodes being executed at startup can
@@ -1022,12 +1013,12 @@ CompilerThread* CompileBroker::make_compiler_thread(const char* name, CompileQue
     // in that case. However, since this must work and we do not allow
     // exceptions anyway, check and abort if this fails.
 
-    if (compiler_thread == NULL || compiler_thread->osthread() == NULL){
+    if (thread == NULL || thread->osthread() == NULL) {
       vm_exit_during_initialization("java.lang.OutOfMemoryError",
                                     os::native_thread_creation_failed_msg());
     }
 
-    java_lang_Thread::set_thread(thread_oop(), compiler_thread);
+    java_lang_Thread::set_thread(thread_oop(), thread);
 
     // Note that this only sets the JavaThread _priority field, which by
     // definition is limited to Java priorities and not OS priorities.
@@ -1048,24 +1039,26 @@ CompilerThread* CompileBroker::make_compiler_thread(const char* name, CompileQue
         native_prio = os::java_to_os_priority[NearMaxPriority];
       }
     }
-    os::set_native_priority(compiler_thread, native_prio);
+    os::set_native_priority(thread, native_prio);
 
     java_lang_Thread::set_daemon(thread_oop());
 
-    compiler_thread->set_threadObj(thread_oop());
-    compiler_thread->set_compiler(comp);
-    Threads::add(compiler_thread);
-    Thread::start(compiler_thread);
+    thread->set_threadObj(thread_oop());
+    if (compiler_thread) {
+      thread->as_CompilerThread()->set_compiler(comp);
+    }
+    Threads::add(thread);
+    Thread::start(thread);
   }
 
   // Let go of Threads_lock before yielding
   os::naked_yield(); // make sure that the compiler thread is started early (especially helpful on SOLARIS)
 
-  return compiler_thread;
+  return thread;
 }
 
 
-void CompileBroker::init_compiler_threads(int c1_compiler_count, int c2_compiler_count) {
+void CompileBroker::init_compiler_sweeper_threads(int c1_compiler_count, int c2_compiler_count) {
   EXCEPTION_MARK;
 #if !defined(ZERO) && !defined(SHARK)
   assert(c2_compiler_count > 0 || c1_compiler_count > 0, "No compilers?");
@@ -1082,17 +1075,14 @@ void CompileBroker::init_compiler_threads(int c1_compiler_count, int c2_compiler
 
   int compiler_count = c1_compiler_count + c2_compiler_count;
 
-  _compiler_threads =
-    new (ResourceObj::C_HEAP, mtCompiler) GrowableArray<CompilerThread*>(compiler_count, true);
-
   char name_buffer[256];
+  const bool compiler_thread = true;
   for (int i = 0; i < c2_compiler_count; i++) {
     // Create a name for our thread.
     sprintf(name_buffer, "C2 CompilerThread%d", i);
     CompilerCounters* counters = new CompilerCounters("compilerThread", i, CHECK);
     // Shark and C2
-    CompilerThread* new_thread = make_compiler_thread(name_buffer, _c2_compile_queue, counters, _compilers[1], CHECK);
-    _compiler_threads->append(new_thread);
+    make_thread(name_buffer, _c2_compile_queue, counters, _compilers[1], compiler_thread, CHECK);
   }
 
   for (int i = c2_compiler_count; i < compiler_count; i++) {
@@ -1100,12 +1090,16 @@ void CompileBroker::init_compiler_threads(int c1_compiler_count, int c2_compiler
     sprintf(name_buffer, "C1 CompilerThread%d", i);
     CompilerCounters* counters = new CompilerCounters("compilerThread", i, CHECK);
     // C1
-    CompilerThread* new_thread = make_compiler_thread(name_buffer, _c1_compile_queue, counters, _compilers[0], CHECK);
-    _compiler_threads->append(new_thread);
+    make_thread(name_buffer, _c1_compile_queue, counters, _compilers[0], compiler_thread, CHECK);
   }
 
   if (UsePerfData) {
     PerfDataManager::create_constant(SUN_CI, "threads", PerfData::U_Bytes, compiler_count, CHECK);
+  }
+
+  if (MethodFlushing) {
+    // Initialize the sweeper thread
+    make_thread("Sweeper thread", NULL, NULL, NULL, false, CHECK);
   }
 }
 
@@ -1204,6 +1198,12 @@ void CompileBroker::compile_method_base(methodHandle method,
   // by a compiler thread), and compiled method registration.
   if (InstanceRefKlass::owns_pending_list_lock(JavaThread::current())) {
     return;
+  }
+
+  if (TieredCompilation) {
+    // Tiered policy requires MethodCounters to exist before adding a method to
+    // the queue. Create if we don't have them yet.
+    method->get_method_counters(thread);
   }
 
   // Outputs from the following MutexLocker block:
@@ -1747,11 +1747,6 @@ void CompileBroker::compiler_thread_loop() {
     // We need this HandleMark to avoid leaking VM handles.
     HandleMark hm(thread);
 
-    if (CodeCache::unallocated_capacity() < CodeCacheMinimumFreeSpace) {
-      // the code cache is really full
-      handle_full_code_cache();
-    }
-
     CompileTask* task = queue->get();
     if (task == NULL) {
       continue;
@@ -1759,8 +1754,9 @@ void CompileBroker::compiler_thread_loop() {
 
     // Give compiler threads an extra quanta.  They tend to be bursty and
     // this helps the compiler to finish up the job.
-    if( CompilerThreadHintNoPreempt )
+    if (CompilerThreadHintNoPreempt) {
       os::hint_no_preempt();
+    }
 
     // trace per thread time and compile statistics
     CompilerCounters* counters = ((CompilerThread*)thread)->counters();
@@ -1777,22 +1773,6 @@ void CompileBroker::compiler_thread_loop() {
     if (method()->number_of_breakpoints() == 0) {
       // Compile the method.
       if ((UseCompiler || AlwaysCompileLoopMethods) && CompileBroker::should_compile_new_jobs()) {
-#ifdef COMPILER1
-        // Allow repeating compilations for the purpose of benchmarking
-        // compile speed. This is not useful for customers.
-        if (CompilationRepeat != 0) {
-          int compile_count = CompilationRepeat;
-          while (compile_count > 0) {
-            invoke_compiler_on_method(task);
-            nmethod* nm = method->code();
-            if (nm != NULL) {
-              nm->make_zombie();
-              method->clear_code();
-            }
-            compile_count--;
-          }
-        }
-#endif /* COMPILER1 */
         invoke_compiler_on_method(task);
       } else {
         // After compilation is disabled, remove remaining methods from queue
@@ -1844,6 +1824,18 @@ void CompileBroker::init_compiler_thread_log() {
     }
     warning("Cannot open log file: %s", file_name);
 }
+
+void CompileBroker::log_metaspace_failure() {
+  const char* message = "some methods may not be compiled because metaspace "
+                        "is out of memory";
+  if (_compilation_log != NULL) {
+    _compilation_log->log_metaspace_failure(message);
+  }
+  if (PrintCompilation) {
+    tty->print_cr("COMPILE PROFILING SKIPPED: %s", message);
+  }
+}
+
 
 // ------------------------------------------------------------------
 // CompileBroker::set_should_block
@@ -2076,10 +2068,12 @@ void CompileBroker::invoke_compiler_on_method(CompileTask* task) {
 }
 
 /**
- * The CodeCache is full.  Print out warning and disable compilation
- * or try code cache cleaning so compilation can continue later.
+ * The CodeCache is full. Print warning and disable compilation.
+ * Schedule code cache cleaning so compilation can continue later.
+ * This function needs to be called only from CodeCache::allocate(),
+ * since we currently handle a full code cache uniformly.
  */
-void CompileBroker::handle_full_code_cache() {
+void CompileBroker::handle_full_code_cache(int code_blob_type) {
   UseInterpreter = true;
   if (UseCompiler || AlwaysCompileLoopMethods ) {
     if (xtty != NULL) {
@@ -2096,8 +2090,6 @@ void CompileBroker::handle_full_code_cache() {
       xtty->end_elem();
     }
 
-    CodeCache::report_codemem_full();
-
 #ifndef PRODUCT
     if (CompileTheWorld || ExitOnFullCodeCache) {
       codecache_print(/* detailed= */ true);
@@ -2111,20 +2103,11 @@ void CompileBroker::handle_full_code_cache() {
       if (CompileBroker::set_should_compile_new_jobs(CompileBroker::stop_compilation)) {
         NMethodSweeper::log_sweep("disable_compiler");
       }
-      // Switch to 'vm_state'. This ensures that possibly_sweep() can be called
-      // without having to consider the state in which the current thread is.
-      ThreadInVMfromUnknown in_vm;
-      NMethodSweeper::possibly_sweep();
     } else {
       disable_compilation_forever();
     }
 
-    // Print warning only once
-    if (should_print_compiler_warning()) {
-      warning("CodeCache is full. Compiler has been disabled.");
-      warning("Try increasing the code cache size using -XX:ReservedCodeCacheSize=");
-      codecache_print(/* detailed= */ true);
-    }
+    CodeCache::report_codemem_full(code_blob_type, should_print_compiler_warning());
   }
 }
 
@@ -2247,6 +2230,11 @@ void CompileBroker::collect_statistics(CompilerThread* thread, elapsedTimer time
   // _perf variables are production performance counters which are
   // updated regardless of the setting of the CITime and CITimeEach flags
   //
+
+  // account all time, including bailouts and failures in this counter;
+  // C1 and C2 counters are counting both successful and unsuccessful compiles
+  _t_total_compilation.add(time);
+
   if (!success) {
     _total_bailout_count++;
     if (UsePerfData) {
@@ -2254,6 +2242,7 @@ void CompileBroker::collect_statistics(CompilerThread* thread, elapsedTimer time
       _perf_last_failed_type->set_value(counters->compile_type());
       _perf_total_bailout_count->inc();
     }
+    _t_bailedout_compilation.add(time);
   } else if (code == NULL) {
     if (UsePerfData) {
       _perf_last_invalidated_method->set_value(counters->current_method());
@@ -2261,14 +2250,13 @@ void CompileBroker::collect_statistics(CompilerThread* thread, elapsedTimer time
       _perf_total_invalidated_count->inc();
     }
     _total_invalidated_count++;
+    _t_invalidated_compilation.add(time);
   } else {
     // Compilation succeeded
 
     // update compilation ticks - used by the implementation of
     // java.lang.management.CompilationMBean
     _perf_total_compilation->inc(time.ticks());
-
-    _t_total_compilation.add(time);
     _peak_compilation_time = time.milliseconds() > _peak_compilation_time ? time.milliseconds() : _peak_compilation_time;
 
     if (CITime) {
@@ -2336,37 +2324,47 @@ const char* CompileBroker::compiler_name(int comp_level) {
 
 void CompileBroker::print_times() {
   tty->cr();
-  tty->print_cr("Accumulated compiler times (for compiled methods only)");
-  tty->print_cr("------------------------------------------------");
+  tty->print_cr("Accumulated compiler times");
+  tty->print_cr("----------------------------------------------------------");
                //0000000000111111111122222222223333333333444444444455555555556666666666
                //0123456789012345678901234567890123456789012345678901234567890123456789
-  tty->print_cr("  Total compilation time   : %6.3f s", CompileBroker::_t_total_compilation.seconds());
-  tty->print_cr("    Standard compilation   : %6.3f s, Average : %2.3f",
+  tty->print_cr("  Total compilation time   : %7.3f s", CompileBroker::_t_total_compilation.seconds());
+  tty->print_cr("    Standard compilation   : %7.3f s, Average : %2.3f s",
                 CompileBroker::_t_standard_compilation.seconds(),
                 CompileBroker::_t_standard_compilation.seconds() / CompileBroker::_total_standard_compile_count);
-  tty->print_cr("    On stack replacement   : %6.3f s, Average : %2.3f", CompileBroker::_t_osr_compilation.seconds(), CompileBroker::_t_osr_compilation.seconds() / CompileBroker::_total_osr_compile_count);
+  tty->print_cr("    Bailed out compilation : %7.3f s, Average : %2.3f s",
+                CompileBroker::_t_bailedout_compilation.seconds(),
+                CompileBroker::_t_bailedout_compilation.seconds() / CompileBroker::_total_bailout_count);
+  tty->print_cr("    On stack replacement   : %7.3f s, Average : %2.3f s",
+                CompileBroker::_t_osr_compilation.seconds(),
+                CompileBroker::_t_osr_compilation.seconds() / CompileBroker::_total_osr_compile_count);
+  tty->print_cr("    Invalidated            : %7.3f s, Average : %2.3f s",
+                CompileBroker::_t_invalidated_compilation.seconds(),
+                CompileBroker::_t_invalidated_compilation.seconds() / CompileBroker::_total_invalidated_count);
 
   AbstractCompiler *comp = compiler(CompLevel_simple);
   if (comp != NULL) {
+    tty->cr();
     comp->print_timers();
   }
   comp = compiler(CompLevel_full_optimization);
   if (comp != NULL) {
+    tty->cr();
     comp->print_timers();
   }
   tty->cr();
-  tty->print_cr("  Total compiled methods   : %6d methods", CompileBroker::_total_compile_count);
-  tty->print_cr("    Standard compilation   : %6d methods", CompileBroker::_total_standard_compile_count);
-  tty->print_cr("    On stack replacement   : %6d methods", CompileBroker::_total_osr_compile_count);
+  tty->print_cr("  Total compiled methods    : %8d methods", CompileBroker::_total_compile_count);
+  tty->print_cr("    Standard compilation    : %8d methods", CompileBroker::_total_standard_compile_count);
+  tty->print_cr("    On stack replacement    : %8d methods", CompileBroker::_total_osr_compile_count);
   int tcb = CompileBroker::_sum_osr_bytes_compiled + CompileBroker::_sum_standard_bytes_compiled;
-  tty->print_cr("  Total compiled bytecodes : %6d bytes", tcb);
-  tty->print_cr("    Standard compilation   : %6d bytes", CompileBroker::_sum_standard_bytes_compiled);
-  tty->print_cr("    On stack replacement   : %6d bytes", CompileBroker::_sum_osr_bytes_compiled);
+  tty->print_cr("  Total compiled bytecodes  : %8d bytes", tcb);
+  tty->print_cr("    Standard compilation    : %8d bytes", CompileBroker::_sum_standard_bytes_compiled);
+  tty->print_cr("    On stack replacement    : %8d bytes", CompileBroker::_sum_osr_bytes_compiled);
   int bps = (int)(tcb / CompileBroker::_t_total_compilation.seconds());
-  tty->print_cr("  Average compilation speed: %6d bytes/s", bps);
+  tty->print_cr("  Average compilation speed : %8d bytes/s", bps);
   tty->cr();
-  tty->print_cr("  nmethod code size        : %6d bytes", CompileBroker::_sum_nmethod_code_size);
-  tty->print_cr("  nmethod total size       : %6d bytes", CompileBroker::_sum_nmethod_size);
+  tty->print_cr("  nmethod code size         : %8d bytes", CompileBroker::_sum_nmethod_code_size);
+  tty->print_cr("  nmethod total size        : %8d bytes", CompileBroker::_sum_nmethod_size);
 }
 
 // Debugging output for failure

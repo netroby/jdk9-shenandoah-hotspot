@@ -25,16 +25,16 @@
 #ifndef SHARE_VM_GC_IMPLEMENTATION_G1_HEAPREGION_HPP
 #define SHARE_VM_GC_IMPLEMENTATION_G1_HEAPREGION_HPP
 
+#include "gc_implementation/g1/g1AllocationContext.hpp"
 #include "gc_implementation/g1/g1BlockOffsetTable.hpp"
 #include "gc_implementation/g1/g1_specialized_oop_closures.hpp"
+#include "gc_implementation/g1/heapRegionType.hpp"
 #include "gc_implementation/g1/survRateGroup.hpp"
 #include "gc_implementation/shared/ageTable.hpp"
 #include "gc_implementation/shared/spaceDecorator.hpp"
 #include "memory/space.inline.hpp"
 #include "memory/watermark.hpp"
 #include "utilities/macros.hpp"
-
-#if INCLUDE_ALL_GCS
 
 // A HeapRegion is the smallest piece of a G1CollectedHeap that
 // can be collected independently.
@@ -55,10 +55,7 @@ class nmethod;
 #define HR_FORMAT "%u:(%s)["PTR_FORMAT","PTR_FORMAT","PTR_FORMAT"]"
 #define HR_FORMAT_PARAMS(_hr_) \
                 (_hr_)->hrm_index(), \
-                (_hr_)->is_survivor() ? "S" : (_hr_)->is_young() ? "E" : \
-                (_hr_)->startsHumongous() ? "HS" : \
-                (_hr_)->continuesHumongous() ? "HC" : \
-                !(_hr_)->is_empty() ? "O" : "F", \
+                (_hr_)->get_short_type_str(), \
                 p2i((_hr_)->bottom()), p2i((_hr_)->top()), p2i((_hr_)->end())
 
 // sentinel value for hrm_index
@@ -215,12 +212,6 @@ class HeapRegion: public G1OffsetTableContigSpace {
   friend class VMStructs;
  private:
 
-  enum HumongousType {
-    NotHumongous = 0,
-    StartsHumongous,
-    ContinuesHumongous
-  };
-
   // The remembered set for this region.
   // (Might want to make this "inline" later, to avoid some alloc failure
   // issues.)
@@ -232,12 +223,12 @@ class HeapRegion: public G1OffsetTableContigSpace {
   // The index of this region in the heap region sequence.
   uint  _hrm_index;
 
-  HumongousType _humongous_type;
+  AllocationContext_t _allocation_context;
+
+  HeapRegionType _type;
+
   // For a humongous region, region in which it starts.
   HeapRegion* _humongous_start_region;
-  // For the start region of a humongous sequence, it's original end().
-  HeapWord* _orig_end;
-
   // True iff the region is in current collection_set.
   bool _in_collection_set;
 
@@ -263,9 +254,6 @@ class HeapRegion: public G1OffsetTableContigSpace {
   HeapRegionSetBase* _containing_set;
 #endif // ASSERT
 
-  // For parallel heapRegion traversal.
-  jint _claimed;
-
   // We use concurrent marking to determine the amount of live data
   // in each heap region.
   size_t _prev_marked_bytes;    // Bytes known to be live via last completed marking.
@@ -274,13 +262,6 @@ class HeapRegion: public G1OffsetTableContigSpace {
   // The calculated GC efficiency of the region.
   double _gc_efficiency;
 
-  enum YoungType {
-    NotYoung,                   // a region is not young
-    Young,                      // a region is young
-    Survivor                    // a region is young and it contains survivors
-  };
-
-  volatile YoungType _young_type;
   int  _young_index_in_cset;
   SurvRateGroup* _surv_rate_group;
   int  _age_index;
@@ -303,12 +284,6 @@ class HeapRegion: public G1OffsetTableContigSpace {
     HeapWord* bot = bottom();
     _prev_top_at_mark_start = bot;
     _next_top_at_mark_start = bot;
-  }
-
-  void set_young_type(YoungType new_type) {
-    //assert(_young_type != new_type, "setting the same type" );
-    // TODO: add more assertions here
-    _young_type = new_type;
   }
 
   // Cached attributes used in the collection set policy information
@@ -357,19 +332,6 @@ class HeapRegion: public G1OffsetTableContigSpace {
   // throughout the JVM's execution, therefore they should only be set
   // up once during initialization time.
   static void setup_heap_region_size(size_t initial_heap_size, size_t max_heap_size);
-
-  enum ClaimValues {
-    InitialClaimValue          = 0,
-    FinalCountClaimValue       = 1,
-    NoteEndClaimValue          = 2,
-    ScrubRemSetClaimValue      = 3,
-    ParVerifyClaimValue        = 4,
-    RebuildRSClaimValue        = 5,
-    ParEvacFailureClaimValue   = 6,
-    AggregateCountClaimValue   = 7,
-    VerifyCountClaimValue      = 8,
-    ParMarkRootClaimValue      = 9
-  };
 
   // All allocated blocks are occupied by objects in a HeapRegion
   bool block_is_obj(const HeapWord* p) const;
@@ -430,9 +392,21 @@ class HeapRegion: public G1OffsetTableContigSpace {
     _prev_marked_bytes = _next_marked_bytes = 0;
   }
 
-  bool isHumongous() const { return _humongous_type != NotHumongous; }
-  bool startsHumongous() const { return _humongous_type == StartsHumongous; }
-  bool continuesHumongous() const { return _humongous_type == ContinuesHumongous; }
+  const char* get_type_str() const { return _type.get_str(); }
+  const char* get_short_type_str() const { return _type.get_short_str(); }
+
+  bool is_free() const { return _type.is_free(); }
+
+  bool is_young()    const { return _type.is_young();    }
+  bool is_eden()     const { return _type.is_eden();     }
+  bool is_survivor() const { return _type.is_survivor(); }
+
+  bool is_humongous() const { return _type.is_humongous(); }
+  bool is_starts_humongous() const { return _type.is_starts_humongous(); }
+  bool is_continues_humongous() const { return _type.is_continues_humongous();   }
+
+  bool is_old() const { return _type.is_old(); }
+
   // For a humongous region, region in which it starts.
   HeapRegion* humongous_start_region() const {
     return _humongous_start_region;
@@ -441,10 +415,10 @@ class HeapRegion: public G1OffsetTableContigSpace {
   // Return the number of distinct regions that are covered by this region:
   // 1 if the region is not humongous, >= 1 if the region is humongous.
   uint region_num() const {
-    if (!isHumongous()) {
+    if (!is_humongous()) {
       return 1U;
     } else {
-      assert(startsHumongous(), "doesn't make sense on HC regions");
+      assert(is_starts_humongous(), "doesn't make sense on HC regions");
       assert(capacity() % HeapRegion::GrainBytes == 0, "sanity");
       return (uint) (capacity() >> HeapRegion::LogOfHRGrainBytes);
     }
@@ -453,7 +427,7 @@ class HeapRegion: public G1OffsetTableContigSpace {
   // Return the index + 1 of the last HC regions that's associated
   // with this HS region.
   uint last_hc_index() const {
-    assert(startsHumongous(), "don't call this otherwise");
+    assert(is_starts_humongous(), "don't call this otherwise");
     return hrm_index() + region_num();
   }
 
@@ -462,7 +436,7 @@ class HeapRegion: public G1OffsetTableContigSpace {
   // their _end set up to be the end of the last continues region of the
   // corresponding humongous object.
   bool is_in_reserved_raw(const void* p) const {
-    return _bottom <= p && p < _orig_end;
+    return _bottom <= p && p < orig_end();
   }
 
   // Makes the current region be a "starts humongous" region, i.e.,
@@ -488,15 +462,15 @@ class HeapRegion: public G1OffsetTableContigSpace {
   // humongous regions can be calculated by just looking at the
   // "starts humongous" regions and by ignoring the "continues
   // humongous" regions.
-  void set_startsHumongous(HeapWord* new_top, HeapWord* new_end);
+  void set_starts_humongous(HeapWord* new_top, HeapWord* new_end);
 
   // Makes the current region be a "continues humongous'
   // region. first_hr is the "start humongous" region of the series
   // which this region will be part of.
-  void set_continuesHumongous(HeapRegion* first_hr);
+  void set_continues_humongous(HeapRegion* first_hr);
 
   // Unsets the humongous-related fields on the region.
-  void set_notHumongous();
+  void clear_humongous();
 
   // If the region has a remembered set, return a pointer to it.
   HeapRegionRemSet* rem_set() const {
@@ -521,6 +495,14 @@ class HeapRegion: public G1OffsetTableContigSpace {
     assert(in_collection_set(), "should only invoke on member of CS.");
     assert(r == NULL || r->in_collection_set(), "Malformed CS.");
     _next_in_special_set = r;
+  }
+
+  void set_allocation_context(AllocationContext_t context) {
+    _allocation_context = context;
+  }
+
+  AllocationContext_t  allocation_context() const {
+    return _allocation_context;
   }
 
   // Methods used by the HeapRegionSetBase class and subclasses.
@@ -566,7 +548,8 @@ class HeapRegion: public G1OffsetTableContigSpace {
   void set_next_dirty_cards_region(HeapRegion* hr) { _next_dirty_cards_region = hr; }
   bool is_on_dirty_cards_region_list() const { return get_next_dirty_cards_region() != NULL; }
 
-  HeapWord* orig_end() const { return _orig_end; }
+  // For the start region of a humongous sequence, it's original end().
+  HeapWord* orig_end() const { return _bottom + GrainWords; }
 
   // Reset HR stuff to default values.
   void hr_clear(bool par, bool clear_space, bool locked = false);
@@ -613,7 +596,7 @@ class HeapRegion: public G1OffsetTableContigSpace {
   bool is_marked() { return _prev_top_at_mark_start != bottom(); }
 
   void reset_during_compaction() {
-    assert(isHumongous() && startsHumongous(),
+    assert(is_starts_humongous(),
            "should only be called for starts humongous regions");
 
     zero_marked_bytes();
@@ -622,9 +605,6 @@ class HeapRegion: public G1OffsetTableContigSpace {
 
   void calc_gc_efficiency(void);
   double gc_efficiency() { return _gc_efficiency;}
-
-  bool is_young() const     { return _young_type != NotYoung; }
-  bool is_survivor() const  { return _young_type == Survivor; }
 
   int  young_index_in_cset() const { return _young_index_in_cset; }
   void set_young_index_in_cset(int index) {
@@ -677,11 +657,13 @@ class HeapRegion: public G1OffsetTableContigSpace {
     }
   }
 
-  void set_young() { set_young_type(Young); }
+  void set_free() { _type.set_free(); }
 
-  void set_survivor() { set_young_type(Survivor); }
+  void set_eden()        { _type.set_eden();        }
+  void set_eden_pre_gc() { _type.set_eden_pre_gc(); }
+  void set_survivor()    { _type.set_survivor();    }
 
-  void set_not_young() { set_young_type(NotYoung); }
+  void set_old() { _type.set_old(); }
 
   // Determine if an object has been allocated since the last
   // mark performed by the collector. This returns true iff the object
@@ -692,12 +674,6 @@ class HeapRegion: public G1OffsetTableContigSpace {
   bool obj_allocated_since_next_marking(oop obj) const {
     return (HeapWord *) obj >= next_top_at_mark_start();
   }
-
-  // For parallel heapRegion traversal.
-  bool claimHeapRegion(int claimValue);
-  jint claim_value() { return _claimed; }
-  // Use this carefully: only when you're sure no one is claiming...
-  void set_claim_value(int claimValue) { _claimed = claimValue; }
 
   // Returns the "evacuation_failed" property of the region.
   bool evacuation_failed() { return _evacuation_failed; }
@@ -808,7 +784,5 @@ class HeapRegionClosure : public StackObj {
   // and returned "false" in all cases.
   bool complete() { return _complete; }
 };
-
-#endif // INCLUDE_ALL_GCS
 
 #endif // SHARE_VM_GC_IMPLEMENTATION_G1_HEAPREGION_HPP
