@@ -35,8 +35,25 @@ void ShenandoahConcurrentThread::notify_jni_critical() {
   ShenandoahHeap* heap = ShenandoahHeap::heap();
 
   if (_do_full_gc) {
-    VM_ShenandoahFullGC full_gc;
-    VMThread::execute(&full_gc);
+    if (heap->concurrent_mark_in_progress()) {
+      // If we get here, we've been sent into jni-critical-wait at the end of marking,
+      // and in the meantime got a full-gc scheduled. Clean up the marking stuff, and
+      // do full-gc.
+      heap->reset_mark_bitmap();
+      heap->stop_concurrent_marking();
+
+      cm_abort();
+
+      VM_ShenandoahFullGC full_gc;
+      VMThread::execute(&full_gc);
+
+      MonitorLockerEx ml(ShenandoahFullGC_lock);
+      _do_full_gc = false;
+      ml.notify_all();
+    } else {
+      VM_ShenandoahFullGC full_gc;
+      VMThread::execute(&full_gc);
+    }
   } else {
     VM_ShenandoahStartEvacuation start_evacuation;
     VMThread::execute(&start_evacuation);
@@ -102,6 +119,12 @@ void ShenandoahConcurrentThread::run() {
           }
         }
 
+        if (cm_has_aborted()) {
+          clear_cm_aborted();
+          assert(heap->is_bitmap_clear(), "need to continue with clear mark bitmap");
+          assert(! heap->concurrent_mark_in_progress(), "concurrent mark must have terminated");
+          continue;
+        }
         if (! _should_terminate) {
           // If we're not concurrently evacuating, evacuation is done
           // from VM_ShenandoahFinishMark within the VMThread above.
