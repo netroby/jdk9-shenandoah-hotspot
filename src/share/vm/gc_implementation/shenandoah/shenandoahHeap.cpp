@@ -86,9 +86,7 @@ jint ShenandoahHeap::initialize() {
 
   ReservedSpace heap_rs = Universe::reserve_heap(max_byte_size,
 						 Arguments::conservative_max_heap_alignment());
-  _reserved.set_word_size(0);
-  _reserved.set_start((HeapWord*)heap_rs.base());
-  _reserved.set_end((HeapWord*) (heap_rs.base() + heap_rs.size()));
+  initialize_reserved_region((HeapWord*)heap_rs.base(), (HeapWord*) (heap_rs.base() + heap_rs.size()));
 
   set_barrier_set(new ShenandoahBarrierSet());
   ReservedSpace pgc_rs = heap_rs.first_part(max_byte_size);

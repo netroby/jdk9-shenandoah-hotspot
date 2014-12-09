@@ -4063,39 +4063,7 @@ jint Arguments::apply_ergo() {
   // Set heap size based on available physical memory
   set_heap_size();
 
-<<<<<<< local
-#if INCLUDE_ALL_GCS
-  // Set per-collector flags
-  if (UseParallelGC || UseParallelOldGC) {
-    set_parallel_gc_flags();
-  } else if (UseConcMarkSweepGC) { // Should be done before ParNew check below
-    set_cms_and_parnew_gc_flags();
-  } else if (UseParNewGC) {  // Skipped if CMS is set above
-    set_parnew_gc_flags();
-  } else if (UseG1GC) {
-    set_g1_gc_flags();
-  } else if (UseShenandoahGC) {
-    set_shenandoah_gc_flags();
-  }
-  check_deprecated_gcs();
-  check_deprecated_gc_flags();
-  if (AssumeMP && !UseSerialGC) {
-    if (FLAG_IS_DEFAULT(ParallelGCThreads) && ParallelGCThreads == 1) {
-      warning("If the number of processors is expected to increase from one, then"
-              " you should configure the number of parallel GC threads appropriately"
-              " using -XX:ParallelGCThreads=N");
-    }
-  }
-  if (MinHeapFreeRatio == 100) {
-    // Keeping the heap 100% free is hard ;-) so limit it to 99%.
-    FLAG_SET_ERGO(uintx, MinHeapFreeRatio, 99);
-  }
-#else // INCLUDE_ALL_GCS
-  assert(verify_serial_gc_flags(), "SerialGC unset");
-#endif // INCLUDE_ALL_GCS
-=======
   set_gc_specific_flags();
->>>>>>> other
 
   // Initialize Metaspace flags and alignments
   Metaspace::ergo_initialize();

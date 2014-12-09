@@ -534,15 +534,15 @@ void ShenandoahConcurrentMark::drain_satb_buffers(uint worker_id, bool remark) {
   ShenandoahSATBMarkObjsClosure cl(worker_id);
 
   SATBMarkQueueSet& satb_mq_set = JavaThread::satb_mark_queue_set();
-  satb_mq_set.set_par_closure(worker_id, &cl);
-  while (satb_mq_set.par_apply_closure_to_completed_buffer(worker_id));
+  satb_mq_set.set_closure(worker_id, &cl);
+  while (satb_mq_set.apply_closure_to_completed_buffer(worker_id));
 
   if (remark) {
     satb_mq_set.par_iterate_closure_all_threads(worker_id);
     assert(satb_mq_set.completed_buffers_num() == 0, "invariant");
   }
 
-  satb_mq_set.set_par_closure(worker_id, NULL);
+  satb_mq_set.set_closure(worker_id, NULL);
 
   // tty->print_cr("end draining SATB buffers");
 
@@ -554,9 +554,9 @@ bool ShenandoahConcurrentMark::drain_one_satb_buffer(uint worker_id) {
   ShenandoahSATBMarkObjsClosure cl(worker_id);
 
   SATBMarkQueueSet& satb_mq_set = JavaThread::satb_mark_queue_set();
-  satb_mq_set.set_par_closure(worker_id, &cl);
-  bool result = satb_mq_set.par_apply_closure_to_completed_buffer(worker_id);
-  satb_mq_set.set_par_closure(worker_id, NULL);
+  satb_mq_set.set_closure(worker_id, &cl);
+  bool result = satb_mq_set.apply_closure_to_completed_buffer(worker_id);
+  satb_mq_set.set_closure(worker_id, NULL);
   return result;
 }
 

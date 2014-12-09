@@ -309,7 +309,7 @@ void SATBMarkQueueSet::par_iterate_closure_all_threads(int worker) {
 
   for(JavaThread* t = Threads::first(); t; t = t->next()) {
     if (t->claim_oops_do(true, parity)) {
-      t->satb_mark_queue().apply_closure_and_empty(_par_closures[worker]);
+      t->satb_mark_queue().apply_closure_and_empty(_closures[worker]);
     }
   }
 
@@ -323,7 +323,7 @@ void SATBMarkQueueSet::par_iterate_closure_all_threads(int worker) {
 
   VMThread* vmt = VMThread::vm_thread();
   if (vmt->claim_oops_do(true, parity)) {
-    shared_satb_queue()->apply_closure_and_empty(_par_closures[worker]);
+    shared_satb_queue()->apply_closure_and_empty(_closures[worker]);
   }
 }
 
