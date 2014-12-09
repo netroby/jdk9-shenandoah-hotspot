@@ -17,7 +17,8 @@ ShenandoahConcurrentThread::ShenandoahConcurrentThread() :
   _concurrent_mark_started(false),
   _concurrent_mark_in_progress(false),
   _waiting_for_jni_critical(false),
-  _do_full_gc(false)
+  _do_full_gc(false),
+  _concurrent_mark_aborted(false)
 {
   create_and_start();
 }
