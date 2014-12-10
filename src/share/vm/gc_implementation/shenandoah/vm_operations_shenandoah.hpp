@@ -54,7 +54,7 @@ class VM_ShenandoahFinishEvacuation: public VM_Operation {
 
 };
 
-class VM_ShenandoahFullGC : public VM_Operation {
+class VM_ShenandoahFullGC : public VM_ShenandoahReferenceOperation {
  public:
   VMOp_Type type() const;
   void doit();

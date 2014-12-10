@@ -151,6 +151,12 @@ void ShenandoahConcurrentThread::run() {
       // yield();
     }
   }
+
+  // Release any threads waiting for full-gc. We won't do it ;-)
+  MonitorLockerEx ml(ShenandoahFullGC_lock);
+  _do_full_gc = false;
+  ml.notify_all();
+
 }
 
 void ShenandoahConcurrentThread::do_full_gc() {

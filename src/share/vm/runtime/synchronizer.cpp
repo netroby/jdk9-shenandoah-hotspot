@@ -1188,7 +1188,7 @@ ObjectMonitor * NOINLINE ObjectSynchronizer::inflate(Thread * Self,
     if (mark->has_monitor()) {
       ObjectMonitor * inf = mark->monitor();
       assert(inf->header()->is_neutral(), "invariant");
-      assert(oopDesc::bs()->resolve_oop(inf->object()) == object, "invariant");
+      assert(oopDesc::bs()->resolve_oop((oop) inf->object()) == object, "invariant");
       assert(ObjectSynchronizer::verify_objmon_isinpool(inf), "monitor is invalid");
       return inf;
     }

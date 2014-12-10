@@ -2508,7 +2508,7 @@ void InstanceKlass::set_source_debug_extension(char* array, int length) {
 }
 
 address InstanceKlass::static_field_addr(int offset) {
-  return (address)(offset + InstanceMirrorKlass::offset_of_static_fields() + cast_from_oop<intptr_t>(java_mirror()));
+  return (address)(offset + InstanceMirrorKlass::offset_of_static_fields() + cast_from_oop<intptr_t>(oopDesc::bs()->resolve_and_maybe_copy_oop(java_mirror())));
 }
 
 
