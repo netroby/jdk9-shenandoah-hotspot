@@ -4362,7 +4362,7 @@ void GraphKit::store_String_offset(Node* ctrl, Node* str, Node* value) {
   // TODO: Use incoming ctrl.
   str = shenandoah_write_barrier(str);
 
-  store_to_memory(control(), basic_plus_adr(str, offset_offset),
+  store_to_memory(UseShenandoahGC ? control() : ctrl, basic_plus_adr(str, offset_offset),
                   value, T_INT, offset_field_idx, MemNode::unordered);
 }
 
@@ -4377,7 +4377,7 @@ void GraphKit::store_String_value(Node* ctrl, Node* str, Node* value) {
   str = shenandoah_write_barrier(str);
   value = shenandoah_read_barrier(value);
 
-  store_oop_to_object(control(), str,  basic_plus_adr(str, value_offset), value_field_type,
+  store_oop_to_object(UseShenandoahGC ? control() : ctrl, str,  basic_plus_adr(str, value_offset), value_field_type,
       value, TypeAryPtr::CHARS, T_OBJECT, MemNode::unordered);
 }
 
@@ -4392,7 +4392,7 @@ void GraphKit::store_String_length(Node* ctrl, Node* str, Node* value) {
   // TODO: Use incoming ctrl.
   str = shenandoah_write_barrier(str);
 
-  store_to_memory(control(), basic_plus_adr(str, count_offset),
+  store_to_memory(UseShenandoahGC ? control() : ctrl, basic_plus_adr(str, count_offset),
                   value, T_INT, count_field_idx, MemNode::unordered);
 }
 
