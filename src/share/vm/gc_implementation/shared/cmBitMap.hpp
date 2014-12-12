@@ -93,7 +93,7 @@ class CMBitMap : public CMBitMapRO {
   inline bool parMark(HeapWord* addr);
   inline bool parClear(HeapWord* addr);
 
-  virtual void markRange(MemRegion mr);
+  void markRange(MemRegion mr);
   void parMarkRange(MemRegion mr);
   void clearRange(MemRegion mr);
 

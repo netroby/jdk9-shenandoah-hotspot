@@ -291,7 +291,7 @@ public:
                              size_t bytes_after,
                              size_t capacity);
 
-  virtual bool is_obj_ill(const oop obj);
+  virtual bool is_obj_ill(const oop obj) const;
 };
 
 inline SharedHeap::ScanningOption operator|(SharedHeap::ScanningOption so0, SharedHeap::ScanningOption so1) {

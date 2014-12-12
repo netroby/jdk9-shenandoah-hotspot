@@ -333,6 +333,6 @@ void SharedHeap::print_size_transition(outputStream* out,
              proper_unit_for_byte_size(capacity));
 }
 
-bool SharedHeap::is_obj_ill(const oop obj) {
+bool SharedHeap::is_obj_ill(const oop obj) const {
   return false;
 }

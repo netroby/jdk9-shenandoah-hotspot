@@ -225,7 +225,7 @@ public:
   ReferenceProcessor* _ref_processor_cm;
   bool is_marked_prev(oop obj) const;
 
-  bool is_obj_ill(const oop obj) {
+  bool is_obj_ill(const oop obj) const {
     return !isMarkedCurrent(obj);
   }
 
