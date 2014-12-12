@@ -2408,7 +2408,7 @@ JNI_ENTRY(void, jni_SetStatic##Result##Field(JNIEnv *env, jclass clazz, jfieldID
     JvmtiExport::jni_SetField_probe(thread, NULL, NULL, id->holder(), fieldID, true, SigType, (jvalue *)&field_value); \
   } \
   oop o = id->holder()->java_mirror(); \
-  oopDesc::bs()->resolve_and_maybe_copy_oop(o); \
+  o = oopDesc::bs()->resolve_and_maybe_copy_oop(o); \
   o-> Fieldname##_field_put (id->offset(), value); \
   ReturnProbe;\
 JNI_END
