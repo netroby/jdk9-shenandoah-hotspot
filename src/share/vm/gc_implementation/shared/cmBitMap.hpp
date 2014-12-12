@@ -93,7 +93,7 @@ class CMBitMap : public CMBitMapRO {
   inline bool parMark(HeapWord* addr);
   inline bool parClear(HeapWord* addr);
 
-  void markRange(MemRegion mr);
+  virtual void markRange(MemRegion mr);
   void parMarkRange(MemRegion mr);
   void clearRange(MemRegion mr);
 
@@ -107,7 +107,7 @@ class CMBitMap : public CMBitMapRO {
   MemRegion getAndClearMarkedRegion(HeapWord* addr, HeapWord* end_addr);
 
   // Clear the whole mark bitmap.
-  void clearAll();
+  virtual void clearAll();
 };
 
 #endif // SHARE_VM_GC_IMPLEMENTATION_SHARED_CMBITMAP_HPP
