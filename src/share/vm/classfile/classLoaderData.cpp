@@ -65,9 +65,8 @@
 #include "utilities/growableArray.hpp"
 #include "utilities/macros.hpp"
 #include "utilities/ostream.hpp"
-
 #if INCLUDE_TRACE
- #include "trace/tracing.hpp"
+#include "trace/tracing.hpp"
 #endif
 
 ClassLoaderData * ClassLoaderData::_the_null_class_loader_data = NULL;
@@ -82,7 +81,8 @@ ClassLoaderData::ClassLoaderData(Handle h_class_loader, bool is_anonymous, Depen
   _metaspace(NULL), _unloading(false), _klasses(NULL),
   _claimed(0), _jmethod_ids(NULL), _handles(NULL), _deallocate_list(NULL),
   _next(NULL), _dependencies(dependencies),
-  _metaspace_lock(new Mutex(Monitor::leaf+1, "Metaspace allocation lock", true)) {
+  _metaspace_lock(new Mutex(Monitor::leaf+1, "Metaspace allocation lock", true,
+                            Monitor::_safepoint_check_never)) {
     // empty
 }
 
@@ -472,7 +472,7 @@ void ClassLoaderData::free_deallocate_list() {
 // These anonymous class loaders are to contain classes used for JSR292
 ClassLoaderData* ClassLoaderData::anonymous_class_loader_data(oop loader, TRAPS) {
   // Add a new class loader data to the graph.
-  return ClassLoaderDataGraph::add(loader, true, CHECK_NULL);
+  return ClassLoaderDataGraph::add(loader, true, THREAD);
 }
 
 const char* ClassLoaderData::loader_name() {
@@ -978,4 +978,4 @@ void ClassLoaderDataGraph::class_unload_event(Klass* const k) {
   event.commit();
 }
 
-#endif /* INCLUDE_TRACE */
+#endif // INCLUDE_TRACE

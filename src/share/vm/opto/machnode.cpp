@@ -473,8 +473,13 @@ bool MachNode::rematerialize() const {
 // Print any per-operand special info
 void MachNode::dump_spec(outputStream *st) const {
   uint cnt = num_opnds();
-  for( uint i=0; i<cnt; i++ )
-    _opnds[i]->dump_spec(st);
+  for( uint i=0; i<cnt; i++ ) {
+    if (_opnds[i] != NULL) {
+      _opnds[i]->dump_spec(st);
+    } else {
+      st->print(" _");
+    }
+  }
   const TypePtr *t = adr_type();
   if( t ) {
     Compile* C = Compile::current();
@@ -493,7 +498,11 @@ void MachNode::dump_format(PhaseRegAlloc *ra, outputStream *st) const {
 //=============================================================================
 #ifndef PRODUCT
 void MachTypeNode::dump_spec(outputStream *st) const {
-  _bottom_type->dump_on(st);
+  if (_bottom_type != NULL) {
+    _bottom_type->dump_on(st);
+  } else {
+    st->print(" NULL");
+  }
 }
 #endif
 
@@ -561,7 +570,9 @@ const Type *MachProjNode::bottom_type() const {
 const TypePtr *MachProjNode::adr_type() const {
   if (bottom_type() == Type::MEMORY) {
     // in(0) might be a narrow MemBar; otherwise we will report TypePtr::BOTTOM
-    const TypePtr* adr_type = in(0)->adr_type();
+    Node* ctrl = in(0);
+    if (ctrl == NULL)  return NULL; // node is dead
+    const TypePtr* adr_type = ctrl->adr_type();
     #ifdef ASSERT
     if (!is_error_reported() && !Node::in_dump())
       assert(adr_type != NULL, "source must have adr_type");
@@ -633,7 +644,7 @@ const Type *MachCallNode::Value(PhaseTransform *phase) const { return tf()->rang
 #ifndef PRODUCT
 void MachCallNode::dump_spec(outputStream *st) const {
   st->print("# ");
-  tf()->dump_on(st);
+  if (tf() != NULL)  tf()->dump_on(st);
   if (_cnt != COUNT_UNKNOWN)  st->print(" C=%f",_cnt);
   if (jvms() != NULL)  jvms()->dump_spec(st);
 }

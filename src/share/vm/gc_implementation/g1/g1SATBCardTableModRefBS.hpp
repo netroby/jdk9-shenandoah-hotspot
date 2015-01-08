@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2001, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2001, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -37,7 +37,7 @@ class G1SATBCardTableLoggingModRefBS;
 // This barrier is specialized to use a logging barrier to support
 // snapshot-at-the-beginning marking.
 
-class G1SATBCardTableModRefBS: public CardTableModRefBSForCTRS {
+class G1SATBCardTableModRefBS: public CardTableModRefBS {
 protected:
   enum G1CardValues {
     g1_young_gen = CT_MR_BS_last_reserved << 1
@@ -50,8 +50,7 @@ public:
   // pre-marking object graph.
   static void enqueue(oop pre_val);
 
-  G1SATBCardTableModRefBS(MemRegion whole_heap,
-                          int max_covered_regions);
+  G1SATBCardTableModRefBS(MemRegion whole_heap);
 
   bool is_a(BarrierSet::Name bsn) {
     return bsn == BarrierSet::G1SATBCT || CardTableModRefBS::is_a(bsn);
@@ -152,8 +151,7 @@ class G1SATBCardTableLoggingModRefBS: public G1SATBCardTableModRefBS {
     return ReservedSpace::allocation_align_size_up(number_of_slots);
   }
 
-  G1SATBCardTableLoggingModRefBS(MemRegion whole_heap,
-                                 int max_covered_regions);
+  G1SATBCardTableLoggingModRefBS(MemRegion whole_heap);
 
   virtual void initialize() { }
   virtual void initialize(G1RegionToSpaceMapper* mapper);

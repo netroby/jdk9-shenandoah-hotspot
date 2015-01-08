@@ -175,8 +175,8 @@ GCStatInfo::GCStatInfo(int num_pools) {
 }
 
 GCStatInfo::~GCStatInfo() {
-  FREE_C_HEAP_ARRAY(MemoryUsage*, _before_gc_usage_array, mtInternal);
-  FREE_C_HEAP_ARRAY(MemoryUsage*, _after_gc_usage_array, mtInternal);
+  FREE_C_HEAP_ARRAY(MemoryUsage*, _before_gc_usage_array);
+  FREE_C_HEAP_ARRAY(MemoryUsage*, _after_gc_usage_array);
 }
 
 void GCStatInfo::set_gc_usage(int pool_index, MemoryUsage usage, bool before_gc) {
@@ -202,7 +202,8 @@ void GCStatInfo::clear() {
 GCMemoryManager::GCMemoryManager() : MemoryManager() {
   _num_collections = 0;
   _last_gc_stat = NULL;
-  _last_gc_lock = new Mutex(Mutex::leaf, "_last_gc_lock", true);
+  _last_gc_lock = new Mutex(Mutex::leaf, "_last_gc_lock", true,
+                            Monitor::_safepoint_check_never);
   _current_gc_stat = NULL;
   _num_gc_threads = 1;
   _notification_enabled = false;

@@ -88,7 +88,8 @@ static void _sltLoop(JavaThread* thread, TRAPS) {
 
 SurrogateLockerThread::SurrogateLockerThread() :
   JavaThread(&_sltLoop),
-  _monitor(Mutex::nonleaf, "SLTMonitor"),
+  _monitor(Mutex::nonleaf, "SLTMonitor", false,
+           Monitor::_safepoint_check_sometimes),
   _buffer(empty)
 {}
 
@@ -136,6 +137,13 @@ SurrogateLockerThread* SurrogateLockerThread::make(TRAPS) {
   }
   os::naked_yield(); // This seems to help with initial start-up of SLT
   return res;
+}
+
+void SurrogateLockerThread::report_missing_slt() {
+  vm_exit_during_initialization(
+    "GC before GC support fully initialized: "
+    "SLT is needed but has not yet been created.");
+  ShouldNotReachHere();
 }
 
 void SurrogateLockerThread::manipulatePLL(SLT_msg_type msg) {

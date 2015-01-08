@@ -46,7 +46,8 @@ AbstractWorkGang::AbstractWorkGang(const char* name,
   // Other initialization.
   _monitor = new Monitor(/* priority */       Mutex::leaf,
                          /* name */           "WorkGroup monitor",
-                         /* allow_vm_block */ are_GC_task_threads);
+                         /* allow_vm_block */ are_GC_task_threads,
+                                              Monitor::_safepoint_check_sometimes);
   assert(monitor() != NULL, "Failed to allocate monitor");
   _terminate = false;
   _task = NULL;
@@ -378,12 +379,13 @@ const char* AbstractGangTask::name() const {
 // *** WorkGangBarrierSync
 
 WorkGangBarrierSync::WorkGangBarrierSync()
-  : _monitor(Mutex::safepoint, "work gang barrier sync", true),
+  : _monitor(Mutex::safepoint, "work gang barrier sync", true,
+             Monitor::_safepoint_check_never),
     _n_workers(0), _n_completed(0), _should_reset(false), _aborted(false) {
 }
 
 WorkGangBarrierSync::WorkGangBarrierSync(uint n_workers, const char* name)
-  : _monitor(Mutex::safepoint, name, true),
+  : _monitor(Mutex::safepoint, name, true, Monitor::_safepoint_check_never),
     _n_workers(n_workers), _n_completed(0), _should_reset(false), _aborted(false) {
 }
 
@@ -489,7 +491,7 @@ void SubTasksDone::all_tasks_completed() {
 
 
 SubTasksDone::~SubTasksDone() {
-  if (_tasks != NULL) FREE_C_HEAP_ARRAY(jint, _tasks, mtInternal);
+  if (_tasks != NULL) FREE_C_HEAP_ARRAY(jint, _tasks);
 }
 
 // *** SequentialSubTasksDone
@@ -560,7 +562,7 @@ FreeIdSet::FreeIdSet(int sz, Monitor* mon) :
 
 FreeIdSet::~FreeIdSet() {
   _sets[_index] = NULL;
-  FREE_C_HEAP_ARRAY(int, _ids, mtInternal);
+  FREE_C_HEAP_ARRAY(int, _ids);
 }
 
 void FreeIdSet::set_safepoint(bool b) {

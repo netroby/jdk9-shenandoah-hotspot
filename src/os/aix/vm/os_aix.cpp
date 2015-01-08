@@ -107,6 +107,12 @@
 #include <sys/vminfo.h>
 #include <sys/wait.h>
 
+// If RUSAGE_THREAD for getrusage() has not been defined, do it here. The code calling
+// getrusage() is prepared to handle the associated failure.
+#ifndef RUSAGE_THREAD
+#define RUSAGE_THREAD   (1)               /* only the calling thread */
+#endif
+
 // Add missing declarations (should be in procinfo.h but isn't until AIX 6.1).
 #if !defined(_AIXVERSION_610)
 extern "C" {
@@ -116,12 +122,6 @@ extern "C" {
                  tid64_t* IndexPointer,
                  int Count);
 }
-#endif
-
-// Excerpts from systemcfg.h definitions newer than AIX 5.3
-#ifndef PV_7
-# define PV_7 0x200000          // Power PC 7
-# define PV_7_Compat 0x208000   // Power PC 7
 #endif
 
 #define MAX_PATH (2 * K)
@@ -134,16 +134,39 @@ extern "C" {
 #define ERROR_MP_VMGETINFO_FAILED                    102
 #define ERROR_MP_VMGETINFO_CLAIMS_NO_SUPPORT_FOR_64K 103
 
-// the semantics in this file are thus that codeptr_t is a *real code ptr*
+// The semantics in this file are thus that codeptr_t is a *real code ptr*.
 // This means that any function taking codeptr_t as arguments will assume
 // a real codeptr and won't handle function descriptors (eg getFuncName),
 // whereas functions taking address as args will deal with function
-// descriptors (eg os::dll_address_to_library_name)
+// descriptors (eg os::dll_address_to_library_name).
 typedef unsigned int* codeptr_t;
 
-// typedefs for stackslots, stack pointers, pointers to op codes
+// Typedefs for stackslots, stack pointers, pointers to op codes.
 typedef unsigned long stackslot_t;
 typedef stackslot_t* stackptr_t;
+
+// Excerpts from systemcfg.h definitions newer than AIX 5.3.
+#ifndef PV_7
+#define PV_7 0x200000          /* Power PC 7 */
+#define PV_7_Compat 0x208000   /* Power PC 7 */
+#endif
+#ifndef PV_8
+#define PV_8 0x300000          /* Power PC 8 */
+#define PV_8_Compat 0x308000   /* Power PC 8 */
+#endif
+
+#define trcVerbose(fmt, ...) { /* PPC port */  \
+  if (Verbose) { \
+    fprintf(stderr, fmt, ##__VA_ARGS__); \
+    fputc('\n', stderr); fflush(stderr); \
+  } \
+}
+#define trc(fmt, ...)        /* PPC port */
+
+#define ERRBYE(s) { \
+    trcVerbose(s); \
+    return -1; \
+}
 
 // query dimensions of the stack of the calling thread
 static void query_stack_dimensions(address* p_stack_base, size_t* p_stack_size);
@@ -176,12 +199,12 @@ inline bool is_valid_codepointer(codeptr_t p) {
   return true;
 }
 
-// macro to check a given stack pointer against given stack limits and to die if test fails
+// Macro to check a given stack pointer against given stack limits and to die if test fails.
 #define CHECK_STACK_PTR(sp, stack_base, stack_size) { \
     guarantee(is_valid_stackpointer((stackptr_t)(sp), (stackptr_t)(stack_base), stack_size), "Stack Pointer Invalid"); \
 }
 
-// macro to check the current stack pointer against given stacklimits
+// Macro to check the current stack pointer against given stacklimits.
 #define CHECK_CURRENT_STACK_PTR(stack_base, stack_size) { \
   address sp; \
   sp = os::current_stack_pointer(); \
@@ -215,7 +238,7 @@ static bool     check_signals      = true;
 static pid_t    _initial_pid       = 0;
 static int      SR_signum          = SIGUSR2; // Signal used to suspend/resume a thread (must be > SIGSEGV, see 4355769)
 static sigset_t SR_sigset;
-static pthread_mutex_t dl_mutex;           // Used to protect dlsym() calls */
+static pthread_mutex_t dl_mutex;              // Used to protect dlsym() calls.
 
 julong os::available_memory() {
   return Aix::available_memory();
@@ -247,7 +270,6 @@ bool os::getenv(const char* name, char* buf, int len) {
   return false;
 }
 
-
 // Return true if user is running as root.
 
 bool os::have_special_privileges() {
@@ -278,8 +300,7 @@ static bool my_disclaim64(char* addr, size_t size) {
 
   for (int i = 0; i < numFullDisclaimsNeeded; i ++) {
     if (::disclaim(p, maxDisclaimSize, DISCLAIM_ZEROMEM) != 0) {
-      //if (Verbose)
-      fprintf(stderr, "Cannot disclaim %p - %p (errno %d)\n", p, p + maxDisclaimSize, errno);
+      trc("Cannot disclaim %p - %p (errno %d)\n", p, p + maxDisclaimSize, errno);
       return false;
     }
     p += maxDisclaimSize;
@@ -287,8 +308,7 @@ static bool my_disclaim64(char* addr, size_t size) {
 
   if (lastDisclaimSize > 0) {
     if (::disclaim(p, lastDisclaimSize, DISCLAIM_ZEROMEM) != 0) {
-      //if (Verbose)
-        fprintf(stderr, "Cannot disclaim %p - %p (errno %d)\n", p, p + lastDisclaimSize, errno);
+      trc("Cannot disclaim %p - %p (errno %d)\n", p, p + lastDisclaimSize, errno);
       return false;
     }
   }
@@ -328,11 +348,11 @@ pid_t os::Aix::gettid() {
 
 void os::Aix::initialize_system_info() {
 
-  // get the number of online(logical) cpus instead of configured
+  // Get the number of online(logical) cpus instead of configured.
   os::_processor_count = sysconf(_SC_NPROCESSORS_ONLN);
   assert(_processor_count > 0, "_processor_count must be > 0");
 
-  // retrieve total physical storage
+  // Retrieve total physical storage.
   os::Aix::meminfo_t mi;
   if (!os::Aix::get_meminfo(&mi)) {
     fprintf(stderr, "os::Aix::get_meminfo failed.\n"); fflush(stderr);
@@ -507,7 +527,6 @@ query_multipage_support_end:
 
 } // end os::Aix::query_multipage_support()
 
-// The code for this method was initially derived from the version in os_linux.cpp.
 void os::init_system_properties_values() {
 
 #define DEFAULT_LIBPATH "/usr/lib:/lib"
@@ -563,13 +582,13 @@ void os::init_system_properties_values() {
   char *ld_library_path = (char *)NEW_C_HEAP_ARRAY(char, strlen(v) + 1 + sizeof(DEFAULT_LIBPATH) + 1, mtInternal);
   sprintf(ld_library_path, "%s%s" DEFAULT_LIBPATH, v, v_colon);
   Arguments::set_library_path(ld_library_path);
-  FREE_C_HEAP_ARRAY(char, ld_library_path, mtInternal);
+  FREE_C_HEAP_ARRAY(char, ld_library_path);
 
   // Extensions directories.
   sprintf(buf, "%s" EXTENSIONS_DIR, Arguments::get_java_home());
   Arguments::set_ext_dirs(buf);
 
-  FREE_C_HEAP_ARRAY(char, buf, mtInternal);
+  FREE_C_HEAP_ARRAY(char, buf);
 
 #undef DEFAULT_LIBPATH
 #undef EXTENSIONS_DIR
@@ -597,10 +616,11 @@ bool os::Aix::is_sig_ignored(int sig) {
   sigaction(sig, (struct sigaction*)NULL, &oact);
   void* ohlr = oact.sa_sigaction ? CAST_FROM_FN_PTR(void*, oact.sa_sigaction)
     : CAST_FROM_FN_PTR(void*, oact.sa_handler);
-  if (ohlr == CAST_FROM_FN_PTR(void*, SIG_IGN))
+  if (ohlr == CAST_FROM_FN_PTR(void*, SIG_IGN)) {
     return true;
-  else
+  } else {
     return false;
+  }
 }
 
 void os::Aix::signal_sets_init() {
@@ -774,6 +794,9 @@ bool os::Aix::get_cpuinfo(cpuinfo_t* pci) {
 
   // get the processor version from _system_configuration
   switch (_system_configuration.version) {
+  case PV_8:
+    strcpy(pci->version, "Power PC 8");
+    break;
   case PV_7:
     strcpy(pci->version, "Power PC 7");
     break;
@@ -800,6 +823,9 @@ bool os::Aix::get_cpuinfo(cpuinfo_t* pci) {
     break;
   case PV_7_Compat:
     strcpy(pci->version, "PV_7_Compat");
+    break;
+  case PV_8_Compat:
+    strcpy(pci->version, "PV_8_Compat");
     break;
   default:
     strcpy(pci->version, "unknown");
@@ -936,7 +962,9 @@ bool os::create_thread(Thread* thread, ThreadType thr_type, size_t stack_size) {
 
   pthread_attr_destroy(&attr);
 
-  if (ret != 0) {
+  if (ret == 0) {
+    // PPC port traceOsMisc(("Created New Thread : pthread-id %u", tid));
+  } else {
     if (PrintMiscellaneous && (Verbose || WizardMode)) {
       perror("pthread_create()");
     }
@@ -1065,15 +1093,19 @@ jlong os::elapsed_frequency() {
   return (1000 * 1000);
 }
 
-// For now, we say that linux does not support vtime. I have no idea
-// whether it can actually be made to (DLD, 9/13/05).
-
-bool os::supports_vtime() { return false; }
+bool os::supports_vtime() { return true; }
 bool os::enable_vtime()   { return false; }
 bool os::vtime_enabled()  { return false; }
+
 double os::elapsedVTime() {
-  // better than nothing, but not much
-  return elapsedTime();
+  struct rusage usage;
+  int retval = getrusage(RUSAGE_THREAD, &usage);
+  if (retval == 0) {
+    return usage.ru_utime.tv_sec + usage.ru_stime.tv_sec + (usage.ru_utime.tv_usec + usage.ru_stime.tv_usec) / (1000.0 * 1000);
+  } else {
+    // better than nothing, but not much
+    return elapsedTime();
+  }
 }
 
 jlong os::javaTimeMillis() {
@@ -1093,8 +1125,7 @@ jlong os::javaTimeNanos() {
   if (os::Aix::on_pase()) {
     Unimplemented();
     return 0;
-  }
-  else {
+  } else {
     // On AIX use the precision of processors real time clock
     // or time base registers.
     timebasestruct_t time;
@@ -1142,7 +1173,6 @@ bool os::getTimesSecs(double* process_real_time,
   }
 }
 
-
 char * os::local_time_string(char *buf, size_t buflen) {
   struct tm t;
   time_t long_time;
@@ -1180,7 +1210,6 @@ void os::shutdown() {
   if (abort_hook != NULL) {
     abort_hook();
   }
-
 }
 
 // Note: os::abort() might be called very early during initialization, or
@@ -1212,8 +1241,7 @@ void os::die() {
 // from src/solaris/hpi/src/system_md.c
 
 size_t os::lasterror(char *buf, size_t len) {
-
-  if (errno == 0)  return 0;
+  if (errno == 0) return 0;
 
   const char *s = ::strerror(errno);
   size_t n = ::strlen(s);
@@ -1226,6 +1254,7 @@ size_t os::lasterror(char *buf, size_t len) {
 }
 
 intx os::current_thread_id() { return (intx)pthread_self(); }
+
 int os::current_process_id() {
 
   // This implementation returns a unique pid, the pid of the
@@ -1290,11 +1319,11 @@ bool os::dll_build_name(char* buffer, size_t buflen,
     // release the storage
     for (int i = 0; i < n; i++) {
       if (pelements[i] != NULL) {
-        FREE_C_HEAP_ARRAY(char, pelements[i], mtInternal);
+        FREE_C_HEAP_ARRAY(char, pelements[i]);
       }
     }
     if (pelements != NULL) {
-      FREE_C_HEAP_ARRAY(char*, pelements, mtInternal);
+      FREE_C_HEAP_ARRAY(char*, pelements);
     }
   } else {
     snprintf(buffer, buflen, "%s/lib%s.so", pname, fname);
@@ -1362,9 +1391,9 @@ bool os::dll_address_to_function_name(address addr, char *buf,
   if (offset) {
     *offset = -1;
   }
-  if (buf) {
-    buf[0] = '\0';
-  }
+  // Buf is not optional, but offset is optional.
+  assert(buf != NULL, "sanity check");
+  buf[0] = '\0';
 
   // Resolve function ptr literals first.
   addr = resolve_function_descriptor_to_code_pointer(addr);
@@ -1397,12 +1426,9 @@ static int getModuleName(codeptr_t pc,                    // [in] program counte
     return 0;
   }
 
-  if (Verbose) {
-    fprintf(stderr, "pc outside any module");
-  }
+  trcVerbose("pc outside any module");
 
   return -1;
-
 }
 
 bool os::dll_address_to_library_name(address addr, char* buf,
@@ -1410,9 +1436,9 @@ bool os::dll_address_to_library_name(address addr, char* buf,
   if (offset) {
     *offset = -1;
   }
-  if (buf) {
-      buf[0] = '\0';
-  }
+  // Buf is not optional, but offset is optional.
+  assert(buf != NULL, "sanity check");
+  buf[0] = '\0';
 
   // Resolve function ptr literals first.
   addr = resolve_function_descriptor_to_code_pointer(addr);
@@ -1427,7 +1453,7 @@ bool os::dll_address_to_library_name(address addr, char* buf,
 }
 
 // Loads .dll/.so and in case of error it checks if .dll/.so was built
-// for the same architecture as Hotspot is running on
+// for the same architecture as Hotspot is running on.
 void *os::dll_load(const char *filename, char *ebuf, int ebuflen) {
 
   if (ebuf && ebuflen > 0) {
@@ -1590,7 +1616,6 @@ void os::print_siginfo(outputStream* st, void* siginfo) {
   st->cr();
 }
 
-
 static void print_signal_handler(outputStream* st, int sig,
                                  char* buf, size_t buflen);
 
@@ -1614,7 +1639,7 @@ void os::print_signal_handlers(outputStream* st, char* buf, size_t buflen) {
 
 static char saved_jvm_path[MAXPATHLEN] = {0};
 
-// Find the full path to the current module, libjvm.so or libjvm_g.so
+// Find the full path to the current module, libjvm.so.
 void os::jvm_path(char *buf, jint buflen) {
   // Error checking.
   if (buflen < MAXPATHLEN) {
@@ -1685,7 +1710,7 @@ void* os::signal(int signal_number, void* handler) {
   // Do not block out synchronous signals in the signal handler.
   // Blocking synchronous signals only makes sense if you can really
   // be sure that those signals won't happen during signal handling,
-  // when the blocking applies.  Normal signal handlers are lean and
+  // when the blocking applies. Normal signal handlers are lean and
   // do not cause signals. But our signal handlers tend to be "risky"
   // - secondary SIGSEGV, SIGILL, SIGBUS' may and do happen.
   // On AIX, PASE there was a case where a SIGSEGV happened, followed
@@ -2851,13 +2876,9 @@ OSReturn os::set_native_priority(Thread* thread, int newpri) {
   param.sched_priority = newpri;
   int ret = pthread_setschedparam(thr, policy, &param);
 
-  if (Verbose) {
-    if (ret == 0) {
-      fprintf(stderr, "changed priority of thread %d to %d\n", (int)thr, newpri);
-    } else {
-      fprintf(stderr, "Could not changed priority for thread %d to %d (error %d, %s)\n",
-              (int)thr, newpri, ret, strerror(ret));
-    }
+  if (ret != 0) {
+    trcVerbose("Could not change priority for thread %d to %d (error %d, %s)",
+        (int)thr, newpri, ret, strerror(ret));
   }
   return (ret == 0) ? OS_OK : OS_ERR;
 }
@@ -2977,7 +2998,6 @@ static void SR_handler(int sig, siginfo_t* siginfo, ucontext_t* context) {
 
   errno = old_errno;
 }
-
 
 static int SR_initialize() {
   struct sigaction act;
@@ -3177,7 +3197,6 @@ void javaSignalHandler(int sig, siginfo_t* info, void* uc) {
   JVM_handle_aix_signal(sig, info, uc, true);
 }
 
-
 // This boolean allows users to forward their own non-matching signals
 // to JVM_handle_aix_signal, harmlessly.
 bool os::Aix::signal_handlers_are_installed = false;
@@ -3371,7 +3390,7 @@ void os::Aix::install_signal_handlers() {
     set_signal_handler(SIGDANGER, true);
 
     if (libjsig_is_loaded) {
-      // Tell libjsig jvm finishes setting signal handlers
+      // Tell libjsig jvm finishes setting signal handlers.
       (*end_signal_setting)();
     }
 
@@ -3387,7 +3406,7 @@ void os::Aix::install_signal_handlers() {
         tty->print_cr("Info: AllowUserSignalHandlers is activated, all active signal checking is disabled");
         check_signals = false;
       }
-      // need to initialize check_signal_done
+      // Need to initialize check_signal_done.
       ::sigemptyset(&check_signal_done);
     }
   }
@@ -3461,7 +3480,6 @@ static void print_signal_handler(outputStream* st, int sig,
   st->cr();
 }
 
-
 #define DO_SIGNAL_CHECK(sig) \
   if (!sigismember(&check_signal_done, sig)) \
     os::Aix::check_signal_handler(sig)
@@ -3521,7 +3539,6 @@ void os::Aix::check_signal_handler(int sig) {
   address thisHandler = (act.sa_flags & SA_SIGINFO)
     ? CAST_FROM_FN_PTR(address, act.sa_sigaction)
     : CAST_FROM_FN_PTR(address, act.sa_handler);
-
 
   switch(sig) {
   case SIGSEGV:
@@ -3675,15 +3692,13 @@ void os::init(void) {
   pthread_mutex_init(&dl_mutex, NULL);
 }
 
-// this is called _after_ the global arguments have been parsed
+// This is called _after_ the global arguments have been parsed.
 jint os::init_2(void) {
 
-  if (Verbose) {
-    fprintf(stderr, "processor count: %d\n", os::_processor_count);
-    fprintf(stderr, "physical memory: %lu\n", Aix::_physical_memory);
-  }
+  trcVerbose("processor count: %d", os::_processor_count);
+  trcVerbose("physical memory: %lu", Aix::_physical_memory);
 
-  // initially build up the loaded dll map
+  // Initially build up the loaded dll map.
   LoadedLibraries::reload();
 
   const int page_size = Aix::page_size();
@@ -3733,7 +3748,7 @@ jint os::init_2(void) {
       }
 
       if (map_address != (address) MAP_FAILED) {
-        // map succeeded, but polling_page is not at wished address, unmap and continue.
+        // Map succeeded, but polling_page is not at wished address, unmap and continue.
         ::munmap(map_address, map_size);
         map_address = (address) MAP_FAILED;
       }
@@ -3787,7 +3802,7 @@ jint os::init_2(void) {
 
   // Make the stack size a multiple of the page size so that
   // the yellow/red zones can be guarded.
-  // note that this can be 0, if no default stacksize was set
+  // Note that this can be 0, if no default stacksize was set.
   JavaThread::set_stack_size_at_create(round_to(threadStackSizeInBytes, vm_page_size()));
 
   Aix::libpthread_init();
@@ -4078,7 +4093,6 @@ int os::open(const char *path, int oflag, int mode) {
   return fd;
 }
 
-
 // create binary file, rewriting existing file if required
 int os::create_binary_file(const char* path, bool rewrite_existing) {
   int oflags = O_WRONLY | O_CREAT;
@@ -4134,10 +4148,30 @@ int os::available(int fd, jlong *bytes) {
 char* os::pd_map_memory(int fd, const char* file_name, size_t file_offset,
                         char *addr, size_t bytes, bool read_only,
                         bool allow_exec) {
-  Unimplemented();
-  return NULL;
-}
+  int prot;
+  int flags = MAP_PRIVATE;
 
+  if (read_only) {
+    prot = PROT_READ;
+  } else {
+    prot = PROT_READ | PROT_WRITE;
+  }
+
+  if (allow_exec) {
+    prot |= PROT_EXEC;
+  }
+
+  if (addr != NULL) {
+    flags |= MAP_FIXED;
+  }
+
+  char* mapped_address = (char*)mmap(addr, (size_t)bytes, prot, flags,
+                                     fd, file_offset);
+  if (mapped_address == MAP_FAILED) {
+    return NULL;
+  }
+  return mapped_address;
+}
 
 // Remap a block of memory.
 char* os::pd_remap_memory(int fd, const char* file_name, size_t file_offset,
@@ -4186,14 +4220,14 @@ static bool thread_cpu_time_unchecked(Thread* thread, jlong* p_sys_time, jlong* 
   jlong sys_time = 0;
   jlong user_time = 0;
 
-  // reimplemented using getthrds64().
+  // Reimplemented using getthrds64().
   //
-  // goes like this:
+  // Works like this:
   // For the thread in question, get the kernel thread id. Then get the
   // kernel thread statistics using that id.
   //
   // This only works of course when no pthread scheduling is used,
-  // ie there is a 1:1 relationship to kernel threads.
+  // i.e. there is a 1:1 relationship to kernel threads.
   // On AIX, see AIXTHREAD_SCOPE variable.
 
   pthread_t pthtid = thread->osthread()->pthread_id();
@@ -4340,14 +4374,12 @@ void os::Aix::initialize_os_info() {
   memset(&uts, 0, sizeof(uts));
   strcpy(uts.sysname, "?");
   if (::uname(&uts) == -1) {
-    fprintf(stderr, "uname failed (%d)\n", errno);
+    trc("uname failed (%d)", errno);
     guarantee(0, "Could not determine whether we run on AIX or PASE");
   } else {
-    if (Verbose) {
-      fprintf(stderr,"uname says: sysname \"%s\" version \"%s\" release \"%s\" "
-              "node \"%s\" machine \"%s\"\n",
-              uts.sysname, uts.version, uts.release, uts.nodename, uts.machine);
-    }
+    trcVerbose("uname says: sysname \"%s\" version \"%s\" release \"%s\" "
+               "node \"%s\" machine \"%s\"\n",
+               uts.sysname, uts.version, uts.release, uts.nodename, uts.machine);
     const int major = atoi(uts.version);
     assert(major > 0, "invalid OS version");
     const int minor = atoi(uts.release);
@@ -4359,12 +4391,10 @@ void os::Aix::initialize_os_info() {
       // We run on AIX. We do not support versions older than AIX 5.3.
       _on_pase = 0;
       if (_os_version < 0x0503) {
-        fprintf(stderr, "AIX release older than AIX 5.3 not supported.\n");
+        trc("AIX release older than AIX 5.3 not supported.");
         assert(false, "AIX release too old.");
       } else {
-        if (Verbose) {
-          fprintf(stderr, "We run on AIX %d.%d\n", major, minor);
-        }
+        trcVerbose("We run on AIX %d.%d\n", major, minor);
       }
     } else {
       assert(false, "unknown OS");
@@ -4372,7 +4402,6 @@ void os::Aix::initialize_os_info() {
   }
 
   guarantee(_on_pase != -1 && _os_version, "Could not determine AIX/OS400 release");
-
 } // end: os::Aix::initialize_os_info()
 
 // Scan environment for important settings which might effect the VM.
@@ -4410,12 +4439,10 @@ void os::Aix::scan_environment() {
   // Note: Setting XPG_SUS_ENV in the process is too late. Must be set earlier (before
   // exec() ? before loading the libjvm ? ....)
   p = ::getenv("XPG_SUS_ENV");
-  if (Verbose) {
-    fprintf(stderr, "XPG_SUS_ENV=%s.\n", p ? p : "<unset>");
-  }
+  trcVerbose("XPG_SUS_ENV=%s.", p ? p : "<unset>");
   if (p && strcmp(p, "ON") == 0) {
     _xpg_sus_mode = 1;
-    fprintf(stderr, "Unsupported setting: XPG_SUS_ENV=ON\n");
+    trc("Unsupported setting: XPG_SUS_ENV=ON");
     // This is not supported. Worst of all, it changes behaviour of mmap MAP_FIXED to
     // clobber address ranges. If we ever want to support that, we have to do some
     // testing first.
@@ -4427,10 +4454,7 @@ void os::Aix::scan_environment() {
   // Switch off AIX internal (pthread) guard pages. This has
   // immediate effect for any pthread_create calls which follow.
   p = ::getenv("AIXTHREAD_GUARDPAGES");
-  if (Verbose) {
-    fprintf(stderr, "AIXTHREAD_GUARDPAGES=%s.\n", p ? p : "<unset>");
-    fprintf(stderr, "setting AIXTHREAD_GUARDPAGES=0.\n");
-  }
+  trcVerbose("AIXTHREAD_GUARDPAGES=%s.", p ? p : "<unset>");
   rc = ::putenv("AIXTHREAD_GUARDPAGES=0");
   guarantee(rc == 0, "");
 
@@ -4448,7 +4472,7 @@ void os::Aix::initialize_libperfstat() {
   assert(os::Aix::on_aix(), "AIX only");
 
   if (!libperfstat::init()) {
-    fprintf(stderr, "libperfstat initialization failed.\n");
+    trc("libperfstat initialization failed.");
     assert(false, "libperfstat initialization failed");
   } else {
     if (Verbose) {
@@ -4620,7 +4644,6 @@ static struct timespec* compute_abstime(timespec* abstime, jlong millis) {
   return abstime;
 }
 
-
 // Test-and-clear _Event, always leaves _Event set to 0, returns immediately.
 // Conceptually TryPark() should be equivalent to park(0).
 
@@ -4701,7 +4724,7 @@ int os::PlatformEvent::park(jlong millis) {
   while (_Event < 0) {
     status = pthread_cond_timedwait(_cond, _mutex, &abst);
     assert_status(status == 0 || status == ETIMEDOUT,
-          status, "cond_timedwait");
+                  status, "cond_timedwait");
     if (!FilterSpuriousWakeups) break;         // previous semantics
     if (status == ETIMEDOUT) break;
     // We consume and ignore EINTR and spurious wakeups.
@@ -4835,9 +4858,9 @@ void Parker::park(bool isAbsolute, jlong time) {
   // Optional fast-path check:
   // Return immediately if a permit is available.
   if (_counter > 0) {
-      _counter = 0;
-      OrderAccess::fence();
-      return;
+    _counter = 0;
+    OrderAccess::fence();
+    return;
   }
 
   Thread* thread = Thread::current();
@@ -4858,7 +4881,6 @@ void Parker::park(bool isAbsolute, jlong time) {
   if (time > 0) {
     unpackTime(&absTime, isAbsolute, time);
   }
-
 
   // Enter safepoint region
   // Beware of deadlocks such as 6317397.
@@ -4947,7 +4969,6 @@ void Parker::unpark() {
   }
 }
 
-
 extern char** environ;
 
 // Run the specified command in a separate process. Return its exit value,
@@ -4966,44 +4987,43 @@ int os::fork_and_exec(char* cmd) {
   } else if (pid == 0) {
     // child process
 
-    // try to be consistent with system(), which uses "/usr/bin/sh" on AIX
+    // Try to be consistent with system(), which uses "/usr/bin/sh" on AIX.
     execve("/usr/bin/sh", argv, environ);
 
     // execve failed
     _exit(-1);
 
-  } else  {
+  } else {
     // copied from J2SE ..._waitForProcessExit() in UNIXProcess_md.c; we don't
     // care about the actual exit code, for now.
 
     int status;
 
-    // Wait for the child process to exit.  This returns immediately if
+    // Wait for the child process to exit. This returns immediately if
     // the child has already exited. */
     while (waitpid(pid, &status, 0) < 0) {
-        switch (errno) {
+      switch (errno) {
         case ECHILD: return 0;
         case EINTR: break;
         default: return -1;
-        }
+      }
     }
 
     if (WIFEXITED(status)) {
-       // The child exited normally; get its exit code.
-       return WEXITSTATUS(status);
+      // The child exited normally; get its exit code.
+      return WEXITSTATUS(status);
     } else if (WIFSIGNALED(status)) {
-       // The child exited because of a signal
-       // The best value to return is 0x80 + signal number,
-       // because that is what all Unix shells do, and because
-       // it allows callers to distinguish between process exit and
-       // process death by signal.
-       return 0x80 + WTERMSIG(status);
+      // The child exited because of a signal.
+      // The best value to return is 0x80 + signal number,
+      // because that is what all Unix shells do, and because
+      // it allows callers to distinguish between process exit and
+      // process death by signal.
+      return 0x80 + WTERMSIG(status);
     } else {
-       // Unknown exit code; pass it through
-       return status;
+      // Unknown exit code; pass it through.
+      return status;
     }
   }
-  // Remove warning.
   return -1;
 }
 
@@ -5018,7 +5038,7 @@ bool os::is_headless_jre() {
   struct stat statbuf;
   char buf[MAXPATHLEN];
   char libmawtpath[MAXPATHLEN];
-  const char *xawtstr  = "/xawt/libmawt.so";
+  const char *xawtstr = "/xawt/libmawt.so";
   const char *new_xawtstr = "/libawt_xawt.so";
 
   char *p;
@@ -5058,6 +5078,9 @@ int os::get_core_path(char* buffer, size_t bufferSize) {
     assert(p != NULL, "failed to get current directory");
     return 0;
   }
+
+  jio_snprintf(buffer, bufferSize, "%s/core or core.%d",
+                                               p, current_process_id());
 
   return strlen(buffer);
 }

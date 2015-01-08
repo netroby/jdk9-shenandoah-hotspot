@@ -2055,7 +2055,6 @@ bool PSParallelCompact::invoke_no_policy(bool maximum_heap_compaction) {
     gc_task_manager()->task_idle_workers();
     heap->set_par_threads(gc_task_manager()->active_workers());
 
-    gclog_or_tty->date_stamp(PrintGC && PrintGCDateStamps);
     TraceCPUTime tcpu(PrintGCDetails, true, gclog_or_tty);
     GCTraceTime t1(GCCauseString("Full GC", gc_cause), PrintGC, !PrintGCDetails, NULL, _gc_tracer.gc_id());
     TraceCollectorStats tcs(counters());
@@ -2070,7 +2069,7 @@ bool PSParallelCompact::invoke_no_policy(bool maximum_heap_compaction) {
 
     COMPILER2_PRESENT(DerivedPointerTable::clear());
 
-    ref_processor()->enable_discovery(true /*verify_disabled*/, true /*verify_no_refs*/);
+    ref_processor()->enable_discovery();
     ref_processor()->setup_policy(maximum_heap_compaction);
 
     bool marked_for_unloading = false;

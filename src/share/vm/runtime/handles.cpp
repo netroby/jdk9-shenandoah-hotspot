@@ -182,11 +182,11 @@ void* HandleMark::operator new [] (size_t size) throw() {
 }
 
 void HandleMark::operator delete(void* p) {
-  FreeHeap(p, mtThread);
+  FreeHeap(p);
 }
 
 void HandleMark::operator delete[](void* p) {
-  FreeHeap(p, mtThread);
+  FreeHeap(p);
 }
 
 #ifdef ASSERT

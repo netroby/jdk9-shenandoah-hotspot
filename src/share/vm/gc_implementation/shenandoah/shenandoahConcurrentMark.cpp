@@ -59,7 +59,7 @@ public:
     for (uint i = 0; i < _heap->num_regions(); i++) {
       regions[i]->increase_live_data(_live_data[i]);
     }
-    FREE_C_HEAP_ARRAY(size_t, _live_data, mtGC);
+    FREE_C_HEAP_ARRAY(size_t, _live_data);
   }
 
   void do_object(oop obj) {
@@ -397,7 +397,7 @@ void ShenandoahConcurrentMark::mark_from_roots(bool update_refs, bool full_gc) {
   ReferenceProcessor* rp = sh->ref_processor_cm();
   
   // enable ("weak") refs discovery
-  rp->enable_discovery(true /*verify_disabled*/, true /*verify_no_refs*/);
+  rp->enable_discovery(true /*verify_no_refs*/);
   rp->setup_policy(false); // snapshot the soft ref policy to be used in this cycle
 
   

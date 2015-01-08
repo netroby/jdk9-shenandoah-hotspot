@@ -36,7 +36,7 @@ ShenandoahHeapRegionSet::ShenandoahHeapRegionSet(size_t max_regions, ShenandoahH
 }
 
 ShenandoahHeapRegionSet::~ShenandoahHeapRegionSet() {
-  FREE_C_HEAP_ARRAY(ShenandoahHeapRegion*, _regions, mtGC);
+  FREE_C_HEAP_ARRAY(ShenandoahHeapRegion*, _regions);
 }
 
 int compareHeapRegionsByGarbage(ShenandoahHeapRegion* a, ShenandoahHeapRegion* b) {
@@ -183,7 +183,7 @@ void ShenandoahHeapRegionSet::choose_collection_set(ShenandoahHeapRegion** regio
     r++;
   }
 
-  FREE_C_HEAP_ARRAY(ShenandoahHeapRegion*, tmp, mtGC);
+  FREE_C_HEAP_ARRAY(ShenandoahHeapRegion*, tmp);
 
 }
 
@@ -215,7 +215,7 @@ void ShenandoahHeapRegionSet::choose_collection_set_min_garbage(ShenandoahHeapRe
     r++;
   }
 
-  FREE_C_HEAP_ARRAY(ShenandoahHeapRegion*, tmp, mtGC);
+  FREE_C_HEAP_ARRAY(ShenandoahHeapRegion*, tmp);
 
   /*
   tty->print_cr("choosen region with "SIZE_FORMAT" garbage given "SIZE_FORMAT" min_garbage", garbage, min_garbage);

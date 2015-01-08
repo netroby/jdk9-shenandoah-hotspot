@@ -26,6 +26,7 @@
 #define SHARE_VM_GC_IMPLEMENTATION_G1_G1COLLECTORPOLICY_HPP
 
 #include "gc_implementation/g1/collectionSetChooser.hpp"
+#include "gc_implementation/g1/g1Allocator.hpp"
 #include "gc_implementation/g1/g1MMUTracker.hpp"
 #include "memory/collectorPolicy.hpp"
 
@@ -612,6 +613,10 @@ private:
                                           uint desired_min_length,
                                           uint desired_max_length);
 
+  // Calculate and return chunk size (in number of regions) for parallel
+  // concurrent mark cleanup.
+  uint calculate_parallel_work_chunk_size(uint n_workers, uint n_regions);
+
   // Check whether a given young length (young_length) fits into the
   // given target pause time and whether the prediction for the amount
   // of objects to be copied for the given length will fit into the
@@ -687,7 +692,7 @@ public:
 
   // Record start, end, and completion of cleanup.
   void record_concurrent_mark_cleanup_start();
-  void record_concurrent_mark_cleanup_end(int no_of_gc_threads);
+  void record_concurrent_mark_cleanup_end(uint n_workers);
   void record_concurrent_mark_cleanup_completed();
 
   // Records the information about the heap size for reporting in
@@ -803,7 +808,7 @@ public:
 
   // If an expansion would be appropriate, because recent GC overhead had
   // exceeded the desired limit, return an amount to expand by.
-  size_t expansion_amount();
+  virtual size_t expansion_amount();
 
   // Print tracing information.
   void print_tracing_info() const;
@@ -822,17 +827,9 @@ public:
 
   size_t young_list_target_length() const { return _young_list_target_length; }
 
-  bool is_young_list_full() {
-    uint young_list_length = _g1->young_list()->length();
-    uint young_list_target_length = _young_list_target_length;
-    return young_list_length >= young_list_target_length;
-  }
+  bool is_young_list_full();
 
-  bool can_expand_young_list() {
-    uint young_list_length = _g1->young_list()->length();
-    uint young_list_max_length = _young_list_max_length;
-    return young_list_length < young_list_max_length;
-  }
+  bool can_expand_young_list();
 
   uint young_list_max_length() {
     return _young_list_max_length;
@@ -884,28 +881,20 @@ private:
 public:
   uint tenuring_threshold() const { return _tenuring_threshold; }
 
-  inline GCAllocPurpose
-    evacuation_destination(HeapRegion* src_region, uint age, size_t word_sz) {
-      if (age < _tenuring_threshold && src_region->is_young()) {
-        return GCAllocForSurvived;
-      } else {
-        return GCAllocForTenured;
-      }
-  }
-
-  inline bool track_object_age(GCAllocPurpose purpose) {
-    return purpose == GCAllocForSurvived;
-  }
-
   static const uint REGIONS_UNLIMITED = (uint) -1;
 
-  uint max_regions(int purpose);
-
-  // The limit on regions for a particular purpose is reached.
-  void note_alloc_region_limit_reached(int purpose) {
-    if (purpose == GCAllocForSurvived) {
-      _tenuring_threshold = 0;
+  uint max_regions(InCSetState dest) {
+    switch (dest.value()) {
+      case InCSetState::Young:
+        return _max_survivor_regions;
+      case InCSetState::Old:
+        return REGIONS_UNLIMITED;
+      default:
+        assert(false, err_msg("Unknown dest state: " CSETSTATE_FORMAT, dest.value()));
+        break;
     }
+    // keep some compilers happy
+    return 0;
   }
 
   void note_start_adding_survivor_regions() {

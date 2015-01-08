@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2001, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2001, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -32,9 +32,8 @@
 #include "runtime/orderAccess.inline.hpp"
 #include "runtime/thread.inline.hpp"
 
-G1SATBCardTableModRefBS::G1SATBCardTableModRefBS(MemRegion whole_heap,
-                                                 int max_covered_regions) :
-    CardTableModRefBSForCTRS(whole_heap, max_covered_regions)
+G1SATBCardTableModRefBS::G1SATBCardTableModRefBS(MemRegion whole_heap) :
+    CardTableModRefBS(whole_heap)
 {
   _kind = G1SATBCT;
 }
@@ -132,9 +131,8 @@ void G1SATBCardTableLoggingModRefBSChangedListener::on_commit(uint start_idx, si
 }
 
 G1SATBCardTableLoggingModRefBS::
-G1SATBCardTableLoggingModRefBS(MemRegion whole_heap,
-                               int max_covered_regions) :
-  G1SATBCardTableModRefBS(whole_heap, max_covered_regions),
+G1SATBCardTableLoggingModRefBS(MemRegion whole_heap) :
+  G1SATBCardTableModRefBS(whole_heap),
   _dcqs(JavaThread::dirty_card_queue_set()),
   _listener()
 {

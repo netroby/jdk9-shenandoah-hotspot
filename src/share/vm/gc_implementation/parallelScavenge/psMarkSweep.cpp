@@ -168,7 +168,6 @@ bool PSMarkSweep::invoke_no_policy(bool clear_all_softrefs) {
   {
     HandleMark hm;
 
-    gclog_or_tty->date_stamp(PrintGC && PrintGCDateStamps);
     TraceCPUTime tcpu(PrintGCDetails, true, gclog_or_tty);
     GCTraceTime t1(GCCauseString("Full GC", gc_cause), PrintGC, !PrintGCDetails, NULL, _gc_tracer->gc_id());
     TraceCollectorStats tcs(counters());
@@ -196,7 +195,7 @@ bool PSMarkSweep::invoke_no_policy(bool clear_all_softrefs) {
 
     COMPILER2_PRESENT(DerivedPointerTable::clear());
 
-    ref_processor()->enable_discovery(true /*verify_disabled*/, true /*verify_no_refs*/);
+    ref_processor()->enable_discovery();
     ref_processor()->setup_policy(clear_all_softrefs);
 
     mark_sweep_phase1(clear_all_softrefs);

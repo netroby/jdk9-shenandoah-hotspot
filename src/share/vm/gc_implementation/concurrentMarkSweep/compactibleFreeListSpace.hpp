@@ -73,6 +73,13 @@ class CompactibleFreeListSpace: public CompactibleSpace {
   friend class CMSCollector;
   // Local alloc buffer for promotion into this space.
   friend class CFLS_LAB;
+  // Allow scan_and_* functions to call (private) overrides of the auxiliary functions on this class
+  template <typename SpaceType>
+  friend void CompactibleSpace::scan_and_adjust_pointers(SpaceType* space);
+  template <typename SpaceType>
+  friend void CompactibleSpace::scan_and_compact(SpaceType* space);
+  template <typename SpaceType>
+  friend void CompactibleSpace::scan_and_forward(SpaceType* space, CompactPoint* cp);
 
   // "Size" of chunks of work (executed during parallel remark phases
   // of CMS collection); this probably belongs in CMSCollector, although
@@ -147,6 +154,9 @@ class CompactibleFreeListSpace: public CompactibleSpace {
 
   // Used to keep track of limit of sweep for the space
   HeapWord* _sweep_limit;
+
+  // Used to make the young collector update the mod union table
+  MemRegionClosure* _preconsumptionDirtyCardClosure;
 
   // Support for compacting cms
   HeapWord* cross_threshold(HeapWord* start, HeapWord* end);
@@ -288,6 +298,28 @@ class CompactibleFreeListSpace: public CompactibleSpace {
     _bt.freed(start, size);
   }
 
+  // Auxiliary functions for scan_and_{forward,adjust_pointers,compact} support.
+  // See comments for CompactibleSpace for more information.
+  inline HeapWord* scan_limit() const {
+    return end();
+  }
+
+  inline bool scanned_block_is_obj(const HeapWord* addr) const {
+    return CompactibleFreeListSpace::block_is_obj(addr); // Avoid virtual call
+  }
+
+  inline size_t scanned_block_size(const HeapWord* addr) const {
+    return CompactibleFreeListSpace::block_size(addr); // Avoid virtual call
+  }
+
+  inline size_t adjust_obj_size(size_t size) const {
+    return adjustObjectSize(size);
+  }
+
+  inline size_t obj_size(const HeapWord* addr) const {
+    return adjustObjectSize(oop(addr)->size());
+  }
+
  protected:
   // Reset the indexed free list to its initial empty condition.
   void resetIndexedFreeListArray();
@@ -326,6 +358,14 @@ class CompactibleFreeListSpace: public CompactibleSpace {
   void initialize_sequential_subtasks_for_rescan(int n_threads);
   void initialize_sequential_subtasks_for_marking(int n_threads,
          HeapWord* low = NULL);
+
+  virtual MemRegionClosure* preconsumptionDirtyCardClosure() const {
+    return _preconsumptionDirtyCardClosure;
+  }
+
+  void setPreconsumptionDirtyCardClosure(MemRegionClosure* cl) {
+    _preconsumptionDirtyCardClosure = cl;
+  }
 
   // Space enquiries
   size_t used() const;
@@ -650,6 +690,9 @@ class CFLS_LAB : public CHeapObj<mtGC> {
   void get_from_global_pool(size_t word_sz, AdaptiveFreeList<FreeChunk>* fl);
 
 public:
+  static const int _default_dynamic_old_plab_size = 16;
+  static const int _default_static_old_plab_size  = 50;
+
   CFLS_LAB(CompactibleFreeListSpace* cfls);
 
   // Allocate and return a block of the given size, or else return NULL.

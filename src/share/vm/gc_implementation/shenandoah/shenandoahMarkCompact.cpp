@@ -235,6 +235,7 @@ public:
   }
   size_t do_object_careful_m(oop p, MemRegion mr) {
     Unimplemented();
+    return 0;
   }
 
   size_t do_object_careful(oop p) {

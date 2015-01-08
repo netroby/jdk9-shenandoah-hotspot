@@ -115,6 +115,7 @@ void ShenandoahBarrierSet::read_ref_field(void* v) {
 
 bool ShenandoahBarrierSet::read_ref_needs_barrier(void* v) {
   Unimplemented();
+  return false;
 }
 
 void ShenandoahBarrierSet::read_region(MemRegion mr) {
@@ -135,6 +136,7 @@ void ShenandoahBarrierSet::write_prim_field(HeapWord* hw, size_t s , juint x, ju
 
 bool ShenandoahBarrierSet::write_prim_needs_barrier(HeapWord* hw, size_t s, juint x, juint y) {
   Unimplemented();
+  return false;
 }
 
 bool ShenandoahBarrierSet::need_update_refs_barrier() {

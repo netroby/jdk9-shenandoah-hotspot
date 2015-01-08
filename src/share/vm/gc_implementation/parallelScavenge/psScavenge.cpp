@@ -330,7 +330,6 @@ bool PSScavenge::invoke_no_policy() {
     ResourceMark rm;
     HandleMark hm;
 
-    gclog_or_tty->date_stamp(PrintGC && PrintGCDateStamps);
     TraceCPUTime tcpu(PrintGCDetails, true, gclog_or_tty);
     GCTraceTime t1(GCCauseString("GC", gc_cause), PrintGC, !PrintGCDetails, NULL, _gc_tracer.gc_id());
     TraceCollectorStats tcs(counters());
@@ -363,7 +362,7 @@ bool PSScavenge::invoke_no_policy() {
 
     COMPILER2_PRESENT(DerivedPointerTable::clear());
 
-    reference_processor()->enable_discovery(true /*verify_disabled*/, true /*verify_no_refs*/);
+    reference_processor()->enable_discovery();
     reference_processor()->setup_policy(false);
 
     // We track how much was promoted to the next generation for

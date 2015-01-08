@@ -109,9 +109,32 @@ class ClearBitmapHRClosure : public HeapRegionClosure {
   }
 };
 
+class ParClearNextMarkBitmapTask : public AbstractGangTask {
+  ClearBitmapHRClosure* _cl;
+  HeapRegionClaimer     _hrclaimer;
+  bool                  _suspendible; // If the task is suspendible, workers must join the STS.
+
+public:
+  ParClearNextMarkBitmapTask(ClearBitmapHRClosure *cl, uint n_workers, bool suspendible) :
+      _cl(cl), _suspendible(suspendible), AbstractGangTask("Parallel Clear Bitmap Task"), _hrclaimer(n_workers) {}
+
+  void work(uint worker_id) {
+    if (_suspendible) {
+      SuspendibleThreadSet::join();
+    }
+    G1CollectedHeap::heap()->heap_region_par_iterate(_cl, worker_id, &_hrclaimer, true);
+    if (_suspendible) {
+      SuspendibleThreadSet::leave();
+    }
+  }
+};
+
 void G1CMBitMap::clearAll() {
+  G1CollectedHeap* g1h = G1CollectedHeap::heap();
   ClearBitmapHRClosure cl(NULL, this, false /* may_yield */);
-  G1CollectedHeap::heap()->heap_region_iterate(&cl);
+  uint n_workers = g1h->workers()->active_workers();
+  ParClearNextMarkBitmapTask task(&cl, n_workers, false);
+  g1h->workers()->run_task(&task);
   guarantee(cl.complete(), "Must have completed iteration.");
   return;
 }
@@ -757,7 +780,8 @@ void ConcurrentMark::clearNextBitmap() {
   guarantee(!g1h->mark_in_progress(), "invariant");
 
   ClearBitmapHRClosure cl(this, _nextMarkBitMap, true /* may_yield */);
-  g1h->heap_region_iterate(&cl);
+  ParClearNextMarkBitmapTask task(&cl, parallel_marking_threads(), true);
+  _parallel_workers->run_task(&task);
 
   // Clear the liveness counting data. If the marking has been aborted, the abort()
   // call already did that.
@@ -843,7 +867,7 @@ void ConcurrentMark::checkpointRootsInitialPost() {
   // Start Concurrent Marking weak-reference discovery.
   ReferenceProcessor* rp = g1h->ref_processor_cm();
   // enable ("weak") refs discovery
-  rp->enable_discovery(true /*verify_disabled*/, true /*verify_no_refs*/);
+  rp->enable_discovery();
   rp->setup_policy(false); // snapshot the soft ref policy to be used in this cycle
 
   SATBMarkQueueSet& satb_mq_set = JavaThread::satb_mark_queue_set();
@@ -1995,6 +2019,7 @@ void ConcurrentMark::cleanup() {
   // We reclaimed old regions so we should calculate the sizes to make
   // sure we update the old gen/space data.
   g1h->g1mm()->update_sizes();
+  g1h->allocation_context_stats().update_after_mark();
 
   g1h->trace_heap_after_concurrent_cycle();
 }
@@ -3115,7 +3140,6 @@ void ConcurrentMark::aggregate_count_data() {
   _g1h->set_par_threads(n_workers);
   _g1h->workers()->run_task(&g1_par_agg_task);
   _g1h->set_par_threads(0);
-  _g1h->allocation_context_stats().update_at_remark();
 }
 
 // Clear the per-worker arrays used to store the per-region counting data

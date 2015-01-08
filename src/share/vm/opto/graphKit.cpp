@@ -1159,7 +1159,7 @@ Node* GraphKit::load_object_klass(Node* obj) {
     obj = shenandoah_read_barrier(obj);
   }
   Node* k_adr = basic_plus_adr(obj, oopDesc::klass_offset_in_bytes());
-  return _gvn.transform( LoadKlassNode::make(_gvn, immutable_memory(), k_adr, TypeInstPtr::KLASS) );
+  return _gvn.transform(LoadKlassNode::make(_gvn, NULL, immutable_memory(), k_adr, TypeInstPtr::KLASS));
 }
 
 //-------------------------load_array_length-----------------------------------
@@ -2630,7 +2630,7 @@ Node* Phase::gen_subtype_check(Node* subklass, Node* superklass, Node** ctrl, Me
   // types load from the super-class display table which is immutable.
   m = mem->memory_at(C->get_alias_index(gvn->type(p2)->is_ptr()));
   Node *kmem = might_be_cache ? m : C->immutable_memory();
-  Node *nkls = gvn->transform(LoadKlassNode::make(*gvn, kmem, p2, gvn->type(p2)->is_ptr(), TypeKlassPtr::OBJECT_OR_NULL));
+  Node *nkls = gvn->transform(LoadKlassNode::make(*gvn, NULL, kmem, p2, gvn->type(p2)->is_ptr(), TypeKlassPtr::OBJECT_OR_NULL));
 
   // Compile speed common case: ARE a subtype and we canNOT fail
   if( superklass == nkls )
@@ -2824,7 +2824,8 @@ Node* GraphKit::maybe_cast_profiled_receiver(Node* not_null_obj,
  */
 Node* GraphKit::maybe_cast_profiled_obj(Node* obj,
                                         ciKlass* type,
-                                        bool not_null) {
+                                        bool not_null,
+                                        SafePointNode* sfpt) {
   // type == NULL if profiling tells us this object is always null
   if (type != NULL) {
     Deoptimization::DeoptReason class_reason = Deoptimization::Reason_speculate_class_check;
@@ -2846,7 +2847,13 @@ Node* GraphKit::maybe_cast_profiled_obj(Node* obj,
       ciKlass* exact_kls = type;
       Node* slow_ctl  = type_check_receiver(exact_obj, exact_kls, 1.0,
                                             &exact_obj);
-      {
+      if (sfpt != NULL) {
+        GraphKit kit(sfpt->jvms());
+        PreserveJVMState pjvms(&kit);
+        kit.set_control(slow_ctl);
+        kit.uncommon_trap(class_reason,
+                          Deoptimization::Action_maybe_recompile);
+      } else {
         PreserveJVMState pjvms(this);
         set_control(slow_ctl);
         uncommon_trap(class_reason,

@@ -58,7 +58,6 @@ enum SH_process_roots_tasks {
 SharedHeap::SharedHeap(CollectorPolicy* policy_) :
   CollectedHeap(),
   _collector_policy(policy_),
-  _rem_set(NULL),
   _strong_roots_scope(NULL),
   _strong_roots_parity(0),
   _process_strong_tasks(new SubTasksDone(SH_PS_NumElements)),
@@ -68,9 +67,7 @@ SharedHeap::SharedHeap(CollectorPolicy* policy_) :
     vm_exit_during_initialization("Failed necessary allocation.");
   }
   _sh = this;  // ch is static, should be set only once.
-  if (UseParNewGC ||
-      UseG1GC || UseShenandoahGC ||
-      (UseConcMarkSweepGC && (CMSParallelInitialMarkEnabled || CMSParallelRemarkEnabled) && use_parallel_gc_threads())) {
+  if (UseConcMarkSweepGC || UseG1GC || UseShenandoahGC) {
     _workers = new FlexibleWorkGang("Parallel GC Threads", ParallelGCThreads,
                             /* are_GC_task_threads */true,
                             /* are_ConcurrentGC_threads */false);
@@ -154,7 +151,7 @@ SharedHeap::StrongRootsScope::~StrongRootsScope() {
   }
 }
 
-Monitor* SharedHeap::StrongRootsScope::_lock = new Monitor(Mutex::leaf, "StrongRootsScope lock", false);
+Monitor* SharedHeap::StrongRootsScope::_lock = new Monitor(Mutex::leaf, "StrongRootsScope lock", false, Monitor::_safepoint_check_never);
 
 void SharedHeap::StrongRootsScope::mark_worker_done_with_threads(uint n_workers) {
   // The Thread work barrier is only needed by G1 Class Unloading.

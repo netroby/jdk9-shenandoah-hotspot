@@ -26,7 +26,8 @@
  * @bug 8038423
  * @summary Checks that decommitment occurs for JVM with different
  * G1ConcRSLogCacheSize and ObjectAlignmentInBytes options values
- * @library /testlibrary /testlibrary/whitebox
+ * @requires vm.gc=="G1" | vm.gc=="null"
+ * @library /testlibrary /../../test/lib
  * @build TestShrinkAuxiliaryData TestShrinkAuxiliaryData10
  * @run driver/timeout=720 TestShrinkAuxiliaryData10
  */

@@ -60,16 +60,15 @@ CmdLine::CmdLine(const char* line, size_t len, bool no_command_name) {
 
 bool DCmdArgIter::next(TRAPS) {
   if (_len == 0) return false;
-  // skipping spaces
+  // skipping delimiters
   while (_cursor < _len - 1 && _buffer[_cursor] == _delim) {
     _cursor++;
   }
   // handling end of command line
-  if (_cursor >= _len - 1) {
-    _cursor = _len - 1;
-    _key_addr = &_buffer[_len - 1];
+  if (_cursor == _len - 1 && _buffer[_cursor] == _delim) {
+    _key_addr = &_buffer[_cursor];
     _key_len = 0;
-    _value_addr = &_buffer[_len - 1];
+    _value_addr = &_buffer[_cursor];
     _value_len = 0;
     return false;
   }
@@ -488,7 +487,7 @@ void DCmdFactory::send_notification_internal(TRAPS) {
   }
 }
 
-Mutex* DCmdFactory::_dcmdFactory_lock = new Mutex(Mutex::leaf, "DCmdFactory", true);
+Mutex* DCmdFactory::_dcmdFactory_lock = new Mutex(Mutex::leaf, "DCmdFactory", true, Monitor::_safepoint_check_never);
 bool DCmdFactory::_send_jmx_notification = false;
 
 DCmdFactory* DCmdFactory::factory(DCmdSource source, const char* name, size_t len) {

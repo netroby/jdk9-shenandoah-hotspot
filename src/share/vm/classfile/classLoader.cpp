@@ -30,10 +30,6 @@
 #include "classfile/classLoaderData.inline.hpp"
 #include "classfile/imageFile.hpp"
 #include "classfile/javaClasses.hpp"
-#if INCLUDE_CDS
-#include "classfile/sharedPathsMiscInfo.hpp"
-#include "classfile/sharedClassUtil.hpp"
-#endif
 #include "classfile/systemDictionary.hpp"
 #include "classfile/vmSymbols.hpp"
 #include "compiler/compileBroker.hpp"
@@ -65,8 +61,13 @@
 #include "services/management.hpp"
 #include "services/threadService.hpp"
 #include "utilities/events.hpp"
-#include "utilities/hashtable.hpp"
 #include "utilities/hashtable.inline.hpp"
+#include "utilities/macros.hpp"
+#if INCLUDE_CDS
+#include "classfile/sharedPathsMiscInfo.hpp"
+#include "classfile/sharedClassUtil.hpp"
+#endif
+
 
 // Entry points in zip.dll for loading zip/jar file entries and image file entries
 
@@ -164,7 +165,7 @@ MetaIndex::MetaIndex(char** meta_package_names, int num_meta_package_names) {
 
 
 MetaIndex::~MetaIndex() {
-  FREE_C_HEAP_ARRAY(char*, _meta_package_names, mtClass);
+  FREE_C_HEAP_ARRAY(char*, _meta_package_names);
 }
 
 
@@ -250,7 +251,7 @@ ClassPathZipEntry::~ClassPathZipEntry() {
   if (ZipClose != NULL) {
     (*ZipClose)(_zip);
   }
-  FREE_C_HEAP_ARRAY(char, _zip_name, mtClass);
+  FREE_C_HEAP_ARRAY(char, _zip_name);
 }
 
 u1* ClassPathZipEntry::open_entry(const char* name, jint* filesize, bool nul_terminate, TRAPS) {
@@ -1212,7 +1213,7 @@ instanceKlassHandle ClassLoader::load_classfile(Symbol* h_name, TRAPS) {
     h = context.record_result(classpath_index, e, result, THREAD);
   } else {
     if (DumpSharedSpaces) {
-      tty->print_cr("Preload Error: Cannot find %s", class_name);
+      tty->print_cr("Preload Warning: Cannot find %s", class_name);
     }
   }
 

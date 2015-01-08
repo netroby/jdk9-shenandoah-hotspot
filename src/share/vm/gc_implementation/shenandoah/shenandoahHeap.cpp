@@ -1098,6 +1098,7 @@ public:
 
   size_t do_object_careful_m(oop p, MemRegion mr) {
     Unimplemented();
+    return 0;
   }
 
   void do_object(oop p) {
@@ -2494,6 +2495,7 @@ GCTracer* ShenandoahHeap::tracer() {
 
 size_t ShenandoahHeap::tlab_used(Thread* ignored) const {
   Unimplemented();
+  return 0;
 }
 
 void ShenandoahHeap::cancel_evacuation() {

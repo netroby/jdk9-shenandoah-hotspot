@@ -80,7 +80,7 @@ G1RemSet::G1RemSet(G1CollectedHeap* g1, CardTableModRefBS* ct_bs)
     _prev_period_summary()
 {
   _seq_task = new SubTasksDone(NumSeqTasks);
-  _cset_rs_update_cl = NEW_C_HEAP_ARRAY(OopsInHeapRegionClosure*, n_workers(), mtGC);
+  _cset_rs_update_cl = NEW_C_HEAP_ARRAY(G1ParPushHeapRSClosure*, n_workers(), mtGC);
   for (uint i = 0; i < n_workers(); i++) {
     _cset_rs_update_cl[i] = NULL;
   }
@@ -94,21 +94,14 @@ G1RemSet::~G1RemSet() {
   for (uint i = 0; i < n_workers(); i++) {
     assert(_cset_rs_update_cl[i] == NULL, "it should be");
   }
-  FREE_C_HEAP_ARRAY(OopsInHeapRegionClosure*, _cset_rs_update_cl, mtGC);
-}
-
-void CountNonCleanMemRegionClosure::do_MemRegion(MemRegion mr) {
-  if (_g1->is_in_g1_reserved(mr.start())) {
-    _n += (int) ((mr.byte_size() / CardTableModRefBS::card_size));
-    if (_start_first == NULL) _start_first = mr.start();
-  }
+  FREE_C_HEAP_ARRAY(G1ParPushHeapRSClosure*, _cset_rs_update_cl);
 }
 
 class ScanRSClosure : public HeapRegionClosure {
   size_t _cards_done, _cards;
   G1CollectedHeap* _g1h;
 
-  OopsInHeapRegionClosure* _oc;
+  G1ParPushHeapRSClosure* _oc;
   CodeBlobClosure* _code_root_cl;
 
   G1BlockOffsetSharedArray* _bot_shared;
@@ -120,7 +113,7 @@ class ScanRSClosure : public HeapRegionClosure {
   bool   _try_claimed;
 
 public:
-  ScanRSClosure(OopsInHeapRegionClosure* oc,
+  ScanRSClosure(G1ParPushHeapRSClosure* oc,
                 CodeBlobClosure* code_root_cl,
                 uint worker_i) :
     _oc(oc),
@@ -142,16 +135,13 @@ public:
   void scanCard(size_t index, HeapRegion *r) {
     // Stack allocate the DirtyCardToOopClosure instance
     HeapRegionDCTOC cl(_g1h, r, _oc,
-                       CardTableModRefBS::Precise,
-                       HeapRegionDCTOC::IntoCSFilterKind);
+                       CardTableModRefBS::Precise);
 
     // Set the "from" region in the closure.
     _oc->set_region(r);
-    HeapWord* card_start = _bot_shared->address_for_index(index);
-    HeapWord* card_end = card_start + G1BlockOffsetSharedArray::N_words;
-    Space *sp = SharedHeap::heap()->space_containing(card_start);
-    MemRegion sm_region = sp->used_region_at_save_marks();
-    MemRegion mr = sm_region.intersection(MemRegion(card_start,card_end));
+    MemRegion card_region(_bot_shared->address_for_index(index), G1BlockOffsetSharedArray::N_words);
+    MemRegion pre_gc_allocated(r->bottom(), r->scan_top());
+    MemRegion mr = pre_gc_allocated.intersection(card_region);
     if (!mr.is_empty() && !_ct_bs->is_card_claimed(index)) {
       // We make the card as "claimed" lazily (so races are possible
       // but they're benign), which reduces the number of duplicate
@@ -240,7 +230,7 @@ public:
   size_t cards_looked_up() { return _cards;}
 };
 
-void G1RemSet::scanRS(OopsInHeapRegionClosure* oc,
+void G1RemSet::scanRS(G1ParPushHeapRSClosure* oc,
                       CodeBlobClosure* code_root_cl,
                       uint worker_i) {
   double rs_time_start = os::elapsedTime();
@@ -303,15 +293,6 @@ void G1RemSet::updateRS(DirtyCardQueue* into_cset_dcq, uint worker_i) {
 
   _g1->iterate_dirty_card_closure(&into_cset_update_rs_cl, into_cset_dcq, false, worker_i);
 
-  // Now there should be no dirty cards.
-  if (G1RSLogCheckCardTable) {
-    CountNonCleanMemRegionClosure cl(_g1);
-    _ct_bs->mod_card_iterate(&cl);
-    // XXX This isn't true any more: keeping cards of young regions
-    // marked dirty broke it.  Need some reasonable fix.
-    guarantee(cl.n() == 0, "Card table should be clean.");
-  }
-
   _g1p->phase_times()->record_update_rs_time(worker_i, (os::elapsedTime() - start) * 1000.0);
 }
 
@@ -319,7 +300,7 @@ void G1RemSet::cleanupHRRS() {
   HeapRegionRemSet::cleanup();
 }
 
-void G1RemSet::oops_into_collection_set_do(OopsInHeapRegionClosure* oc,
+void G1RemSet::oops_into_collection_set_do(G1ParPushHeapRSClosure* oc,
                                            CodeBlobClosure* code_root_cl,
                                            uint worker_i) {
 #if CARD_REPEAT_HISTO
@@ -369,7 +350,7 @@ void G1RemSet::cleanup_after_oops_into_collection_set_do() {
   for (uint i = 0; i < n_workers(); ++i) {
     _total_cards_scanned += _cards_scanned[i];
   }
-  FREE_C_HEAP_ARRAY(size_t, _cards_scanned, mtGC);
+  FREE_C_HEAP_ARRAY(size_t, _cards_scanned);
   _cards_scanned = NULL;
   // Cleanup after copy
   _g1->set_refine_cte_cl_concurrency(true);
@@ -435,7 +416,7 @@ G1Mux2Closure::G1Mux2Closure(OopClosure *c1, OopClosure *c2) :
 G1UpdateRSOrPushRefOopClosure::
 G1UpdateRSOrPushRefOopClosure(G1CollectedHeap* g1h,
                               G1RemSet* rs,
-                              OopsInHeapRegionClosure* push_ref_cl,
+                              G1ParPushHeapRSClosure* push_ref_cl,
                               bool record_refs_into_cset,
                               uint worker_i) :
   _g1(g1h), _g1_rem_set(rs), _from(NULL),
@@ -536,7 +517,7 @@ bool G1RemSet::refine_card(jbyte* card_ptr, uint worker_i,
   ct_freq_note_card(_ct_bs->index_for(start));
 #endif
 
-  OopsInHeapRegionClosure* oops_in_heap_closure = NULL;
+  G1ParPushHeapRSClosure* oops_in_heap_closure = NULL;
   if (check_for_refs_into_cset) {
     // ConcurrentG1RefineThreads have worker numbers larger than what
     // _cset_rs_update_cl[] is set up to handle. But those threads should

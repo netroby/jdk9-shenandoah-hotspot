@@ -83,14 +83,17 @@ CompactibleFreeListSpace::CompactibleFreeListSpace(BlockOffsetSharedArray* bs,
   // Note: this requires that CFLspace c'tors
   // are called serially in the order in which the locks are
   // are acquired in the program text. This is true today.
-  _freelistLock(_lockRank--, "CompactibleFreeListSpace._lock", true),
+  _freelistLock(_lockRank--, "CompactibleFreeListSpace._lock", true,
+                Monitor::_safepoint_check_sometimes),
   _parDictionaryAllocLock(Mutex::leaf - 1,  // == rank(ExpandHeap_lock) - 1
-                          "CompactibleFreeListSpace._dict_par_lock", true),
+                          "CompactibleFreeListSpace._dict_par_lock", true,
+                          Monitor::_safepoint_check_never),
   _rescan_task_size(CardTableModRefBS::card_size_in_words * BitsPerWord *
                     CMSRescanMultiple),
   _marking_task_size(CardTableModRefBS::card_size_in_words * BitsPerWord *
                     CMSConcMarkMultiple),
-  _collector(NULL)
+  _collector(NULL),
+  _preconsumptionDirtyCardClosure(NULL)
 {
   assert(sizeof(FreeChunk) / BytesPerWord <= MinChunkSize,
          "FreeChunk is larger than expected");
@@ -151,8 +154,7 @@ CompactibleFreeListSpace::CompactibleFreeListSpace(BlockOffsetSharedArray* bs,
   // Initialize locks for parallel case.
   for (size_t i = IndexSetStart; i < IndexSetSize; i += IndexSetStride) {
     _indexedFreeListParLocks[i] = new Mutex(Mutex::leaf - 1, // == ExpandHeap_lock - 1
-                                            "a freelist par lock",
-                                            true);
+                                            "a freelist par lock", true, Mutex::_safepoint_check_sometimes);
     DEBUG_ONLY(
       _indexedFreeList[i].set_protecting_lock(_indexedFreeListParLocks[i]);
     )
@@ -2083,16 +2085,12 @@ bool CompactibleFreeListSpace::should_concurrent_collect() const {
 }
 
 // Support for compaction
-
 void CompactibleFreeListSpace::prepare_for_compaction(CompactPoint* cp) {
-  SCAN_AND_FORWARD(cp,end,block_is_obj,block_size);
+  scan_and_forward(this, cp);
   // Prepare_for_compaction() uses the space between live objects
   // so that later phase can skip dead space quickly.  So verification
   // of the free lists doesn't work after.
 }
-
-#define obj_size(q) adjustObjectSize(oop(q)->size())
-#define adjust_obj_size(s) adjustObjectSize(s)
 
 void CompactibleFreeListSpace::adjust_pointers() {
   // In other versions of adjust_pointers(), a bail out
@@ -2101,12 +2099,12 @@ void CompactibleFreeListSpace::adjust_pointers() {
   // Cannot test used() == 0 here because the free lists have already
   // been mangled by the compaction.
 
-  SCAN_AND_ADJUST_POINTERS(adjust_obj_size);
+  scan_and_adjust_pointers(this);
   // See note about verification in prepare_for_compaction().
 }
 
 void CompactibleFreeListSpace::compact() {
-  SCAN_AND_COMPACT(obj_size);
+  scan_and_compact(this);
 }
 
 // Fragmentation metric = 1 - [sum of (fbs**2) / (sum of fbs)**2]
@@ -2562,12 +2560,12 @@ void CompactibleFreeListSpace::printFLCensus(size_t sweep_count) const {
      x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x,   \
      x }
 
-// Initialize with default setting of CMSParPromoteBlocksToClaim, _not_
-// OldPLABSize, whose static default is different; if overridden at the
+// Initialize with default setting for CMS, _not_
+// generic OldPLABSize, whose static default is different; if overridden at the
 // command-line, this will get reinitialized via a call to
 // modify_initialization() below.
 AdaptiveWeightedAverage CFLS_LAB::_blocks_to_claim[]    =
-  VECTOR_257(AdaptiveWeightedAverage(OldPLABWeight, (float)CMSParPromoteBlocksToClaim));
+  VECTOR_257(AdaptiveWeightedAverage(OldPLABWeight, (float)CFLS_LAB::_default_dynamic_old_plab_size));
 size_t CFLS_LAB::_global_num_blocks[]  = VECTOR_257(0);
 uint   CFLS_LAB::_global_num_workers[] = VECTOR_257(0);
 
@@ -2629,7 +2627,7 @@ void CFLS_LAB::get_from_global_pool(size_t word_sz, AdaptiveFreeList<FreeChunk>*
   // Get the #blocks we want to claim
   size_t n_blks = (size_t)_blocks_to_claim[word_sz].average();
   assert(n_blks > 0, "Error");
-  assert(ResizePLAB || n_blks == OldPLABSize, "Error");
+  assert(ResizeOldPLAB || n_blks == OldPLABSize, "Error");
   // In some cases, when the application has a phase change,
   // there may be a sudden and sharp shift in the object survival
   // profile, and updating the counts at the end of a scavenge

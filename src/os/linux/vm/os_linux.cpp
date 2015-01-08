@@ -68,6 +68,7 @@
 #include "utilities/events.hpp"
 #include "utilities/elfFile.hpp"
 #include "utilities/growableArray.hpp"
+#include "utilities/macros.hpp"
 #include "utilities/vmError.hpp"
 
 // put OS-includes here
@@ -401,14 +402,14 @@ void os::init_system_properties_values() {
                                                      mtInternal);
     sprintf(ld_library_path, "%s%s" SYS_EXT_DIR "/lib/%s:" DEFAULT_LIBPATH, v, v_colon, cpu_arch);
     Arguments::set_library_path(ld_library_path);
-    FREE_C_HEAP_ARRAY(char, ld_library_path, mtInternal);
+    FREE_C_HEAP_ARRAY(char, ld_library_path);
   }
 
   // Extensions directories.
   sprintf(buf, "%s" EXTENSIONS_DIR ":" SYS_EXT_DIR EXTENSIONS_DIR, Arguments::get_java_home());
   Arguments::set_ext_dirs(buf);
 
-  FREE_C_HEAP_ARRAY(char, buf, mtInternal);
+  FREE_C_HEAP_ARRAY(char, buf);
 
 #undef DEFAULT_LIBPATH
 #undef SYS_EXT_DIR
@@ -1613,11 +1614,11 @@ bool os::dll_build_name(char* buffer, size_t buflen,
     // release the storage
     for (int i = 0; i < n; i++) {
       if (pelements[i] != NULL) {
-        FREE_C_HEAP_ARRAY(char, pelements[i], mtInternal);
+        FREE_C_HEAP_ARRAY(char, pelements[i]);
       }
     }
     if (pelements != NULL) {
-      FREE_C_HEAP_ARRAY(char*, pelements, mtInternal);
+      FREE_C_HEAP_ARRAY(char*, pelements);
     }
   } else {
     snprintf(buffer, buflen, "%s/lib%s.so", pname, fname);
@@ -2928,7 +2929,7 @@ void os::Linux::rebuild_cpu_to_node_map() {
       }
     }
   }
-  FREE_C_HEAP_ARRAY(unsigned long, cpu_map, mtInternal);
+  FREE_C_HEAP_ARRAY(unsigned long, cpu_map);
 }
 
 int os::Linux::get_node_by_cpu(int cpu_id) {
@@ -5987,11 +5988,68 @@ bool os::is_headless_jre() {
 // Get the default path to the core file
 // Returns the length of the string
 int os::get_core_path(char* buffer, size_t bufferSize) {
-  const char* p = get_current_directory(buffer, bufferSize);
+  /*
+   * Max length of /proc/sys/kernel/core_pattern is 128 characters.
+   * See https://www.kernel.org/doc/Documentation/sysctl/kernel.txt
+   */
+  const int core_pattern_len = 129;
+  char core_pattern[core_pattern_len] = {0};
 
-  if (p == NULL) {
-    assert(p != NULL, "failed to get current directory");
+  int core_pattern_file = ::open("/proc/sys/kernel/core_pattern", O_RDONLY);
+  if (core_pattern_file != -1) {
+    ssize_t ret = ::read(core_pattern_file, core_pattern, core_pattern_len);
+    ::close(core_pattern_file);
+
+    if (ret > 0) {
+      char *last_char = core_pattern + strlen(core_pattern) - 1;
+
+      if (*last_char == '\n') {
+        *last_char = '\0';
+      }
+    }
+  }
+
+  if (strlen(core_pattern) == 0) {
     return 0;
+  }
+
+  char *pid_pos = strstr(core_pattern, "%p");
+  size_t written;
+
+  if (core_pattern[0] == '/') {
+    written = jio_snprintf(buffer, bufferSize, core_pattern);
+  } else {
+    char cwd[PATH_MAX];
+
+    const char* p = get_current_directory(cwd, PATH_MAX);
+    if (p == NULL) {
+      assert(p != NULL, "failed to get current directory");
+      return 0;
+    }
+
+    if (core_pattern[0] == '|') {
+      written = jio_snprintf(buffer, bufferSize,
+                        "\"%s\" (or dumping to %s/core.%d)",
+                                     &core_pattern[1], p, current_process_id());
+    } else {
+      written = jio_snprintf(buffer, bufferSize, "%s/%s", p, core_pattern);
+    }
+  }
+
+  if ((written >= 0) && (written < bufferSize)
+            && (pid_pos == NULL) && (core_pattern[0] != '|')) {
+    int core_uses_pid_file = ::open("/proc/sys/kernel/core_uses_pid", O_RDONLY);
+
+    if (core_uses_pid_file != -1) {
+      char core_uses_pid = 0;
+      ssize_t ret = ::read(core_uses_pid_file, &core_uses_pid, 1);
+      ::close(core_uses_pid_file);
+
+      if (core_uses_pid == '1'){
+        jio_snprintf(buffer + written, bufferSize - written,
+                                          ".%d", current_process_id());
+      }
+    }
   }
 
   return strlen(buffer);

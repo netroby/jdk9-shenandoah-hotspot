@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2000, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -66,6 +66,9 @@ public:
   Generation* _gens[max_gens];
   GenerationSpec** _gen_specs;
 
+  // The singleton Gen Remembered Set.
+  GenRemSet* _rem_set;
+
   // The generational collector policy.
   GenCollectorPolicy* _gen_policy;
 
@@ -121,9 +124,7 @@ public:
 
   // Returns JNI_OK on success
   virtual jint initialize();
-  char* allocate(size_t alignment,
-                 size_t* _total_reserved, int* _n_covered_regions,
-                 ReservedSpace* heap_rs);
+  char* allocate(size_t alignment, size_t* _total_reserved, ReservedSpace* heap_rs);
 
   // Does operations required after initialization has been done.
   void post_initialize();
@@ -264,12 +265,12 @@ public:
 
   // We don't need barriers for stores to objects in the
   // young gen and, a fortiori, for initializing stores to
-  // objects therein. This applies to {DefNew,ParNew}+{Tenured,CMS}
+  // objects therein. This applies to DefNew+Tenured and ParNew+CMS
   // only and may need to be re-examined in case other
   // kinds of collectors are implemented in the future.
   virtual bool can_elide_initializing_store_barrier(oop new_obj) {
     // We wanted to assert that:-
-    // assert(UseParNewGC || UseSerialGC || UseConcMarkSweepGC,
+    // assert(UseSerialGC || UseConcMarkSweepGC,
     //       "Check can_elide_initializing_store_barrier() for this collector");
     // but unfortunately the flag UseSerialGC need not necessarily always
     // be set when DefNew+Tenured are being used.
@@ -384,6 +385,10 @@ public:
     assert(_n_gens == gen_policy()->number_of_generations(), "Sanity");
     return _n_gens;
   }
+
+  // This function returns the "GenRemSet" object that allows us to scan
+  // generations in a fully generational heap.
+  GenRemSet* rem_set() { return _rem_set; }
 
   // Convenience function to be used in situations where the heap type can be
   // asserted to be this type.

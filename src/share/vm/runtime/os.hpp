@@ -311,6 +311,12 @@ class os: AllStatic {
   static bool   uncommit_memory(char* addr, size_t bytes);
   static bool   release_memory(char* addr, size_t bytes);
 
+  // Touch memory pages that cover the memory range from start to end (exclusive)
+  // to make the OS back the memory range with actual memory.
+  // Current implementation may not touch the last page if unaligned addresses
+  // are passed.
+  static void   pretouch_memory(char* start, char* end);
+
   enum ProtType { MEM_PROT_NONE, MEM_PROT_READ, MEM_PROT_RW, MEM_PROT_RWX };
   static bool   protect_memory(char* addr, size_t bytes, ProtType prot,
                                bool is_committed = true);
@@ -665,7 +671,7 @@ class os: AllStatic {
   static void* realloc (void *memblock, size_t size, MEMFLAGS flag, const NativeCallStack& stack);
   static void* realloc (void *memblock, size_t size, MEMFLAGS flag);
 
-  static void  free    (void *memblock, MEMFLAGS flags = mtNone);
+  static void  free    (void *memblock);
   static bool  check_heap(bool force = false);      // verify C heap integrity
   static char* strdup(const char *, MEMFLAGS flags = mtInternal);  // Like strdup
   // Like strdup, but exit VM when strdup() returns NULL

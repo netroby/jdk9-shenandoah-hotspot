@@ -24,12 +24,12 @@
 /*
  * @test IsMethodCompilableTest
  * @bug 8007270 8006683 8007288 8022832
- * @library /testlibrary /testlibrary/whitebox /testlibrary/com/oracle/java/testlibrary
+ * @library /testlibrary /../../test/lib /testlibrary/com/oracle/java/testlibrary
  * @build IsMethodCompilableTest
  * @run main ClassFileInstaller sun.hotspot.WhiteBox
  *                              sun.hotspot.WhiteBox$WhiteBoxPermission
  * @run main ClassFileInstaller com.oracle.java.testlibrary.Platform
- * @run main/othervm/timeout=2400 -Xbootclasspath/a:. -Xmixed -XX:+UnlockDiagnosticVMOptions -XX:+WhiteBoxAPI -XX:PerMethodRecompilationCutoff=3 -XX:CompileCommand=compileonly,SimpleTestCase$Helper::* IsMethodCompilableTest
+ * @run main/othervm/timeout=2400 -Xbootclasspath/a:. -Xmixed -XX:-TieredCompilation -XX:+UnlockDiagnosticVMOptions -XX:+WhiteBoxAPI -XX:PerMethodRecompilationCutoff=3 -XX:CompileCommand=compileonly,SimpleTestCase$Helper::* IsMethodCompilableTest
  * @summary testing of WB::isMethodCompilable()
  * @author igor.ignatyev@oracle.com
  */
