@@ -1749,7 +1749,12 @@ void Arguments::set_shenandoah_gc_flags() {
                    Abstract_VM_Version::parallel_worker_threads());
 
   if (FLAG_IS_DEFAULT(ConcGCThreads)) {
-    FLAG_SET_DEFAULT(ConcGCThreads, 1);
+    uintx conc_threads = MIN2((uintx) 1, ParallelGCThreads / 2);
+    FLAG_SET_DEFAULT(ConcGCThreads, conc_threads);
+  }
+
+  if (FLAG_IS_DEFAULT(ParallelRefProcEnabled)) {
+    FLAG_SET_DEFAULT(ParallelRefProcEnabled, true);
   }
 }
 
