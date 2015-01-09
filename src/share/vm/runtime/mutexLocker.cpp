@@ -214,7 +214,7 @@ void mutex_init() {
     def(SATB_Q_CBL_mon             , Monitor, nonleaf,     true,  Monitor::_safepoint_check_never);
     def(Shared_SATB_Q_lock         , Mutex,   nonleaf,     true,  Monitor::_safepoint_check_never);
     def(ShenandoahHeap_lock        , Monitor, special,     false, Monitor::_safepoint_check_never);
-    def(ShenandoahFullGC_lock      , Monitor, leaf,        true,  Monitor::_safepoint_check_never);
+    def(ShenandoahFullGC_lock      , Monitor, leaf,        true,  Monitor::_safepoint_check_always);
     def(ShenandoahJNICritical_lock , Monitor, nonleaf+1,   true,  Monitor::_safepoint_check_never);
     def(ShenandoahMemProtect_lock  , Monitor, native,      false, Monitor::_safepoint_check_never);
   }

@@ -60,7 +60,7 @@ void ShenandoahConcurrentThread::notify_jni_critical() {
     VMThread::execute(&start_evacuation);
 
   }
-  MonitorLockerEx ml(ShenandoahJNICritical_lock);
+  MonitorLockerEx ml(ShenandoahJNICritical_lock, true);
   _waiting_for_jni_critical = false;
   ml.notify_all();
 }
