@@ -170,6 +170,7 @@ void MethodHandles::jump_to_lambda_form(MacroAssembler* _masm,
   __ load_heap_oop(method_temp, Address(method_temp, NONZERO(java_lang_invoke_LambdaForm::vmentry_offset_in_bytes())));
   __ verify_oop(method_temp);
   // the following assumes that a Method* is normally compressed in the vmtarget field:
+  oopDesc::bs()->compile_resolve_oop(_masm, method_temp);
   __ movptr(method_temp, Address(method_temp, NONZERO(java_lang_invoke_MemberName::vmtarget_offset_in_bytes())));
 
   if (VerifyMethodHandles && !for_compiler_entry) {
@@ -381,6 +382,7 @@ void MethodHandles::generate_method_handle_dispatch(MacroAssembler* _masm,
       if (VerifyMethodHandles) {
         verify_ref_kind(_masm, JVM_REF_invokeSpecial, member_reg, temp3);
       }
+      oopDesc::bs()->compile_resolve_oop(_masm, member_reg);
       __ movptr(rbx_method, member_vmtarget);
       break;
 
@@ -388,6 +390,7 @@ void MethodHandles::generate_method_handle_dispatch(MacroAssembler* _masm,
       if (VerifyMethodHandles) {
         verify_ref_kind(_masm, JVM_REF_invokeStatic, member_reg, temp3);
       }
+      oopDesc::bs()->compile_resolve_oop(_masm, member_reg);
       __ movptr(rbx_method, member_vmtarget);
       break;
 
