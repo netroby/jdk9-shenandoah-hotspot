@@ -164,13 +164,14 @@ void MethodHandles::jump_to_lambda_form(MacroAssembler* _masm,
   //NOT_PRODUCT({ FlagSetting fs(TraceMethodHandles, true); trace_method_handle(_masm, "LZMH"); });
 
   // Load the invoker, as MH -> MH.form -> LF.vmentry
+  oopDesc::bs()->compile_resolve_oop(_masm, recv);
   __ verify_oop(recv);
   __ load_heap_oop(method_temp, Address(recv, NONZERO(java_lang_invoke_MethodHandle::form_offset_in_bytes())));
+  oopDesc::bs()->compile_resolve_oop(_masm, method_temp);
   __ verify_oop(method_temp);
   __ load_heap_oop(method_temp, Address(method_temp, NONZERO(java_lang_invoke_LambdaForm::vmentry_offset_in_bytes())));
   __ verify_oop(method_temp);
   // the following assumes that a Method* is normally compressed in the vmtarget field:
-  oopDesc::bs()->compile_resolve_oop(_masm, method_temp);
   __ movptr(method_temp, Address(method_temp, NONZERO(java_lang_invoke_MemberName::vmtarget_offset_in_bytes())));
 
   if (VerifyMethodHandles && !for_compiler_entry) {
@@ -376,13 +377,13 @@ void MethodHandles::generate_method_handle_dispatch(MacroAssembler* _masm,
     //  rsi/r13 - interpreter linkage (if interpreted)
     //  rcx, rdx, rsi, rdi, r8, r8 - compiler arguments (if compiled)
 
+    oopDesc::bs()->compile_resolve_oop(_masm, member_reg);
     Label L_incompatible_class_change_error;
     switch (iid) {
     case vmIntrinsics::_linkToSpecial:
       if (VerifyMethodHandles) {
         verify_ref_kind(_masm, JVM_REF_invokeSpecial, member_reg, temp3);
       }
-      oopDesc::bs()->compile_resolve_oop(_masm, member_reg);
       __ movptr(rbx_method, member_vmtarget);
       break;
 
@@ -390,7 +391,6 @@ void MethodHandles::generate_method_handle_dispatch(MacroAssembler* _masm,
       if (VerifyMethodHandles) {
         verify_ref_kind(_masm, JVM_REF_invokeStatic, member_reg, temp3);
       }
-      oopDesc::bs()->compile_resolve_oop(_masm, member_reg);
       __ movptr(rbx_method, member_vmtarget);
       break;
 
