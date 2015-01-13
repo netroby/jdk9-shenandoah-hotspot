@@ -32,6 +32,7 @@
 #include "c1/c1_ValueStack.hpp"
 #include "ci/ciArrayKlass.hpp"
 #include "ci/ciInstance.hpp"
+#include "gc_implementation/shenandoah/shenandoahHeap.hpp"
 #include "gc_interface/collectedHeap.hpp"
 #include "memory/barrierSet.hpp"
 #include "memory/cardTableModRefBS.hpp"
@@ -1514,6 +1515,48 @@ void LIR_Assembler::emit_opBranch(LIR_OpBranch* op) {
     }
     __ jcc(acond,*(op->label()));
   }
+}
+
+void LIR_Assembler::emit_opShenandoahWriteBarrier(LIR_OpShenandoahWriteBarrier* op) {
+  Label done;
+  Register obj = op->in_opr()->as_register();
+  Register res = op->result_opr()->as_register();
+  Register tmp1 = op->tmp_opr()->as_register();
+  assert_different_registers(res, tmp1);
+
+  if (res != obj) {
+    __ mov(res, obj);
+  }
+  
+  // Check for null.
+  if (op->need_null_check()) {
+    __ testptr(res, res);
+    __ jcc(Assembler::zero, done);
+  }
+
+  // The read-barrier.
+  __ movptr(res, Address(res, -8));
+
+  // Check for evacuation-in-progress
+  ExternalAddress evacuation_in_progress = ExternalAddress(ShenandoahHeap::evacuation_in_progress_addr());
+  __ movptr(tmp1, evacuation_in_progress);
+  __ cmpl(tmp1, 0);
+  __ jcc(Assembler::equal, done);
+
+  if (res != rax) {
+    __ xchgptr(res, rax); // Move obj into rax and save rax into obj.
+  }
+
+  __ call(RuntimeAddress(Runtime1::entry_for(Runtime1::shenandoah_write_barrier_slow_id)));
+  add_call_info_here(op->info());
+  verify_oop_map(op->info());
+
+  if (res != rax) {
+    __ xchgptr(rax, res); // Swap back obj with rax.
+  }
+
+  __ bind(done);
+
 }
 
 void LIR_Assembler::emit_opConvert(LIR_OpConvert* op) {

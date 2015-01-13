@@ -1116,8 +1116,8 @@ LEAF(IfOp, Op2)
 
  public:
   // creation
-  IfOp(Value x, Condition cond, Value y, Value tval, Value fval)
-  : Op2(tval->type()->meet(fval->type()), (Bytecodes::Code)cond, x, y)
+  IfOp(Value x, Condition cond, Value y, Value tval, Value fval, ValueStack* state_before)
+  : Op2(tval->type()->meet(fval->type()), (Bytecodes::Code)cond, x, y, state_before)
   , _tval(tval)
   , _fval(fval)
   {

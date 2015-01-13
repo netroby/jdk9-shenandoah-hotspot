@@ -538,28 +538,6 @@ class ArrayCopyStub: public CodeStub {
 //////////////////////////////////////////////////////////////////////////////////////////
 #if INCLUDE_ALL_GCS
 
-class ShenandoahWriteBarrierStub : public CodeStub {
-private:
-  LIR_Opr _obj;
-  bool _need_null_check;
-
-public:
-  ShenandoahWriteBarrierStub(LIR_Opr obj) :
-    _obj(obj) {
-  }
-  LIR_Opr obj() const { return _obj; }
-  virtual void emit_code(LIR_Assembler* e);
-  virtual void visit(LIR_OpVisitState* visitor) {
-    visitor->do_slow_case();
-    visitor->do_input(_obj);
-
-  }
-#ifndef PRODUCT
-  virtual void print_name(outputStream* out) const { out->print("ShenandoahWriteBarrierStub"); }
-#endif // PRODUCT
-
-};
-
 // Code stubs for Garbage-First barriers.
 class G1PreBarrierStub: public CodeStub {
  private:

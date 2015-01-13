@@ -213,7 +213,6 @@ void mutex_init() {
     def(SATB_Q_FL_lock             , Mutex  , special,     true,  Monitor::_safepoint_check_never);
     def(SATB_Q_CBL_mon             , Monitor, nonleaf,     true,  Monitor::_safepoint_check_never);
     def(Shared_SATB_Q_lock         , Mutex,   nonleaf,     true,  Monitor::_safepoint_check_never);
-    def(ShenandoahHeap_lock        , Monitor, special,     false, Monitor::_safepoint_check_never);
     def(ShenandoahFullGC_lock      , Monitor, leaf,        true,  Monitor::_safepoint_check_always);
     def(ShenandoahJNICritical_lock , Monitor, nonleaf+1,   true,  Monitor::_safepoint_check_never);
     def(ShenandoahMemProtect_lock  , Monitor, native,      false, Monitor::_safepoint_check_never);
@@ -270,8 +269,8 @@ void mutex_init() {
   if (UseConcMarkSweepGC) {
     def(SLT_lock                   , Monitor, nonleaf,     false, Monitor::_safepoint_check_never);      // used in CMS GC for locking PLL lock
   }
-
   def(Heap_lock                    , Monitor, nonleaf+1,   false, Monitor::_safepoint_check_sometimes);
+  def(ShenandoahHeap_lock          , Monitor, nonleaf+1,   false, Monitor::_safepoint_check_sometimes);
   def(JfieldIdCreation_lock        , Mutex  , nonleaf+1,   true,  Monitor::_safepoint_check_always);     // jfieldID, Used in VM_Operation
   def(MemberNameTable_lock         , Mutex  , nonleaf+1,   false, Monitor::_safepoint_check_always);     // Used to protect MemberNameTable
 
