@@ -233,7 +233,17 @@ void ShenandoahHeap::print_on(outputStream* st) const {
   }
 }
 
+class InitGCLABClosure : public ThreadClosure {
+  void do_thread(Thread* thread) {
+    thread->tlab().initialize();
+  }
+};
+
 void ShenandoahHeap::post_initialize() {
+
+  InitGCLABClosure init_gclabs;
+  gc_threads_do(&init_gclabs);
+
   _scm->initialize();
   ref_processing_init();
 }
@@ -368,8 +378,8 @@ HeapWord* ShenandoahHeap::allocate_new_gclab(size_t word_size) {
   }
   return result;
 }
-  
 
+  
 ShenandoahHeap* ShenandoahHeap::heap() {
   assert(_pgc != NULL, "Unitialized access to ShenandoahHeap::heap()");
   assert(_pgc->kind() == CollectedHeap::ShenandoahHeap, "not a shenandoah heap");
@@ -493,7 +503,7 @@ HeapWord* ShenandoahHeap::allocate_memory_work(size_t word_size, bool evacuation
     return allocate_large_memory(word_size);
   }
 
-  ShenandoahHeapRegion* my_current_region = get_current_region(evacuation);
+  ShenandoahHeapRegion* my_current_region = get_current_region(false);
   if (my_current_region == NULL) {
     return NULL; // No more room to make a new region. OOM.
   }
@@ -512,7 +522,7 @@ HeapWord* ShenandoahHeap::allocate_memory_work(size_t word_size, bool evacuation
   result = my_current_region->par_allocate(word_size);
   while (result == NULL && my_current_region != NULL) {
     // 2nd attempt. Try next region.
-    my_current_region = get_next_region(evacuation);
+    my_current_region = get_next_region(false);
     if (my_current_region == NULL) {
       return NULL; // No more room to make a new region. OOM.
     }
@@ -835,7 +845,7 @@ public:
     if (ShenandoahGCVerbose) 
       tty->print("Thread "INT32_FORMAT" post barrier sync\n", worker_id);
 
-    Thread::current()->gclab().make_parsable(true);
+    Thread::current()->tlab().make_parsable(true);
   }
 };
 
@@ -1155,26 +1165,14 @@ public:
 
   void do_thread(Thread* thread) {
     thread->tlab().make_parsable(_retire);
-    thread->gclab().make_parsable(_retire);
   }
 };
 
 void ShenandoahHeap::ensure_parsability(bool retire_tlabs) {
-  assert(SafepointSynchronize::is_at_safepoint() ||
-         !is_init_completed(),
-         "Should only be called at a safepoint or at start-up"
-         " otherwise concurrent mutator activity may make heap "
-         " unparsable again");
-  const bool use_tlab = UseTLAB;
-  // The main thread starts allocating via a TLAB even before it
-  // has added itself to the threads list at vm boot-up.
-  assert(!use_tlab || Threads::first() != NULL,
-         "Attempt to fill tlabs before main thread has been added"
-         " to threads list is doomed to failure!");
-
+  CollectedHeap::ensure_parsability(retire_tlabs);
 
   RetireTLABClosure cl(retire_tlabs);
-  Threads::threads_do(&cl);
+  gc_threads_do(&cl);
 }
 
 void ShenandoahHeap::prepare_for_update_references() {
@@ -1502,12 +1500,43 @@ bool ShenandoahHeap::supports_tlab_allocation() const {
 
 
 size_t  ShenandoahHeap::unsafe_max_tlab_alloc(Thread *thread) const {
-  ShenandoahHeapRegion* current = _free_regions->current(true);
-  if (current == NULL) {
-    return MinTLABSize;
-  } else {
-    return MIN2(current->free(), (size_t) MinTLABSize);
+  return ShenandoahHeapRegion::RegionSizeBytes;
+}
+
+class ResizeGCLABClosure : public ThreadClosure {
+public:
+  void do_thread(Thread* thread) {
+    thread->tlab().resize();
   }
+};
+
+void ShenandoahHeap::resize_all_tlabs() {
+  CollectedHeap::resize_all_tlabs();
+
+  if (PrintTLAB && Verbose) {
+    tty->print_cr("Resizing Shenandoah GCLABs...");
+  }
+
+  ResizeGCLABClosure cl;
+  gc_threads_do(&cl);
+
+  if (PrintTLAB && Verbose) {
+    tty->print_cr("Done resizing Shenandoah GCLABs...");
+  }
+}
+
+class AccumulateStatisticsGCLABClosure : public ThreadClosure {
+public:
+  void do_thread(Thread* thread) {
+    thread->tlab().accumulate_statistics();
+    thread->tlab().initialize_statistics();
+  }
+};
+
+void ShenandoahHeap::accumulate_statistics_all_gclabs() {
+
+  AccumulateStatisticsGCLABClosure cl;
+  gc_threads_do(&cl);
 }
 
 bool  ShenandoahHeap::can_elide_tlab_store_barriers() const {
@@ -1701,7 +1730,8 @@ void ShenandoahHeap::verify(bool silent , VerifyOption vo) {
   }
 }
 size_t ShenandoahHeap::tlab_capacity(Thread *thr) const {
-  return ShenandoahHeapRegion::RegionSizeBytes;
+  // We have all the heap available for tlabs.
+  return capacity();
 }
 
 class ShenandoahIterateObjectClosureRegionClosure: public ShenandoahHeapRegionClosure {
@@ -1887,6 +1917,9 @@ public:
 
 
 void ShenandoahHeap::start_concurrent_marking() {
+
+  accumulate_statistics_all_tlabs();
+
   set_concurrent_mark_in_progress(true);
   // We need to reset all TLABs because we'd lose marks on all objects allocated in them.
   if (UseTLAB) {
@@ -2217,7 +2250,7 @@ void ShenandoahHeap::copy_object(oop p, HeapWord* s) {
 }
 
 HeapWord* ShenandoahHeap::allocate_from_gclab(Thread* thread, size_t size) {
-  HeapWord* obj = thread->gclab().allocate(size);
+  HeapWord* obj = thread->tlab().allocate(size);
   if (obj != NULL) {
     return obj;
   }
@@ -2228,16 +2261,16 @@ HeapWord* ShenandoahHeap::allocate_from_gclab(Thread* thread, size_t size) {
 HeapWord* ShenandoahHeap::allocate_from_gclab_slow(Thread* thread, size_t size) {
   // Retain tlab and allocate object in shared space if
   // the amount free in the tlab is too large to discard.
-  if (thread->gclab().free() > thread->gclab().refill_waste_limit()) {
-    thread->gclab().record_slow_allocation(size);
+  if (thread->tlab().free() > thread->tlab().refill_waste_limit()) {
+    thread->tlab().record_slow_allocation(size);
     return NULL;
   }
 
   // Discard tlab and allocate a new one.
   // To minimize fragmentation, the last TLAB may be smaller than the rest.
-  size_t new_gclab_size = thread->gclab().compute_size(size);
+  size_t new_gclab_size = thread->tlab().compute_size(size);
 
-  thread->gclab().clear_before_allocation();
+  thread->tlab().clear_before_allocation();
 
   if (new_gclab_size == 0) {
     return NULL;
@@ -2263,7 +2296,7 @@ HeapWord* ShenandoahHeap::allocate_from_gclab_slow(Thread* thread, size_t size) 
     Copy::fill_to_words(obj + hdr_size, new_gclab_size - hdr_size, badHeapWordVal);
 #endif // ASSERT
   }
-  thread->gclab().fill(obj, obj + size, new_gclab_size);
+  thread->tlab().fill(obj, obj + size, new_gclab_size);
   return obj;
 }
 
@@ -2297,7 +2330,12 @@ oop ShenandoahHeap::evacuate_object(oop p, Thread* thread) {
 
   if (filler == NULL) {
     oom_during_evacuation();
-    return p;
+    // If this is a Java thread, it should have waited
+    // until all GC threads are done, and then we
+    // return the forwardee.
+    oop resolved = ShenandoahBarrierSet::resolve_oop_static(p);
+    tty->print_cr("possible emergency allocation needed: %p", (oopDesc*) resolved);
+    return resolved;
   }
 
   HeapWord* copy = filler + BrooksPointer::BROOKS_POINTER_OBJ_SIZE;
@@ -2332,7 +2370,7 @@ oop ShenandoahHeap::evacuate_object(oop p, Thread* thread) {
 #endif
   }  else {
     if (alloc_from_gclab) {
-      thread->gclab().rollback(required);
+      thread->tlab().rollback(required);
     }
 #ifdef ASSERT
     if (ShenandoahTraceEvacuations) {
@@ -2507,8 +2545,9 @@ GCTracer* ShenandoahHeap::tracer() {
   return _tracer;
 }
 
-size_t ShenandoahHeap::tlab_used(Thread* ignored) const {
-  Unimplemented();
+size_t ShenandoahHeap::tlab_used(Thread* thread) const {
+  // This is used for stats. Dunno how to easily track this.
+  return used();
   return 0;
 }
 

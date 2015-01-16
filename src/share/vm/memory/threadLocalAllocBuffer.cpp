@@ -54,6 +54,8 @@ void ThreadLocalAllocBuffer::accumulate_statistics_before_gc() {
     thread->tlab().initialize_statistics();
   }
 
+  Universe::heap()->accumulate_statistics_all_gclabs();
+
   // Publish new stats if some allocation occurred.
   if (global_stats()->allocation() != 0) {
     global_stats()->publish();
@@ -195,8 +197,7 @@ void ThreadLocalAllocBuffer::initialize(HeapWord* start,
   invariants();
 }
 
-void ThreadLocalAllocBuffer::initialize(bool gclab) {
-  _gclab = gclab;
+void ThreadLocalAllocBuffer::initialize() {
   initialize(NULL,                    // start
              NULL,                    // top
              NULL);                   // end
@@ -293,15 +294,9 @@ void ThreadLocalAllocBuffer::verify() {
 }
 
 Thread* ThreadLocalAllocBuffer::myThread() {
-  ByteSize gclab_offset = Thread::gclab_start_offset();
-  ByteSize tlab_offset = Thread::tlab_start_offset();
-  ByteSize offs = _gclab ? gclab_offset : tlab_offset;
-  Thread* thread = (Thread*)(((char *)this) +
-                   in_bytes(start_offset()) - in_bytes(offs));
-#ifdef ASSERT
-  assert(this == (_gclab ? &thread->gclab() : &thread->tlab()), "must be");
-#endif
-  return thread;
+  return (Thread*)(((char *)this) +
+                   in_bytes(start_offset()) -
+                   in_bytes(Thread::tlab_start_offset()));
 }
 
 size_t ThreadLocalAllocBuffer::end_reserve() {

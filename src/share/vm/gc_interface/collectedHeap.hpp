@@ -630,6 +630,9 @@ class CollectedHeap : public CHeapObj<mtInternal> {
   // Shut down all GC workers and other GC related threads.
   virtual void shutdown();
 
+  // Accumulate additional statistics from GCLABs.
+  virtual void accumulate_statistics_all_gclabs();
+
   // Non product verification and debugging.
 #ifndef PRODUCT
   // Support for PromotionFailureALot.  Return true if it's time to cause a

@@ -219,6 +219,8 @@ void VM_ShenandoahUpdateRootRefs::doit() {
 
   sh->reset_mark_bitmap();
 
+  sh->resize_all_tlabs();
+
   sh->shenandoahPolicy()->record_final_update_refs_end();
 }
 

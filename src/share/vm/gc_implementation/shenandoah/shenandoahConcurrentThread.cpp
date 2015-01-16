@@ -166,6 +166,7 @@ void ShenandoahConcurrentThread::do_full_gc() {
 }
 
 void ShenandoahConcurrentThread::schedule_full_gc() {
+  tty->print_cr("scheduling full gc");
   _do_full_gc = true;
 }
 

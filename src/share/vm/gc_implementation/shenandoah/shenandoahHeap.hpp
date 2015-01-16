@@ -178,6 +178,9 @@ public:
   void space_iterate(SpaceClosure* scl);
   virtual size_t unsafe_max_tlab_alloc(Thread *thread) const;
 
+  void resize_all_tlabs();
+  void accumulate_statistics_all_gclabs();
+
   HeapWord* tlab_post_allocation_setup(HeapWord* obj, bool new_obj);
 
   uint oop_extra_words();

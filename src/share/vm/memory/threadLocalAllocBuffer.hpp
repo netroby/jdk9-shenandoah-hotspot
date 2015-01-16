@@ -56,12 +56,8 @@ private:
   unsigned  _slow_refill_waste;
   unsigned  _gc_waste;
   unsigned  _slow_allocations;
-  bool      _gclab;
 
   AdaptiveWeightedAverage _allocation_fraction;  // fraction of eden allocated in tlabs
-
-  void accumulate_statistics();
-  void initialize_statistics();
 
   void set_start(HeapWord* start)                { _start = start; }
   void set_end(HeapWord* end)                    { _end = end; }
@@ -79,9 +75,6 @@ private:
 
   // Make parsable and release it.
   void reset();
-
-  // Resize based on amount of allocation, etc.
-  void resize();
 
   void invariants() const { assert(top() >= start() && top() <= end(), "invalid tlab"); }
 
@@ -106,6 +99,12 @@ public:
   ThreadLocalAllocBuffer() : _allocation_fraction(TLABAllocationWeight), _allocated_before_last_gc(0) {
     // do nothing.  tlabs must be inited by initialize() calls
   }
+
+  // Resize based on amount of allocation, etc.
+  void resize();
+
+  void accumulate_statistics();
+  void initialize_statistics();
 
   static const size_t min_size()                 { return align_object_size(MinTLABSize / HeapWordSize); }
   static const size_t max_size()                 { assert(_max_size != 0, "max_size not set up"); return _max_size; }
@@ -158,7 +157,7 @@ public:
   static void resize_all_tlabs();
 
   void fill(HeapWord* start, HeapWord* top, size_t new_size);
-  void initialize(bool gclab = false);
+  void initialize();
 
   static size_t refill_waste_limit_increment()   { return TLABWasteIncrement; }
 
