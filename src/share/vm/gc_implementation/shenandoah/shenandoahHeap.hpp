@@ -345,10 +345,6 @@ public:
            (size_t) _in_cset_fast_test_length * sizeof(bool));
   }
 
-  static address in_cset_fast_test_addr() {
-    return (address) ShenandoahHeap::heap()->_in_cset_fast_test;
-  }
-
   GCTracer* tracer();
 
   size_t tlab_used(Thread* ignored) const;

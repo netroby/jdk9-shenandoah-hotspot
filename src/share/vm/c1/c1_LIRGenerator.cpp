@@ -1885,9 +1885,8 @@ LIR_Opr LIRGenerator::shenandoah_write_barrier(LIR_Opr obj, CodeEmitInfo* info, 
   if (UseShenandoahGC) {
 
     LIR_Opr result = new_register(T_OBJECT);
-    LIR_Opr tmp1 = new_register(T_INT);
-    LIR_Opr tmp2 = new_register(T_INT);
-    __ shenandoah_wb(obj, result, tmp1, tmp2, new CodeEmitInfo(info), need_null_check);
+    LIR_Opr tmp = new_register(T_INT);
+    __ shenandoah_wb(obj, result, tmp, new CodeEmitInfo(info), need_null_check);
     return result;
 
   } else {
