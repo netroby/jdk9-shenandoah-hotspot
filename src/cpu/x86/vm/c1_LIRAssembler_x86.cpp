@@ -1521,8 +1521,9 @@ void LIR_Assembler::emit_opShenandoahWriteBarrier(LIR_OpShenandoahWriteBarrier* 
   Label done;
   Register obj = op->in_opr()->as_register();
   Register res = op->result_opr()->as_register();
-  Register tmp1 = op->tmp_opr()->as_register();
-  assert_different_registers(res, tmp1);
+  Register tmp1 = op->tmp1_opr()->as_register();
+  Register tmp2 = op->tmp2_opr()->as_register();
+  assert_different_registers(res, tmp1, tmp2);
 
   if (res != obj) {
     __ mov(res, obj);
@@ -1542,6 +1543,14 @@ void LIR_Assembler::emit_opShenandoahWriteBarrier(LIR_OpShenandoahWriteBarrier* 
   __ movptr(tmp1, evacuation_in_progress);
   __ cmpl(tmp1, 0);
   __ jcc(Assembler::equal, done);
+
+  // Check for object in collection set.
+  __ movptr(tmp1, res);
+  __ shrptr(tmp1, ShenandoahHeapRegion::RegionSizeShift);
+  __ movptr(tmp2, (intptr_t) ShenandoahHeap::in_cset_fast_test_addr());
+  __ movbool(tmp2, Address(tmp2, tmp1, Address::times_1));
+  __ testb(tmp2, 0x1);
+  __ jcc(Assembler::zero, done);
 
   if (res != rax) {
     __ xchgptr(res, rax); // Move obj into rax and save rax into obj.

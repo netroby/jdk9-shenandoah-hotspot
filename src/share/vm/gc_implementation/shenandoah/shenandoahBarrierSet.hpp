@@ -134,7 +134,7 @@ public:
   virtual oop resolve_and_maybe_copy_oop(oop src);
 
   static void resolve_and_maybe_copy_oop_c2(oopDesc* src, JavaThread* thread);
-  static void resolve_and_maybe_copy_oop_static2(JavaThread* thread, oopDesc* src);
+  static void resolve_and_maybe_copy_oop_interp(JavaThread* thread, oopDesc* src);
   static void resolve_and_maybe_copy_oop_c1(JavaThread* thread, oopDesc* src);
 
 private:

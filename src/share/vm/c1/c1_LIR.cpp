@@ -1017,7 +1017,8 @@ void LIR_OpVisitState::visit(LIR_Op* op) {
       LIR_OpShenandoahWriteBarrier* opShenandoahWB = (LIR_OpShenandoahWriteBarrier*) op;
       do_input(opShenandoahWB->_opr);
       do_output(opShenandoahWB->_result);
-      do_temp(opShenandoahWB->_tmp);
+      do_temp(opShenandoahWB->_tmp1);
+      do_temp(opShenandoahWB->_tmp2);
       do_info(opShenandoahWB->_info);
       break;
     }
@@ -1847,7 +1848,8 @@ const char * LIR_Op::name() const {
 void LIR_OpShenandoahWriteBarrier::print_instr(outputStream* out) const {
   out->print("[obj: "); in_opr()->print(out); out->print("]");
   out->print("[res: "); result_opr()->print(out); out->print("]");
-  out->print("[tmp: "); tmp_opr()->print(out); out->print("]");
+  out->print("[tmp1: "); tmp1_opr()->print(out); out->print("]");
+  out->print("[tmp2: "); tmp2_opr()->print(out); out->print("]");
 }
 
 // LIR_OpJavaCall
