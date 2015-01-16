@@ -369,6 +369,13 @@ HeapWord* ShenandoahHeap::allocate_new_gclab(size_t word_size) {
     oom_during_evacuation();
     return NULL;
   }
+  assert(! _concurrent_mark_in_progress, "no new gclabs during marking");
+  assert(_evacuation_in_progress, "new gclabs only during evacuation");
+  if (ShenandoahUpdateRefsEarly) {
+    // We mark the whole tlab here, this way we avoid marking every single
+    // allocated object.
+    _next_mark_bit_map->parMarkRange(MemRegion(result, word_size));
+  }
   assert(! heap_region_containing(result)->is_in_collection_set(), "Never allocate in dirty region");
   if (result != NULL) {
     if (ShenandoahTraceTLabs) {
