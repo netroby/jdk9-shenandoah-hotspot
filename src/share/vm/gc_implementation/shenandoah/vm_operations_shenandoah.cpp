@@ -202,6 +202,9 @@ void VM_ShenandoahUpdateRootRefs::doit() {
     tty->print("vm_ShenandoahUpdateRootRefs\n");
 
   ShenandoahHeap *sh = ShenandoahHeap::heap();
+
+  sh->shenandoahPolicy()->record_final_update_refs_start();
+
   sh->update_roots();
 
   if (ShenandoahVerify) {
@@ -216,6 +219,7 @@ void VM_ShenandoahUpdateRootRefs::doit() {
 
   sh->reset_mark_bitmap();
 
+  sh->shenandoahPolicy()->record_final_update_refs_end();
 }
 
 VM_Operation::VMOp_Type VM_ShenandoahUpdateRefs::type() const {
@@ -231,7 +235,9 @@ void VM_ShenandoahUpdateRefs::doit() {
     tty->print("vm_ShenandoahUpdateRefs\n");
 
   ShenandoahHeap *sh = ShenandoahHeap::heap();
+  sh->shenandoahPolicy()->record_final_evacuation_start();
   sh->set_evacuation_in_progress(false);
   sh->prepare_for_update_references();
   assert(ShenandoahConcurrentUpdateRefs, "only do this when concurrent update references is turned on");
+  sh->shenandoahPolicy()->record_final_evacuation_end();
 }

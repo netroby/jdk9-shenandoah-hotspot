@@ -391,7 +391,11 @@ void ShenandoahConcurrentMark::mark_from_roots(bool update_refs, bool full_gc) {
     tty->print_cr("STOPPING THE WORLD: before marking");
     tty->print_cr("Starting markFromRoots");
   }
+
   ShenandoahHeap* sh = (ShenandoahHeap *) Universe::heap();
+
+  sh->shenandoahPolicy()->record_concurrent_mark_start();
+
   uint max_workers = full_gc ? _max_worker_id : _max_conc_worker_id;
   ParallelTaskTerminator terminator(max_workers, _task_queues);
   ReferenceProcessor* rp = sh->ref_processor_cm();
@@ -415,6 +419,7 @@ void ShenandoahConcurrentMark::mark_from_roots(bool update_refs, bool full_gc) {
     TASKQUEUE_STATS_ONLY(reset_taskqueue_stats());
   }
 
+  sh->shenandoahPolicy()->record_concurrent_mark_end();
 }
 
 class FinishDrainSATBBuffersTask : public AbstractGangTask {

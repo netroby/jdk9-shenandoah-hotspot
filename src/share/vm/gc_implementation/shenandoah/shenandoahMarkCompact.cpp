@@ -31,6 +31,8 @@ void ShenandoahMarkCompact::do_mark_compact() {
   assert(!_heap->is_evacuation_in_progress(), "can't do full-GC while evacuation is in progress");
   assert(!_heap->is_update_references_in_progress(), "can't do full-GC while updating of references is in progress");
 
+  _heap->shenandoahPolicy()->record_fullgc_start();
+
   if (ShenandoahVerify) {
     // Full GC should only be called between regular concurrent cycles, therefore
     // those verifications should be valid.
@@ -66,6 +68,8 @@ void ShenandoahMarkCompact::do_mark_compact() {
   }
 
   _heap->reset_mark_bitmap();
+
+  _heap->shenandoahPolicy()->record_fullgc_end();
 }
 
 void ShenandoahMarkCompact::phase1_mark_heap() {

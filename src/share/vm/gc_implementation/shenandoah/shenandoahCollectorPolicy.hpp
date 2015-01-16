@@ -41,8 +41,14 @@ public:
   void record_concurrent_mark_end();
   void record_final_mark_start();
   void record_final_mark_end();
+  void record_final_evacuation_start();
+  void record_final_evacuation_end();
+  void record_final_update_refs_start();
+  void record_final_update_refs_end();
   void record_concurrent_evacuation_start();
   void record_concurrent_evacuation_end();
+  void record_fullgc_start();
+  void record_fullgc_end();
   void record_bytes_allocated(size_t bytes);
   void record_bytes_reclaimed(size_t bytes);
   bool should_start_concurrent_mark(size_t used, size_t capacity);

@@ -228,7 +228,9 @@ void ShenandoahHeap::print_on(outputStream* st) const {
   st->print("Shenandoah Heap");
   st->print(" total = " SIZE_FORMAT " K, used " SIZE_FORMAT " K ", capacity()/ K, used() /K);
   st->print("Region size = " SIZE_FORMAT "K \n", ShenandoahHeapRegion::RegionSizeBytes / K);
-  print_heap_regions(st);
+  if (Verbose) {
+    print_heap_regions(st);
+  }
 }
 
 void ShenandoahHeap::post_initialize() {
