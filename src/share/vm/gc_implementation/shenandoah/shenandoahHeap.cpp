@@ -1052,8 +1052,6 @@ void ShenandoahHeap::verify_heap_after_marking() {
 
 void ShenandoahHeap::prepare_for_concurrent_evacuation() {
 
-  _cancelled_evacuation = false;
-
   if (! ShenandoahUpdateRefsEarly) {
     recycle_dirty_regions();
   }
@@ -1153,7 +1151,7 @@ public:
     ShenandoahHeapRegion* region = _regions->claim_next();
     ShenandoahHeap* heap = ShenandoahHeap::heap();
     while (region != NULL) {
-      if (! ((region->is_in_collection_set() && ! heap->cancelled_evacuation()) || region->is_humonguous_continuation())) {
+      if ((! region->is_in_collection_set() || heap->cancelled_evacuation()) && ! region->is_humonguous_continuation()) {
         HeapWord* failed = region->object_iterate_careful(&update_refs_cl);
         assert(failed == NULL, "careful iteration is implemented safe for now in Shenandaoh");
       }
@@ -1482,6 +1480,8 @@ oop ShenandoahHeap::maybe_update_oop_ref(oop* p) {
     if (forwarded_oop != heap_oop) {
       // tty->print_cr("updating old ref: "PTR_FORMAT" pointing to "PTR_FORMAT" to new ref: "PTR_FORMAT, p2i(p), p2i(heap_oop), p2i(forwarded_oop));
       assert(forwarded_oop->is_oop(), "oop required");
+      assert(is_in(forwarded_oop), "forwardee must be in heap");
+      assert(! heap_region_containing(forwarded_oop)->is_in_collection_set(), "forwardee must not be in collection set");
       // If this fails, another thread wrote to p before us, it will be logged in SATB and the
       // reference be updated later.
       oop result = (oop) Atomic::cmpxchg_ptr(forwarded_oop, p, heap_oop);
@@ -2341,7 +2341,6 @@ oop ShenandoahHeap::evacuate_object(oop p, Thread* thread) {
     // until all GC threads are done, and then we
     // return the forwardee.
     oop resolved = ShenandoahBarrierSet::resolve_oop_static(p);
-    tty->print_cr("possible emergency allocation needed: %p", (oopDesc*) resolved);
     return resolved;
   }
 

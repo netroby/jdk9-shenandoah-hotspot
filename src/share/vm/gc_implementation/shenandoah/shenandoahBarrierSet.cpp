@@ -279,6 +279,11 @@ oop ShenandoahBarrierSet::resolve_and_maybe_copy_oop_work(oop src) {
 
 oop ShenandoahBarrierSet::resolve_and_maybe_copy_oop_work2(oop src) {
   ShenandoahHeap *sh = (ShenandoahHeap*) Universe::heap();
+  if (! sh->is_evacuation_in_progress()) {
+    // We may get here through a barrier that just took a safepoint that
+    // turned off evacuation. In this case, return right away.
+    return ShenandoahBarrierSet::resolve_oop_static(src);
+  }
   assert(src != NULL, "only evacuated non NULL oops");
   assert(sh->heap_region_containing(src)->is_in_collection_set(), "only evacuate objects in collection set");
   assert(! sh->heap_region_containing(src)->is_humonguous(), "never evacuate humonguous objects");
