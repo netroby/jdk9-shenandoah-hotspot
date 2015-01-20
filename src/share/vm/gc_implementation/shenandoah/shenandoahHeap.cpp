@@ -227,7 +227,21 @@ bool ShenandoahHeap::is_bitmap_clear() {
 void ShenandoahHeap::print_on(outputStream* st) const {
   st->print("Shenandoah Heap");
   st->print(" total = " SIZE_FORMAT " K, used " SIZE_FORMAT " K ", capacity()/ K, used() /K);
-  st->print("Region size = " SIZE_FORMAT "K \n", ShenandoahHeapRegion::RegionSizeBytes / K);
+  st->print("Region size = " SIZE_FORMAT "K ", ShenandoahHeapRegion::RegionSizeBytes / K);
+  if (_concurrent_mark_in_progress) {
+    st->print("marking ");
+  }
+  if (_evacuation_in_progress) {
+    st->print("evacuating ");
+  }
+  if (_update_references_in_progress) {
+    st->print("updating-refs ");
+  }
+  if (_cancelled_evacuation) {
+    st->print("cancelled ");
+  }
+  st->print("\n");
+
   if (Verbose) {
     print_heap_regions(st);
   }
