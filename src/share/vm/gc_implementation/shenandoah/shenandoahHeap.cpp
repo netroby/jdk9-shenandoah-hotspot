@@ -2342,6 +2342,11 @@ oop ShenandoahHeap::evacuate_object(oop p, Thread* thread) {
 
   assert(! heap_region_containing(p)->is_humonguous(), "never evacuate humonguous objects");
 
+  // Don't even attempt to evacuate anything if evacuation has been cancelled.
+  if (_cancelled_evacuation) {
+    return ShenandoahBarrierSet::resolve_oop_static(p);
+  }
+
   bool alloc_from_gclab = true;
   HeapWord* filler = allocate_from_gclab(thread, required);
   if (filler == NULL) {
