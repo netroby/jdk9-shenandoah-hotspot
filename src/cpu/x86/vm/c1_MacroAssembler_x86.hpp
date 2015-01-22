@@ -117,8 +117,4 @@
 
   void invalidate_registers(bool inv_rax, bool inv_rbx, bool inv_rcx, bool inv_rdx, bool inv_rsi, bool inv_rdi) PRODUCT_RETURN;
 
-#ifdef ASSERT
-void check_obj_shenandoah(Register obj, const char* err_msg);
-#endif
-
 #endif // CPU_X86_VM_C1_MACROASSEMBLER_X86_HPP
