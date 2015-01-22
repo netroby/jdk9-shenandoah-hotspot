@@ -258,6 +258,8 @@ Thread::Thread() {
   _MutexEvent  = ParkEvent::Allocate(this);
   _MuxEvent    = ParkEvent::Allocate(this);
 
+  _evacuating = false;
+
 #ifdef CHECK_UNHANDLED_OOPS
   if (CheckUnhandledOops) {
     _unhandled_oops = new UnhandledOops(this);

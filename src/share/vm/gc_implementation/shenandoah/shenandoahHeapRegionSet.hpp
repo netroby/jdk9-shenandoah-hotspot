@@ -11,8 +11,7 @@ class ShenandoahHeapRegionSet : public CHeapObj<mtGC> {
 private:
   ShenandoahHeapRegion** _regions;
   // current region to be returned from get_next()
-  ShenandoahHeapRegion** _current_allocation;
-  ShenandoahHeapRegion** _current_evacuation;
+  ShenandoahHeapRegion** _current;
   ShenandoahHeapRegion** _next;
 
   // last inserted region.
@@ -57,7 +56,7 @@ public:
   /**
    * Returns a pointer to the current region.
    */
-   ShenandoahHeapRegion* current(bool evacuation);
+   ShenandoahHeapRegion* current();
 
   /**
    * Gets the next region for allocation (from free-list).
@@ -65,7 +64,7 @@ public:
    * increment to the next region, the others will fail and return
    * the region that the succeeding thread got.
    */
-  ShenandoahHeapRegion* get_next(bool evacuation);
+  ShenandoahHeapRegion* get_next();
 
   /**
    * Claims next region for processing. This is implemented to be concurrency-safe.

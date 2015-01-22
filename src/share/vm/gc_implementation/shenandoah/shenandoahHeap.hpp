@@ -107,7 +107,7 @@ public:
   ShenandoahHeap(ShenandoahCollectorPolicy* policy);
   HeapWord* allocate_new_tlab(size_t word_size);
 
-  HeapWord* allocate_memory(size_t word_size, bool evacuation);
+  HeapWord* allocate_memory(size_t word_size);
 
   bool find_contiguous_free_regions(uint num_free_regions, ShenandoahHeapRegion** free_regions);
   bool allocate_contiguous_free_regions(uint num_free_regions, ShenandoahHeapRegion** free_regions);
@@ -270,9 +270,6 @@ public:
   void verify_heap_after_update_refs();
   void verify_regions_after_update_refs();
 
-  // This is here to get access to the otherwise protected method in CollectedHeap.
-  static HeapWord* allocate_from_tlab_work(Thread* thread, size_t size);
-
   static ByteSize ordered_regions_offset() { return byte_offset_of(ShenandoahHeap, _ordered_regions); }
   static ByteSize first_region_bottom_offset() { return byte_offset_of(ShenandoahHeap, _first_region_bottom); }
   static address evacuation_in_progress_addr() {
@@ -360,10 +357,6 @@ private:
   void verify_evacuation(ShenandoahHeapRegion* from_region);
   void set_concurrent_mark_in_progress(bool in_progress);
 
-  HeapWord* allocate_new_gclab(size_t word_size);
-  HeapWord* allocate_from_gclab(Thread* thread, size_t size);
-  HeapWord* allocate_from_gclab_slow(Thread* thread, size_t size);
-
   void oom_during_evacuation();
   void cancel_evacuation();
 public:
@@ -377,17 +370,17 @@ private:
   void verify_live();
   void verify_liveness_after_concurrent_mark();
 
-  HeapWord* allocate_memory_with_lock(size_t word_size, bool evacuation);
-  HeapWord* allocate_memory_heap_lock(size_t word_size, bool evacuation);
-  HeapWord* allocate_memory_shenandoah_lock(size_t word_size, bool evacuation);
-  HeapWord* allocate_memory_work(size_t word_size, bool evacuation);
+  HeapWord* allocate_memory_with_lock(size_t word_size);
+  HeapWord* allocate_memory_heap_lock(size_t word_size);
+  HeapWord* allocate_memory_shenandoah_lock(size_t word_size);
+  HeapWord* allocate_memory_work(size_t word_size);
   HeapWord* allocate_large_memory(size_t word_size);
-  ShenandoahHeapRegion* check_skip_humonguous(ShenandoahHeapRegion* region, bool evacuation);
-  ShenandoahHeapRegion* get_next_region_skip_humonguous(bool evacuation);
-  ShenandoahHeapRegion* get_current_region_skip_humonguous(bool evacuation);
-  ShenandoahHeapRegion* check_grow_heap(ShenandoahHeapRegion* current, bool evacuation);
-  ShenandoahHeapRegion* get_next_region(bool evacuation);
-  ShenandoahHeapRegion* get_current_region(bool evacuation);
+  ShenandoahHeapRegion* check_skip_humonguous(ShenandoahHeapRegion* region);
+  ShenandoahHeapRegion* get_next_region_skip_humonguous();
+  ShenandoahHeapRegion* get_current_region_skip_humonguous();
+  ShenandoahHeapRegion* check_grow_heap(ShenandoahHeapRegion* current);
+  ShenandoahHeapRegion* get_next_region();
+  ShenandoahHeapRegion* get_current_region();
 
   void set_from_region_protection(bool protect);
 };

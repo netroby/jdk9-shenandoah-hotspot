@@ -357,7 +357,7 @@ bool  ShenandoahHeap::is_scavengable(const void* p) {
 }
 
 HeapWord* ShenandoahHeap::allocate_new_tlab(size_t word_size) {
-  HeapWord* result = allocate_memory(word_size, false);
+  HeapWord* result = allocate_memory(word_size);
 
   if (result != NULL) {
     if (_concurrent_mark_in_progress || (ShenandoahUpdateRefsEarly && _evacuation_in_progress)) {
@@ -377,30 +377,6 @@ HeapWord* ShenandoahHeap::allocate_new_tlab(size_t word_size) {
   return result;
 }
 
-HeapWord* ShenandoahHeap::allocate_new_gclab(size_t word_size) {
-  HeapWord* result = allocate_memory(word_size, true);
-  if (result == NULL) {
-    oom_during_evacuation();
-    return NULL;
-  }
-  assert(! _concurrent_mark_in_progress, "no new gclabs during marking");
-  assert(_evacuation_in_progress, "new gclabs only during evacuation");
-  if (ShenandoahUpdateRefsEarly) {
-    // We mark the whole tlab here, this way we avoid marking every single
-    // allocated object.
-    _next_mark_bit_map->parMarkRange(MemRegion(result, word_size));
-  }
-  assert(! heap_region_containing(result)->is_in_collection_set(), "Never allocate in dirty region");
-  if (result != NULL) {
-    if (ShenandoahTraceTLabs) {
-      tty->print_cr("allocating new gclab of size "SIZE_FORMAT" at addr "PTR_FORMAT, word_size, p2i(result));
-    }
-
-  }
-  return result;
-}
-
-  
 ShenandoahHeap* ShenandoahHeap::heap() {
   assert(_pgc != NULL, "Unitialized access to ShenandoahHeap::heap()");
   assert(_pgc->kind() == CollectedHeap::ShenandoahHeap, "not a shenandoah heap");
@@ -445,58 +421,58 @@ public:
 
 };
 
-HeapWord* ShenandoahHeap::allocate_memory(size_t word_size, bool evacuation) {
+HeapWord* ShenandoahHeap::allocate_memory(size_t word_size) {
   HeapWord* result = NULL;
-  result = allocate_memory_with_lock(word_size, evacuation);
+  result = allocate_memory_with_lock(word_size);
 
-  if (result == NULL && ! evacuation) { // Allocation failed, try full-GC, then retry allocation.
+  if (result == NULL && ! Thread::current()->is_evacuating()) { // Allocation failed, try full-GC, then retry allocation.
     collect(GCCause::_allocation_failure);
-    result = allocate_memory_with_lock(word_size, evacuation);
+    result = allocate_memory_with_lock(word_size);
   }
 
   return result;
 }
 
-HeapWord* ShenandoahHeap::allocate_memory_with_lock(size_t word_size, bool evacuation) {
+HeapWord* ShenandoahHeap::allocate_memory_with_lock(size_t word_size) {
   if (Thread::current()->is_GC_task_thread() && SafepointSynchronize::is_at_safepoint()) {
-    return allocate_memory_shenandoah_lock(word_size, evacuation);
+    return allocate_memory_shenandoah_lock(word_size);
   } else {
-    return allocate_memory_heap_lock(word_size, evacuation);
+    return allocate_memory_heap_lock(word_size);
   }
 }
 
-HeapWord* ShenandoahHeap::allocate_memory_heap_lock(size_t word_size, bool evacuation) {
+HeapWord* ShenandoahHeap::allocate_memory_heap_lock(size_t word_size) {
   MutexLocker ml(Heap_lock);
-  return allocate_memory_work(word_size, evacuation);
+  return allocate_memory_work(word_size);
 }
 
-HeapWord* ShenandoahHeap::allocate_memory_shenandoah_lock(size_t word_size, bool evacuation) {
+HeapWord* ShenandoahHeap::allocate_memory_shenandoah_lock(size_t word_size) {
   MutexLocker ml(ShenandoahHeap_lock);
-  return allocate_memory_work(word_size, evacuation);
+  return allocate_memory_work(word_size);
 }
 
-ShenandoahHeapRegion* ShenandoahHeap::check_skip_humonguous(ShenandoahHeapRegion* region, bool evacuation) {
+ShenandoahHeapRegion* ShenandoahHeap::check_skip_humonguous(ShenandoahHeapRegion* region) {
   while (region != NULL && region->is_humonguous()) {
-    region = _free_regions->get_next(evacuation);
+    region = _free_regions->get_next();
   }
   return region;
 }
 
-ShenandoahHeapRegion* ShenandoahHeap::get_next_region_skip_humonguous(bool evacuation) {
-  ShenandoahHeapRegion* next = _free_regions->get_next(evacuation);
-  return check_skip_humonguous(next, evacuation);
+ShenandoahHeapRegion* ShenandoahHeap::get_next_region_skip_humonguous() {
+  ShenandoahHeapRegion* next = _free_regions->get_next();
+  return check_skip_humonguous(next);
 }
 
-ShenandoahHeapRegion* ShenandoahHeap::get_current_region_skip_humonguous(bool evacuation) {
-  ShenandoahHeapRegion* current = _free_regions->current(evacuation);
-  return check_skip_humonguous(current, evacuation);
+ShenandoahHeapRegion* ShenandoahHeap::get_current_region_skip_humonguous() {
+  ShenandoahHeapRegion* current = _free_regions->current();
+  return check_skip_humonguous(current);
 }
 
 
-ShenandoahHeapRegion* ShenandoahHeap::check_grow_heap(ShenandoahHeapRegion* current, bool evacuation) {
+ShenandoahHeapRegion* ShenandoahHeap::check_grow_heap(ShenandoahHeapRegion* current) {
   if (current == NULL) {
     if (grow_heap_by()) {
-      current = _free_regions->get_next(evacuation);
+      current = _free_regions->get_next();
       assert(current != NULL, "After successfully growing the heap we should have a region");
       assert(! current->is_humonguous(), "new region must not be humonguous");
     } else {
@@ -506,25 +482,25 @@ ShenandoahHeapRegion* ShenandoahHeap::check_grow_heap(ShenandoahHeapRegion* curr
   return current;
 }
 
-ShenandoahHeapRegion* ShenandoahHeap::get_current_region(bool evacuation) {
-  ShenandoahHeapRegion* current = get_current_region_skip_humonguous(evacuation);
-  return check_grow_heap(current, evacuation);
+ShenandoahHeapRegion* ShenandoahHeap::get_current_region() {
+  ShenandoahHeapRegion* current = get_current_region_skip_humonguous();
+  return check_grow_heap(current);
 }
 
-ShenandoahHeapRegion* ShenandoahHeap::get_next_region(bool evacuation) {
-  ShenandoahHeapRegion* current = get_next_region_skip_humonguous(evacuation);
-  return check_grow_heap(current, evacuation);
+ShenandoahHeapRegion* ShenandoahHeap::get_next_region() {
+  ShenandoahHeapRegion* current = get_next_region_skip_humonguous();
+  return check_grow_heap(current);
 }
 
 
-HeapWord* ShenandoahHeap::allocate_memory_work(size_t word_size, bool evacuation) {
+HeapWord* ShenandoahHeap::allocate_memory_work(size_t word_size) {
 
   if (word_size * HeapWordSize > ShenandoahHeapRegion::RegionSizeBytes) {
-    assert(! evacuation, "no evacuation of humonguous objects");
+    assert(! Thread::current()->is_evacuating(), "no humonguous allocation for evacuating thread");
     return allocate_large_memory(word_size);
   }
 
-  ShenandoahHeapRegion* my_current_region = get_current_region(false);
+  ShenandoahHeapRegion* my_current_region = get_current_region();
   if (my_current_region == NULL) {
     return NULL; // No more room to make a new region. OOM.
   }
@@ -543,7 +519,7 @@ HeapWord* ShenandoahHeap::allocate_memory_work(size_t word_size, bool evacuation
   result = my_current_region->par_allocate(word_size);
   while (result == NULL && my_current_region != NULL) {
     // 2nd attempt. Try next region.
-    my_current_region = get_next_region(false);
+    my_current_region = get_next_region();
     if (my_current_region == NULL) {
       return NULL; // No more room to make a new region. OOM.
     }
@@ -675,7 +651,7 @@ HeapWord* ShenandoahHeap::mem_allocate_locked(size_t size,
   // This was used for allocation while holding the Heap_lock.
   // HeapWord* filler = allocate_memory(BrooksPointer::BROOKS_POINTER_OBJ_SIZE + size);
 
-  HeapWord* filler = allocate_memory(BrooksPointer::BROOKS_POINTER_OBJ_SIZE + size, false);
+  HeapWord* filler = allocate_memory(BrooksPointer::BROOKS_POINTER_OBJ_SIZE + size);
   HeapWord* result = filler + BrooksPointer::BROOKS_POINTER_OBJ_SIZE;
   if (filler != NULL) {
     initialize_brooks_ptr(filler, result);
@@ -2270,57 +2246,6 @@ void ShenandoahHeap::copy_object(oop p, HeapWord* s) {
 #endif
 }
 
-HeapWord* ShenandoahHeap::allocate_from_gclab(Thread* thread, size_t size) {
-  HeapWord* obj = thread->tlab().allocate(size);
-  if (obj != NULL) {
-    return obj;
-  }
-  // Otherwise...
-  return allocate_from_gclab_slow(thread, size);
-}
-
-HeapWord* ShenandoahHeap::allocate_from_gclab_slow(Thread* thread, size_t size) {
-  // Retain tlab and allocate object in shared space if
-  // the amount free in the tlab is too large to discard.
-  if (thread->tlab().free() > thread->tlab().refill_waste_limit()) {
-    thread->tlab().record_slow_allocation(size);
-    return NULL;
-  }
-
-  // Discard tlab and allocate a new one.
-  // To minimize fragmentation, the last TLAB may be smaller than the rest.
-  size_t new_gclab_size = thread->tlab().compute_size(size);
-
-  thread->tlab().clear_before_allocation();
-
-  if (new_gclab_size == 0) {
-    return NULL;
-  }
-
-  // Allocate a new TLAB...
-  HeapWord* obj = allocate_new_gclab(new_gclab_size);
-  if (obj == NULL) {
-    return NULL;
-  }
-  fill_with_object(obj, size);
-
-  if (ZeroTLAB) {
-    // ..and clear it.
-    Copy::zero_to_words(obj, new_gclab_size);
-  } else {
-    // ...and zap just allocated object.
-#ifdef ASSERT
-    // Skip mangling the space corresponding to the object header to
-    // ensure that the returned space is not considered parsable by
-    // any concurrent GC thread.
-    size_t hdr_size = oopDesc::header_size();
-    Copy::fill_to_words(obj + hdr_size, new_gclab_size - hdr_size, badHeapWordVal);
-#endif // ASSERT
-  }
-  thread->tlab().fill(obj, obj + size, new_gclab_size);
-  return obj;
-}
-
 oop ShenandoahHeap::evacuate_object(oop p, Thread* thread) {
   ShenandoahHeapRegion* hr;
   size_t required;
@@ -2348,11 +2273,13 @@ oop ShenandoahHeap::evacuate_object(oop p, Thread* thread) {
   }
 
   bool alloc_from_gclab = true;
-  HeapWord* filler = allocate_from_gclab(thread, required);
+  thread->set_evacuating(true);
+  HeapWord* filler = allocate_from_tlab_work(SystemDictionary::Object_klass(), thread, required);
   if (filler == NULL) {
-    filler = allocate_memory(required, true);
+    filler = allocate_memory(required);
     alloc_from_gclab = false;
   }
+  thread->set_evacuating(false);
 
   if (filler == NULL) {
     oom_during_evacuation();
@@ -2406,10 +2333,6 @@ oop ShenandoahHeap::evacuate_object(oop p, Thread* thread) {
   }
 
   return return_val;
-}
-
-HeapWord* ShenandoahHeap::allocate_from_tlab_work(Thread* thread, size_t size) {
-  return CollectedHeap::allocate_from_tlab_work(SystemDictionary::Object_klass(), thread, size);
 }
 
 HeapWord* ShenandoahHeap::tlab_post_allocation_setup(HeapWord* obj, bool new_obj) {
