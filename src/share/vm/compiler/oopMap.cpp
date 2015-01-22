@@ -308,6 +308,9 @@ OopMap* OopMapSet::find_map_at_offset(int pc_offset) const {
   assert( i < len, "oopmap not found" );
 
   OopMap* m = at(i);
+  if (m->offset() != pc_offset) {
+    tty->print_cr("oopmap not found, pc_offset: %d, m->offset(): %d", pc_offset, m->offset());
+  }
   assert( m->offset() == pc_offset, "oopmap not found" );
   return m;
 }

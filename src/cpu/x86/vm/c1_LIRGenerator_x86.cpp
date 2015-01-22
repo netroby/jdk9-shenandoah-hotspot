@@ -370,7 +370,9 @@ void LIRGenerator::do_MonitorEnter(MonitorEnter* x) {
   // this CodeEmitInfo must not have the xhandlers because here the
   // object is already locked (xhandlers expect object to be unlocked)
   CodeEmitInfo* info = state_for(x, x->state(), true);
-  monitor_enter(obj.result(), lock, syncTempOpr(), scratch,
+  LIR_Opr obj_opr = obj.result();
+  obj_opr = shenandoah_write_barrier(obj_opr, state_for(x/*, x->state_before()*/), x->needs_null_check());
+  monitor_enter(obj_opr, lock, syncTempOpr(), scratch,
                         x->monitor_no(), info_for_exception, info);
 }
 

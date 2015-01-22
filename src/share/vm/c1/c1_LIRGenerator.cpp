@@ -2879,6 +2879,7 @@ void LIRGenerator::do_Base(Base* x) {
       __ load_stack_address_monitor(0, lock);
 
       CodeEmitInfo* info = new CodeEmitInfo(scope()->start()->state()->copy(ValueStack::StateBefore, SynchronizationEntryBCI), NULL, x->check_flag(Instruction::DeoptimizeOnException));
+      obj = shenandoah_write_barrier(obj, info, false);
       CodeStub* slow_path = new MonitorEnterStub(obj, lock, info);
 
       // receiver is guaranteed non-NULL so don't need CodeEmitInfo

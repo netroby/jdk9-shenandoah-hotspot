@@ -35,6 +35,35 @@
 #include "runtime/os.hpp"
 #include "runtime/stubRoutines.hpp"
 
+#ifdef ASSERT
+#include "gc_implementation/shenandoah/shenandoahHeap.hpp"
+#include "gc_implementation/shenandoah/shenandoahHeapRegion.hpp"
+
+void C1_MacroAssembler::check_obj_shenandoah(Register obj, const char* err_msg) {
+  if (UseShenandoahGC) {
+    Label done;
+    push(rscratch1);
+    push(rscratch2);
+
+    testptr(obj, obj);
+    jcc(Assembler::zero, done);
+
+    movptr(rscratch1, obj);
+    shrq(rscratch1, ShenandoahHeapRegion::RegionSizeShift);
+    movptr(rscratch2, (intptr_t) ShenandoahHeap::in_cset_fast_test_addr());
+    cmpb(Address(rscratch2, rscratch1, Address::times_1), 0);
+    jcc(Assembler::equal, done);
+
+    stop(err_msg);
+
+    bind(done);
+
+    pop(rscratch2);
+    pop(rscratch1);
+  }
+}
+#endif
+
 int C1_MacroAssembler::lock_object(Register hdr, Register obj, Register disp_hdr, Register scratch, Label& slow_case) {
   const int aligned_mask = BytesPerWord -1;
   const int hdr_offset = oopDesc::mark_offset_in_bytes();
@@ -43,7 +72,10 @@ int C1_MacroAssembler::lock_object(Register hdr, Register obj, Register disp_hdr
   Label done;
   int null_check_offset = -1;
 
-  oopDesc::bs()->compile_resolve_oop_for_write(this, obj, true, 0, 1, BarrierSet::ss_all);
+#ifdef ASSERT
+  check_obj_shenandoah(obj, "attempted lock of from-space object");
+#endif
+
   verify_oop(obj);
 
   // save object being locked into the BasicObjectLock
@@ -109,7 +141,11 @@ void C1_MacroAssembler::unlock_object(Register hdr, Register obj, Register disp_
   if (UseBiasedLocking) {
     // load object
     movptr(obj, Address(disp_hdr, BasicObjectLock::obj_offset_in_bytes()));
-    oopDesc::bs()->compile_resolve_oop_for_write(this, obj, false, 0, 1, BarrierSet::ss_all);
+
+#ifdef ASSERT
+    check_obj_shenandoah(obj, "attempted biased unlock of from-space object");
+#endif
+
     biased_locking_exit(obj, hdr, done);
   }
 
@@ -122,7 +158,9 @@ void C1_MacroAssembler::unlock_object(Register hdr, Register obj, Register disp_
   if (!UseBiasedLocking) {
     // load object
     movptr(obj, Address(disp_hdr, BasicObjectLock::obj_offset_in_bytes()));
-    oopDesc::bs()->compile_resolve_oop_for_write(this, obj, false, 0, 1, BarrierSet::ss_all);
+#ifdef ASSERT
+    check_obj_shenandoah(obj, "attempted unlock of from-space object");
+#endif
   }
   verify_oop(obj);
   // test if object header is pointing to the displaced header, and if so, restore

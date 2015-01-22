@@ -339,6 +339,10 @@ public:
     }
   }
 
+  static address in_cset_fast_test_addr() {
+    return (address) (ShenandoahHeap::heap()->_in_cset_fast_test);
+  }
+
   void clear_cset_fast_test() {
     assert(_in_cset_fast_test_base != NULL, "sanity");
     memset(_in_cset_fast_test_base, false,
