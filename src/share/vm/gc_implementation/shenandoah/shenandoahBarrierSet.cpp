@@ -313,13 +313,13 @@ oop ShenandoahBarrierSet::resolve_and_maybe_copy_oopHelper(oop src) {
 }
 
 JRT_ENTRY(void, ShenandoahBarrierSet::resolve_and_maybe_copy_oop_c2(oopDesc* src, JavaThread* thread))
-  oop result = ((ShenandoahBarrierSet*) oopDesc::bs())->resolve_and_maybe_copy_oop_work(oop(src));
+  oop result = ((ShenandoahBarrierSet*) oopDesc::bs())->resolve_and_maybe_copy_oop_work2(oop(src));
   // tty->print_cr("called C2 write barrier with: %p result: %p copy: %d", (oopDesc*) src, (oopDesc*) result, src != result);
   thread->set_vm_result(result);
   // eturn (oopDesc*) result;
 JRT_END
 
-IRT_ENTRY(void, ShenandoahBarrierSet::resolve_and_maybe_copy_oop_static2(JavaThread* thread, oopDesc* src))
+IRT_ENTRY(void, ShenandoahBarrierSet::resolve_and_maybe_copy_oop_interp(JavaThread* thread, oopDesc* src))
   oop result = ((ShenandoahBarrierSet*)oopDesc::bs())->resolve_and_maybe_copy_oop_work2(oop(src));
   // tty->print_cr("called interpreter write barrier with: %p result: %p", src, result);
   thread->set_vm_result(result);
@@ -537,24 +537,11 @@ void ShenandoahBarrierSet::compile_resolve_oop_for_write(MacroAssembler* masm, R
   __ push(rscratch1);
   __ push(rscratch2);
 
-  ExternalAddress heap_address = ExternalAddress((address) Universe::heap_addr());
-  __ movptr(rscratch1, heap_address);
-  // Compute index into regions array.
-  __ movq(rscratch2, dst);
-  // __ andq(rscratch2, ~(ShenandoahHeapRegion::RegionSizeBytes - 1));
-  Address first_region_bottom_addr = Address(rscratch1, ShenandoahHeap::first_region_bottom_offset());
-  __ subq(rscratch2, first_region_bottom_addr);
-  __ shrq(rscratch2, ShenandoahHeapRegion::RegionSizeShift);
-
-  Address regions_address = Address(rscratch1, ShenandoahHeap::ordered_regions_offset());
-  __ movptr(rscratch1, regions_address);
-
-  Address heap_region_containing_addr = Address(rscratch1, rscratch2, Address::times_ptr);
-  __ movptr(rscratch1, heap_region_containing_addr);
-
-  Address is_in_coll_set_addr = Address(rscratch1, ShenandoahHeapRegion::is_in_collection_set_offset());
-  __ movb(rscratch1, is_in_coll_set_addr);
-  __ testb(rscratch1, 0x1);
+  __ movptr(rscratch1, dst);
+  __ shrptr(rscratch1, ShenandoahHeapRegion::RegionSizeShift);
+  __ movptr(rscratch2, (intptr_t) ShenandoahHeap::in_cset_fast_test_addr());
+  __ movbool(rscratch2, Address(rscratch2, rscratch1, Address::times_1));
+  __ testb(rscratch2, 0x1);
 
   __ pop(rscratch2);
   __ pop(rscratch1);
@@ -627,7 +614,7 @@ void ShenandoahBarrierSet::compile_resolve_oop_for_write(MacroAssembler* masm, R
     }
   }
 
-  __ call_VM(dst, CAST_FROM_FN_PTR(address, ShenandoahBarrierSet::resolve_and_maybe_copy_oop_static2), dst, false);
+  __ call_VM(dst, CAST_FROM_FN_PTR(address, ShenandoahBarrierSet::resolve_and_maybe_copy_oop_interp), dst, false);
 
   for (int i = num_state_save - 1; i >= 0; i--) {
     switch (save_states[i]) {
