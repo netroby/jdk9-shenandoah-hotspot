@@ -4,6 +4,7 @@ Copyright 2014 Red Hat, Inc. and/or its affiliates.
 #include "precompiled.hpp"
 #include "asm/macroAssembler.hpp"
 
+#include "gc_interface/collectedHeap.inline.hpp"
 #include "gc_implementation/shared/cmBitMap.inline.hpp"
 #include "gc_implementation/shared/gcHeapSummary.hpp"
 #include "gc_implementation/shared/gcTimer.hpp"
@@ -20,6 +21,8 @@ Copyright 2014 Red Hat, Inc. and/or its affiliates.
 #include "memory/iterator.hpp"
 #include "memory/oopFactory.hpp"
 #include "memory/referenceProcessor.hpp"
+#include "memory/space.inline.hpp"
+#include "memory/threadLocalAllocBuffer.inline.hpp"
 #include "memory/universe.hpp"
 #include "utilities/copy.hpp"
 #include "gc_implementation/shared/vmGCOperations.hpp"

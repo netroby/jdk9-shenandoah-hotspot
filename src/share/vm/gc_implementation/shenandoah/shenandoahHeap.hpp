@@ -15,7 +15,7 @@ Copyright 2014 Red Hat, Inc. and/or its affiliates.
 
 #include "memory/barrierSet.hpp"
 #include "memory/sharedHeap.hpp"
-#include "memory/space.inline.hpp"
+#include "memory/space.hpp"
 #include "oops/oop.hpp"
 #include "oops/markOop.hpp"
 

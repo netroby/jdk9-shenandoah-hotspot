@@ -4,7 +4,7 @@ Copyright 2014 Red Hat, Inc. and/or its affiliates.
 #ifndef SHARE_VM_GC_IMPLEMENTATION_SHENANDOAH_SHENANDOAHHEAPREGION_HPP
 #define SHARE_VM_GC_IMPLEMENTATION_SHENANDOAH_SHENANDOAHHEAPREGION_HPP
 
-#include "memory/space.inline.hpp"
+#include "memory/space.hpp"
 #include "memory/universe.hpp"
 #include "utilities/sizes.hpp"
 
