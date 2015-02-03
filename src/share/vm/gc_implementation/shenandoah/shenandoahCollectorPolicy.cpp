@@ -348,7 +348,7 @@ public:
 
   void set_garbage_threshold(uintx garbage_threshold) {
     this->_garbage_threshold_factor = get_percent(garbage_threshold);
-    this->_garbage_threshold = _garbage_threshold;
+    this->_garbage_threshold = garbage_threshold;
   }
 
   void set_allocation_threshold(uintx allocationThreshold) {
@@ -448,7 +448,7 @@ public:
 
   void set_garbage_threshold(uintx garbage_threshold) {
     this->_garbage_threshold_factor = get_percent(garbage_threshold);
-    this->_garbage_threshold = _garbage_threshold;
+    this->_garbage_threshold = garbage_threshold;
   }
 
   void set_allocation_threshold(uintx allocationThreshold) {
