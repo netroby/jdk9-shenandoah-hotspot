@@ -167,8 +167,15 @@ void ShenandoahHeapRegionSet::choose_collection_set(ShenandoahHeapRegion** regio
     if (region->garbage() > _garbage_threshold && ! region->is_humonguous()) {
 
       assert(! region->is_humonguous(), "no humonguous regions in collection set");
-      append(region);
-      region->set_is_in_collection_set(true);
+
+      if (region->getLiveData() == 0) {
+        // We can recycle it right away and put it in the free set.
+        tty->print_cr("recycling all garbage region early");
+        region->recycle();
+      } else {
+        append(region);
+        region->set_is_in_collection_set(true);
+      }
     }
     r++;
   }

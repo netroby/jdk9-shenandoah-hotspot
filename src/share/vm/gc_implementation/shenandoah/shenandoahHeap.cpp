@@ -778,9 +778,7 @@ void ShenandoahHeap::verify_evacuated_region(ShenandoahHeapRegion* from_region) 
 
 void ShenandoahHeap::parallel_evacuate_region(ShenandoahHeapRegion* from_region) {
 
-  if (from_region->getLiveData() == 0) {
-    return;
-  }
+  assert(from_region->getLiveData() > 0, "all-garbage regions are reclaimed earlier");
 
   ParallelEvacuateRegionObjectClosure evacuate_region(this);
   
@@ -828,10 +826,9 @@ public:
 	from_hr->print();
       }
 
-      // Not sure if the check is worth it or not.
-      if (from_hr->getLiveData() != 0) {
-	_sh->parallel_evacuate_region(from_hr);
-      }
+      assert(from_hr->getLiveData() > 0, "all-garbage regions are reclaimed early");
+      _sh->parallel_evacuate_region(from_hr);
+
       if (_sh->cancelled_evacuation()) {
         break;
       }
