@@ -225,11 +225,17 @@ void VM_ShenandoahUpdateRootRefs::doit() {
     sh->verify_regions_after_update_refs();
   }
 
-  sh->shenandoahPolicy()->record_phase_start(ShenandoahCollectorPolicy::reset_bitmaps);
-
-  sh->reset_mark_bitmap();
-
-  sh->shenandoahPolicy()->record_phase_end(ShenandoahCollectorPolicy::reset_bitmaps);
+  if (! ShenandoahUpdateRefsEarly) {
+    // TODO: Do this concurrently after evacuation.
+    sh->shenandoahPolicy()->record_phase_start(ShenandoahCollectorPolicy::reset_bitmaps);
+    sh->reset_mark_bitmap();
+    sh->shenandoahPolicy()->record_phase_end(ShenandoahCollectorPolicy::reset_bitmaps);
+  }
+#ifdef ASSERT
+ else {
+   assert(sh->is_bitmap_clear(), "need cleared bitmap here");
+ }
+#endif
 
   sh->shenandoahPolicy()->record_phase_start(ShenandoahCollectorPolicy::resize_tlabs);
 

@@ -83,11 +83,8 @@ private:
   int _max_conc_workers;
   volatile size_t _used;
 
-  CMBitMap _mark_bit_map0;
+  CMBitMap _mark_bit_map;
   CMBitMap* _next_mark_bit_map;
-
-  CMBitMap _mark_bit_map1;
-  CMBitMap* _prev_mark_bit_map;
 
   bool* _in_cset_fast_test;
   bool* _in_cset_fast_test_base;
@@ -233,6 +230,8 @@ public:
   }
 
   void reset_mark_bitmap();
+  void reset_mark_bitmap_range(HeapWord* from, HeapWord* to);
+
   bool is_bitmap_clear();
 
   virtual void post_allocation_collector_specific_setup(HeapWord* obj);

@@ -143,19 +143,12 @@ jint ShenandoahHeap::initialize() {
   size_t bitmap_size = CMBitMap::compute_size(heap_rs.size());
   MemRegion heap_region = MemRegion((HeapWord*) heap_rs.base(), heap_rs.size() / HeapWordSize);
 
-  ReservedSpace bitmap_0(ReservedSpace::allocation_align_size_up(bitmap_size));
-  os::commit_memory_or_exit(bitmap_0.base(), bitmap_0.size(), false, err_msg("couldn't allocate mark bitmap 0"));
+  ReservedSpace bitmap(ReservedSpace::allocation_align_size_up(bitmap_size));
+  os::commit_memory_or_exit(bitmap.base(), bitmap.size(), false, err_msg("couldn't allocate mark bitmap"));
+  MemRegion bitmap_region = MemRegion((HeapWord*) bitmap.base(), bitmap.size() / HeapWordSize);
+  _mark_bit_map.initialize(heap_region, bitmap_region);
 
-  MemRegion bitmap_0_region = MemRegion((HeapWord*) bitmap_0.base(), bitmap_0.size() / HeapWordSize);
-  _mark_bit_map0.initialize(heap_region, bitmap_0_region);
-
-  ReservedSpace bitmap_1(ReservedSpace::allocation_align_size_up(bitmap_size));
-  os::commit_memory_or_exit(bitmap_1.base(), bitmap_1.size(), false, err_msg("couldn't allocate mark bitmap 1"));
-  MemRegion bitmap_1_region = MemRegion((HeapWord*) bitmap_1.base(), bitmap_1.size() / HeapWordSize);
-  _mark_bit_map1.initialize(heap_region, bitmap_1_region);
-
-  _prev_mark_bit_map = &_mark_bit_map0;
-  _next_mark_bit_map = &_mark_bit_map1;
+  _next_mark_bit_map = &_mark_bit_map;
   reset_mark_bitmap();
 
   // Initialize fast collection set test structure.
@@ -189,8 +182,7 @@ ShenandoahHeap::ShenandoahHeap(ShenandoahCollectorPolicy* policy) :
   _in_cset_fast_test(NULL),
   _in_cset_fast_test_base(NULL),
   _tracer(new (ResourceObj::C_HEAP, mtGC) ShenandoahTracer()),
-  _mark_bit_map0(),
-  _mark_bit_map1(),
+  _mark_bit_map(),
   _cancelled_evacuation(false) {
   _pgc = this;
   _scm = new ShenandoahConcurrentMark();
@@ -199,10 +191,11 @@ ShenandoahHeap::ShenandoahHeap(ShenandoahCollectorPolicy* policy) :
 }
 
 void ShenandoahHeap::reset_mark_bitmap() {
-  CMBitMap* current = _next_mark_bit_map;
-  _next_mark_bit_map = _prev_mark_bit_map;
-  _prev_mark_bit_map = current;
   _next_mark_bit_map->clearAll();
+}
+
+void ShenandoahHeap::reset_mark_bitmap_range(HeapWord* from, HeapWord* to) {
+  _next_mark_bit_map->clearRange(MemRegion(from, to));
 }
 
 class BitmapClearClosure : public BitMapClosure {
@@ -1145,6 +1138,7 @@ public:
         HeapWord* failed = region->object_iterate_careful(&update_refs_cl);
         assert(failed == NULL, "careful iteration is implemented safe for now in Shenandaoh");
       }
+      heap->reset_mark_bitmap_range(region->bottom(), region->end());
       region = _regions->claim_next();
     }
   }
@@ -2185,11 +2179,9 @@ bool ShenandoahHeap::mark_current(oop obj) const {
     tty->print_cr("heap region containing obj:");
     ShenandoahHeapRegion* obj_region = heap_region_containing(obj);
     obj_region->print();
-    tty->print_cr("obj has been marked prev: %s", BOOL_TO_STR(is_marked_prev(obj)));
     tty->print_cr("heap region containing forwardee:");
     ShenandoahHeapRegion* forward_region = heap_region_containing(oopDesc::bs()->resolve_oop(obj));
     forward_region->print();    
-    tty->print_cr("fwd has been marked prev: %s", BOOL_TO_STR(is_marked_prev(oopDesc::bs()->resolve_oop(obj))));
   }
 #endif
 
@@ -2203,10 +2195,6 @@ bool ShenandoahHeap::mark_current_no_checks(oop obj) const {
 
 bool ShenandoahHeap::isMarkedCurrent(oop obj) const {
   return _next_mark_bit_map->isMarked((HeapWord*) obj);
-}
-
-bool ShenandoahHeap::is_marked_prev(oop obj) const {
-  return _prev_mark_bit_map->isMarked((HeapWord*) obj);
 }
 
 void ShenandoahHeap::verify_copy(oop p,oop c){

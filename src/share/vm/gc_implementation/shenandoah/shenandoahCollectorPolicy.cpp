@@ -482,7 +482,9 @@ void ShenandoahCollectorPolicy::print_tracing_info() {
   print_summary_sd("Final Update Refs Pauses", &(_timing_data[final_uprefs]._ms));
   print_summary_sd("  Update roots", &(_timing_data[update_roots]._ms));
   print_summary_sd("  Recycle regions", &(_timing_data[recycle_regions]._ms));
-  print_summary_sd("  Reset bitmaps", &(_timing_data[reset_bitmaps]._ms));
+  if (! ShenandoahUpdateRefsEarly) {
+    print_summary_sd("  Reset bitmaps", &(_timing_data[reset_bitmaps]._ms));
+  }
   print_summary_sd("  Resize TLABs", &(_timing_data[resize_tlabs]._ms));
   gclog_or_tty->print_cr(" ");
   print_summary_sd("Concurrent Marking Times", &(_timing_data[conc_mark]._ms));
