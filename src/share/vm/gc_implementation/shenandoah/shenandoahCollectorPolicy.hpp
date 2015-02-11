@@ -8,11 +8,38 @@ Copyright 2014 Red Hat, Inc. and/or its affiliates.
 #include "gc_implementation/shenandoah/shenandoahHeapRegionSet.hpp"
 #include "memory/collectorPolicy.hpp"
 #include "runtime/arguments.hpp"
+#include "utilities/numberSeq.hpp"
 
 class ShenandoahHeap;
 class ShenandoahHeuristics;
 
 class ShenandoahCollectorPolicy: public CollectorPolicy {
+
+public:
+  enum TimingPhase {
+    init_mark,
+    final_mark,
+    final_evac,
+    final_uprefs,
+
+    full_gc,
+    conc_mark,
+    conc_evac,
+
+    _num_phases
+  };
+
+private:
+  struct TimingData {
+    NumberSeq _ms;
+    double _start;
+    size_t _count;
+  };
+
+private:
+  TimingData _timing_data[_num_phases];
+  const char* _phase_names[_num_phases];
+
   ShenandoahHeap* _pgc;
   ShenandoahHeuristics* _heuristics;
 
@@ -35,20 +62,9 @@ public:
 
   void post_heap_initialize();
 
-  void record_init_mark_start();
-  void record_init_mark_end();
-  void record_concurrent_mark_start();
-  void record_concurrent_mark_end();
-  void record_final_mark_start();
-  void record_final_mark_end();
-  void record_final_evacuation_start();
-  void record_final_evacuation_end();
-  void record_final_update_refs_start();
-  void record_final_update_refs_end();
-  void record_concurrent_evacuation_start();
-  void record_concurrent_evacuation_end();
-  void record_fullgc_start();
-  void record_fullgc_end();
+  void record_phase_start(TimingPhase phase);
+  void record_phase_end(TimingPhase phase);
+
   void record_bytes_allocated(size_t bytes);
   void record_bytes_reclaimed(size_t bytes);
   bool should_start_concurrent_mark(size_t used, size_t capacity);
@@ -57,6 +73,10 @@ public:
                                        ShenandoahHeapRegionSet* free_set);
 
   void print_tracing_info();
+
+private:
+  void print_summary(const char* str, const NumberSeq* seq);
+  void print_summary_sd(const char* str, const NumberSeq* seq);
 };
 
 

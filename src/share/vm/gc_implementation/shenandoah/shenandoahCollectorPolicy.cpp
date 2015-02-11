@@ -1,37 +1,10 @@
 #include "gc_implementation/shenandoah/shenandoahCollectorPolicy.hpp"
 #include "gc_implementation/shenandoah/shenandoahHeap.hpp"
-#include "utilities/numberSeq.hpp"
 
 class ShenandoahHeuristics : public CHeapObj<mtGC> {
-private:
-  NumberSeq _init_mark_ms;
-  NumberSeq _final_mark_ms;
-  NumberSeq _final_evac_ms;
-  NumberSeq _final_uprefs_ms;
-
-  NumberSeq _fullgc_ms;
-
-  NumberSeq _concurrent_mark_times_ms;
-  NumberSeq _concurrent_evacuation_times_ms;
 
   NumberSeq _allocation_rate_bytes;
   NumberSeq _reclamation_rate_bytes;
-
-  double _init_mark_start;
-  double _concurrent_mark_start;
-  double _final_mark_start;
-  double _final_evac_start;
-  double _final_uprefs_start;
-  double _concurrent_evacuation_start; 
-  double _fullgc_start; 
-
-  int _init_mark_count;
-  int _final_mark_count;
-  int _final_evac_count;
-  int _final_uprefs_count;
-  int _concurrent_evacuation_count;
-  int _concurrent_mark_count;
-  int _fullgc_count;
 
   size_t _bytes_allocated_since_CM;
   size_t _bytes_reclaimed_this_cycle;
@@ -40,20 +13,6 @@ public:
 
   ShenandoahHeuristics();
 
-  void record_init_mark_start();
-  void record_init_mark_end();
-  void record_concurrent_mark_start();
-  void record_concurrent_mark_end();
-  void record_final_mark_start();
-  void record_final_mark_end();
-  void record_final_evacuation_start();
-  void record_final_evacuation_end();
-  void record_final_update_refs_start();
-  void record_final_update_refs_end();
-  void record_concurrent_evacuation_start();
-  void record_concurrent_evacuation_end();  
-  void record_fullgc_start();
-  void record_fullgc_end();
   void record_bytes_allocated(size_t bytes);
   void record_bytes_reclaimed(size_t bytes);
 
@@ -65,108 +24,25 @@ public:
 };
 
 ShenandoahHeuristics::ShenandoahHeuristics() :
-  _init_mark_start(0),
-  _concurrent_mark_start(0),
-  _final_mark_start(0),
-  _final_evac_start(0),
-  _final_uprefs_start(0),
-  _concurrent_evacuation_start(0),
-  _fullgc_start(0),
   _bytes_allocated_since_CM(0),
-  _bytes_reclaimed_this_cycle(0),
-  _init_mark_count(0),
-  _final_mark_count(0),
-  _final_evac_count(0),
-  _final_uprefs_count(0),
-  _fullgc_count(0),
-  _concurrent_mark_count(0),
-  _concurrent_evacuation_count(0)
+  _bytes_reclaimed_this_cycle(0)
 {
   if (PrintGCDetails)
     tty->print_cr("initializing heuristics");
 }
 
-void ShenandoahHeuristics::record_init_mark_start() { 
-  _init_mark_start = os::elapsedTime();
+void ShenandoahCollectorPolicy::record_phase_start(TimingPhase phase) {
+  _timing_data[phase]._start = os::elapsedTime();
 }
 
-void ShenandoahHeuristics::record_init_mark_end()   { 
+void ShenandoahCollectorPolicy::record_phase_end(TimingPhase phase) {
   double end = os::elapsedTime();
-
-  double elapsed = (os::elapsedTime() - _init_mark_start); 
-  _init_mark_ms.add(elapsed * 1000);
-  if (ShenandoahGCVerbose && PrintGCDetails)
-    tty->print_cr("PolicyPrint: InitialMark "INT32_FORMAT" took %lf ms", _init_mark_count++, elapsed * 1000);
-}
-
-void ShenandoahHeuristics::record_final_mark_start() { 
-  _final_mark_start = os::elapsedTime();
-}
-
-void ShenandoahHeuristics::record_final_mark_end()   { 
-  double elapsed = os::elapsedTime() - _final_mark_start;
-  _final_mark_ms.add(elapsed * 1000);
-  if (ShenandoahGCVerbose && PrintGCDetails)
-    tty->print_cr("PolicyPrint: FinalMark "INT32_FORMAT" took %lf ms", _final_mark_count++, elapsed * 1000);
-}
-
-void ShenandoahHeuristics::record_final_evacuation_start() {
-  _final_evac_start = os::elapsedTime();
-}
-
-void ShenandoahHeuristics::record_final_evacuation_end() {
-  double elapsed = os::elapsedTime() - _final_evac_start;
-  _final_evac_ms.add(elapsed * 1000);
+  double elapsed = end - _timing_data[phase]._start;
+  _timing_data[phase]._ms.add(elapsed * 1000);
   if (ShenandoahGCVerbose && PrintGCDetails) {
-    tty->print_cr("PolicyPrint: FinalEvacuation "INT32_FORMAT" took %lf ms", _final_evac_count++, elapsed * 1000);
+    tty->print_cr("PolicyPrint: %s "SIZE_FORMAT" took %lf ms", _phase_names[phase],
+                  _timing_data[phase]._count++, elapsed * 1000);
   }
-}
-
-void ShenandoahHeuristics::record_final_update_refs_start() { 
-  _final_uprefs_start = os::elapsedTime();
-}
-
-void ShenandoahHeuristics::record_final_update_refs_end()   { 
-  double elapsed = os::elapsedTime() - _final_uprefs_start;
-  _final_uprefs_ms.add(elapsed * 1000);
-  if (ShenandoahGCVerbose && PrintGCDetails)
-    tty->print_cr("PolicyPrint: FinalUpdateRefs "INT32_FORMAT" took %lf ms", _final_uprefs_count++, elapsed * 1000);
-}
-
-void ShenandoahHeuristics::record_concurrent_evacuation_start() { 
-  _concurrent_evacuation_start = os::elapsedTime();
-}
-
-void ShenandoahHeuristics::record_concurrent_evacuation_end()   { 
-  double elapsed = os::elapsedTime() - _concurrent_evacuation_start;
-  _concurrent_evacuation_times_ms.add(elapsed * 1000);
-  if (ShenandoahGCVerbose && PrintGCDetails)
-    tty->print_cr("PolicyPrint: Concurrent Evacuation "INT32_FORMAT" took %lf ms", 
-		  _concurrent_evacuation_count++, elapsed * 1000);
-}
-
-void ShenandoahHeuristics::record_concurrent_mark_start() { 
-  _concurrent_mark_start = os::elapsedTime();
-}
-
-void ShenandoahHeuristics::record_concurrent_mark_end()   { 
-  double elapsed = os::elapsedTime() - _concurrent_mark_start;
-  _concurrent_mark_times_ms.add(elapsed * 1000);
-  if (ShenandoahGCVerbose && PrintGCDetails)
-    tty->print_cr("PolicyPrint: Concurrent Marking "INT32_FORMAT" took %lf ms", 
-		  _concurrent_mark_count++, elapsed * 1000);
-}
-
-void ShenandoahHeuristics::record_fullgc_start() { 
-  _fullgc_start = os::elapsedTime();
-}
-
-void ShenandoahHeuristics::record_fullgc_end()   { 
-  double elapsed = os::elapsedTime() - _fullgc_start;
-  _fullgc_ms.add(elapsed * 1000);
-  if (ShenandoahGCVerbose && PrintGCDetails)
-    tty->print_cr("PolicyPrint: Full GC "INT32_FORMAT" took %lf ms", 
-		  _fullgc_count++, elapsed * 1000);
 }
 
 void ShenandoahHeuristics::record_bytes_allocated(size_t bytes) {
@@ -487,6 +363,15 @@ static DynamicHeuristics *configureDynamicHeuristics() {
 
 ShenandoahCollectorPolicy::ShenandoahCollectorPolicy() {
   initialize_all();
+
+  _phase_names[init_mark] = "InitMark";
+  _phase_names[final_mark] = "FinalMark";
+  _phase_names[final_evac] = "FinalEvacuation";
+  _phase_names[final_uprefs] = "FinalUpdateRefs";
+  _phase_names[full_gc] = "FullGC";
+  _phase_names[conc_mark] = "ConcurrentMark";
+  _phase_names[conc_evac] = "ConcurrentEvacuation";
+
   if (ShenandoahGCHeuristics != NULL) {
     if (strcmp(ShenandoahGCHeuristics, "aggressive") == 0) {
       if (ShenandoahLogConfig) {
@@ -564,61 +449,6 @@ void ShenandoahCollectorPolicy::post_heap_initialize() {
   // Nothing to do here (yet).
 }
 
-void ShenandoahCollectorPolicy::record_init_mark_start()  { 
-  _heuristics->record_init_mark_start();
-}
-
-void ShenandoahCollectorPolicy::record_init_mark_end() { 
-  _heuristics->record_init_mark_end();
-}
-void ShenandoahCollectorPolicy::record_final_mark_start() { 
-  _heuristics->record_final_mark_start();
-}
-
-void ShenandoahCollectorPolicy::record_final_mark_end() { 
-  _heuristics->record_final_mark_end();
-}
-
-void ShenandoahCollectorPolicy::record_final_evacuation_start() { 
-  _heuristics->record_final_evacuation_start();
-}
-
-void ShenandoahCollectorPolicy::record_final_evacuation_end() { 
-  _heuristics->record_final_evacuation_end();
-}
-
-void ShenandoahCollectorPolicy::record_final_update_refs_start() { 
-  _heuristics->record_final_update_refs_start();
-}
-
-void ShenandoahCollectorPolicy::record_final_update_refs_end() { 
-  _heuristics->record_final_update_refs_end();
-}
-
-void ShenandoahCollectorPolicy::record_concurrent_evacuation_start() { 
-    _heuristics->record_concurrent_evacuation_start();
-}
-
-void ShenandoahCollectorPolicy::record_concurrent_evacuation_end()   { 
-    _heuristics->record_concurrent_evacuation_end();
-}
-
-void ShenandoahCollectorPolicy::record_concurrent_mark_start() { 
-    _heuristics->record_concurrent_mark_start();
-}
-
-void ShenandoahCollectorPolicy::record_concurrent_mark_end()   { 
-    _heuristics->record_concurrent_mark_end();
-}
-
-void ShenandoahCollectorPolicy::record_fullgc_start() { 
-    _heuristics->record_fullgc_start();
-}
-
-void ShenandoahCollectorPolicy::record_fullgc_end()   { 
-    _heuristics->record_fullgc_end();
-}
-
 void ShenandoahCollectorPolicy::record_bytes_allocated(size_t bytes) {
   _heuristics->record_bytes_allocated(bytes);
 }
@@ -640,32 +470,23 @@ void ShenandoahCollectorPolicy::choose_collection_and_free_sets(
 }
 
 void ShenandoahCollectorPolicy::print_tracing_info() {
-  _heuristics->print_tracing_info();
+  print_summary_sd("Initial Mark Pauses", &(_timing_data[init_mark]._ms));
+  print_summary_sd("Final Mark Pauses", &(_timing_data[final_mark]._ms));
+  print_summary_sd("Final Evacuation Pauses", &(_timing_data[final_evac]._ms));
+  print_summary_sd("Final Update Refs Pauses", &(_timing_data[final_uprefs]._ms));
+  print_summary_sd("Concurrent Marking Times", &(_timing_data[conc_mark]._ms));
+  print_summary_sd("Concurrent Evacuation Times", &(_timing_data[conc_evac]._ms));
+  print_summary_sd("Full GC Times", &(_timing_data[full_gc]._ms));
 }
 
-void print_summary(const char* str,
-		   const NumberSeq* seq)  {
+void ShenandoahCollectorPolicy::print_summary(const char* str, const NumberSeq* seq)  {
   double sum = seq->sum();
   gclog_or_tty->print_cr("%-27s = %8.2lf s (avg = %8.2lf ms)",
-                str, sum / 1000.0, seq->avg());
+                         str, sum / 1000.0, seq->avg());
 }
 
-void print_summary_sd(const char* str,
-		      const NumberSeq* seq) {
+void ShenandoahCollectorPolicy::print_summary_sd(const char* str, const NumberSeq* seq) {
   print_summary(str, seq);
   gclog_or_tty->print_cr("%s = "INT32_FORMAT_W(5)", std dev = %8.2lf ms, max = %8.2lf ms)",
-                "(num", seq->num(), seq->sd(), seq->maximum());
-}
-
-void ShenandoahHeuristics::print_tracing_info() {
-  print_summary_sd("Initial Mark Pauses", &_init_mark_ms);
-  print_summary_sd("Final Mark Pauses", &_final_mark_ms);
-  print_summary_sd("Final Evacuation Pauses", &_final_evac_ms);
-  print_summary_sd("Final Update Refs Pauses", &_final_uprefs_ms);
-  print_summary_sd("Concurrent Marking Times", 
-		   &_concurrent_mark_times_ms);
-  print_summary_sd("Concurrent Evacuation Times", 
-		   &_concurrent_evacuation_times_ms);
-  print_summary_sd("Full GC Times", 
-		   &_fullgc_ms);
+                         "(num", seq->num(), seq->sd(), seq->maximum());
 }

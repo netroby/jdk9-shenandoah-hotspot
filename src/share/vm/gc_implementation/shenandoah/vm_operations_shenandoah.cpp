@@ -16,11 +16,11 @@ const char* VM_ShenandoahInitMark::name() const {
 
 void VM_ShenandoahInitMark::doit() {
   ShenandoahHeap *sh = (ShenandoahHeap*) Universe::heap();
-  sh->shenandoahPolicy()->record_init_mark_start();
+  sh->shenandoahPolicy()->record_phase_start(ShenandoahCollectorPolicy::init_mark);
   if (ShenandoahGCVerbose)
     tty->print("vm_ShenandoahInitMark\n");
   sh->start_concurrent_marking();
-  sh->shenandoahPolicy()->record_init_mark_end();
+  sh->shenandoahPolicy()->record_phase_end(ShenandoahCollectorPolicy::init_mark);
 
   if (! ShenandoahConcurrentMarking) {
     sh->concurrentMark()->mark_from_roots(! ShenandoahUpdateRefsEarly);
@@ -100,10 +100,10 @@ void VM_ShenandoahStartEvacuation::doit() {
   if (ShenandoahGCVerbose)
     tty->print("vm_ShenandoahFinalMark\n");
 
-  sh->shenandoahPolicy()->record_final_mark_start();  
+  sh->shenandoahPolicy()->record_phase_start(ShenandoahCollectorPolicy::final_mark);
   sh->concurrentMark()->finish_mark_from_roots();
   sh->stop_concurrent_marking();
-  sh->shenandoahPolicy()->record_final_mark_end();    
+  sh->shenandoahPolicy()->record_phase_end(ShenandoahCollectorPolicy::final_mark);
 
   sh->prepare_for_concurrent_evacuation();
   sh->set_evacuation_in_progress(true);
@@ -203,7 +203,7 @@ void VM_ShenandoahUpdateRootRefs::doit() {
 
   ShenandoahHeap *sh = ShenandoahHeap::heap();
 
-  sh->shenandoahPolicy()->record_final_update_refs_start();
+  sh->shenandoahPolicy()->record_phase_start(ShenandoahCollectorPolicy::final_uprefs);
 
   sh->update_roots();
 
@@ -221,7 +221,7 @@ void VM_ShenandoahUpdateRootRefs::doit() {
 
   sh->resize_all_tlabs();
 
-  sh->shenandoahPolicy()->record_final_update_refs_end();
+  sh->shenandoahPolicy()->record_phase_end(ShenandoahCollectorPolicy::final_uprefs);
 }
 
 VM_Operation::VMOp_Type VM_ShenandoahUpdateRefs::type() const {
@@ -237,9 +237,9 @@ void VM_ShenandoahUpdateRefs::doit() {
     tty->print("vm_ShenandoahUpdateRefs\n");
 
   ShenandoahHeap *sh = ShenandoahHeap::heap();
-  sh->shenandoahPolicy()->record_final_evacuation_start();
+  sh->shenandoahPolicy()->record_phase_start(ShenandoahCollectorPolicy::final_evac);
   sh->set_evacuation_in_progress(false);
   sh->prepare_for_update_references();
   assert(ShenandoahConcurrentUpdateRefs, "only do this when concurrent update references is turned on");
-  sh->shenandoahPolicy()->record_final_evacuation_end();
+  sh->shenandoahPolicy()->record_phase_end(ShenandoahCollectorPolicy::final_evac);
 }

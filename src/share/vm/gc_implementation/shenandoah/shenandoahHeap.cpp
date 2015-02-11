@@ -1368,7 +1368,7 @@ void ShenandoahHeap::parallel_evacuate() {
     //    heap_region_iterate(&pc1);
   }
 
-  _shenandoah_policy->record_concurrent_evacuation_start();
+  _shenandoah_policy->record_phase_start(ShenandoahCollectorPolicy::conc_evac);
 
   if (ShenandoahGCVerbose) {
     tty->print("Printing all available regions");
@@ -1403,7 +1403,7 @@ void ShenandoahHeap::parallel_evacuate() {
     print_heap_regions();
   }
 
-  _shenandoah_policy->record_concurrent_evacuation_end();
+  _shenandoah_policy->record_phase_end(ShenandoahCollectorPolicy::conc_evac);
 }
 
 class VerifyEvacuationClosure: public ExtendedOopClosure {

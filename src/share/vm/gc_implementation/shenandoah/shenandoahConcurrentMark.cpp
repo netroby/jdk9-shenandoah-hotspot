@@ -394,7 +394,7 @@ void ShenandoahConcurrentMark::mark_from_roots(bool update_refs, bool full_gc) {
 
   ShenandoahHeap* sh = (ShenandoahHeap *) Universe::heap();
 
-  sh->shenandoahPolicy()->record_concurrent_mark_start();
+  sh->shenandoahPolicy()->record_phase_start(ShenandoahCollectorPolicy::conc_mark);
 
   uint max_workers = full_gc ? _max_worker_id : _max_conc_worker_id;
   ParallelTaskTerminator terminator(max_workers, _task_queues);
@@ -419,7 +419,7 @@ void ShenandoahConcurrentMark::mark_from_roots(bool update_refs, bool full_gc) {
     TASKQUEUE_STATS_ONLY(reset_taskqueue_stats());
   }
 
-  sh->shenandoahPolicy()->record_concurrent_mark_end();
+  sh->shenandoahPolicy()->record_phase_end(ShenandoahCollectorPolicy::conc_mark);
 }
 
 class FinishDrainSATBBuffersTask : public AbstractGangTask {
