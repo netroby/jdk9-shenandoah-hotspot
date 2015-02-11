@@ -170,7 +170,6 @@ void ShenandoahHeapRegionSet::choose_collection_set(ShenandoahHeapRegion** regio
 
       if (region->getLiveData() == 0) {
         // We can recycle it right away and put it in the free set.
-        tty->print_cr("recycling all garbage region early");
         region->recycle();
       } else {
         append(region);
