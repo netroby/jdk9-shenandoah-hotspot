@@ -368,6 +368,12 @@ ShenandoahCollectorPolicy::ShenandoahCollectorPolicy() {
   _phase_names[final_mark] = "FinalMark";
   _phase_names[final_evac] = "FinalEvacuation";
   _phase_names[final_uprefs] = "FinalUpdateRefs";
+
+  _phase_names[update_roots] = "UpdateRoots";
+  _phase_names[recycle_regions] = "RecycleRegions";
+  _phase_names[reset_bitmaps] = "ResetBitmaps";
+  _phase_names[resize_tlabs] = "ResizeTLABs";
+
   _phase_names[full_gc] = "FullGC";
   _phase_names[conc_mark] = "ConcurrentMark";
   _phase_names[conc_evac] = "ConcurrentEvacuation";
@@ -474,6 +480,11 @@ void ShenandoahCollectorPolicy::print_tracing_info() {
   print_summary_sd("Final Mark Pauses", &(_timing_data[final_mark]._ms));
   print_summary_sd("Final Evacuation Pauses", &(_timing_data[final_evac]._ms));
   print_summary_sd("Final Update Refs Pauses", &(_timing_data[final_uprefs]._ms));
+  print_summary_sd("  Update roots", &(_timing_data[update_roots]._ms));
+  print_summary_sd("  Recycle regions", &(_timing_data[recycle_regions]._ms));
+  print_summary_sd("  Reset bitmaps", &(_timing_data[reset_bitmaps]._ms));
+  print_summary_sd("  Resize TLABs", &(_timing_data[resize_tlabs]._ms));
+  gclog_or_tty->print_cr(" ");
   print_summary_sd("Concurrent Marking Times", &(_timing_data[conc_mark]._ms));
   print_summary_sd("Concurrent Evacuation Times", &(_timing_data[conc_evac]._ms));
   print_summary_sd("Full GC Times", &(_timing_data[full_gc]._ms));

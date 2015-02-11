@@ -21,7 +21,10 @@ public:
     final_mark,
     final_evac,
     final_uprefs,
-
+      update_roots,
+      recycle_regions,
+      reset_bitmaps,
+      resize_tlabs,
     full_gc,
     conc_mark,
     conc_evac,

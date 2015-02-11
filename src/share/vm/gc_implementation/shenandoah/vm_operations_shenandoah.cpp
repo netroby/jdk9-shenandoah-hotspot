@@ -205,21 +205,37 @@ void VM_ShenandoahUpdateRootRefs::doit() {
 
   sh->shenandoahPolicy()->record_phase_start(ShenandoahCollectorPolicy::final_uprefs);
 
+  sh->shenandoahPolicy()->record_phase_start(ShenandoahCollectorPolicy::update_roots);
+
   sh->update_roots();
+
+  sh->shenandoahPolicy()->record_phase_end(ShenandoahCollectorPolicy::update_roots);
 
   if (ShenandoahVerify) {
     sh->verify_heap_after_update_refs();
   }
 
+  sh->shenandoahPolicy()->record_phase_start(ShenandoahCollectorPolicy::recycle_regions);
+
   sh->recycle_dirty_regions();
+
+  sh->shenandoahPolicy()->record_phase_end(ShenandoahCollectorPolicy::recycle_regions);
 
   if (ShenandoahVerify) {
     sh->verify_regions_after_update_refs();
   }
 
+  sh->shenandoahPolicy()->record_phase_start(ShenandoahCollectorPolicy::reset_bitmaps);
+
   sh->reset_mark_bitmap();
 
+  sh->shenandoahPolicy()->record_phase_end(ShenandoahCollectorPolicy::reset_bitmaps);
+
+  sh->shenandoahPolicy()->record_phase_start(ShenandoahCollectorPolicy::resize_tlabs);
+
   sh->resize_all_tlabs();
+
+  sh->shenandoahPolicy()->record_phase_end(ShenandoahCollectorPolicy::resize_tlabs);
 
   sh->shenandoahPolicy()->record_phase_end(ShenandoahCollectorPolicy::final_uprefs);
 }
