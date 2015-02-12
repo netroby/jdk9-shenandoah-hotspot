@@ -364,8 +364,17 @@ static DynamicHeuristics *configureDynamicHeuristics() {
 ShenandoahCollectorPolicy::ShenandoahCollectorPolicy() {
   initialize_all();
 
+  _user_requested_gcs = 0;
+
   _phase_names[init_mark] = "InitMark";
   _phase_names[final_mark] = "FinalMark";
+  _phase_names[final_mark] = "RescanRoots";
+  _phase_names[final_mark] = "DrainSATB";
+  _phase_names[final_mark] = "DrainOverflow";
+  _phase_names[final_mark] = "DrainQueues";
+  _phase_names[final_mark] = "WeakRefs";
+  _phase_names[final_mark] = "PrepareEvac";
+  _phase_names[final_mark] = "InitEvac";
   _phase_names[final_evac] = "FinalEvacuation";
   _phase_names[final_uprefs] = "FinalUpdateRefs";
 
@@ -462,6 +471,10 @@ void ShenandoahCollectorPolicy::record_bytes_reclaimed(size_t bytes) {
   _heuristics->record_bytes_reclaimed(bytes);
 }
 
+void ShenandoahCollectorPolicy::record_user_requested_gc() {
+  _user_requested_gcs++;
+}
+
 bool ShenandoahCollectorPolicy::should_start_concurrent_mark(size_t used,
 							     size_t capacity) {
   ShenandoahHeap* heap = ShenandoahHeap::heap();
@@ -476,30 +489,59 @@ void ShenandoahCollectorPolicy::choose_collection_and_free_sets(
 }
 
 void ShenandoahCollectorPolicy::print_tracing_info() {
-  print_summary_sd("Initial Mark Pauses", &(_timing_data[init_mark]._ms));
-  print_summary_sd("Final Mark Pauses", &(_timing_data[final_mark]._ms));
-  print_summary_sd("Final Evacuation Pauses", &(_timing_data[final_evac]._ms));
-  print_summary_sd("Final Update Refs Pauses", &(_timing_data[final_uprefs]._ms));
-  print_summary_sd("  Update roots", &(_timing_data[update_roots]._ms));
-  print_summary_sd("  Recycle regions", &(_timing_data[recycle_regions]._ms));
+  print_summary_sd("Initial Mark Pauses", 0, &(_timing_data[init_mark]._ms));
+  print_summary_sd("Final Mark Pauses", 0, &(_timing_data[final_mark]._ms));
+
+  print_summary_sd("Rescan Roots", 2, &(_timing_data[rescan_roots]._ms));
+  print_summary_sd("Drain SATB", 2, &(_timing_data[drain_satb]._ms));
+  print_summary_sd("Drain Overflow", 2, &(_timing_data[drain_overflow]._ms));
+  print_summary_sd("Drain Queues", 2, &(_timing_data[drain_queues]._ms));
+  print_summary_sd("Weak References", 2, &(_timing_data[weakrefs]._ms));
+  print_summary_sd("Prepare Evacuation", 2, &(_timing_data[prepare_evac]._ms));
+  print_summary_sd("Initial Evacuation", 2, &(_timing_data[init_evac]._ms));
+
+  print_summary_sd("Final Evacuation Pauses", 0, &(_timing_data[final_evac]._ms));
+  print_summary_sd("Final Update Refs Pauses", 0, &(_timing_data[final_uprefs]._ms));
+  print_summary_sd("Update roots", 2, &(_timing_data[update_roots]._ms));
+  print_summary_sd("Recycle regions", 2, &(_timing_data[recycle_regions]._ms));
   if (! ShenandoahUpdateRefsEarly) {
-    print_summary_sd("  Reset bitmaps", &(_timing_data[reset_bitmaps]._ms));
+    print_summary_sd("Reset bitmaps", 2, &(_timing_data[reset_bitmaps]._ms));
   }
-  print_summary_sd("  Resize TLABs", &(_timing_data[resize_tlabs]._ms));
+  print_summary_sd("Resize TLABs", 2, &(_timing_data[resize_tlabs]._ms));
   gclog_or_tty->print_cr(" ");
-  print_summary_sd("Concurrent Marking Times", &(_timing_data[conc_mark]._ms));
-  print_summary_sd("Concurrent Evacuation Times", &(_timing_data[conc_evac]._ms));
-  print_summary_sd("Full GC Times", &(_timing_data[full_gc]._ms));
+  print_summary_sd("Concurrent Marking Times", 0, &(_timing_data[conc_mark]._ms));
+  print_summary_sd("Concurrent Evacuation Times", 0, &(_timing_data[conc_evac]._ms));
+  print_summary_sd("Full GC Times", 0, &(_timing_data[full_gc]._ms));
+
+  gclog_or_tty->print_cr("User requested GCs: "SIZE_FORMAT, _user_requested_gcs);
+
+  gclog_or_tty->print_cr(" ");
+  double total_sum = _timing_data[init_mark]._ms.sum() +
+    _timing_data[final_mark]._ms.sum() +
+    _timing_data[final_evac]._ms.sum() +
+    _timing_data[final_uprefs]._ms.sum();
+  double total_avg = (_timing_data[init_mark]._ms.avg() +
+                      _timing_data[final_mark]._ms.avg() +
+                      _timing_data[final_evac]._ms.avg() +
+                      _timing_data[final_uprefs]._ms.avg()) / 4.0;
+  double total_max = MAX2(
+                          MAX2(
+                               MAX2(_timing_data[init_mark]._ms.maximum(),
+                                    _timing_data[final_mark]._ms.maximum()),
+                               _timing_data[final_evac]._ms.maximum()),
+                          _timing_data[final_uprefs]._ms.maximum());
+
+  gclog_or_tty->print_cr("%-27s = %8.2lf s, avg = %8.2lf ms, max = %8.2lf ms",
+                         "Total", total_sum / 1000.0, total_avg, total_max);
+
 }
 
-void ShenandoahCollectorPolicy::print_summary(const char* str, const NumberSeq* seq)  {
+void ShenandoahCollectorPolicy::print_summary_sd(const char* str, uint indent, const NumberSeq* seq)  {
   double sum = seq->sum();
+  for (uint i = 0; i < indent; i++) gclog_or_tty->print(" ");
   gclog_or_tty->print_cr("%-27s = %8.2lf s (avg = %8.2lf ms)",
                          str, sum / 1000.0, seq->avg());
-}
-
-void ShenandoahCollectorPolicy::print_summary_sd(const char* str, const NumberSeq* seq) {
-  print_summary(str, seq);
+  for (uint i = 0; i < indent; i++) gclog_or_tty->print(" ");
   gclog_or_tty->print_cr("%s = "INT32_FORMAT_W(5)", std dev = %8.2lf ms, max = %8.2lf ms)",
                          "(num", seq->num(), seq->sd(), seq->maximum());
 }

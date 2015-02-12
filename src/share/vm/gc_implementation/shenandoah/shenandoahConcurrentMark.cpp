@@ -445,19 +445,30 @@ void ShenandoahConcurrentMark::finish_mark_from_roots(bool full_gc) {
 
   // Trace any (new) unmarked root references.
   if (! full_gc) {
+    sh->shenandoahPolicy()->record_phase_start(ShenandoahCollectorPolicy::rescan_roots);
     prepare_unmarked_root_objs();
+    sh->shenandoahPolicy()->record_phase_end(ShenandoahCollectorPolicy::rescan_roots);
   }
 
   {
+    if (! full_gc) {
+      sh->shenandoahPolicy()->record_phase_start(ShenandoahCollectorPolicy::drain_satb);
+    }
     ParallelTaskTerminator terminator(_max_worker_id, _task_queues);
     ShenandoahHeap::StrongRootsScope srs(sh);
     // drain_satb_buffers(0, true);
     FinishDrainSATBBuffersTask drain_satb_buffers(this, &terminator);
     sh->workers()->set_active_workers(_max_worker_id);
     sh->workers()->run_task(&drain_satb_buffers);
+    if (! full_gc) {
+      sh->shenandoahPolicy()->record_phase_end(ShenandoahCollectorPolicy::drain_satb);
+    }
   }
 
   // Also drain our overflow queue.
+  if (! full_gc) {
+    sh->shenandoahPolicy()->record_phase_start(ShenandoahCollectorPolicy::drain_overflow);
+  }
   ShenandoahMarkRefsClosure cl1(0);
   ShenandoahMarkRefsNoUpdateClosure cl2(0);
   ExtendedOopClosure* cl;
@@ -472,13 +483,22 @@ void ShenandoahConcurrentMark::finish_mark_from_roots(bool full_gc) {
     obj->oop_iterate(cl);
     obj = _overflow_queue->pop();
   }
+  if (! full_gc) {
+    sh->shenandoahPolicy()->record_phase_end(ShenandoahCollectorPolicy::drain_overflow);
+  }
 
   // Finally mark everything else we've got in our queues during the previous steps.
   {
+    if (! full_gc) {
+      sh->shenandoahPolicy()->record_phase_start(ShenandoahCollectorPolicy::drain_queues);
+    }
     ParallelTaskTerminator terminator(_max_worker_id, _task_queues);
     SCMConcurrentMarkingTask markingTask = SCMConcurrentMarkingTask(this, &terminator, !ShenandoahUpdateRefsEarly);
     sh->workers()->set_active_workers(_max_worker_id);
     sh->workers()->run_task(&markingTask);
+    if (! full_gc) {
+      sh->shenandoahPolicy()->record_phase_end(ShenandoahCollectorPolicy::drain_queues);
+    }
   }
 
 #ifdef ASSERT
@@ -488,7 +508,13 @@ void ShenandoahConcurrentMark::finish_mark_from_roots(bool full_gc) {
 #endif
 
   // When we're done marking everything, we process weak references.
+  if (! full_gc) {
+    sh->shenandoahPolicy()->record_phase_start(ShenandoahCollectorPolicy::weakrefs);
+  }
   weak_refs_work();
+  if (! full_gc) {
+    sh->shenandoahPolicy()->record_phase_end(ShenandoahCollectorPolicy::weakrefs);
+  }
 
 #ifdef ASSERT
   for (int i = 0; i < sh->max_workers(); i++) {

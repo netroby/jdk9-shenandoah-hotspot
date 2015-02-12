@@ -103,17 +103,21 @@ void VM_ShenandoahStartEvacuation::doit() {
   sh->shenandoahPolicy()->record_phase_start(ShenandoahCollectorPolicy::final_mark);
   sh->concurrentMark()->finish_mark_from_roots();
   sh->stop_concurrent_marking();
-  sh->shenandoahPolicy()->record_phase_end(ShenandoahCollectorPolicy::final_mark);
 
+  sh->shenandoahPolicy()->record_phase_start(ShenandoahCollectorPolicy::prepare_evac);
   sh->prepare_for_concurrent_evacuation();
   sh->set_evacuation_in_progress(true);
+  sh->shenandoahPolicy()->record_phase_end(ShenandoahCollectorPolicy::prepare_evac);
 
   if (! ShenandoahConcurrentEvacuation) {
     VM_ShenandoahEvacuation evacuation;
     evacuation.doit();
   } else {
+    sh->shenandoahPolicy()->record_phase_start(ShenandoahCollectorPolicy::init_evac);
     sh->evacuate_and_update_roots();
+    sh->shenandoahPolicy()->record_phase_end(ShenandoahCollectorPolicy::init_evac);
   }
+  sh->shenandoahPolicy()->record_phase_end(ShenandoahCollectorPolicy::final_mark);
 }
 
 VM_Operation::VMOp_Type VM_ShenandoahStartEvacuation::type() const {

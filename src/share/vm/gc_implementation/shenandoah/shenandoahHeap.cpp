@@ -1556,6 +1556,7 @@ void ShenandoahHeap::collect(GCCause::Cause cause) {
       if (ShenandoahTraceFullGC) {
         gclog_or_tty->print_cr("Shenandoah-full-gc: requested full GC");
       }
+      shenandoahPolicy()->record_user_requested_gc();
       _concurrent_gc_thread->do_full_gc();
     }
   } else if (cause == GCCause::_allocation_failure) {

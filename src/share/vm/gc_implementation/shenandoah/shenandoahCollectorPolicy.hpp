@@ -19,6 +19,14 @@ public:
   enum TimingPhase {
     init_mark,
     final_mark,
+      rescan_roots,
+      drain_satb,
+      drain_overflow,
+      drain_queues,
+      weakrefs,
+      prepare_evac,
+      init_evac,
+
     final_evac,
     final_uprefs,
       update_roots,
@@ -42,6 +50,8 @@ private:
 private:
   TimingData _timing_data[_num_phases];
   const char* _phase_names[_num_phases];
+
+  size_t _user_requested_gcs;
 
   ShenandoahHeap* _pgc;
   ShenandoahHeuristics* _heuristics;
@@ -68,6 +78,8 @@ public:
   void record_phase_start(TimingPhase phase);
   void record_phase_end(TimingPhase phase);
 
+  void record_user_requested_gc();
+
   void record_bytes_allocated(size_t bytes);
   void record_bytes_reclaimed(size_t bytes);
   bool should_start_concurrent_mark(size_t used, size_t capacity);
@@ -78,8 +90,7 @@ public:
   void print_tracing_info();
 
 private:
-  void print_summary(const char* str, const NumberSeq* seq);
-  void print_summary_sd(const char* str, const NumberSeq* seq);
+  void print_summary_sd(const char* str, uint indent, const NumberSeq* seq);
 };
 
 
