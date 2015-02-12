@@ -1465,6 +1465,9 @@ class CommandLineFlags {
   develop(bool, ShenandoahTraceTLabs, false,                                \
           "Trace TLabs in Shenandoah Heap")                                 \
                                                                             \
+  product(bool, ShenandoahProcessReferences, true,                          \
+          "Enable processing of (soft/weak/..) references in Shenandoah")   \
+                                                                            \
   develop(bool, ShenandoahTraceWeakReferences, false,                       \
           "Trace Weak Reference Processing in Shenandoah Heap")             \
                                                                             \

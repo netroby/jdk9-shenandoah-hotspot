@@ -308,11 +308,11 @@ void ShenandoahConcurrentMark::prepare_unmarked_root_objs_no_derived_ptrs(bool u
     ShenandoahMarkRootsTask mark_roots(update_refs);
     heap->workers()->run_task(&mark_roots);
     heap->set_par_threads(0); // Prepare for serial processing in future calls to process_strong_roots.
-
-    ReferenceProcessor* rp = heap->ref_processor_cm();
-    ShenandoahMarkRefsNoUpdateClosure rootsCl2(0);
-    rp->weak_oops_do(&rootsCl2);
-
+    if (ShenandoahProcessReferences) {
+      ReferenceProcessor* rp = heap->ref_processor_cm();
+      ShenandoahMarkRefsNoUpdateClosure rootsCl2(0);
+      rp->weak_oops_do(&rootsCl2);
+    }
   } else {
     ExtendedOopClosure* cl;
     ShenandoahMarkRefsClosure rootsCl1(0);
@@ -398,12 +398,13 @@ void ShenandoahConcurrentMark::mark_from_roots(bool update_refs, bool full_gc) {
 
   uint max_workers = full_gc ? _max_worker_id : _max_conc_worker_id;
   ParallelTaskTerminator terminator(max_workers, _task_queues);
-  ReferenceProcessor* rp = sh->ref_processor_cm();
-  
-  // enable ("weak") refs discovery
-  rp->enable_discovery(true /*verify_no_refs*/);
-  rp->setup_policy(false); // snapshot the soft ref policy to be used in this cycle
 
+  if (ShenandoahProcessReferences) {
+    ReferenceProcessor* rp = sh->ref_processor_cm();
+    // enable ("weak") refs discovery
+    rp->enable_discovery(true /*verify_no_refs*/);
+    rp->setup_policy(false); // snapshot the soft ref policy to be used in this cycle
+  }
   
   SCMConcurrentMarkingTask markingTask = SCMConcurrentMarkingTask(this, &terminator, update_refs);
 
@@ -508,12 +509,14 @@ void ShenandoahConcurrentMark::finish_mark_from_roots(bool full_gc) {
 #endif
 
   // When we're done marking everything, we process weak references.
-  if (! full_gc) {
-    sh->shenandoahPolicy()->record_phase_start(ShenandoahCollectorPolicy::weakrefs);
-  }
-  weak_refs_work();
-  if (! full_gc) {
-    sh->shenandoahPolicy()->record_phase_end(ShenandoahCollectorPolicy::weakrefs);
+  if (ShenandoahProcessReferences) {
+    if (! full_gc) {
+      sh->shenandoahPolicy()->record_phase_start(ShenandoahCollectorPolicy::weakrefs);
+    }
+    weak_refs_work();
+    if (! full_gc) {
+      sh->shenandoahPolicy()->record_phase_end(ShenandoahCollectorPolicy::weakrefs);
+    }
   }
 
 #ifdef ASSERT

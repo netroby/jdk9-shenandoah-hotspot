@@ -496,7 +496,9 @@ void ShenandoahCollectorPolicy::print_tracing_info() {
   print_summary_sd("Drain SATB", 2, &(_timing_data[drain_satb]._ms));
   print_summary_sd("Drain Overflow", 2, &(_timing_data[drain_overflow]._ms));
   print_summary_sd("Drain Queues", 2, &(_timing_data[drain_queues]._ms));
-  print_summary_sd("Weak References", 2, &(_timing_data[weakrefs]._ms));
+  if (ShenandoahProcessReferences) {
+    print_summary_sd("Weak References", 2, &(_timing_data[weakrefs]._ms));
+  }
   print_summary_sd("Prepare Evacuation", 2, &(_timing_data[prepare_evac]._ms));
   print_summary_sd("Initial Evacuation", 2, &(_timing_data[init_evac]._ms));
 

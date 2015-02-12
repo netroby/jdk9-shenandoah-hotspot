@@ -255,7 +255,10 @@ void ShenandoahHeap::post_initialize() {
   gc_threads_do(&init_gclabs);
 
   _scm->initialize();
-  ref_processing_init();
+
+  if (ShenandoahProcessReferences) {
+    ref_processing_init();
+  }
 }
 
 class CalculateUsedRegionClosure : public ShenandoahHeapRegionClosure {
@@ -1259,7 +1262,9 @@ public:
     ShenandoahHeap* heap = ShenandoahHeap::heap();
     ResourceMark rm;
     heap->process_all_roots(false, SharedHeap::SO_AllCodeCache, &cl, &cldCl, &blobsCl);
-    heap->ref_processor_cm()->weak_oops_do(&cl);
+    if (ShenandoahProcessReferences) {
+      heap->ref_processor_cm()->weak_oops_do(&cl);
+    }
     heap->process_weak_roots(&cl);
 
   }
@@ -1432,7 +1437,9 @@ void ShenandoahHeap::roots_iterate(ExtendedOopClosure* cl) {
 }
 
 void ShenandoahHeap::weak_roots_iterate(ExtendedOopClosure* cl) {
-  ref_processor_cm()->weak_oops_do(cl);
+  if (ShenandoahProcessReferences) {
+    ref_processor_cm()->weak_oops_do(cl);
+  }
   process_weak_roots(cl);
 }
 
