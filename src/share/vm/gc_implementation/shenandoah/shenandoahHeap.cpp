@@ -1563,8 +1563,7 @@ void ShenandoahHeap::collect(GCCause::Cause cause) {
       if (ShenandoahTraceFullGC) {
         gclog_or_tty->print_cr("Shenandoah-full-gc: requested full GC");
       }
-      shenandoahPolicy()->record_user_requested_gc();
-      _concurrent_gc_thread->do_full_gc();
+      _concurrent_gc_thread->do_full_gc(cause);
     }
   } else if (cause == GCCause::_allocation_failure) {
 
@@ -1572,7 +1571,7 @@ void ShenandoahHeap::collect(GCCause::Cause cause) {
       gclog_or_tty->print_cr("Shenandoah-full-gc: full GC for allocation failure");
     }
     collector_policy()->set_should_clear_all_soft_refs(true);
-      _concurrent_gc_thread->do_full_gc();
+      _concurrent_gc_thread->do_full_gc(cause);
 
   } else if (cause == GCCause::_gc_locker) {
 

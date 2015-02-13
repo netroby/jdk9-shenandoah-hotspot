@@ -84,6 +84,11 @@ void ShenandoahConcurrentThread::run() {
     if (_do_full_gc) {
       {
         MonitorLockerEx ml(ShenandoahJNICritical_lock, true);
+        if (_full_gc_cause == GCCause::_allocation_failure) {
+          heap->shenandoahPolicy()->record_allocation_failure_gc();
+        } else {
+          heap->shenandoahPolicy()->record_user_requested_gc();
+        }
         VM_ShenandoahFullGC full_gc;
         VMThread::execute(&full_gc);
         while (_waiting_for_jni_critical) {
@@ -153,12 +158,13 @@ void ShenandoahConcurrentThread::run() {
   }
 }
 
-void ShenandoahConcurrentThread::do_full_gc() {
+void ShenandoahConcurrentThread::do_full_gc(GCCause::Cause cause) {
 
   assert(Thread::current()->is_Java_thread(), "expect Java thread here");
 
   MonitorLockerEx ml(ShenandoahFullGC_lock);
   _do_full_gc = true;
+  _full_gc_cause = cause;
   while (_do_full_gc) {
     ml.wait();
   }

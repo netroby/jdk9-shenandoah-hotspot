@@ -6,6 +6,7 @@ Copyright 2014 Red Hat, Inc. and/or its affiliates.
 
 #include "gc_implementation/shared/concurrentGCThread.hpp"
 #include "gc_implementation/shared/suspendibleThreadSet.hpp"
+#include "gc_interface/gcCause.hpp"
 #include "memory/resourceArea.hpp"
 
 // For now we just want to have a concurrent marking thread. 
@@ -30,6 +31,7 @@ class ShenandoahConcurrentThread: public ConcurrentGCThread {
   static SuspendibleThreadSet _sts;
 
   bool _do_full_gc;
+  GCCause::Cause _full_gc_cause;
 
   void sleepBeforeNextCycle();
 
@@ -57,7 +59,7 @@ class ShenandoahConcurrentThread: public ConcurrentGCThread {
   bool cm_has_aborted() { return _concurrent_mark_aborted;}
   void clear_cm_aborted() { _concurrent_mark_aborted = false;}
 
-  void do_full_gc();
+  void do_full_gc(GCCause::Cause cause);
 
   void schedule_full_gc();
 

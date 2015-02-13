@@ -365,6 +365,7 @@ ShenandoahCollectorPolicy::ShenandoahCollectorPolicy() {
   initialize_all();
 
   _user_requested_gcs = 0;
+  _allocation_failure_gcs = 0;
 
   _phase_names[init_mark] = "InitMark";
   _phase_names[final_mark] = "FinalMark";
@@ -475,6 +476,10 @@ void ShenandoahCollectorPolicy::record_user_requested_gc() {
   _user_requested_gcs++;
 }
 
+void ShenandoahCollectorPolicy::record_allocation_failure_gc() {
+  _allocation_failure_gcs++;
+}
+
 bool ShenandoahCollectorPolicy::should_start_concurrent_mark(size_t used,
 							     size_t capacity) {
   ShenandoahHeap* heap = ShenandoahHeap::heap();
@@ -516,6 +521,7 @@ void ShenandoahCollectorPolicy::print_tracing_info() {
   print_summary_sd("Full GC Times", 0, &(_timing_data[full_gc]._ms));
 
   gclog_or_tty->print_cr("User requested GCs: "SIZE_FORMAT, _user_requested_gcs);
+  gclog_or_tty->print_cr("Allocation failure GCs: "SIZE_FORMAT, _allocation_failure_gcs);
 
   gclog_or_tty->print_cr(" ");
   double total_sum = _timing_data[init_mark]._ms.sum() +

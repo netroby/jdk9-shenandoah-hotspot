@@ -52,6 +52,7 @@ private:
   const char* _phase_names[_num_phases];
 
   size_t _user_requested_gcs;
+  size_t _allocation_failure_gcs;
 
   ShenandoahHeap* _pgc;
   ShenandoahHeuristics* _heuristics;
@@ -79,6 +80,7 @@ public:
   void record_phase_end(TimingPhase phase);
 
   void record_user_requested_gc();
+  void record_allocation_failure_gc();
 
   void record_bytes_allocated(size_t bytes);
   void record_bytes_reclaimed(size_t bytes);
