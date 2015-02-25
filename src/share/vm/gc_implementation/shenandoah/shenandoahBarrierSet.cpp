@@ -32,8 +32,7 @@ public:
 
 };
 
-ShenandoahBarrierSet::ShenandoahBarrierSet() {
-  _kind = BarrierSet::ShenandoahBarrierSet;
+ShenandoahBarrierSet::ShenandoahBarrierSet() : BarrierSet(BarrierSet::ShenandoahBarrierSet) {
 }
 
 void ShenandoahBarrierSet::print_on(outputStream* st) const {
