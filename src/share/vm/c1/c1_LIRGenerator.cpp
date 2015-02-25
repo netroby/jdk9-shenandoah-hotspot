@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2005, 2014, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2005, 2015, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -1444,7 +1444,6 @@ void LIRGenerator::pre_barrier(LIR_Opr addr_opr, LIR_Opr pre_val,
       // No pre barriers
       break;
     case BarrierSet::ModRef:
-    case BarrierSet::Other:
       // No pre barriers
       break;
     default      :
@@ -1468,7 +1467,6 @@ void LIRGenerator::post_barrier(LIR_OprDesc* addr, LIR_OprDesc* new_val) {
       CardTableModRef_post_barrier(addr,  new_val);
       break;
     case BarrierSet::ModRef:
-    case BarrierSet::Other:
       // No post barriers
       break;
     default      :
@@ -2448,37 +2446,6 @@ void LIRGenerator::do_UnsafePutObject(UnsafePutObject* x) {
   CodeEmitInfo* info = state_for(x, x->state_before());
   put_Object_unsafe(src.result(), off.result(), data.result(), type, x->is_volatile(), info);
   if (x->is_volatile() && os::is_MP()) __ membar();
-}
-
-
-void LIRGenerator::do_UnsafePrefetch(UnsafePrefetch* x, bool is_store) {
-  LIRItem src(x->object(), this);
-  LIRItem off(x->offset(), this);
-
-  src.load_item();
-  if (off.is_constant() && can_inline_as_constant(x->offset())) {
-    // let it be a constant
-    off.dont_load_item();
-  } else {
-    off.load_item();
-  }
-
-  set_no_result(x);
-
-  LIR_Opr src_op = src.result();
-  src_op = shenandoah_read_barrier(src_op, NULL, false);
-  LIR_Address* addr = generate_address(src_op, off.result(), 0, 0, T_BYTE);
-  __ prefetch(addr, is_store);
-}
-
-
-void LIRGenerator::do_UnsafePrefetchRead(UnsafePrefetchRead* x) {
-  do_UnsafePrefetch(x, false);
-}
-
-
-void LIRGenerator::do_UnsafePrefetchWrite(UnsafePrefetchWrite* x) {
-  do_UnsafePrefetch(x, true);
 }
 
 

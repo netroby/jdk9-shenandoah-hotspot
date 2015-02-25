@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2000, 2015, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -43,9 +43,7 @@ public:
     CardTableExtension,
     G1SATBCT,
     G1SATBCTLogging,
-    ShenandoahBarrierSet,
-    Other,
-    Uninit
+    ShenandoahBarrierSet
   };
 
   enum Flags {
@@ -80,9 +78,11 @@ protected:
   static const int _max_covered_regions = 2;
   Name _kind;
 
+  BarrierSet(Name kind) : _kind(kind) { }
+  ~BarrierSet() { }
+
 public:
 
-  BarrierSet() { _kind = Uninit; }
   // To get around prohibition on RTTI.
   BarrierSet::Name kind() { return _kind; }
   virtual bool is_a(BarrierSet::Name bsn) = 0;
