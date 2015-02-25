@@ -1120,9 +1120,7 @@ bool Node::has_special_unique_user() const {
   } else if (op == Op_SubI || op == Op_SubL) {
     // Condition for subI(x,subI(y,z)) ==> subI(addI(x,z),y)
     return n->Opcode() == op && n->in(2) == this;
-  } else if (is_If() && (n->is_IfFalse() || n->is_IfTrue()) && !UseShenandoahGC) {
-    // TODO: For some reason, it breaks with Shenandoah barriers. Figure out
-    // why and fix it.
+  } else if (is_If() && (n->is_IfFalse() || n->is_IfTrue())) {
     // See IfProjNode::Identity()
     return true;
   }
