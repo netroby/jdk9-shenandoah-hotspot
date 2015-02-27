@@ -264,6 +264,7 @@ public:
   void copy_object(oop p, HeapWord* s);
   void verify_copy(oop p, oop c);
   //  void assign_brooks_pointer(oop p, HeapWord* filler, HeapWord* copy);
+  void verify_heap_size_consistency();
   void verify_heap_after_marking();
   void verify_heap_after_evacuation();
   void verify_heap_after_update_refs();

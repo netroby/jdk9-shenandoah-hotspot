@@ -277,8 +277,13 @@ public:
   size_t getResult() { return sum;}
 };
 
+void ShenandoahHeap::verify_heap_size_consistency() {
+  CalculateUsedRegionClosure cl;
+  heap_region_iterate(&cl);
+  assert(cl.getResult() == used(),
+         err_msg("heap used size must be consistent heap-used: "SIZE_FORMAT" regions-used: "SIZE_FORMAT, used(), cl.getResult()));
+}
 
-  
 size_t ShenandoahHeap::used() const {
   return _used;
 }
@@ -1025,6 +1030,9 @@ public:
 };
 
 void ShenandoahHeap::verify_heap_after_marking() {
+
+  verify_heap_size_consistency();
+
   if (ShenandoahGCVerbose) {
     tty->print("verifying heap after marking\n");
   }
@@ -2048,6 +2056,8 @@ public:
 
 void ShenandoahHeap::verify_heap_after_evacuation() {
 
+  verify_heap_size_consistency();
+
   ensure_parsability(false);
 
   VerifyAfterEvacuationClosure cl;
@@ -2073,6 +2083,8 @@ void ShenandoahHeap::verify_regions_after_update_refs() {
 }
 
 void ShenandoahHeap::verify_heap_after_update_refs() {
+
+  verify_heap_size_consistency();
 
   ensure_parsability(false);
 
