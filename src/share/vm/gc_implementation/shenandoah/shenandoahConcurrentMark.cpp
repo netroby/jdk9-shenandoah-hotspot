@@ -232,7 +232,7 @@ public:
     if (_update_refs) {
       cl = &rootsCl1;
     } else {
-      cl = &rootsCl2;
+      cl = &rootsCl1;
     }
 
     CodeBlobToOopClosure blobsCl(cl, true);

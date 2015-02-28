@@ -869,7 +869,7 @@ public:
       _heap->decrease_used(r->used());
       r->recycle();
       if (ShenandoahUpdateRefsEarly) {
-        _heap->free_regions()->append(r);
+        _heap->free_regions()->append_concurrent(r);
       }
     }
 
@@ -1205,12 +1205,16 @@ void ShenandoahHeap::update_references() {
   workers()->run_task(&task);
   workers()->set_active_workers(_max_workers);
 
+  recycle_dirty_regions();
+
+  /*
   VM_ShenandoahUpdateRootRefs update_roots;
   if (ShenandoahConcurrentUpdateRefs) {
     VMThread::execute(&update_roots);
   } else {
     update_roots.doit();
   }
+  */
 
   _allocated_last_gc = used() - _used_start_gc;
   size_t max_allocated_gc = MAX2(_max_allocated_gc, _allocated_last_gc);
