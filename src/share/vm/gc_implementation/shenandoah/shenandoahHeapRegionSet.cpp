@@ -33,7 +33,6 @@ ShenandoahHeapRegionSet::ShenandoahHeapRegionSet(size_t max_regions, ShenandoahH
   _next_free = &_regions[num_regions];
 }
 
-
 ShenandoahHeapRegionSet::~ShenandoahHeapRegionSet() {
   FREE_C_HEAP_ARRAY(ShenandoahHeapRegion*, _regions);
 }
@@ -78,7 +77,7 @@ size_t ShenandoahHeapRegionSet::available_regions() {
 
 void ShenandoahHeapRegionSet::append(ShenandoahHeapRegion* region) {
   assert(_next_free < _regions + _max_regions, "need space for additional regions");
-  // assert(SafepointSynchronize::is_at_safepoint() || ShenandoahHeap_lock->owned_by_self() || ! Universe::is_fully_initialized(), "only append regions to list while world is stopped");
+  assert(SafepointSynchronize::is_at_safepoint() || ShenandoahHeap_lock->owned_by_self() || ! Universe::is_fully_initialized(), "only append regions to list while world is stopped");
 
   // Grab next slot.
   ShenandoahHeapRegion** next_free = _next_free;
@@ -86,14 +85,6 @@ void ShenandoahHeapRegionSet::append(ShenandoahHeapRegion* region) {
 
   // Insert new region into slot.
   *next_free = region;
-}
-
-void ShenandoahHeapRegionSet::append_concurrent(ShenandoahHeapRegion* region) {
-  
-  {
-    MutexLocker ml(Heap_lock);
-    append(region);
-  }
 }
 
 void ShenandoahHeapRegionSet::clear() {

@@ -35,8 +35,6 @@ public:
 
   ~ShenandoahHeapRegionSet();
 
-  void initialize();
-
   void set_garbage_threshold(size_t minimum_garbage) { _garbage_threshold = minimum_garbage;}
   void set_free_threshold(size_t minimum_free) { _free_threshold = minimum_free;}
 
@@ -44,7 +42,6 @@ public:
    * Appends a region to the set. This is implemented to be concurrency-safe.
    */
   void append(ShenandoahHeapRegion* region);
-  void append_concurrent(ShenandoahHeapRegion* region);
 
   void clear();
 

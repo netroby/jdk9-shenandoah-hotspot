@@ -265,7 +265,6 @@ void VM_ShenandoahUpdateRefs::doit() {
   ShenandoahHeap *sh = ShenandoahHeap::heap();
   sh->shenandoahPolicy()->record_phase_start(ShenandoahCollectorPolicy::final_evac);
   sh->set_evacuation_in_progress(false);
-  sh->resize_all_tlabs();
   sh->prepare_for_update_references();
   assert(ShenandoahConcurrentUpdateRefs, "only do this when concurrent update references is turned on");
   sh->shenandoahPolicy()->record_phase_end(ShenandoahCollectorPolicy::final_evac);
