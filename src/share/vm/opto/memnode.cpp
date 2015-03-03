@@ -888,7 +888,7 @@ void LoadNode::dump_spec(outputStream *st) const {
 //----------------------------is_immutable_value-------------------------------
 // Helper function to allow a raw load without control edge for some cases
 bool LoadNode::is_immutable_value(Node* adr) {
-  return (adr->is_AddP() && adr->in(AddPNode::Base)->is_top() &&
+  return UseShenandoahGC || (adr->is_AddP() && adr->in(AddPNode::Base)->is_top() &&
           adr->in(AddPNode::Address)->Opcode() == Op_ThreadLocal &&
           (adr->in(AddPNode::Offset)->find_intptr_t_con(-1) ==
            in_bytes(JavaThread::osthread_offset())));
