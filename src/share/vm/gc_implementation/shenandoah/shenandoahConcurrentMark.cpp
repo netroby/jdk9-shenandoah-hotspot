@@ -186,7 +186,6 @@ public:
     _heap(ShenandoahHeap::heap()),
     _mark_objs(ShenandoahMarkObjsClosure(worker_id))
   {
-    assert(ShenandoahUpdateRefsEarly, "Only use non-updating marking when ShenandoahUpdateRefsEarly");
   }
 
   void do_oop(narrowOop* p) {
