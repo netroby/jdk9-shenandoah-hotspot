@@ -131,6 +131,12 @@ const char* VM_ShenandoahStartEvacuation::name() const {
 void VM_ShenandoahFinishEvacuation::doit() {
   ShenandoahHeap *sh = ShenandoahHeap::heap();
   sh->set_evacuation_in_progress(false);
+
+  // TODO: Do this concurrently after evacuation.
+  sh->shenandoahPolicy()->record_phase_start(ShenandoahCollectorPolicy::reset_bitmaps);
+  sh->reset_mark_bitmap();
+  sh->shenandoahPolicy()->record_phase_end(ShenandoahCollectorPolicy::reset_bitmaps);
+
 }
 
 VM_Operation::VMOp_Type VM_ShenandoahFinishEvacuation::type() const {
@@ -229,12 +235,6 @@ void VM_ShenandoahUpdateRootRefs::doit() {
     sh->verify_regions_after_update_refs();
   }
 
-  if (! ShenandoahUpdateRefsEarly) {
-    // TODO: Do this concurrently after evacuation.
-    sh->shenandoahPolicy()->record_phase_start(ShenandoahCollectorPolicy::reset_bitmaps);
-    sh->reset_mark_bitmap();
-    sh->shenandoahPolicy()->record_phase_end(ShenandoahCollectorPolicy::reset_bitmaps);
-  }
 #ifdef ASSERT
  else {
    assert(sh->is_bitmap_clear(), "need cleared bitmap here");

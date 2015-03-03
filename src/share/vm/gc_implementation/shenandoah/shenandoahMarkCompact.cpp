@@ -33,6 +33,14 @@ void ShenandoahMarkCompact::do_mark_compact() {
 
   _heap->shenandoahPolicy()->record_phase_start(ShenandoahCollectorPolicy::full_gc);
 
+  // We need to clear the is_in_collection_set flag in all regions.
+  ShenandoahHeapRegion** regions = _heap->heap_regions();
+  size_t num_regions = _heap->num_regions();
+  for (size_t i = 0; i < num_regions; i++) {
+    regions[i]->set_is_in_collection_set(false);
+  }
+  _heap->clear_cset_fast_test();
+
   if (ShenandoahVerify) {
     // Full GC should only be called between regular concurrent cycles, therefore
     // those verifications should be valid.
@@ -78,18 +86,10 @@ void ShenandoahMarkCompact::phase1_mark_heap() {
     _heap->ensure_parsability(true);
   }
 
-  // We need to clear the is_in_collection_set flag in all regions.
-  ShenandoahHeapRegion** regions = _heap->heap_regions();
-  size_t num_regions = _heap->num_regions();
-  for (size_t i = 0; i < num_regions; i++) {
-    regions[i]->set_is_in_collection_set(false);
-  }
-  _heap->clear_cset_fast_test();
-
   // TODO: Move prepare_unmarked_root_objs() into SCM!
   // TODO: Make this whole sequence a separate method in SCM!
-  _heap->concurrentMark()->prepare_unmarked_root_objs_no_derived_ptrs(false /* update references */);
-  _heap->concurrentMark()->mark_from_roots(false /* update-refs */, true /* full-gc */);
+  _heap->concurrentMark()->prepare_unmarked_root_objs_no_derived_ptrs(! ShenandoahUpdateRefsEarly /* update references */);
+  _heap->concurrentMark()->mark_from_roots(! ShenandoahUpdateRefsEarly, true /* full-gc */);
   _heap->concurrentMark()->finish_mark_from_roots(true);
 
 }

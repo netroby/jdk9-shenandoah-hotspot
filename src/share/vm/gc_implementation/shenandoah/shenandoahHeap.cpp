@@ -1221,8 +1221,10 @@ void ShenandoahHeap::update_references() {
  
  set_update_references_in_progress(false);
 
- // In case evacuation has been cancelled, the cancallation protocol is done here.
- _cancelled_evacuation = false;
+ if (ShenandoahUpdateRefsEarly) {
+   // In case evacuation has been cancelled, the cancallation protocol is done here.
+   _cancelled_evacuation = false;
+ }
 }
 
 
@@ -2099,6 +2101,11 @@ void ShenandoahHeap::verify_heap_after_update_refs() {
 void ShenandoahHeap::stop_concurrent_marking() {
   assert(concurrent_mark_in_progress(), "How else could we get here?");
   set_concurrent_mark_in_progress(false);
+
+  if (! ShenandoahUpdateRefsEarly) {
+    // In case evacuation has been cancelled, the cancallation protocol is done here.
+    _cancelled_evacuation = false;
+  }
 
   if (ShenandoahGCVerbose) {
     print_heap_regions();

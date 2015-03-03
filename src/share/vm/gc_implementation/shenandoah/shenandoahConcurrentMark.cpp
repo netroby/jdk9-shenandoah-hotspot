@@ -76,7 +76,9 @@ public:
         //      _heap->print_heap_regions();
       }
 #endif
-      assert(! _heap->heap_region_containing(obj)->is_in_collection_set(), "we don't want to mark objects in from-space");
+      assert(_heap->cancelled_evacuation()
+             || ! _heap->heap_region_containing(obj)->is_in_collection_set(),
+             "we don't want to mark objects in from-space");
       assert(_heap->is_in(obj), "referenced objects must be in the heap. No?");
       if (_heap->mark_current(obj)) {
 #ifdef ASSERT
@@ -184,6 +186,7 @@ public:
     _heap(ShenandoahHeap::heap()),
     _mark_objs(ShenandoahMarkObjsClosure(worker_id))
   {
+    assert(ShenandoahUpdateRefsEarly, "Only use non-updating marking when ShenandoahUpdateRefsEarly");
   }
 
   void do_oop(narrowOop* p) {
@@ -310,8 +313,15 @@ void ShenandoahConcurrentMark::prepare_unmarked_root_objs_no_derived_ptrs(bool u
     heap->set_par_threads(0); // Prepare for serial processing in future calls to process_strong_roots.
     if (ShenandoahProcessReferences) {
       ReferenceProcessor* rp = heap->ref_processor_cm();
+      ExtendedOopClosure* cl;
+      ShenandoahMarkRefsClosure rootsCl1(0);
       ShenandoahMarkRefsNoUpdateClosure rootsCl2(0);
-      rp->weak_oops_do(&rootsCl2);
+      if (update_refs) {
+        cl = &rootsCl1;
+      } else {
+        cl = &rootsCl2;
+      }
+      rp->weak_oops_do(cl);
     }
   } else {
     ExtendedOopClosure* cl;
