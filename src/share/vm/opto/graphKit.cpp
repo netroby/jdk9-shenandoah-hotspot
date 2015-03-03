@@ -4502,7 +4502,7 @@ Node* GraphKit::make_shenandoah_write_barrier(Node* ctrl, Node* obj, const Type*
   Node* oldmem = map()->memory();
 
   // Make the merge point.
-  enum { _evac_path = 1, _no_cset_path, _no_evac_path, PATH_LIMIT };
+  enum { _evac_path = 1, _no_evac_path, PATH_LIMIT };
   RegionNode* region = new RegionNode(PATH_LIMIT);
   Node*       phi    = new PhiNode(region, obj_type);
 
@@ -4517,27 +4517,6 @@ Node* GraphKit::make_shenandoah_write_barrier(Node* ctrl, Node* obj, const Type*
 
   // Evacuation path.
   set_control(iffalse);
-
-  // Check for in-cset.
-  Node* in_cset_fast_test_addr = makecon(TypeRawPtr::make(ShenandoahHeap::in_cset_fast_test_addr()));
-  Node* region_size_shift = intcon(ShenandoahHeapRegion::RegionSizeShift);
-  Node* objX = _gvn.transform(new CastP2XNode(control(), obj));
-  Node* in_cset_fast_test_idx = _gvn.transform(new URShiftXNode(objX, region_size_shift));
-  Node* test_addr = basic_plus_adr(top(), in_cset_fast_test_addr, in_cset_fast_test_idx);
-  Node* in_cset_test = make_load(control(), test_addr, TypeInt::BOOL, T_BOOLEAN, Compile::AliasIdxRaw, MemNode::unordered, false);
-  Node* chk2 = _gvn.transform(new CmpINode(in_cset_test, intcon(0)));
-  Node* test2 = _gvn.transform(new BoolNode(chk2, BoolTest::eq));
-
-  // The if-branch for in-cset-test.
-  IfNode* iff2 = create_and_map_if(control(), test2, PROB_LIKELY_MAG(1), COUNT_UNKNOWN);
-  Node* iftrue2 = _gvn.transform(new IfTrueNode(iff2));
-  Node* iffalse2 = _gvn.transform(new IfFalseNode(iff2));
-
-  region->init_req(_no_cset_path, iftrue2);
-  phi->init_req(_no_cset_path, obj);
-
-  // Evacuation path.
-  set_control(iffalse2);
 
   kill_dead_locals();
   Node *call = make_runtime_call(RC_NO_LEAF | RC_NO_IO,
@@ -4558,7 +4537,6 @@ Node* GraphKit::make_shenandoah_write_barrier(Node* ctrl, Node* obj, const Type*
   record_for_igvn(region);
   phi = _gvn.transform(phi);
 
-  merge_memory(oldmem, region, _no_cset_path);
   merge_memory(oldmem, region, _no_evac_path);
 
   return phi;

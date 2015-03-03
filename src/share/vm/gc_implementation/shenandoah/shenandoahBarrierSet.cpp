@@ -312,7 +312,7 @@ oop ShenandoahBarrierSet::resolve_and_maybe_copy_oopHelper(oop src) {
 }
 
 JRT_ENTRY(void, ShenandoahBarrierSet::resolve_and_maybe_copy_oop_c2(oopDesc* src, JavaThread* thread))
-  oop result = ((ShenandoahBarrierSet*) oopDesc::bs())->resolve_and_maybe_copy_oop_work2(oop(src));
+  oop result = ((ShenandoahBarrierSet*) oopDesc::bs())->resolve_and_maybe_copy_oop_work(oop(src));
   // tty->print_cr("called C2 write barrier with: %p result: %p copy: %d", (oopDesc*) src, (oopDesc*) result, src != result);
   thread->set_vm_result(result);
   // eturn (oopDesc*) result;
