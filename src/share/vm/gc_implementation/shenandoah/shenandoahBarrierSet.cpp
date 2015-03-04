@@ -522,16 +522,12 @@ void ShenandoahBarrierSet::compile_resolve_oop_for_write(MacroAssembler* masm, R
     __ jcc(Assembler::zero, done);
   }
 
-  __ push(rscratch1);
-
   // Now check if evacuation is in progress.
-  ExternalAddress evacuation_in_progress = ExternalAddress(ShenandoahHeap::evacuation_in_progress_addr());
-  __ movptr(rscratch1, evacuation_in_progress);
-
   compile_resolve_oop_not_null(masm, dst);
 
-  __ cmpl(rscratch1, 0);
-  __ pop(rscratch1);
+  Address evacuation_in_progress = Address(r15_thread, in_bytes(JavaThread::evacuation_in_progress_offset()));
+
+  __ cmpb(evacuation_in_progress, 0);
   __ jcc(Assembler::equal, done);
   __ push(rscratch1);
   __ push(rscratch2);

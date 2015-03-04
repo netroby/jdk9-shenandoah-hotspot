@@ -2152,6 +2152,7 @@ void ShenandoahHeap::set_evacuation_in_progress(bool in_progress) {
       }
     }
   }
+  JavaThread::set_evacuation_in_progress_all_threads(in_progress);
   _evacuation_in_progress = in_progress;
 }
 

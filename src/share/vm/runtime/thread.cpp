@@ -1460,13 +1460,15 @@ void JavaThread::initialize() {
 #if INCLUDE_ALL_GCS
 SATBMarkQueueSet JavaThread::_satb_mark_queue_set;
 DirtyCardQueueSet JavaThread::_dirty_card_queue_set;
+bool JavaThread::_evacuation_in_progress_global = false;
 #endif // INCLUDE_ALL_GCS
 
 JavaThread::JavaThread(bool is_attaching_via_jni) :
                        Thread()
 #if INCLUDE_ALL_GCS
                        , _satb_mark_queue(&_satb_mark_queue_set),
-                       _dirty_card_queue(&_dirty_card_queue_set)
+                       _dirty_card_queue(&_dirty_card_queue_set),
+                       _evacuation_in_progress(_evacuation_in_progress_global)
 #endif // INCLUDE_ALL_GCS
 {
   initialize();
@@ -1524,7 +1526,8 @@ JavaThread::JavaThread(ThreadFunction entry_point, size_t stack_sz) :
                        Thread()
 #if INCLUDE_ALL_GCS
                        , _satb_mark_queue(&_satb_mark_queue_set),
-                       _dirty_card_queue(&_dirty_card_queue_set)
+                       _dirty_card_queue(&_dirty_card_queue_set),
+                       _evacuation_in_progress(_evacuation_in_progress_global)
 #endif // INCLUDE_ALL_GCS
 {
   initialize();
@@ -1878,6 +1881,21 @@ void JavaThread::initialize_queues() {
   // The dirty card queue should have been constructed with its
   // active field set to true.
   assert(dirty_queue.is_active(), "dirty card queue should be active");
+}
+
+bool JavaThread::evacuation_in_progress() const {
+  return _evacuation_in_progress;
+}
+
+void JavaThread::set_evacuation_in_progress(bool in_prog) {
+  _evacuation_in_progress = in_prog;
+}
+
+void JavaThread::set_evacuation_in_progress_all_threads(bool in_prog) {
+  _evacuation_in_progress_global = in_prog;
+  for (JavaThread* t = Threads::first(); t; t = t->next()) {
+    t->set_evacuation_in_progress(in_prog);
+  }
 }
 #endif // INCLUDE_ALL_GCS
 

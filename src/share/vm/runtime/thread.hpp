@@ -947,6 +947,10 @@ class JavaThread: public Thread {
   static DirtyCardQueueSet _dirty_card_queue_set;
 
   void flush_barrier_queues();
+
+  bool _evacuation_in_progress;
+  static bool _evacuation_in_progress_global;
+
 #endif // INCLUDE_ALL_GCS
 
   friend class VMThread;
@@ -1366,6 +1370,9 @@ class JavaThread: public Thread {
 #if INCLUDE_ALL_GCS
   static ByteSize satb_mark_queue_offset()       { return byte_offset_of(JavaThread, _satb_mark_queue); }
   static ByteSize dirty_card_queue_offset()      { return byte_offset_of(JavaThread, _dirty_card_queue); }
+
+  static ByteSize evacuation_in_progress_offset() { return byte_offset_of(JavaThread, _evacuation_in_progress); }
+
 #endif // INCLUDE_ALL_GCS
 
   // Returns the jni environment for this thread
@@ -1662,6 +1669,12 @@ class JavaThread: public Thread {
   static DirtyCardQueueSet& dirty_card_queue_set() {
     return _dirty_card_queue_set;
   }
+
+  bool evacuation_in_progress() const;
+
+  void set_evacuation_in_progress(bool in_prog);
+
+  static void set_evacuation_in_progress_all_threads(bool in_prog);
 #endif // INCLUDE_ALL_GCS
 
   // This method initializes the SATB and dirty card queues before a

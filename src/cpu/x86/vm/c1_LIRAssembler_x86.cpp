@@ -1495,9 +1495,8 @@ void LIR_Assembler::emit_opShenandoahWriteBarrier(LIR_OpShenandoahWriteBarrier* 
   __ movptr(res, Address(res, -8));
 
   // Check for evacuation-in-progress
-  ExternalAddress evacuation_in_progress = ExternalAddress(ShenandoahHeap::evacuation_in_progress_addr());
-  __ movptr(tmp1, evacuation_in_progress);
-  __ cmpl(tmp1, 0);
+  Address evacuation_in_progress = Address(r15_thread, in_bytes(JavaThread::evacuation_in_progress_offset()));
+  __ cmpb(evacuation_in_progress, 0);
   __ jcc(Assembler::equal, done);
 
   // Check for object in collection set.

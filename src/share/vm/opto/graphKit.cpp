@@ -4491,8 +4491,10 @@ Node* GraphKit::shenandoah_read_barrier(Node* obj) {
 Node* GraphKit::make_shenandoah_write_barrier(Node* ctrl, Node* obj, const Type* obj_type) {
 
   // Construct check for evacuation-in-progress.
-  Node* evac_in_progr_addr = makecon(TypeRawPtr::make(ShenandoahHeap::evacuation_in_progress_addr()));
-  Node* evac_in_progr = make_load(ctrl, evac_in_progr_addr, TypeInt::BOOL, T_INT, Compile::AliasIdxRaw, MemNode::unordered, false);
+  Node* jthread = _gvn.transform(new ThreadLocalNode());
+  Node* evac_in_progr_addr = basic_plus_adr(top(), jthread, in_bytes(JavaThread::evacuation_in_progress_offset()));
+
+  Node* evac_in_progr = make_load(ctrl, evac_in_progr_addr, TypeInt::BOOL, T_BOOLEAN, Compile::AliasIdxRaw, MemNode::unordered, false);
 
   obj = make_shenandoah_read_barrier(ctrl, obj, obj_type);
 
