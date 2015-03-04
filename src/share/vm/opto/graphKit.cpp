@@ -4494,7 +4494,7 @@ Node* GraphKit::make_shenandoah_write_barrier(Node* ctrl, Node* obj, const Type*
   Node* evac_in_progr_addr = makecon(TypeRawPtr::make(ShenandoahHeap::evacuation_in_progress_addr()));
   Node* evac_in_progr = make_load(NULL, evac_in_progr_addr, TypeInt::BOOL, T_INT, Compile::AliasIdxRaw, MemNode::unordered, false);
 
-  obj = make_shenandoah_read_barrier(NULL, obj, obj_type);
+  obj = make_shenandoah_read_barrier(ctrl, obj, obj_type);
 
   Node* chk = _gvn.transform(new CmpINode(evac_in_progr, intcon(0)));
   Node* test = _gvn.transform(new BoolNode(chk, BoolTest::eq));
