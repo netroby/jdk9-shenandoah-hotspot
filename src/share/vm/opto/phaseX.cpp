@@ -34,6 +34,7 @@
 #include "opto/phaseX.hpp"
 #include "opto/regalloc.hpp"
 #include "opto/rootnode.hpp"
+#include "opto/shenandoahSupport.hpp"
 
 //=============================================================================
 #define NODE_HASH_MINIMUM_SIZE    255
@@ -565,6 +566,37 @@ void PhaseTransform::dump_nodes_and_types_recur( const Node *n, uint depth, bool
 
 #endif
 
+bool PhaseTransform::eqv(const Node* n1, const Node* n2) const {
+  if (UseShenandoahGC) {
+
+    if (n1 == n2) return true;
+
+    if (n1 == NULL || n2 == NULL) return false;
+
+    if (n1->is_AddP() && n2->is_AddP()) {
+      Node* addp1 = n1->as_AddP();
+      Node* base1 = addp1->in(AddPNode::Base);
+      Node* addr1 = addp1->in(AddPNode::Address);
+      Node* offs1 = addp1->in(AddPNode::Offset);
+
+      Node* addp2 = n2->as_AddP();
+      Node* base2 = addp2->in(AddPNode::Base);
+      Node* addr2 = addp2->in(AddPNode::Address);
+      Node* offs2 = addp2->in(AddPNode::Offset);
+
+      if (base1 == addr1 && base2 == addr2) {
+
+        addr1 = ShenandoahSupport::skip_through_barrier(addr1);
+        addr2 = ShenandoahSupport::skip_through_barrier(addr2);
+        if (addr1 == addr2 && offs1 == offs2) return true;
+      }
+
+    }
+    return false;
+  } else {
+    return n1 == n2;
+  }
+}
 
 //=============================================================================
 //------------------------------PhaseValues------------------------------------

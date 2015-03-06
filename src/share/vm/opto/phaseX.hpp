@@ -257,7 +257,7 @@ public:
   // Return whether two Nodes are equivalent.
   // Must not be recursive, since the recursive version is built from this.
   // For pessimistic optimizations this is simply pointer equivalence.
-  bool eqv(const Node* n1, const Node* n2) const { return n1 == n2; }
+  bool eqv(const Node* n1, const Node* n2) const;
 
   // For pessimistic passes, the return type must monotonically narrow.
   // For optimistic  passes, the return type must monotonically widen.
