@@ -47,6 +47,7 @@
 #include "opto/parse.hpp"
 #include "opto/runtime.hpp"
 #include "opto/subnode.hpp"
+#include "opto/shenandoahSupport.hpp"
 #include "prims/nativeLookup.hpp"
 #include "runtime/sharedRuntime.hpp"
 #include "trace/traceMacros.hpp"
@@ -5050,6 +5051,8 @@ LibraryCallKit::tightly_coupled_allocation(Node* ptr,
                                            RegionNode* slow_region) {
   if (stopped())             return NULL;  // no fast path
   if (C->AliasLevel() == 0)  return NULL;  // no MergeMems around
+
+  ptr = ShenandoahSupport::skip_through_barrier(ptr);
 
   AllocateArrayNode* alloc = AllocateArrayNode::Ideal_array_allocation(ptr, &_gvn);
   if (alloc == NULL)  return NULL;
