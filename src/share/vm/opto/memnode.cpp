@@ -40,6 +40,7 @@
 #include "opto/narrowptrnode.hpp"
 #include "opto/phaseX.hpp"
 #include "opto/regmask.hpp"
+#include "opto/shenandoahSupport.hpp"
 
 // Portions of code courtesy of Clifford Click
 
@@ -1086,6 +1087,7 @@ Node* MemNode::can_see_stored_value(Node* st, PhaseTransform* phase) const {
         (tp != NULL) && tp->is_ptr_to_boxed_value()) {
       intptr_t ignore = 0;
       Node* base = AddPNode::Ideal_base_and_offset(ld_adr, phase, ignore);
+      base = ShenandoahSupport::skip_through_barrier(base);
       if (base != NULL && base->is_Proj() &&
           base->as_Proj()->_con == TypeFunc::Parms &&
           base->in(0)->is_CallStaticJava() &&

@@ -39,10 +39,13 @@ Node* ShenandoahSupport::skip_through_write_barrier(Node* n) {
 }
 
 Node* ShenandoahSupport::skip_through_barrier(Node* n) {
-
   Node* skipped = skip_through_read_barrier(n);
   if (skipped == n) {
     skipped = skip_through_write_barrier(n);
+  }
+  // Skip through chains of barriers
+  if (skipped != n) {
+    skipped = skip_through_barrier(skipped);
   }
   return skipped;
 }
