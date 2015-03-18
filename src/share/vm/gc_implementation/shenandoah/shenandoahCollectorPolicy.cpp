@@ -33,15 +33,36 @@ ShenandoahHeuristics::ShenandoahHeuristics() :
 
 void ShenandoahCollectorPolicy::record_phase_start(TimingPhase phase) {
   _timing_data[phase]._start = os::elapsedTime();
+
+  if (PrintGCTimeStamps) {
+    if (phase == init_mark)
+      _tracer->report_gc_start(GCCause::_shenandoah_init_mark, _conc_timer->gc_start());
+    else if (phase == full_gc) 
+      _tracer->report_gc_start(GCCause::_last_ditch_collection, _stw_timer->gc_start());
+
+    gclog_or_tty->gclog_stamp(_tracer->gc_id());
+    gclog_or_tty->print_cr("[GC %s start]", _phase_names[phase]);
+  }
 }
 
 void ShenandoahCollectorPolicy::record_phase_end(TimingPhase phase) {
   double end = os::elapsedTime();
   double elapsed = end - _timing_data[phase]._start;
   _timing_data[phase]._ms.add(elapsed * 1000);
+
   if (ShenandoahGCVerbose && PrintGCDetails) {
     tty->print_cr("PolicyPrint: %s "SIZE_FORMAT" took %lf ms", _phase_names[phase],
                   _timing_data[phase]._count++, elapsed * 1000);
+  }
+  if (PrintGCTimeStamps) {
+    gclog_or_tty->gclog_stamp(_tracer->gc_id());
+    gclog_or_tty->print_cr("[GC %s end, %lf secs]", _phase_names[phase], elapsed );
+
+    if (phase == final_uprefs)
+      _tracer->report_gc_end(_conc_timer->gc_end(), _conc_timer->time_partitions());
+    else if (phase == full_gc) 
+      _tracer->report_gc_end(_stw_timer->gc_end(), _stw_timer->time_partitions());
+    
   }
 }
 
@@ -364,18 +385,21 @@ static DynamicHeuristics *configureDynamicHeuristics() {
 ShenandoahCollectorPolicy::ShenandoahCollectorPolicy() {
   initialize_all();
 
+  _tracer = new (ResourceObj::C_HEAP, mtGC) ShenandoahTracer();
+  _stw_timer = new (ResourceObj::C_HEAP, mtGC) STWGCTimer();
+  _conc_timer = new (ResourceObj::C_HEAP, mtGC) ConcurrentGCTimer();
   _user_requested_gcs = 0;
   _allocation_failure_gcs = 0;
 
   _phase_names[init_mark] = "InitMark";
   _phase_names[final_mark] = "FinalMark";
-  _phase_names[final_mark] = "RescanRoots";
-  _phase_names[final_mark] = "DrainSATB";
-  _phase_names[final_mark] = "DrainOverflow";
-  _phase_names[final_mark] = "DrainQueues";
-  _phase_names[final_mark] = "WeakRefs";
-  _phase_names[final_mark] = "PrepareEvac";
-  _phase_names[final_mark] = "InitEvac";
+  _phase_names[rescan_roots] = "RescanRoots";
+  _phase_names[drain_satb] = "DrainSATB";
+  _phase_names[drain_overflow] = "DrainOverflow";
+  _phase_names[drain_queues] = "DrainQueues";
+  _phase_names[weakrefs] = "WeakRefs";
+  _phase_names[prepare_evac] = "PrepareEvac";
+  _phase_names[init_evac] = "InitEvac";
   _phase_names[final_evac] = "FinalEvacuation";
   _phase_names[final_uprefs] = "FinalUpdateRefs";
 
@@ -428,6 +452,7 @@ ShenandoahCollectorPolicy::ShenandoahCollectorPolicy() {
       }
     _heuristics = new StatusQuoHeuristics();
   }
+
 }
 
 ShenandoahCollectorPolicy* ShenandoahCollectorPolicy::as_pgc_policy() {

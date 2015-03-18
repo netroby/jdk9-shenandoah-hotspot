@@ -1,14 +1,17 @@
 /*
-Copyright 2014 Red Hat, Inc. and/or its affiliates.
- */
+  Copyright 2014 Red Hat, Inc. and/or its affiliates.
+*/
 #ifndef SHARE_VM_GC_IMPLEMENTATION_SHENANDOAH_SHENANDOAH_COLLECTOR_POLICY_HPP
 #define SHARE_VM_GC_IMPLEMENTATION_SHENANDOAH_SHENANDOAH_COLLECTOR_POLICY_HPP
 
 #include "gc_implementation/shenandoah/shenandoahHeapRegion.hpp"
 #include "gc_implementation/shenandoah/shenandoahHeapRegionSet.hpp"
+#include "gc_implementation/shared/gcTrace.hpp"
+#include "gc_implementation/shared/gcTimer.hpp"
 #include "memory/collectorPolicy.hpp"
 #include "runtime/arguments.hpp"
 #include "utilities/numberSeq.hpp"
+
 
 class ShenandoahHeap;
 class ShenandoahHeuristics;
@@ -19,20 +22,20 @@ public:
   enum TimingPhase {
     init_mark,
     final_mark,
-      rescan_roots,
-      drain_satb,
-      drain_overflow,
-      drain_queues,
-      weakrefs,
-      prepare_evac,
-      init_evac,
+    rescan_roots,
+    drain_satb,
+    drain_overflow,
+    drain_queues,
+    weakrefs,
+    prepare_evac,
+    init_evac,
 
     final_evac,
     final_uprefs,
-      update_roots,
-      recycle_regions,
-      reset_bitmaps,
-      resize_tlabs,
+    update_roots,
+    recycle_regions,
+    reset_bitmaps,
+    resize_tlabs,
     full_gc,
     conc_mark,
     conc_evac,
@@ -56,6 +59,9 @@ private:
 
   ShenandoahHeap* _pgc;
   ShenandoahHeuristics* _heuristics;
+  ShenandoahTracer* _tracer;
+  STWGCTimer* _stw_timer;
+  ConcurrentGCTimer* _conc_timer;
 
 public:
   ShenandoahCollectorPolicy();
@@ -90,6 +96,8 @@ public:
                                        ShenandoahHeapRegionSet* free_set);
 
   void print_tracing_info();
+  GCTimer* conc_timer(){return _conc_timer;}
+  GCTimer* stw_timer() {return _stw_timer;}
 
 private:
   void print_summary_sd(const char* str, uint indent, const NumberSeq* seq);
