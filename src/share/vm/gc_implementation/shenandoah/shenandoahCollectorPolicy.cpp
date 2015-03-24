@@ -41,7 +41,18 @@ void ShenandoahCollectorPolicy::record_phase_start(TimingPhase phase) {
       _tracer->report_gc_start(GCCause::_last_ditch_collection, _stw_timer->gc_start());
 
     gclog_or_tty->gclog_stamp(_tracer->gc_id());
-    gclog_or_tty->print_cr("[GC %s start]", _phase_names[phase]);
+    gclog_or_tty->print("[GC %s start", _phase_names[phase]);
+    ShenandoahHeap* heap = (ShenandoahHeap*) Universe::heap();
+
+    gclog_or_tty->print(" total = " SIZE_FORMAT " K, used = " SIZE_FORMAT " K free = " SIZE_FORMAT " K", heap->capacity()/ K, heap->used() /K, 
+			((heap->capacity() - heap->used())/K) );
+
+    if (heap->calculateUsed() != heap->used()) {
+      gclog_or_tty->print("calc used = " SIZE_FORMAT " K heap used = " SIZE_FORMAT " K",
+			    heap->calculateUsed() / K, heap->used() / K);
+    }
+    assert(heap->calculateUsed() == heap->used(), "Just checking");      
+    gclog_or_tty->print_cr("]");
   }
 }
 
@@ -55,14 +66,24 @@ void ShenandoahCollectorPolicy::record_phase_end(TimingPhase phase) {
                   _timing_data[phase]._count++, elapsed * 1000);
   }
   if (PrintGCTimeStamps) {
+    ShenandoahHeap* heap = (ShenandoahHeap*) Universe::heap();
     gclog_or_tty->gclog_stamp(_tracer->gc_id());
-    gclog_or_tty->print_cr("[GC %s end, %lf secs]", _phase_names[phase], elapsed );
 
-    if (phase == final_uprefs)
+    gclog_or_tty->print("[GC %s end, %lf secs", _phase_names[phase], elapsed );
+    gclog_or_tty->print(" total = " SIZE_FORMAT " K, used = " SIZE_FORMAT " K free = " SIZE_FORMAT " K", heap->capacity()/ K, heap->used() /K, 
+			((heap->capacity() - heap->used())/K) );
+
+    if (heap->calculateUsed() != heap->used()) {
+      gclog_or_tty->print("calc used = " SIZE_FORMAT " K heap used = " SIZE_FORMAT " K",
+			    heap->calculateUsed() / K, heap->used() / K);
+    }
+    assert(heap->calculateUsed() == heap->used(), "Stashed heap used must be equal to calculated heap used");
+    gclog_or_tty->print_cr("]");
+
+    if (phase == final_uprefs) 
       _tracer->report_gc_end(_conc_timer->gc_end(), _conc_timer->time_partitions());
     else if (phase == full_gc) 
       _tracer->report_gc_end(_stw_timer->gc_end(), _stw_timer->time_partitions());
-    
   }
 }
 

@@ -344,7 +344,7 @@ public:
   }
 
   GCTracer* tracer();
-
+  ShenandoahHeapRegionSet* collection_set() { return _collection_set; }
   size_t tlab_used(Thread* ignored) const;
 
 private:
@@ -362,6 +362,8 @@ public:
   void shutdown();
 
   bool concurrent_mark_in_progress();
+  size_t calculateUsed();
+  size_t calculateFree();
 
 private:
   void verify_live();

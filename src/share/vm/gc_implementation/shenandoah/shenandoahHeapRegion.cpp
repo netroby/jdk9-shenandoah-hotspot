@@ -10,7 +10,7 @@ Copyright 2014 Red Hat, Inc. and/or its affiliates.
 #include "runtime/mutexLocker.hpp"
 #include "runtime/os.hpp"
 
-size_t ShenandoahHeapRegion::RegionSizeShift = 27;
+size_t ShenandoahHeapRegion::RegionSizeShift = 23;
 size_t ShenandoahHeapRegion::RegionSizeBytes = 1 << ShenandoahHeapRegion::RegionSizeShift; // 1024 * 1024 * 8;
 
 jint ShenandoahHeapRegion::initialize(HeapWord* start, 

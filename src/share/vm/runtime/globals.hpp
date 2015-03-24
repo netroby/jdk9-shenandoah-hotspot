@@ -1433,7 +1433,7 @@ class CommandLineFlags {
   develop(bool, ShenandoahDumpHeapAfterConcurrentMark, false,               \
           "Dump the ShenanodahHeap After Each Concurrent Mark")             \
                                                                             \
-  develop(bool, ShenandoahTraceFullGC, false,                               \
+  product(bool, ShenandoahTraceFullGC, false,				\
           "Trace Shenandoah full GC")                                       \
                                                                             \
   develop(bool, ShenandoahTracePhases, false,                               \

@@ -138,11 +138,14 @@ void ShenandoahHeapRegionSet::print() {
 void ShenandoahHeapRegionSet::choose_collection_and_free_sets(ShenandoahHeapRegionSet* col_set, ShenandoahHeapRegionSet* free_set) {
   col_set->choose_collection_set(_regions, length());
   free_set->choose_free_set(_regions, length());
+  //  assert(col_set->length() > 0 && free_set->length() > 0, "Better have some regions in the collection and free sets");
+
 }
 
 void ShenandoahHeapRegionSet::choose_collection_and_free_sets_min_garbage(ShenandoahHeapRegionSet* col_set, ShenandoahHeapRegionSet* free_set, size_t min_garbage) {
   col_set->choose_collection_set_min_garbage(_regions, length(), min_garbage);
   free_set->choose_free_set(_regions, length());
+  //  assert(col_set->length() > 0 && free_set->length() > 0, "Better have some regions in the collection and free sets");
 }
 
 void ShenandoahHeapRegionSet::choose_collection_set(ShenandoahHeapRegion** regions, size_t length) {
@@ -165,6 +168,8 @@ void ShenandoahHeapRegionSet::choose_collection_set(ShenandoahHeapRegion** regio
   while (r < end) {
     ShenandoahHeapRegion* region = *r;
     if (region->garbage() > _garbage_threshold && ! region->is_humonguous()) {
+      //      tty->print("choose region %d with garbage = " SIZE_FORMAT " and live = " SIZE_FORMAT " and _garbage_threshold = " SIZE_FORMAT "\n",
+      //		 region->region_number(), region->garbage(), region->getLiveData(), _garbage_threshold);
 
       assert(! region->is_humonguous(), "no humonguous regions in collection set");
 
@@ -176,6 +181,9 @@ void ShenandoahHeapRegionSet::choose_collection_set(ShenandoahHeapRegion** regio
         append(region);
         region->set_is_in_collection_set(true);
       }
+      //    } else {
+      //      tty->print("rejected region %d with garbage = " SIZE_FORMAT " and live = " SIZE_FORMAT " and _garbage_threshold = " SIZE_FORMAT "\n",
+      //		 region->region_number(), region->garbage(), region->getLiveData(), _garbage_threshold);
     }
     r++;
   }

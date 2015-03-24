@@ -277,11 +277,19 @@ public:
   size_t getResult() { return sum;}
 };
 
-void ShenandoahHeap::verify_heap_size_consistency() {
+size_t ShenandoahHeap::calculateUsed() {
   CalculateUsedRegionClosure cl;
   heap_region_iterate(&cl);
-  assert(cl.getResult() == used(),
-         err_msg("heap used size must be consistent heap-used: "SIZE_FORMAT" regions-used: "SIZE_FORMAT, used(), cl.getResult()));
+  return cl.getResult();
+}
+
+size_t ShenandoahHeap::calculateFree() {
+  return capacity() - calculateUsed();
+}
+
+void ShenandoahHeap::verify_heap_size_consistency() {
+  assert(calculateUsed() == used(),
+         err_msg("heap used size must be consistent heap-used: "SIZE_FORMAT" regions-used: "SIZE_FORMAT, used(), calculateUsed()));
 }
 
 size_t ShenandoahHeap::used() const {
@@ -300,6 +308,7 @@ void ShenandoahHeap::set_used(size_t bytes) {
 void ShenandoahHeap::decrease_used(size_t bytes) {
   assert(_used - bytes >= 0, "never decrease heap size by more than we've left");
   _used -= bytes;
+  
   // Atomic::add_ptr(-bytes, &_used);
 }
 
@@ -850,6 +859,7 @@ public:
 class RecycleDirtyRegionsClosure: public ShenandoahHeapRegionClosure {
 private:
   ShenandoahHeap* _heap;
+  size_t _bytes_reclaimed;
 public:
   RecycleDirtyRegionsClosure() : _heap(ShenandoahHeap::heap()) {}
 
@@ -863,10 +873,11 @@ public:
     }
 
     if (r->is_in_collection_set()) {
-      // tty->print_cr("recycling region "INT32_FORMAT":", r->region_number());
-      // r->print_on(tty);
-      // tty->print_cr("");
+      //      tty->print_cr("recycling region "INT32_FORMAT":", r->region_number());
+      //      r->print_on(tty);
+      //      tty->print_cr(" ");
       _heap->decrease_used(r->used());
+      _bytes_reclaimed += r->used();
       r->recycle();
       if (ShenandoahUpdateRefsEarly) {
         _heap->free_regions()->append(r);
@@ -875,11 +886,17 @@ public:
 
     return false;
   }
+  size_t bytes_reclaimed() { return _bytes_reclaimed;}
+  void clear_bytes_reclaimed() {_bytes_reclaimed = 0;}
 };
 
 void ShenandoahHeap::recycle_dirty_regions() {
   RecycleDirtyRegionsClosure cl;
+  cl.clear_bytes_reclaimed();
+
   heap_region_iterate(&cl);
+
+  _shenandoah_policy->record_bytes_reclaimed(cl.bytes_reclaimed());
   clear_cset_fast_test();
 }
 
@@ -1066,6 +1083,10 @@ void ShenandoahHeap::prepare_for_concurrent_evacuation() {
   _free_regions->clear();
   _shenandoah_policy->choose_collection_and_free_sets(&regions, _collection_set, _free_regions);
 
+  if (PrintGCDetails) {
+    gclog_or_tty->print("Collection set used = " SIZE_FORMAT " K live = " SIZE_FORMAT " K reclaimable = " SIZE_FORMAT " K\n",
+			_collection_set->used() / K, _collection_set->live_data() / K, _collection_set->garbage() / K);
+  }
 
   _bytesAllocSinceCM = 0;
 
@@ -1382,8 +1403,11 @@ void ShenandoahHeap::parallel_evacuate() {
   }
 
   if (ShenandoahPrintCollectionSet) {
-    tty->print("Printing collection set which contains "SIZE_FORMAT" regions:\n", _collection_set->available_regions());
+    tty->print("Printing collection set which contains "SIZE_FORMAT" regions:\n", _collection_set->length());
     _collection_set->print();
+
+    //    if (_collection_set->length() == 0)
+    //      print_heap_regions();      
   }
 
   barrierSync.set_n_workers(_max_conc_workers);

@@ -52,6 +52,7 @@ public:
   size_t garbage();
   size_t used();
   size_t live_data();
+  size_t reclaimed() {return _reclaimed;}
 
   /**
    * Returns a pointer to the current region.
@@ -83,6 +84,7 @@ private:
   void reclaim_humonguous_region_at(ShenandoahHeapRegion** r);
 
   ShenandoahHeapRegion** limit_region(ShenandoahHeapRegion** region);
+  size_t _reclaimed;
 
 };
 
