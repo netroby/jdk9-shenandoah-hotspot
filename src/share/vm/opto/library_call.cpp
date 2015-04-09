@@ -3367,7 +3367,6 @@ bool LibraryCallKit::inline_native_isInterrupted() {
 Node* LibraryCallKit::load_mirror_from_klass(Node* klass) {
   Node* p = basic_plus_adr(klass, in_bytes(Klass::java_mirror_offset()));
   Node* ld = make_load(NULL, p, TypeInstPtr::MIRROR, T_OBJECT, MemNode::unordered);
-  ld = shenandoah_barrier_pre(ld);
   return ld;
 }
 

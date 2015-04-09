@@ -497,7 +497,7 @@ public:
   void leaf(bool need_barrier) {
     if (need_barrier) {
       Node* top = _stack->top();
-#ifdef ASSERT
+#ifdef ASSERT_DISABLED
       if (_stack->length() == 1) {
 	tty->print_cr("where does this come from?");
 	top->dump(4);
