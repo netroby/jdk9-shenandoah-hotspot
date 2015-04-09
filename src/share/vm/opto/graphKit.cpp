@@ -4316,7 +4316,7 @@ Node* GraphKit::load_String_offset(Node* ctrl, Node* str) {
     // leave this here as workaround for now. The other option would be
     // to leave this barrier here in any case, and let C2 optimize it away
     // if it can prove that the object is immutable.
-    str = shenandoah_read_barrier(str);
+    str = shenandoah_read_barrier(str, offset_field_type);
 
     return make_load(ctrl,
                      basic_plus_adr(str, str, offset_offset),
@@ -4335,7 +4335,7 @@ Node* GraphKit::load_String_length(Node* ctrl, Node* str) {
     int count_field_idx = C->get_alias_index(count_field_type);
 
     // TODO: See comment in load_String_offset().
-    str = shenandoah_read_barrier(str);
+    str = shenandoah_read_barrier(str, count_field_type);
 
     return make_load(ctrl,
                      basic_plus_adr(str, str, count_offset),
@@ -4356,7 +4356,7 @@ Node* GraphKit::load_String_value(Node* ctrl, Node* str) {
   int value_field_idx = C->get_alias_index(value_field_type);
 
   // TODO: See comment in load_String_offset().
-  str = shenandoah_read_barrier(str);
+  str = shenandoah_read_barrier(str, value_field_type);
 
   Node* load = make_load(ctrl, basic_plus_adr(str, str, value_offset),
                          value_type, T_OBJECT, value_field_idx, MemNode::unordered);
@@ -4418,201 +4418,111 @@ Node* GraphKit::cast_array_to_stable(Node* ary, const TypeAryPtr* ary_type) {
   return _gvn.transform(new CastPPNode(ary, ary_type->cast_to_stable(true)));
 }
 
-Node* GraphKit::make_shenandoah_read_barrier(Node* ctrl, Node* obj, const Type* obj_type) {
-
-  if (ShenandoahVerifyReadsToFromSpace) {
-    return shenandoah_read_barrier_runtime(obj);
+Node* GraphKit::make_shenandoah_barrier(ShenandoahBarrierNode* barrier, Node* obj, bool is_wb, const TypePtr* adr_type) {
+  if (is_wb) {
+    kill_dead_locals();
   }
-  // Construct the address of the brooks ptr and the load.
-  Node* bp_addr = basic_plus_adr(obj, -0x8);
-  const TypePtr* adr_type = bp_addr->bottom_type()->is_ptr();
-  assert(adr_type->offset() == -8, "sane address type offset");
-  Node* bp_load = make_load(ctrl, bp_addr, obj_type, T_OBJECT, adr_type, MemNode::unordered, false);
-  return bp_load;
+
+  const Type* obj_type = _gvn.type(obj)->remove_speculative();
+
+  Node* ctrl = control();
+  Node* mem = reset_memory();
+
+  barrier->init_req(TypeFunc::Control, ctrl);
+  barrier->init_req(TypeFunc::Memory, mem);
+  barrier->init_req(TypeFunc::I_O, top()); // does no i/o
+  barrier->init_req(TypeFunc::FramePtr, frameptr());
+  barrier->init_req(TypeFunc::ReturnAdr, top());
+
+  barrier->init_req(TypeFunc::Parms + 0, obj);
+
+  if (is_wb) {
+    add_safepoint_edges(barrier);
+  }
+
+  Node* t_barrier = _gvn.transform(barrier);
+  if (t_barrier == barrier) {
+    // New barrier, need to hook it up correctly
+    set_predefined_output_for_runtime_call(barrier, mem, adr_type);
+  } else {
+    // Restore memory.
+    set_all_memory(mem);
+  }
+
+  record_for_igvn(t_barrier);
+
+  Node* barrier_out = new ProjNode(t_barrier, TypeFunc::Parms + 0);
+  return _gvn.transform(barrier_out);
 }
 
-Node* GraphKit::shenandoah_read_barrier_runtime(Node* obj) {
-  const Type* obj_type = _gvn.type(obj);
-  Node *call = make_runtime_call(RC_LEAF | RC_NO_IO,
-                                 OptoRuntime::shenandoah_barrier_Type(obj_type),
-                                 CAST_FROM_FN_PTR(address, ShenandoahBarrierSet::resolve_oop_static),
-                                 "shenandoah_read_barrier",
-                                 NULL,
-                                 obj);
+Node* GraphKit::shenandoah_read_barrier(Node* obj, const TypePtr* slice) {
 
-  Node* result = _gvn.transform(new ProjNode(call, TypeFunc::Parms + 0));
-  return result;
-}
-
-Node* GraphKit::shenandoah_read_barrier(Node* obj) {
-
-  if (UseShenandoahGC && ShenandoahReadBarrier) {
-
+  if (UseShenandoahGC && ShenandoahWriteBarrier) {
+    
     const Type* obj_type = _gvn.type(obj)->remove_speculative();
-
-    // Fast path 1: We know it's NULL, so simply return it.
-    if (obj_type->higher_equal(TypePtr::NULL_PTR)) {
+    if (ShenandoahSupport::can_eliminate_barrier(&_gvn, obj_type, obj)) {
       return obj;
     }
 
-    // Do the null-check.
-    Node* null_ctrl = top();
-    obj = null_check_oop(obj, &null_ctrl, false, false);
-
-    // Fast path 2: we know it's not null. Return a simple barrier.
-    if (null_ctrl == top()) {
-      Node* bp_load = make_shenandoah_read_barrier(NULL, obj, obj_type);
-      return bp_load;
+    if (obj_type->meet(TypePtr::NULL_PTR) == obj_type) {
+      // We don't know if it's null or not.
+      const TypePtr* adr_type = obj_type->is_ptr()->add_offset(-8);
+      ShenandoahBarrierNode* barrier = new ShenandoahBarrierNode(C, ShenandoahBarrierNode::barrier_type(obj_type), NULL, slice);
+      barrier->set_is_use_read(true);
+      Node* n = make_shenandoah_barrier(barrier, obj, true, NULL);
+      return n;
+    } else {
+      // Simple read barrier.
+      Node* addr = basic_plus_adr(obj, -8);
+      const TypePtr* adr_type = addr->bottom_type()->is_ptr();
+      Node* mem = memory(adr_type);
+      ShenandoahReadBarrierNode* rb = new ShenandoahReadBarrierNode(C, NULL, mem, addr, adr_type, obj_type->is_ptr(), MemNode::unordered, slice);
+      rb->set_is_use_read(true);
+      Node* n = _gvn.transform(rb);
+      if (C->do_escape_analysis() || C->eliminate_boxing()) {
+	// Improve graph before escape analysis and boxing elimination.
+	record_for_igvn(n);
+      }
+      return n;
     }
-
-    const Type* load_type = obj_type->join(TypePtr::NOTNULL);
-
-    // Make the merge point.
-    enum { _obj_path = 1, _null_path, PATH_LIMIT };
-    RegionNode* region = new RegionNode(PATH_LIMIT);
-    Node*       phi    = new PhiNode(region, obj_type);
-    
-    region->init_req(_null_path, null_ctrl);
-    phi   ->init_req(_null_path, null()); // Set null path value
-
-    Node* bp_load = make_shenandoah_read_barrier(control(), obj, obj_type);
-
-    // Plug in the success path to the general merge in slot 1.
-    region->init_req(_obj_path, control());
-    phi   ->init_req(_obj_path, bp_load);
-
-    // Return final merged results
-    set_control( _gvn.transform(region) );
-    record_for_igvn(region);
-
-    phi = _gvn.transform(phi);
-    return phi;
 
   } else {
     return obj;
   }
-}
-
-Node* GraphKit::make_shenandoah_write_barrier(Node* ctrl, Node* obj, const Type* obj_type) {
-
-  // Construct check for evacuation-in-progress.
-  Node* jthread = _gvn.transform(new ThreadLocalNode());
-  Node* evac_in_progr_addr = basic_plus_adr(top(), jthread, in_bytes(JavaThread::evacuation_in_progress_offset()));
-
-  Node* evac_in_progr = make_load(ctrl, evac_in_progr_addr, TypeInt::BOOL, T_BOOLEAN, Compile::AliasIdxRaw, MemNode::unordered, false);
-
-  obj = make_shenandoah_read_barrier(ctrl, obj, obj_type);
-
-  Node* chk = _gvn.transform(new CmpINode(evac_in_progr, intcon(0)));
-  Node* test = _gvn.transform(new BoolNode(chk, BoolTest::eq));
-
-  Node* oldmem = map()->memory();
-
-  // Make the merge point.
-  enum { _evac_path = 1, _no_evac_path, PATH_LIMIT };
-  RegionNode* region = new RegionNode(PATH_LIMIT);
-  Node*       phi    = new PhiNode(region, obj_type);
-
-  // Make the actual if-branch.
-  IfNode* iff = create_and_map_if(control(), test, PROB_LIKELY_MAG(1), COUNT_UNKNOWN);
-  Node* iftrue = _gvn.transform(new IfTrueNode(iff));
-  Node* iffalse = _gvn.transform(new IfFalseNode(iff));
-
-  // No-evacuation path.
-  region->init_req(_no_evac_path, iftrue);
-  phi->init_req(_no_evac_path, obj);
-
-  // Evacuation path.
-  set_control(iffalse);
-
-  kill_dead_locals();
-  Node *call = make_runtime_call(RC_NO_LEAF | RC_NO_IO,
-                                 OptoRuntime::shenandoah_barrier_Type(obj_type),
-                                 OptoRuntime::shenandoah_write_barrier_Java(),
-                                 "shenandoah_write_barrier",
-                                 obj_type->is_ptr()->add_offset(-8),
-                                 obj);
-
-  assert(call->jvms()->method() != NULL, "must have method in JVMS");
-  Node* result = _gvn.transform(new ProjNode(call, TypeFunc::Parms + 0));
-
-  region->init_req(_evac_path, control());
-  phi->init_req(_evac_path, result);
-
-  // Return final merged results
-  set_control( _gvn.transform(region) );
-  record_for_igvn(region);
-  phi = _gvn.transform(phi);
-
-  merge_memory(oldmem, region, _no_evac_path);
-
-  return phi;
 }
 
 Node* GraphKit::shenandoah_write_barrier(Node* obj) {
 
-  if (UseShenandoahGC) {
-
-    if (obj->is_shenandoah_wb()) {
+  if (UseShenandoahGC && ShenandoahWriteBarrier) {
+    
+    const Type* obj_type = _gvn.type(obj)->remove_speculative();
+    if (ShenandoahSupport::can_eliminate_barrier(&_gvn, obj_type, obj)) {
       return obj;
     }
 
-    if (! ShenandoahWriteBarrier) {
-      assert(! ShenandoahConcurrentEvacuation, "Can only do this without concurrent evacuation");
-      return shenandoah_read_barrier(obj);
-    }
-
-    const TypePtr* obj_type = _gvn.type(obj)->remove_speculative()->is_ptr();
-
-    // Fast path 1: We know it's NULL, so simply return it.
-    if (obj_type->higher_equal(TypePtr::NULL_PTR)) {
-      return obj;
-    }
-
-    // Fast path 2: we know it's not null.
-    if (obj_type->meet(TypePtr::NULL_PTR) != obj_type) {
-      Node* wb = make_shenandoah_write_barrier(NULL, obj, obj_type);
-      wb->init_flags(Node::Flag_is_shenandoah_wb);
-      replace_in_map(obj, wb);
-      return wb;
-    }
-
-    Node* oldmem = map()->memory();
-
-    // Make the merge point.
-    enum { _obj_path = 1, _null_path, PATH_LIMIT };
-    RegionNode* region = new RegionNode(PATH_LIMIT);
-    Node*       phi    = new PhiNode(region, obj_type);
-
-    // Construct the null check.
-    Node* chk = _gvn.transform(new CmpPNode(obj, null()));
-    Node* test = _gvn.transform(new BoolNode(chk, BoolTest::ne));
-    IfNode* iff = create_and_map_if(control(), test, PROB_LIKELY_MAG(3), COUNT_UNKNOWN);
-    Node* iftrue = _gvn.transform(new IfTrueNode(iff));
-    Node* iffalse = _gvn.transform(new IfFalseNode(iff));
-
-    // Null-path.
-    region->init_req(_null_path, iffalse);
-    phi   ->init_req(_null_path, null()); // Set null path value
-
-    // Not-null path.
-    set_control(iftrue);
-    Node* wb = make_shenandoah_write_barrier(control(), obj, obj_type);
-
-    region->init_req(_obj_path, control());
-    phi   ->init_req(_obj_path, wb);
-
-    // Return final merged results
-    set_control( _gvn.transform(region) );
-    record_for_igvn(region);
-    phi = _gvn.transform(phi);
-
-    merge_memory(oldmem, region, _null_path);
-
-    phi->init_flags(Node::Flag_is_shenandoah_wb);
-    replace_in_map(obj, phi);
-    return phi;
+    const TypePtr* adr_type = obj_type->is_ptr()->add_offset(-8);
+    ShenandoahBarrierNode* barrier = new ShenandoahBarrierNode(C, ShenandoahBarrierNode::barrier_type(obj_type), adr_type, NULL);
+    barrier->set_is_use_write(true);
+    Node* n = make_shenandoah_barrier(barrier, obj, true, adr_type);
+    return n;
   } else {
     return obj;
   }
+}
+
+Node* GraphKit::shenandoah_barrier_pre(Node* obj) {
+  if (UseShenandoahGC && ShenandoahWriteBarrier) {
+    
+    const Type* obj_type = _gvn.type(obj)->remove_speculative();
+    if (ShenandoahSupport::can_eliminate_barrier(&_gvn, obj_type, obj)) {
+      return obj;
+    }
+
+    const TypePtr* adr_type = obj_type->is_ptr()->add_offset(-8);
+    ShenandoahBarrierNode* barrier = new ShenandoahBarrierNode(C, ShenandoahBarrierNode::barrier_type(obj_type), adr_type, NULL);
+    return make_shenandoah_barrier(barrier, obj, true, adr_type);
+  } else {
+    return obj;
+  }
+
 }

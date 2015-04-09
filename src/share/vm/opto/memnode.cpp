@@ -825,6 +825,7 @@ Node *MemNode::Ideal_common_DU_postCCP( PhaseCCP *ccp, Node* n, Node* adr ) {
       case Op_Con:              // Reading from TLS
       case Op_CMoveP:           // CMoveP is pinned
       case Op_CMoveN:           // CMoveN is pinned
+      case Op_ShenandoahReadBarrier: // Loading from within a klass
         break;                  // No progress
 
       case Op_Proj:             // Direct call to an allocation routine
@@ -843,6 +844,8 @@ Node *MemNode::Ideal_common_DU_postCCP( PhaseCCP *ccp, Node* n, Node* adr ) {
             // new_instance_Java, new_array_Java, or
             // the like, but do not assert for this.
           } else if (call->is_Allocate()) {
+            // similar case to new_instance_Java, etc.
+          } else if (call->is_ShenandoahBarrier()) {
             // similar case to new_instance_Java, etc.
           } else if (!call->is_CallLeaf()) {
             // Projections from fetch_oop (OSR) are allowed as well.
