@@ -200,13 +200,12 @@ void Parse::do_get_xxx(Node* obj, ciField* field, bool is_field) {
   ciType* field_klass = field->type();
   bool is_vol = field->is_volatile();
 
+  // Insert read barrier for Shenandoah.
+  obj = shenandoah_read_barrier(obj);
+
   // Compute address and memory type.
   int offset = field->offset_in_bytes();
   const TypePtr* adr_type = C->alias_type(field)->adr_type();
-
-  // Insert read barrier for Shenandoah.
-  obj = shenandoah_read_barrier(obj, adr_type);
-
   Node *adr = basic_plus_adr(obj, obj, offset);
   BasicType bt = field->layout_type();
 
@@ -240,9 +239,6 @@ void Parse::do_get_xxx(Node* obj, ciField* field, bool is_field) {
   MemNode::MemOrd mo = is_vol ? MemNode::acquire : MemNode::unordered;
   bool needs_atomic_access = is_vol || AlwaysAtomicAccesses;
   Node* ld = make_load(NULL, adr, type, bt, adr_type, mo, needs_atomic_access);
-  if (bt == T_OBJECT || bt == T_ARRAY) {
-    ld = shenandoah_barrier_pre(ld);
-  }
 
   // Adjust Java stack
   if (type2size[bt] == 1)

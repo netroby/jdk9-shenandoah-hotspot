@@ -954,7 +954,6 @@ class Compile : public Phase {
   void dec_number_of_mh_late_inlines() { assert(_number_of_mh_late_inlines > 0, "_number_of_mh_late_inlines < 0 !"); _number_of_mh_late_inlines--; }
   bool has_mh_late_inlines() const     { return _number_of_mh_late_inlines > 0; }
 
-  void optimize_shenandoah_barriers(PhaseIterGVN& igvn);
   void inline_incrementally_one(PhaseIterGVN& igvn);
   void inline_incrementally(PhaseIterGVN& igvn);
   void inline_string_calls(bool parse_time);

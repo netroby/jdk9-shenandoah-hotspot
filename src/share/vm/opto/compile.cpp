@@ -61,7 +61,6 @@
 #include "opto/rootnode.hpp"
 #include "opto/runtime.hpp"
 #include "opto/stringopts.hpp"
-#include "opto/shenandoahSupport.hpp"
 #include "opto/type.hpp"
 #include "opto/vectornode.hpp"
 #include "runtime/arguments.hpp"
@@ -2126,11 +2125,6 @@ void Compile::Optimize() {
   // No more new expensive nodes will be added to the list from here
   // so keep only the actual candidates for optimizations.
   cleanup_expensive_nodes(igvn);
-
-  if (UseShenandoahGC) {
-    optimize_shenandoah_barriers(igvn);
-    igvn.optimize();
-  }
 
   // Perform escape analysis
   if (_do_escape_analysis && ConnectionGraph::has_candidates(this)) {
@@ -4275,46 +4269,4 @@ void Compile::remove_speculative_types(PhaseIterGVN &igvn) {
 bool Compile::randomized_select(int count) {
   assert(count > 0, "only positive");
   return (os::random() & RANDOMIZED_DOMAIN_MASK) < (RANDOMIZED_DOMAIN / count);
-}
-
-void Compile::optimize_shenandoah_barriers(PhaseIterGVN& igvn) {
-  for (int i = macro_count() - 1; i >= 0; i--) {
-    Node * n = macro_node(i);
-    if (ShenandoahSupport::is_shenandoah_barrier(n)) {
-      if (ShenandoahSupport::is_use_read(n)) {
-	ShenandoahSupport::increase_read_used(igvn, n);
-      }
-      if (ShenandoahSupport::is_use_write(n)) {
-	ShenandoahSupport::increase_write_used(igvn, n);
-      }
-    }
-  }
-
-  for (int i = macro_count() - 1; i >= 0; i--) {
-    Node * n = macro_node(i);
-    if (ShenandoahSupport::is_shenandoah_barrier(n)) {
-      if (ShenandoahSupport::is_use_read(n) || ShenandoahSupport::is_use_write(n)) {
-	ShenandoahSupport::optimize_barrier(igvn, n);
-      }
-    }
-  }
-
-  // Eliminate in two-step to avoid corruption of macro list.
-  Arena* a = comp_arena();
-  GrowableArray<Node*>* to_eliminate = new (a) GrowableArray<Node*>(a, 4, 0, NULL);
-
-  for (int i = macro_count() - 1; i >= 0; i--) {
-    Node * n = macro_node(i);
-    if (ShenandoahSupport::is_shenandoah_barrier(n)) {
-      if ((! ShenandoahSupport::is_keep(n)) ||
-	  (ShenandoahSupport::read_used(n) == 0 && ShenandoahSupport::write_used(n) == 0)) {
-	to_eliminate->push(n);
-      }
-    }
-  }
-
-  while (! to_eliminate->is_empty()) {
-    Node* n = to_eliminate->pop();
-    ShenandoahSupport::eliminate_barrier(igvn, n);
-  }
 }

@@ -132,11 +132,7 @@ Node *Parse::fetch_interpreter_state(int index,
   }
   default: ShouldNotReachHere();
   }
-  l = _gvn.transform(l);
-  if (bt == T_OBJECT) {
-    l = shenandoah_barrier_pre(l);
-  }
-  return l;
+  return _gvn.transform(l);
 }
 
 // Helper routine to prevent the interpreter from handing
@@ -1147,19 +1143,6 @@ void Parse::do_method_entry() {
 
   if (C->env()->dtrace_method_probes()) {
     make_dtrace_method_entry(method());
-  }
-
-  // Setup early Sheanndoah barriers on method entry.
-  //tty->print_cr("depth: %d", jvms()->depth());
-  if (jvms()->depth() == 1) {
-    uint arg_size = tf()->domain()->cnt();
-    for (uint i = TypeFunc::Parms; i < arg_size; i++) {
-      Node* arg = map()->in(i);
-      if (arg->bottom_type()->isa_oopptr()) {
-	arg = shenandoah_barrier_pre(arg);
-	map()->set_req(i, arg);
-      }
-    }
   }
 
   // If the method is synchronized, we need to construct a lock node, attach

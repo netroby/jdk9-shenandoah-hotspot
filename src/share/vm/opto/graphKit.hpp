@@ -902,13 +902,13 @@ class GraphKit : public Phase {
   // Produce new array node of stable type
   Node* cast_array_to_stable(Node* ary, const TypeAryPtr* ary_type);
 
-  Node* shenandoah_read_barrier(Node* obj, const TypePtr* slice = NULL);
+  Node* shenandoah_read_barrier(Node* obj);
   Node* shenandoah_write_barrier(Node* obj);
-  Node* shenandoah_barrier_pre(Node* obj);
 
 private:
-  Node* make_shenandoah_barrier(ShenandoahBarrierNode* barrier, Node* obj, bool is_wb, const TypePtr* adr_type);
-
+  Node* shenandoah_read_barrier_runtime(Node* obj);
+  Node* make_shenandoah_read_barrier(Node* ctrl, Node* obj, const Type* type);
+  Node* make_shenandoah_write_barrier(Node* ctrl, Node* obj, const Type* type);
 };
 
 // Helper class to support building of control flow branches. Upon

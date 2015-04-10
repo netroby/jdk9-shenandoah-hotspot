@@ -42,8 +42,6 @@ private:
   Node* intcon(jint con)        const { return _igvn.intcon(con); }
   Node* longcon(jlong con)      const { return _igvn.longcon(con); }
   Node* makecon(const Type *t)  const { return _igvn.makecon(t); }
-  Node* zerocon(BasicType bt)   const { return _igvn.zerocon(bt); }
-
   Node* basic_plus_adr(Node* base, int offset) {
     return (offset == 0)? base: basic_plus_adr(base, MakeConX(offset));
   }
@@ -81,11 +79,6 @@ private:
   // Additional data collected during macro expansion
   bool _has_locks;
 
-  Node* make_basic_read_barrier(Node* n, Node* ctrl, Node* mem, const TypePtr* obj_type);
-  Node* make_basic_write_barrier(CallNode* wb, Node* n, Node* ctrl, Node* mem, const TypePtr* obj_type, Node*& ctrl_out, Node*& mem_out);
-  bool eliminate_barrier_node(Node* barrier);
-  void expand_barrier(Node* rb);
-  void expand_write_barrier(ShenandoahBarrierNode* rb);
   void expand_allocate(AllocateNode *alloc);
   void expand_allocate_array(AllocateArrayNode *alloc);
   void expand_allocate_common(AllocateNode* alloc,
@@ -210,7 +203,6 @@ public:
   PhaseMacroExpand(PhaseIterGVN &igvn) : Phase(Macro_Expand), _igvn(igvn), _has_locks(false) {
     _igvn.set_delay_transform(true);
   }
-  void expand_read_barrier(Node* rb);
   void eliminate_macro_nodes();
   bool expand_macro_nodes();
 

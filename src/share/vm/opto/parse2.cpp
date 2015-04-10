@@ -54,10 +54,6 @@ void Parse::array_load(BasicType elem_type) {
   dec_sp(2);                  // Pop array and index
   const TypeAryPtr* adr_type = TypeAryPtr::get_array_body_type(elem_type);
   Node* ld = make_load(control(), adr, elem, elem_type, adr_type, MemNode::unordered);
-  assert(elem_type != T_ARRAY, "doesn't happen, right?");
-  if (elem_type == T_OBJECT) {
-    ld = shenandoah_barrier_pre(ld);
-  }
   push(ld);
 }
 
@@ -164,7 +160,7 @@ Node* Parse::array_addressing(BasicType type, int vals, bool is_store, const Typ
   if (is_store) {
     ary = shenandoah_write_barrier(ary);
   } else {
-    ary = shenandoah_read_barrier(ary, TypeAryPtr::get_array_body_type(type));
+    ary = shenandoah_read_barrier(ary);
   }
 
   Node* ptr = array_element_address(ary, idx, type, sizetype);
