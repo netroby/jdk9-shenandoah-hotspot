@@ -41,6 +41,7 @@
 #include "opto/phaseX.hpp"
 #include "opto/rootnode.hpp"
 #include "opto/runtime.hpp"
+#include "opto/shenandoahSupport.hpp"
 #include "opto/subnode.hpp"
 #include "opto/type.hpp"
 #include "runtime/sharedRuntime.hpp"
@@ -2487,6 +2488,10 @@ void PhaseMacroExpand::eliminate_macro_nodes() {
         break;
       case Node::Class_ArrayCopy:
         break;
+      case Node::Class_ShenandoahBarrier:
+      case Node::Class_ShenandoahReadBarrier:
+	success = eliminate_barrier_node(n);
+   	break;
       default:
         assert(n->Opcode() == Op_LoopLimit ||
                n->Opcode() == Op_Opaque1   ||
@@ -2569,7 +2574,7 @@ bool PhaseMacroExpand::expand_macro_nodes() {
   while (macro_idx >= 0) {
     Node * n = C->macro_node(macro_idx);
     assert(n->is_macro(), "only macro nodes expected here");
-    if (_igvn.type(n) == Type::TOP || n->in(0)->is_top() ) {
+    if (_igvn.type(n) == Type::TOP || ((n->Opcode() != Op_ShenandoahReadBarrier) && n->in(0)->is_top() )) {
       // node is unreachable, so don't try to expand it
       C->remove_macro_node(n);
     } else if (n->is_ArrayCopy()){
@@ -2587,7 +2592,7 @@ bool PhaseMacroExpand::expand_macro_nodes() {
     int macro_count = C->macro_count();
     Node * n = C->macro_node(macro_count-1);
     assert(n->is_macro(), "only macro nodes expected here");
-    if (_igvn.type(n) == Type::TOP || n->in(0)->is_top() ) {
+    if (_igvn.type(n) == Type::TOP || ((n->Opcode() != Op_ShenandoahReadBarrier) && n->in(0)->is_top() )) {
       // node is unreachable, so don't try to expand it
       C->remove_macro_node(n);
       continue;
@@ -2604,6 +2609,10 @@ bool PhaseMacroExpand::expand_macro_nodes() {
       break;
     case Node::Class_Unlock:
       expand_unlock_node(n->as_Unlock());
+      break;
+    case Node::Class_ShenandoahBarrier:
+    case Node::Class_ShenandoahReadBarrier:
+      expand_barrier(n);
       break;
     default:
       assert(false, "unknown node type in macro list");

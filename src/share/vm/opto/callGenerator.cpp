@@ -156,6 +156,10 @@ JVMState* DirectCallGenerator::generate(JVMState* jvms) {
   kit.set_arguments_for_java_call(call);
   kit.set_edges_for_java_call(call, false, _separate_io_proj);
   Node* ret = kit.set_results_for_java_call(call, _separate_io_proj);
+  if (method()->return_type()->basic_type() == T_OBJECT ||
+      method()->return_type()->basic_type() == T_ARRAY) {
+    ret = kit.shenandoah_barrier_pre(ret);
+  }
   kit.push_node(method()->return_type()->basic_type(), ret);
   return kit.transfer_exceptions_into_jvms();
 }
@@ -229,6 +233,10 @@ JVMState* VirtualCallGenerator::generate(JVMState* jvms) {
   kit.set_arguments_for_java_call(call);
   kit.set_edges_for_java_call(call);
   Node* ret = kit.set_results_for_java_call(call);
+  if (method()->return_type()->basic_type() == T_OBJECT ||
+      method()->return_type()->basic_type() == T_ARRAY) {
+    ret = kit.shenandoah_barrier_pre(ret);
+  }
   kit.push_node(method()->return_type()->basic_type(), ret);
 
   // Represent the effect of an implicit receiver null_check
@@ -984,7 +992,7 @@ JVMState* PredicatedIntrinsicGenerator::generate(JVMState* jvms) {
     assert(old_jvms == kit.jvms(), "generate_predicate should not change jvm state");
     SafePointNode* new_map = kit.map();
     assert(old_io  == new_map->i_o(), "generate_predicate should not change i_o");
-    assert(old_mem == new_map->memory(), "generate_predicate should not change memory");
+    assert(old_mem == new_map->memory() || UseShenandoahGC, "generate_predicate should not change memory");
     assert(old_exc == new_map->next_exception(), "generate_predicate should not add exceptions");
 #endif
     if (!kit.stopped()) {

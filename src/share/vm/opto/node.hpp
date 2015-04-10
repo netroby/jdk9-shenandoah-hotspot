@@ -130,6 +130,8 @@ class RegionNode;
 class RootNode;
 class SafePointNode;
 class SafePointScalarObjectNode;
+class ShenandoahBarrierNode;
+class ShenandoahReadBarrierNode;
 class StartNode;
 class State;
 class StoreNode;
@@ -578,6 +580,7 @@ public:
             DEFINE_CLASS_ID(Lock,             AbstractLock, 0)
             DEFINE_CLASS_ID(Unlock,           AbstractLock, 1)
           DEFINE_CLASS_ID(ArrayCopy,        Call, 4)
+          DEFINE_CLASS_ID(ShenandoahBarrier, Call, 5)
       DEFINE_CLASS_ID(MultiBranch, Multi, 1)
         DEFINE_CLASS_ID(PCTable,     MultiBranch, 0)
           DEFINE_CLASS_ID(Catch,       PCTable, 0)
@@ -633,6 +636,7 @@ public:
     DEFINE_CLASS_ID(Mem,   Node, 4)
       DEFINE_CLASS_ID(Load,  Mem, 0)
         DEFINE_CLASS_ID(LoadVector,  Load, 0)
+        DEFINE_CLASS_ID(ShenandoahReadBarrier,  Load, 1)
       DEFINE_CLASS_ID(Store, Mem, 1)
         DEFINE_CLASS_ID(StoreVector, Store, 0)
       DEFINE_CLASS_ID(LoadStore, Mem, 2)
@@ -674,8 +678,7 @@ public:
     Flag_avoid_back_to_back_after    = Flag_avoid_back_to_back_before << 1,
     Flag_has_call                    = Flag_avoid_back_to_back_after << 1,
     Flag_is_expensive                = Flag_has_call << 1,
-    Flag_is_shenandoah_wb            = Flag_is_expensive << 1,
-    _max_flags = (Flag_is_shenandoah_wb << 1) - 1 // allow flags combination
+    _max_flags = (Flag_is_expensive << 1) - 1 // allow flags combination
   };
 
 private:
@@ -796,6 +799,8 @@ public:
   DEFINE_CLASS_QUERY(Root)
   DEFINE_CLASS_QUERY(SafePoint)
   DEFINE_CLASS_QUERY(SafePointScalarObject)
+  DEFINE_CLASS_QUERY(ShenandoahBarrier)
+  DEFINE_CLASS_QUERY(ShenandoahReadBarrier)
   DEFINE_CLASS_QUERY(Start)
   DEFINE_CLASS_QUERY(Store)
   DEFINE_CLASS_QUERY(Sub)
@@ -822,8 +827,6 @@ public:
 
   // is_Copy() returns copied edge index (0 or 1)
   uint is_Copy() const { return (_flags & Flag_is_Copy); }
-
-  bool is_shenandoah_wb() const { return (_flags & Flag_is_shenandoah_wb) != 0; }
 
   virtual bool is_CFG() const { return false; }
 
