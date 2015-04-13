@@ -282,9 +282,8 @@ void ShenandoahHeapRegionSet::reclaim_humonguous_region_at(ShenandoahHeapRegion*
     }
 
     region->reset();
+    ShenandoahHeap::heap()->decrease_used(ShenandoahHeapRegion::RegionSizeBytes);
   }
-
-  ShenandoahHeap::heap()->decrease_used(size * HeapWordSize);
 }
 
 void ShenandoahHeapRegionSet::set_concurrent_iteration_safe_limits() {

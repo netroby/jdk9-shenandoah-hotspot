@@ -579,7 +579,7 @@ HeapWord* ShenandoahHeap::allocate_large_memory(size_t words) {
       free_regions[i]->set_top(free_regions[i]->end());
     }
     result = free_regions[0]->bottom();
-    increase_used(words * HeapWordSize);
+    increase_used(ShenandoahHeapRegion::RegionSizeBytes);
   }
   return result;
 }
