@@ -1062,7 +1062,6 @@ Node* LibraryCallKit::generate_current_thread(Node* &tls_output) {
   Node* thread = _gvn.transform(new ThreadLocalNode());
   Node* p = basic_plus_adr(top()/*!oop*/, thread, in_bytes(JavaThread::threadObj_offset()));
   Node* threadObj = make_load(NULL, p, thread_type, T_OBJECT, MemNode::unordered);
-  threadObj = shenandoah_barrier_pre(threadObj);
   tls_output = thread;
   return threadObj;
 }
@@ -2660,7 +2659,6 @@ bool LibraryCallKit::inline_unsafe_access(bool is_native_ptr, bool is_store, Bas
       if (need_read_barrier) {
         insert_pre_barrier(heap_base_oop, offset, p, !(is_volatile || need_mem_bar));
       }
-      p = shenandoah_barrier_pre(p);
       break;
     case T_ADDRESS:
       // Cast to an int type.
@@ -2966,7 +2964,6 @@ bool LibraryCallKit::inline_unsafe_load_store(BasicType type, LoadStoreKind kind
           // Load old value from memory. We shuold really use what we get back from the CAS,
           // if we can.
           Node* current = make_load(control(), adr, TypeInstPtr::BOTTOM, type, TypeInstPtr::BOTTOM, MemNode::unordered, false);
-	  current = shenandoah_barrier_pre(current);
           // read_barrier(old)
           Node* new_current = shenandoah_read_barrier(current);
 
@@ -3032,7 +3029,6 @@ bool LibraryCallKit::inline_unsafe_load_store(BasicType type, LoadStoreKind kind
                   load_store /* pre_val */,
                   T_OBJECT);
     }
-    load_store = shenandoah_barrier_pre(load_store);
   }
 
   // Add the trailing membar surrounding the access
@@ -5412,8 +5408,6 @@ bool LibraryCallKit::inline_reference_get() {
   // across safepoint since GC can change its value.
   insert_mem_bar(Op_MemBarCPUOrder);
 
-  result = shenandoah_barrier_pre(result);
-
   set_result(result);
   return true;
 }
@@ -5460,9 +5454,6 @@ Node * LibraryCallKit::load_field_from_object(Node * fromObj, const char * field
   // Build the load.
   MemNode::MemOrd mo = is_vol ? MemNode::acquire : MemNode::unordered;
   Node* loadedField = make_load(NULL, adr, type, bt, adr_type, mo, is_vol);
-  if (bt == T_OBJECT) {
-    loadedField = shenandoah_barrier_pre(loadedField);
-  }
   // If reference is volatile, prevent following memory ops from
   // floating up past the volatile read.  Also prevents commoning
   // another volatile read.
