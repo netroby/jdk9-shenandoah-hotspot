@@ -433,6 +433,8 @@ void ShenandoahSupport::visit_barrier_chain(Node* n, ShenandoahBarrierVisitor* v
     v->leaf(true);
   } else if (n->Opcode() == Op_CreateEx) {
     v->leaf(false);
+  } else if (n->Opcode() == Op_GetAndSetP) {
+    v->leaf(true);
   } else {
 #ifdef ASSERT
     tty->print_cr("what node is this?");
