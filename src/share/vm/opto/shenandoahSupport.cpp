@@ -32,7 +32,7 @@ bool ShenandoahSupport::can_eliminate_barrier(PhaseTransform* phase, const Type*
   }
   if (t->is_oopptr()->const_oop() != NULL) {
     //tty->print_cr("eliminate barrier because it's constant");
-    return true;
+    return false;
   }
   /*
   if (n->is_ShenandoahWriteBarrier()) {
@@ -415,11 +415,13 @@ void ShenandoahSupport::visit_barrier_chain(Node* n, ShenandoahBarrierVisitor* v
   } else if (n->isa_Start()) {
     v->leaf(true);
   } else if (n->is_Con()) {
-#ifdef ASSERT
     const Type* t = n->bottom_type(); // Maybe use igvn type!
-    assert(t->higher_equal(TypePtr::NULL_PTR) || t->is_oopptr()->const_oop() != NULL, "expect null or constant oop");
-#endif
-    v->leaf(false);
+    if (t->higher_equal(TypePtr::NULL_PTR)) {
+      v->leaf(false);
+    } else {
+      assert(t->is_oopptr()->const_oop() != NULL, "expect null or constant oop");
+      v->leaf(true); // Probably over-conservative. Shouldn't need barrier on constants.
+    }
   } else if (n->is_Allocate()) {
     v->leaf(false);
   } else if (n->isa_CallStaticJava()) {
@@ -441,6 +443,8 @@ void ShenandoahSupport::visit_barrier_chain(Node* n, ShenandoahBarrierVisitor* v
     n->dump(2);
     Unimplemented();
 #endif
+    tty->print_cr("WARNING: unknown node type in Shenandoah graph analysis");
+    v->leaf(true); // Conservative fall-back if we don't know.
   }
 }
 
