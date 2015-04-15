@@ -303,12 +303,13 @@ void ShenandoahConcurrentMark::prepare_unmarked_root_objs_no_derived_ptrs(bool u
 
   ShenandoahHeap* heap = ShenandoahHeap::heap();
   if (ShenandoahParallelRootScan) {
-    heap->workers()->set_active_workers(_max_worker_id);
-    heap->set_par_threads(heap->workers()->active_workers()); // Prepare for parallel processing.
     ClassLoaderDataGraph::clear_claimed_marks();
+    heap->conc_workers()->set_active_workers(_max_conc_worker_id);
+    heap->set_par_threads(heap->conc_workers()->active_workers()); // Prepare for parallel processing.
+    TASKQUEUE_STATS_ONLY(reset_taskqueue_stats());
     SharedHeap::StrongRootsScope strong_roots_scope(heap, true);
     ShenandoahMarkRootsTask mark_roots(update_refs);
-    heap->workers()->run_task(&mark_roots);
+    heap->conc_workers()->run_task(&mark_roots);
     heap->set_par_threads(0); // Prepare for serial processing in future calls to process_strong_roots.
     if (ShenandoahProcessReferences) {
       ReferenceProcessor* rp = heap->ref_processor_cm();
@@ -339,7 +340,7 @@ void ShenandoahConcurrentMark::prepare_unmarked_root_objs_no_derived_ptrs(bool u
 
 bool ShenandoahConcurrentMark::try_queue(uint worker_id, ExtendedOopClosure* cl) {
   oop obj;
-  if (task_queues()->queue(worker_id % _max_worker_id)->pop_local(obj)) {
+  if (task_queues()->queue(worker_id % _max_conc_worker_id)->pop_local(obj)) {
     traverse_object(cl, obj);
     return true;
   } else 
@@ -382,12 +383,11 @@ void ShenandoahConcurrentMark::traverse_object(ExtendedOopClosure* cl, oop obj) 
 }
 
 void ShenandoahConcurrentMark::initialize() {
-  _max_worker_id = MAX2((uint) ParallelGCThreads, 1U);
   _max_conc_worker_id = MAX2((uint) ConcGCThreads, 1U);
-  _task_queues = new SCMObjToScanQueueSet((int) _max_worker_id);
+  _task_queues = new SCMObjToScanQueueSet((int) _max_conc_worker_id);
   _overflow_queue = new SharedOverflowMarkQueue();
 
-  for (uint i = 0; i < _max_worker_id; ++i) {
+  for (uint i = 0; i < _max_conc_worker_id; ++i) {
     SCMObjToScanQueue* task_queue = new SCMObjToScanQueue();
     task_queue->initialize();
     _task_queues->register_queue(i, task_queue);
@@ -395,7 +395,7 @@ void ShenandoahConcurrentMark::initialize() {
   JavaThread::satb_mark_queue_set().set_buffer_size(1014 /* G1SATBBufferSize */);
 }
 
-void ShenandoahConcurrentMark::mark_from_roots(bool update_refs, bool full_gc) {
+void ShenandoahConcurrentMark::mark_from_roots(bool update_refs) {
   if (ShenandoahGCVerbose) {
     tty->print_cr("STOPPING THE WORLD: before marking");
     tty->print_cr("Starting markFromRoots");
@@ -404,9 +404,7 @@ void ShenandoahConcurrentMark::mark_from_roots(bool update_refs, bool full_gc) {
   ShenandoahHeap* sh = (ShenandoahHeap *) Universe::heap();
 
   sh->shenandoahPolicy()->record_phase_start(ShenandoahCollectorPolicy::conc_mark);
-
-  uint max_workers = full_gc ? _max_worker_id : _max_conc_worker_id;
-  ParallelTaskTerminator terminator(max_workers, _task_queues);
+  ParallelTaskTerminator terminator(_max_conc_worker_id, _task_queues);
 
   if (ShenandoahProcessReferences) {
     ReferenceProcessor* rp = sh->ref_processor_cm();
@@ -417,18 +415,18 @@ void ShenandoahConcurrentMark::mark_from_roots(bool update_refs, bool full_gc) {
   
   SCMConcurrentMarkingTask markingTask = SCMConcurrentMarkingTask(this, &terminator, update_refs);
 
-  sh->workers()->set_active_workers(max_workers);
-  sh->workers()->run_task(&markingTask);
+  sh->conc_workers()->set_active_workers(_max_conc_worker_id);
+  sh->conc_workers()->run_task(&markingTask);
 
   if (ShenandoahGCVerbose) {
     tty->print("total workers = %u finished workers = %u\n", 
-	       sh->workers()->started_workers(), 
-	       sh->workers()->finished_workers());
+	       sh->conc_workers()->started_workers(), 
+	       sh->conc_workers()->finished_workers());
     TASKQUEUE_STATS_ONLY(print_taskqueue_stats());
     TASKQUEUE_STATS_ONLY(reset_taskqueue_stats());
   }
 
-  sh->workers()->set_active_workers(_max_worker_id);
+  sh->conc_workers()->set_active_workers(_max_conc_worker_id);
 
   if (ShenandoahGCVerbose) {
     tty->print_cr("Finishing markFromRoots");
@@ -452,7 +450,7 @@ public:
   }
 };
 
-void ShenandoahConcurrentMark::finish_mark_from_roots(bool full_gc) {
+void ShenandoahConcurrentMark::finish_mark_from_roots() {
   if (ShenandoahGCVerbose) {
     tty->print_cr("Starting finishMarkFromRoots");
   }
@@ -460,31 +458,23 @@ void ShenandoahConcurrentMark::finish_mark_from_roots(bool full_gc) {
   ShenandoahHeap* sh = (ShenandoahHeap *) Universe::heap();
 
   // Trace any (new) unmarked root references.
-  if (! full_gc) {
-    sh->shenandoahPolicy()->record_phase_start(ShenandoahCollectorPolicy::rescan_roots);
-    prepare_unmarked_root_objs();
-    sh->shenandoahPolicy()->record_phase_end(ShenandoahCollectorPolicy::rescan_roots);
-  }
-
+  sh->shenandoahPolicy()->record_phase_start(ShenandoahCollectorPolicy::rescan_roots);
+  prepare_unmarked_root_objs();
+  sh->shenandoahPolicy()->record_phase_end(ShenandoahCollectorPolicy::rescan_roots);
+  sh->shenandoahPolicy()->record_phase_start(ShenandoahCollectorPolicy::drain_satb);
   {
-    if (! full_gc) {
-      sh->shenandoahPolicy()->record_phase_start(ShenandoahCollectorPolicy::drain_satb);
-    }
-    ParallelTaskTerminator terminator(_max_worker_id, _task_queues);
+    ParallelTaskTerminator terminator(_max_conc_worker_id, _task_queues);
     ShenandoahHeap::StrongRootsScope srs(sh);
     // drain_satb_buffers(0, true);
     FinishDrainSATBBuffersTask drain_satb_buffers(this, &terminator);
-    sh->workers()->set_active_workers(_max_worker_id);
-    sh->workers()->run_task(&drain_satb_buffers);
-    if (! full_gc) {
-      sh->shenandoahPolicy()->record_phase_end(ShenandoahCollectorPolicy::drain_satb);
-    }
+    sh->conc_workers()->set_active_workers(_max_conc_worker_id);
+    sh->conc_workers()->run_task(&drain_satb_buffers);
+    sh->shenandoahPolicy()->record_phase_end(ShenandoahCollectorPolicy::drain_satb);
   }
-
+  
   // Also drain our overflow queue.
-  if (! full_gc) {
-    sh->shenandoahPolicy()->record_phase_start(ShenandoahCollectorPolicy::drain_overflow);
-  }
+  sh->shenandoahPolicy()->record_phase_start(ShenandoahCollectorPolicy::drain_overflow);
+
   ShenandoahMarkRefsClosure cl1(0);
   ShenandoahMarkRefsNoUpdateClosure cl2(0);
   ExtendedOopClosure* cl;
@@ -499,43 +489,34 @@ void ShenandoahConcurrentMark::finish_mark_from_roots(bool full_gc) {
     obj->oop_iterate(cl);
     obj = _overflow_queue->pop();
   }
-  if (! full_gc) {
-    sh->shenandoahPolicy()->record_phase_end(ShenandoahCollectorPolicy::drain_overflow);
-  }
+
+  sh->shenandoahPolicy()->record_phase_end(ShenandoahCollectorPolicy::drain_overflow);
 
   // Finally mark everything else we've got in our queues during the previous steps.
   {
-    if (! full_gc) {
-      sh->shenandoahPolicy()->record_phase_start(ShenandoahCollectorPolicy::drain_queues);
-    }
-    ParallelTaskTerminator terminator(_max_worker_id, _task_queues);
+    sh->shenandoahPolicy()->record_phase_start(ShenandoahCollectorPolicy::drain_queues);
+    ParallelTaskTerminator terminator(_max_conc_worker_id, _task_queues);
     SCMConcurrentMarkingTask markingTask = SCMConcurrentMarkingTask(this, &terminator, !ShenandoahUpdateRefsEarly);
-    sh->workers()->set_active_workers(_max_worker_id);
-    sh->workers()->run_task(&markingTask);
-    if (! full_gc) {
-      sh->shenandoahPolicy()->record_phase_end(ShenandoahCollectorPolicy::drain_queues);
-    }
+    sh->conc_workers()->set_active_workers(_max_conc_worker_id);
+    sh->conc_workers()->run_task(&markingTask);
+    sh->shenandoahPolicy()->record_phase_end(ShenandoahCollectorPolicy::drain_queues);
   }
 
 #ifdef ASSERT
-  for (int i = 0; i < sh->max_workers(); i++) {
+  for (int i = 0; i < (int) _max_conc_worker_id; i++) {
     assert(_task_queues->queue(i)->is_empty(), "Should be empty");
   }
 #endif
 
   // When we're done marking everything, we process weak references.
   if (ShenandoahProcessReferences) {
-    if (! full_gc) {
-      sh->shenandoahPolicy()->record_phase_start(ShenandoahCollectorPolicy::weakrefs);
-    }
+    sh->shenandoahPolicy()->record_phase_start(ShenandoahCollectorPolicy::weakrefs);
     weak_refs_work();
-    if (! full_gc) {
-      sh->shenandoahPolicy()->record_phase_end(ShenandoahCollectorPolicy::weakrefs);
-    }
+    sh->shenandoahPolicy()->record_phase_end(ShenandoahCollectorPolicy::weakrefs);
   }
 
 #ifdef ASSERT
-  for (int i = 0; i < sh->max_workers(); i++) {
+  for (int i = 0; i < (int) _max_conc_worker_id; i++) {
     assert(_task_queues->queue(i)->is_empty(), "Should be empty");
   }
 #endif
@@ -543,11 +524,11 @@ void ShenandoahConcurrentMark::finish_mark_from_roots(bool full_gc) {
   if (ShenandoahGCVerbose) {
     tty->print_cr("Finishing finishMarkFromRoots");
 #ifdef SLOWDEBUG
-    for (int i = 0; i <(int)_max_worker_id; i++) {
+    for (int i = 0; i <(int)_max_conc_worker_id; i++) {
       tty->print("Queue: "INT32_FORMAT":", i);
       _task_queues->queue(i)->stats.print(tty, 10);
       tty->cr();
-      //    _task_queues->queue(i)->stats.verify();
+      _task_queues->queue(i)->stats.verify();
     }
 #endif
   }
@@ -610,7 +591,6 @@ bool ShenandoahConcurrentMark::drain_one_satb_buffer(uint worker_id) {
 }
 
 void ShenandoahConcurrentMark::add_task(oop obj, int q) {
-  q = q % _max_worker_id;
   assert(obj->is_oop(), "Oops, not an oop");
   assert(! ShenandoahHeap::heap()->heap_region_containing(obj)->is_in_collection_set(), "we don't want to mark objects in from-space");
 
@@ -642,7 +622,23 @@ void ShenandoahConcurrentMark::print_taskqueue_stats(outputStream* const st) con
   print_taskqueue_stats_hdr(st);
   ShenandoahHeap* sh = (ShenandoahHeap*) Universe::heap();
   TaskQueueStats totals;
-  const int n = sh->workers() != NULL ? sh->workers()->finished_workers() : 1;
+  const int n = sh->max_conc_workers();
+  for (int i = 0; i < n; ++i) {
+    st->print(INT32_FORMAT_W(3), i); 
+    _task_queues->queue(i)->stats.print(st);
+    st->print("\n");
+    totals += _task_queues->queue(i)->stats;
+  }
+  st->print_raw("tot "); totals.print(st); st->cr();
+  DEBUG_ONLY(totals.verify());
+
+}
+
+void ShenandoahConcurrentMark::print_push_only_taskqueue_stats(outputStream* const st) const {
+  print_taskqueue_stats_hdr(st);
+  ShenandoahHeap* sh = (ShenandoahHeap*) Universe::heap();
+  TaskQueueStats totals;
+  const int n = sh->max_conc_workers();
   for (int i = 0; i < n; ++i) {
     st->print(INT32_FORMAT_W(3), i); 
     _task_queues->queue(i)->stats.print(st);
@@ -651,13 +647,12 @@ void ShenandoahConcurrentMark::print_taskqueue_stats(outputStream* const st) con
   }
   st->print_raw("tot "); totals.print(st); st->cr();
 
-  // FIXME chf this needs to work, but for now investigating something else.
-  //  DEBUG_ONLY(totals.verify());
+  DEBUG_ONLY(totals.verify_only_pushes());
 }
 
 void ShenandoahConcurrentMark::reset_taskqueue_stats() {
   ShenandoahHeap* sh = (ShenandoahHeap*) Universe::heap();
-  const int n = sh->workers() != NULL ? sh->workers()->total_workers() : 1;
+  const int n = sh->max_conc_workers();
   for (int i = 0; i < n; ++i) {
     _task_queues->queue(i)->stats.reset();
   }
@@ -795,7 +790,7 @@ private:
 
 public:
 
-  ShenandoahRefProcTaskExecutor() : _workers(ShenandoahHeap::heap()->workers()) {
+  ShenandoahRefProcTaskExecutor() : _workers(ShenandoahHeap::heap()->conc_workers()) {
   }
 
   // Executes a task using worker threads.

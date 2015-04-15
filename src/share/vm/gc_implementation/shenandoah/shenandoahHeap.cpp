@@ -47,7 +47,8 @@ void ShenandoahHeap::print_heap_objects(HeapWord* start, HeapWord* end) {
   }
 }
 
-class PrintHeapRegionsClosure : public ShenandoahHeapRegionClosure {
+class PrintHeapRegionsClosure : public
+   ShenandoahHeapRegionClosure {
 private:
   outputStream* _st;
 public:
@@ -176,8 +177,8 @@ ShenandoahHeap::ShenandoahHeap(ShenandoahCollectorPolicy* policy) :
   _max_allocated_gc(0),
   _allocated_last_gc(0),
   _used_start_gc(0),
-  _max_workers((int) MAX2((uint) ParallelGCThreads, 1U)),
   _max_conc_workers((int) MAX2((uint) ConcGCThreads, 1U)),
+  _max_parallel_workers((int) MAX2((uint) ParallelGCThreads, 1U)),
   _ref_processor_cm(NULL),
   _in_cset_fast_test(NULL),
   _in_cset_fast_test_base(NULL),
@@ -187,7 +188,17 @@ ShenandoahHeap::ShenandoahHeap(ShenandoahCollectorPolicy* policy) :
   _pgc = this;
   _scm = new ShenandoahConcurrentMark();
   _used = 0;
-  
+  // This is odd.  They are concurrent gc threads, but they are also task threads.  
+  // Framework doesn't allow both.
+  _conc_workers = new FlexibleWorkGang("Concurrent GC Threads", ConcGCThreads,
+                            /* are_GC_task_threads */false,
+                            /* are_ConcurrentGC_threads */true);
+  if ((_workers == NULL) || (_conc_workers == NULL)) {
+      vm_exit_during_initialization("Failed necessary allocation.");
+    } else {
+      _workers->initialize_workers();
+      _conc_workers->initialize_workers();
+    }
 }
 
 void ShenandoahHeap::reset_mark_bitmap() {
@@ -259,6 +270,7 @@ void ShenandoahHeap::post_initialize() {
   if (ShenandoahProcessReferences) {
     ref_processing_init();
   }
+  _max_workers = MAX(_max_parallel_workers, _max_conc_workers);
 }
 
 class CalculateUsedRegionClosure : public ShenandoahHeapRegionClosure {
@@ -1083,7 +1095,7 @@ void ShenandoahHeap::prepare_for_concurrent_evacuation() {
   _free_regions->clear();
   _shenandoah_policy->choose_collection_and_free_sets(&regions, _collection_set, _free_regions);
 
-  if (PrintGCDetails) {
+  if (PrintGCTimeStamps) {
     gclog_or_tty->print("Collection set used = " SIZE_FORMAT " K live = " SIZE_FORMAT " K reclaimable = " SIZE_FORMAT " K\n",
 			_collection_set->used() / K, _collection_set->live_data() / K, _collection_set->garbage() / K);
   }
@@ -1222,9 +1234,9 @@ void ShenandoahHeap::update_references() {
 
   ShenandoahHeapRegionSet regions = ShenandoahHeapRegionSet(_num_regions, _ordered_regions, _num_regions);
   ParallelUpdateRefsTask task = ParallelUpdateRefsTask(&regions);
-  workers()->set_active_workers(_max_conc_workers);
-  workers()->run_task(&task);
-  workers()->set_active_workers(_max_workers);
+  //  workers()->set_active_workers(_max_conc_workers);
+  conc_workers()->run_task(&task);
+  //  workers()->set_active_workers(_max_parallel_workers);
 
   VM_ShenandoahUpdateRootRefs update_roots;
   if (ShenandoahConcurrentUpdateRefs) {
@@ -1325,11 +1337,13 @@ void ShenandoahHeap::evacuate_and_update_roots() {
   }
 
   assert(SafepointSynchronize::is_at_safepoint(), "Only iterate roots while world is stopped");
-  set_par_threads(_max_workers); // Prepare for parallel processing.
+  //  set_par_threads(_max_parallel_workers); // Prepare for parallel processing.
   ClassLoaderDataGraph::clear_claimed_marks();
   SharedHeap::StrongRootsScope strong_roots_scope(this, true);
   ShenandoahEvacuateUpdateStrongRootsTask strong_roots_task;
-  workers()->run_task(&strong_roots_task);
+  set_par_threads(1);
+  conc_workers()->set_active_workers(1);
+  conc_workers()->run_task(&strong_roots_task);
   set_par_threads(0); // Prepare for serial processing in future calls to process_strong_roots.
 
   // We process weak roots using only 1 worker thread, multi-threaded weak roots
@@ -1337,10 +1351,10 @@ void ShenandoahHeap::evacuate_and_update_roots() {
   // we need to grab the Heap_lock.
   ShenandoahEvacuateUpdateWeakRootsTask weak_roots_task;
   set_par_threads(1); // Prepare for parallel processing.
-  workers()->set_active_workers(1);
-  workers()->run_task(&weak_roots_task);
-  workers()->set_active_workers(workers()->total_workers());
-  set_par_threads(0); // Prepare for serial processing in future calls to process_strong_roots.
+  conc_workers()->set_active_workers(1);
+  conc_workers()->run_task(&weak_roots_task);
+  conc_workers()->set_active_workers(conc_workers()->total_workers());
+  // set_par_threads(0); // Prepare for serial processing in future calls to process_strong_roots.
 
   if (ShenandoahVerifyReadsToFromSpace) {
     set_from_region_protection(true);
@@ -1414,9 +1428,9 @@ void ShenandoahHeap::parallel_evacuate() {
   
   ParallelEvacuationTask evacuationTask = ParallelEvacuationTask(this, _collection_set, &barrierSync);
 
-  workers()->set_active_workers(_max_conc_workers);
-  workers()->run_task(&evacuationTask);
-  workers()->set_active_workers(_max_workers);
+  //  workers()->set_active_workers(_max_conc_workers);
+  conc_workers()->run_task(&evacuationTask);
+  //  workers()->set_active_workers(_max_parallel_workers);
 
   if (ShenandoahGCVerbose) {
 
@@ -1666,10 +1680,12 @@ void ShenandoahHeap::prepare_for_verify() {
 
 void ShenandoahHeap::print_gc_threads_on(outputStream* st) const {
   workers()->print_worker_threads_on(st);
+  conc_workers()->print_worker_threads_on(st);
 }
 
 void ShenandoahHeap::gc_threads_do(ThreadClosure* tcl) const {
   workers()->threads_do(tcl);
+  conc_workers()->threads_do(tcl);
 }
 
 void ShenandoahHeap::print_tracing_info() const {
@@ -2476,21 +2492,39 @@ void ShenandoahHeap::ref_processing_init() {
   MemRegion mr = reserved_region();
 
   // Concurrent Mark ref processor
+//   _ref_processor_cm =
+//     new ReferenceProcessor(mr,    // span
+//                            ParallelRefProcEnabled && (ParallelGCThreads > 1),
+//                                 // mt processing
+//                            (int) ParallelGCThreads,
+//                                 // degree of mt processing
+//                            (ParallelGCThreads > 1) || (ConcGCThreads > 1),
+//                                 // mt discovery
+//                            (int) MAX2(ParallelGCThreads, ConcGCThreads),
+//                                 // degree of mt discovery
+//                            false,
+//                                 // Reference discovery is not atomic
+// 			   &isAlive);
+//                                 // is alive closure
+//                                 // (for efficiency/performance)
   _ref_processor_cm =
     new ReferenceProcessor(mr,    // span
-                           ParallelRefProcEnabled && (ParallelGCThreads > 1),
-                                // mt processing
-                           (int) ParallelGCThreads,
-                                // degree of mt processing
-                           (ParallelGCThreads > 1) || (ConcGCThreads > 1),
-                                // mt discovery
-                           (int) MAX2(ParallelGCThreads, ConcGCThreads),
-                                // degree of mt discovery
-                           false,
-                                // Reference discovery is not atomic
-			   &isAlive);
-                                // is alive closure
-                                // (for efficiency/performance)
+			   ParallelRefProcEnabled && (ConcGCThreads > 1),
+			   // mt processing
+                           (int) ConcGCThreads,
+			   // degree of mt processing
+			   (ConcGCThreads > 1),
+			   // mt discovery
+			   (int) ConcGCThreads,
+			   // degree of mt discovery
+			   false,
+			   // Reference discovery is not atomic
+ 			   &isAlive);
+  // is alive closure
+  // (for efficiency/performance)
+
+
+
 }
 
 #ifdef ASSERT
@@ -2543,7 +2577,7 @@ void ShenandoahHeap::cancel_evacuation() {
   // If this is a GC thread, we let it return immediately, otherwise we wait
   // until all GC threads are done.
   if (! Thread::current()->is_GC_task_thread()) {
-    while (! workers()->is_idle()) { // wait.
+    while (! conc_workers()->is_idle()) { // wait.
       Thread::current()->_ParkEvent->park(1) ;
     }
   }
@@ -2556,6 +2590,13 @@ bool ShenandoahHeap::cancelled_evacuation() {
 
 int ShenandoahHeap::max_workers() {
   return _max_workers;
+}
+
+int ShenandoahHeap::max_parallel_workers() {
+  return _max_parallel_workers;
+}
+int ShenandoahHeap::max_conc_workers() {
+  return _max_conc_workers;
 }
 
 void ShenandoahHeap::shutdown() {

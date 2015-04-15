@@ -4076,9 +4076,11 @@ void Threads::possibly_parallel_oops_do(OopClosure* f, CLDClosure* cld_f, CodeBl
   // turn off parallelism in process_roots while active_workers
   // is being used for parallelism elsewhere.
   bool is_par = sh->n_par_threads() > 0;
-  assert(!is_par ||
-         (SharedHeap::heap()->n_par_threads() ==
-         SharedHeap::heap()->workers()->active_workers()), "Mismatch");
+
+  // Shenandoah may run possibly parallel oops do with conc_workers instead of workers.
+  assert(!is_par || UseShenandoahGC || 
+	 (SharedHeap::heap()->n_par_threads() ==
+  	  SharedHeap::heap()->workers()->active_workers()), "Mismatch");
   int cp = SharedHeap::heap()->strong_roots_parity();
   ALL_JAVA_THREADS(p) {
     if (p->claim_oops_do(is_par, cp)) {

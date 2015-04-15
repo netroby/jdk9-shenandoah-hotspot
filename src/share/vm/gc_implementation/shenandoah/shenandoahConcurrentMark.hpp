@@ -22,7 +22,6 @@ private:
   SharedOverflowMarkQueue* _overflow_queue;
 
   bool                    _aborted;       
-  uint _max_worker_id;
   uint _max_conc_worker_id;
   ParallelTaskTerminator* _terminator;
 
@@ -30,14 +29,14 @@ public:
   // We need to do this later when the heap is already created.
   void initialize();
 
-  void mark_from_roots(bool update_refs, bool full_gc = false);
+  void mark_from_roots(bool update_refs);
 
   // Prepares unmarked root objects by marking them and putting
   // them into the marking task queue.
   void prepare_unmarked_root_objs();
   void prepare_unmarked_root_objs_no_derived_ptrs(bool update_refs);
 
-  void finish_mark_from_roots(bool full_gc = false);
+  void finish_mark_from_roots();
 
   // Those are only needed public because they're called from closures.
   void add_task(oop obj, int worker_id);
@@ -62,6 +61,7 @@ private:
 #if TASKQUEUE_STATS
   static void print_taskqueue_stats_hdr(outputStream* const st = gclog_or_tty);
   void print_taskqueue_stats(outputStream* const st = gclog_or_tty) const;
+  void print_push_only_taskqueue_stats(outputStream* const st = gclog_or_tty) const;
   void reset_taskqueue_stats();
 #endif // TASKQUEUE_STATS
 

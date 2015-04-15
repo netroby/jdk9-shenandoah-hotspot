@@ -10,15 +10,30 @@ Copyright 2014 Red Hat, Inc. and/or its affiliates.
 #include "oops/oop.inline.hpp"
 #include "runtime/thread.hpp"
 #include "utilities/copy.hpp"
+#include "utilities/taskqueue.hpp"
+#include "utilities/workgroup.hpp"
 
 ShenandoahMarkCompact::ShenandoahMarkCompact() :
   _heap(ShenandoahHeap::heap()),
-  _barrier_set(ShenandoahMarkCompactBarrierSet()) {
-
-  // Nothing left to do.
-
+  _barrier_set(ShenandoahMarkCompactBarrierSet()),
+  _max_worker_id(MAX2((uint) ParallelGCThreads, 1U)),
+  _seed(17)
+{
+  // nothing to do here.
 }
 
+void ShenandoahMarkCompact::initialize() {
+  _max_worker_id = MAX2((uint) ParallelGCThreads, 1U);
+  _task_queues = new ObjToScanQueueSet((int) _max_worker_id);
+  _overflow_queue = new SharedOverflowMarkQueue();
+
+  for (uint i = 0; i < _max_worker_id; ++i) {
+    ObjToScanQueue* task_queue = new ObjToScanQueue();
+    task_queue->initialize();
+    _task_queues->register_queue(i, task_queue);
+  }
+}
+  
 void ShenandoahMarkCompact::do_mark_compact() {
 
   BarrierSet* old_bs = oopDesc::bs();
@@ -51,6 +66,11 @@ void ShenandoahMarkCompact::do_mark_compact() {
   if (ShenandoahTraceFullGC) {
     gclog_or_tty->print_cr("Shenandoah-full-gc: phase 1: marking the heap");
   }
+
+  if (UseTLAB) {
+    _heap->ensure_parsability(true);
+  }
+
   phase1_mark_heap();
 
   if (ShenandoahTraceFullGC) {
@@ -80,19 +100,118 @@ void ShenandoahMarkCompact::do_mark_compact() {
   _heap->shenandoahPolicy()->record_phase_end(ShenandoahCollectorPolicy::full_gc);
 }
 
-void ShenandoahMarkCompact::phase1_mark_heap() {
 
-  if (UseTLAB) {
-    _heap->ensure_parsability(true);
+void ShenandoahMarkCompact::add_task(oop obj, int q) {
+  if (!_task_queues->queue(q)->push(obj)) {
+    tty->print_cr("WARNING: Shenandoah mark queues overflown overflow_queue: obj = "PTR_FORMAT, p2i((HeapWord*) obj));
+    _overflow_queue->push(obj);
+  }
+}
+
+oop ShenandoahMarkCompact::pop_task(int q) {
+  oop obj;
+  if (_task_queues->queue(q)->pop_local(obj)) {
+    return obj;
+  }
+  return NULL;
+}
+
+oop ShenandoahMarkCompact::steal_task(int q) {
+  oop obj;
+  if (_task_queues->steal(q, &_seed, obj)) {
+    return obj;
+  }
+  return NULL;
+}
+
+class ShenandoahMarkCompactObjsClosure : public ExtendedOopClosure {
+  uint _worker_id;
+  ShenandoahMarkCompact* _smc;
+  ShenandoahHeap* _heap;
+public:
+  ShenandoahMarkCompactObjsClosure(uint worker_id, ShenandoahMarkCompact* smc)  : 
+    _worker_id(worker_id), 
+    _smc(smc) 
+  {
+    _heap = ShenandoahHeap::heap();
   }
 
-  // TODO: Move prepare_unmarked_root_objs() into SCM!
-  // TODO: Make this whole sequence a separate method in SCM!
-  _heap->concurrentMark()->prepare_unmarked_root_objs_no_derived_ptrs(! ShenandoahUpdateRefsEarly /* update references */);
-  _heap->concurrentMark()->mark_from_roots(! ShenandoahUpdateRefsEarly, true /* full-gc */);
-  _heap->concurrentMark()->finish_mark_from_roots(true);
+  void do_oop(oop* p) {
+    oop obj = *p;
+    if (obj != NULL) {
+      if (_heap->mark_current_no_checks(obj)) {
+	//	tty->print("thread %d is marking object %p\n", _worker_id, obj);
+	_smc->add_task(obj, _worker_id);
+      }
+    }
+  }
 
+  void do_oop(narrowOop* oop) {
+    assert(false, "Narrow Ooops aren't supported in Shenandoah GC");
+  }
+};
+
+oop ShenandoahMarkCompact::get_task(int worker_id) {
+  oop result = pop_task(worker_id);
+  if (result == NULL) result = steal_task(worker_id);
+  if (result == NULL) result = _overflow_queue->pop();
+  return result;
 }
+  
+class ShenandoahMarkTask : public AbstractGangTask {
+  ShenandoahMarkCompact* _smc;
+  ParallelTaskTerminator* _terminator;
+
+public:
+  ShenandoahMarkTask(ShenandoahMarkCompact *smc, 
+		     ParallelTaskTerminator* terminator) : 
+    AbstractGangTask("Shenandoah marking task"),
+    _smc(smc),
+    _terminator(terminator){
+    // nothing to do here
+  }
+
+  void work(uint worker_id) {
+
+    ResourceMark rm;
+
+    ShenandoahMarkCompactObjsClosure cl(worker_id, _smc);
+    CodeBlobToOopClosure blobsCl(&cl, true);
+    CLDToOopClosure cldCl(&cl);
+
+
+    ShenandoahHeap* heap = ShenandoahHeap::heap();
+    // Start at the roots
+    heap->process_all_roots(false, SharedHeap::SO_AllCodeCache, &cl, &cldCl, &blobsCl);
+
+    while (true) {
+    oop obj = _smc->get_task(worker_id);
+    while (obj != NULL) {
+      obj->oop_iterate(&cl);
+      obj = _smc->get_task(worker_id);
+    }
+    if (_terminator->offer_termination()) break;
+    }
+  }
+};
+
+
+void ShenandoahMarkCompact::phase1_mark_heap() {
+  ClassLoaderDataGraph::clear_claimed_marks();
+  ParallelTaskTerminator terminator(_max_worker_id, _task_queues);
+
+  SharedHeap::StrongRootsScope strong_roots_scope(_heap, true);
+  _heap->workers()->set_active_workers(_max_worker_id);
+  _heap->set_par_threads(_max_worker_id);
+  ShenandoahMarkTask mark_task(this, &terminator);
+  _heap->workers()->run_task(&mark_task);
+  if (ShenandoahGCVerbose) {
+    TASKQUEUE_STATS_ONLY(print_taskqueue_stats());
+    TASKQUEUE_STATS_ONLY(reset_taskqueue_stats());
+  }
+  _heap->set_par_threads(0); // Prepare for serial processing in future calls to process_strong_roots.
+}
+
 
 class CalculateTargetAddressObjectClosure : public ObjectClosure {
 private:
@@ -358,3 +477,36 @@ void ShenandoahMarkCompact::phase4_compact_objects() {
 
   _heap->set_used(cl.used() * HeapWordSize);
 }
+
+#if TASKQUEUE_STATS
+void ShenandoahMarkCompact::print_taskqueue_stats_hdr(outputStream* const st) {
+  st->print_raw_cr("GC Task Stats");
+  st->print_raw("thr "); TaskQueueStats::print_header(1, st); st->cr();
+  st->print_raw("--- "); TaskQueueStats::print_header(2, st); st->cr();
+}
+
+void ShenandoahMarkCompact::print_taskqueue_stats(outputStream* const st) const {
+  print_taskqueue_stats_hdr(st);
+  ShenandoahHeap* sh = (ShenandoahHeap*) Universe::heap();
+  TaskQueueStats totals;
+  const int n = sh->max_workers();
+  for (int i = 0; i < n; ++i) {
+    st->print(INT32_FORMAT_W(3), i); 
+    _task_queues->queue(i)->stats.print(st);
+    st->print("\n");
+    totals += _task_queues->queue(i)->stats;
+  }
+  st->print_raw("tot "); totals.print(st); st->cr();
+  DEBUG_ONLY(totals.verify());
+
+}
+
+void ShenandoahMarkCompact::reset_taskqueue_stats() {
+  ShenandoahHeap* sh = (ShenandoahHeap*) Universe::heap();
+  //  const int n = sh->workers() != NULL ? sh->workers()->total_workers() : 1;
+  const int n = sh->max_workers();
+  for (int i = 0; i < n; ++i) {
+    _task_queues->queue(i)->stats.reset();
+  }
+}
+#endif // TASKQUEUE_STATS

@@ -109,6 +109,17 @@ void TaskQueueStats::verify() const
          err_msg("overflow_max_len=" SIZE_FORMAT " overflow=" SIZE_FORMAT,
                  get(overflow_max_len), get(overflow)));
 }
+
+void TaskQueueStats::verify_only_pushes() const
+{
+  assert((get(pop) == 0),
+         err_msg("pops=" SIZE_FORMAT , 
+                 get(pop)));
+  assert((get(steal) == 0),
+         err_msg("steals=" SIZE_FORMAT , 
+                 get(steal)));
+}
+
 #endif // ASSERT
 #endif // TASKQUEUE_STATS
 

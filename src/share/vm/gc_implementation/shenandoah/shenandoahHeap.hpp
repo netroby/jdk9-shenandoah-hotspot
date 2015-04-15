@@ -79,8 +79,13 @@ private:
   uint _numAllocs;
 #endif
   WorkGangBarrierSync barrierSync;
-  int _max_workers;
+  int _max_parallel_workers;
   int _max_conc_workers;
+  int _max_workers;
+
+  FlexibleWorkGang* _conc_workers;
+
+
   volatile size_t _used;
 
   CMBitMap _mark_bit_map;
@@ -301,6 +306,9 @@ public:
   void release_pending_refs_lock();
 
   int max_workers();
+  int max_conc_workers();
+  int max_parallel_workers();
+  FlexibleWorkGang* conc_workers() const{ return _conc_workers;}
 
   ShenandoahHeapRegion** heap_regions();
   size_t num_regions();

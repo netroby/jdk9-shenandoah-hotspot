@@ -45,6 +45,7 @@ void VM_ShenandoahFullGC::doit() {
 
   if (! GC_locker::check_active_before_gc()) {
     ShenandoahMarkCompact mark_compact;
+    mark_compact.initialize();
     mark_compact.do_mark_compact();
   } else {
     if (ShenandoahTraceJNICritical) {

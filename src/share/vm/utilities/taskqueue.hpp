@@ -82,6 +82,7 @@ public:
   void print(outputStream* const stream = tty, unsigned int width = 10) const;
 
   DEBUG_ONLY(void verify() const;)
+  DEBUG_ONLY(void verify_only_pushes() const;)
 
 private:
   size_t                    _stats[last_stat_id];
